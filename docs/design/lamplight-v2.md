@@ -81,11 +81,18 @@ the maintainer's answers to the questions they raised.
 - **Writes** take a per-Topic lock, write the Event first with everything needed to apply
   it, then update content files atomically. On load, the core replays any Event whose effect
   is missing. Every operation is idempotent.
+- **Events** carry a unique ID and the time they happened. Replay orders them by time, then
+  by ID, never by position in the file, and applies each ID once. Each Event is one append
+  ending in a newline; a last line without one is an interrupted write, which replay
+  ignores and the next write truncates (logging the fragment), so every Event starts on a
+  record boundary.
 - **Formats**: every file has a `format` number, and a binary refuses to write a file newer
   than it understands. File schemas are Lamplight's own types, never go-fsrs structs. Files
   the core rewrites say in a header comment that comments are not preserved.
 - **Sync**: a Topic can be synced between machines with git. History files merge by union,
-  and a partly written last line is ignored until it is complete.
+  which can leave lines in any order; because replay sorts Events, a merge in either
+  direction gives the same state. A Revision whose base no longer matches the Syllabus after
+  a merge is flagged in `status` instead of being applied.
 
 ## Domain behaviour
 
@@ -332,10 +339,11 @@ web/                        dashboard, in a later point release
 - Tests go through each module's interface. Core tests run in process with a fixed clock
   and a temporary Study home.
 - Replay: the same History always yields the same state and Card schedule.
-- Crash injection: interrupt every write between the Event and the content update, then
-  check that replay repairs it.
+- Crash injection: interrupt every write between the Event and the content update, and cut
+  an Event off mid-line, then check that replay and the next write repair it.
 - Concurrency: the CLI and the MCP server writing to one Topic at once.
-- Sync: two machines' History files merged by union replay to one consistent state.
+- Sync: two machines' History files, merged by union in both directions, replay to the
+  same state, including interleaved Reviews of one Card and conflicting Revisions.
 - The MCP server through the Go SDK's in-memory transport; the CLI by comparing `--json`
   output with saved expected files.
 - `study setup` against fake `claude` and `codex` executables.

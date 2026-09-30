@@ -28,6 +28,12 @@ updates content files. On load, the core replays any Event whose effect is missi
 crash never leaves a half-done operation. Operations are idempotent: completing a Lesson
 twice changes nothing, and Card IDs derive from the Lesson (`<lesson-id>.<n>`).
 
+Each Event carries a unique ID and the time it happened. Replay orders Events by time, then
+by ID, never by their position in the file, and applies each ID once. Each Event is written
+as a single append ending in a newline; a last line without one comes from an interrupted
+write, so replay ignores it and the next write truncates it, logging the fragment, before
+appending.
+
 Every file carries a `format` number. A binary refuses to write a file newer than it
 understands. File schemas are Lamplight's own types, never a library's structs.
 
@@ -36,7 +42,9 @@ rebuilt at any time.
 
 ## Consequences
 
-Syncing a Topic between machines is a git pull: History files merge by union and replay to
-the same state. Writes still take a per-Topic lock, because the CLI and the MCP server can
-run at the same time. Hand edits to content files are allowed and validated on load;
+Syncing a Topic between machines is a git pull. History files merge by union, which can
+leave lines in any order; because replay sorts Events, a merge in either direction replays
+to the same state. A Revision whose recorded base no longer matches the Syllabus after a
+merge is not applied; `status` asks the learner to resolve it. Writes still take a
+per-Topic lock, because the CLI and the MCP server can run at the same time. Hand edits to content files are allowed and validated on load;
 comments in files the core rewrites are not preserved, and those files say so in a header.
