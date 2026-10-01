@@ -145,6 +145,12 @@ the maintainer's answers to the questions they raised.
   | `card.deleted` | Card, how many of its Reviews the deleting machine knew | `cards.jsonl#<id>` (removed) |
   | `card.flagged` | Card, the learner's note | none |
   | `checkpoint.taken` | the Event whose Checkpoint it settles, role, commit | none |
+  | `deadline.set` | the Goal's deadline, empty to remove it | `topic.toml` |
+  | `pace.set` | the Pace periods (`from`, `hours_per_week`), replacing the old ones | `topic.toml` |
+  | `new_cards_per_day.set` | the daily cap on new Cards | `topic.toml` |
+  | `task.added`, `task.removed` | the Tasks in full, or their ids | `topic.toml` |
+  | `topic_state.set` | `active`, `paused` or `finished` | none |
+  | `task.done`, `task.reopened` | Task id | none |
 
   `syllabus.toml` keeps settings Lamplight does not know at every level, as `topic.toml`
   does, and refuses a newer format. A Revision is based on the version the History
@@ -214,6 +220,20 @@ hours before any learning happens is exactly what v1 produced.
   Core ends Oct 16"). If a must-Milestone misses its deadline, the agent offers a **Triage**
   Revision: trim Stretch goals, move Lessons past the deadline, or raise the Pace. A
   Pace change produces a new Forecast.
+  - The core computes both, exactly and deterministically: work is the hour estimates of
+    the Lessons neither done nor skipped (one in progress in full), taken through the
+    Syllabus in order and counted in minutes; the Pace is minutes per week, and each
+    calendar day on the learner's clock, from today, adds its period's share. A Lesson
+    without an estimate stops the Forecast at its Milestone and names it, rather than
+    guessing. A Milestone's deadline is its target date, or the Goal's deadline for a
+    must-Milestone without one.
+  - The Triage for the first must-Milestone forecast to end after its deadline gives the
+    Pace that finishes it in time (hours a week from today to the deadline, rounded up to a
+    half hour), the Lessons not started that fit it in time if moved past the deadline
+    (optional Milestones' Lessons before it first, then its own from the last), and the
+    hours of Stretch goals to trim instead. The core never changes the Syllabus or the Pace
+    itself: the learner chooses, and the agent proposes the Revision or the Pace change.
+  - Forecasts appear in `status` and `syllabus`; a paused or finished Topic has none.
 - **Revisions**: the learner asks in plain words; the agent proposes a before/after change
   that names Lessons by title and shows any renumbering; the core applies it after approval.
   The core computes that change from the current Syllabus and the proposed one, so the
@@ -222,7 +242,6 @@ hours before any learning happens is exactly what v1 produced.
   skipped by marking it (`skipped = true`), never by removing it; it keeps its number, and a
   later Revision can take the skip back. Skipping a Lesson in progress offers Cards for what
   was already covered. Target dates are written as text, so no time zone can shift them.
-  (Forecasts, the Pace and Triage, which read the target dates and hour estimates, are #29.)
 - **Approvals are tamper-evident, not tamper-proof.** A Revision stores its exact change and
   the Syllabus version it was based on. Where the client supports MCP elicitation, or on a
   terminal, the core asks the learner directly; the Event records how approval was given and
@@ -380,8 +399,8 @@ hours before any learning happens is exactly what v1 produced.
   every replayed schedule, so it comes with a migration once learner data depends on it.
 - Reviews work with the agent (conversational recall) or without it (`study review` in the
   terminal). Paused Topics hide their Cards; finished Topics keep reviewing at growing
-  intervals. TODO(#29): paused and finished Topics, once Topics have states, and the daily
-  cap as a Topic setting next to Pace.
+  intervals. The daily cap on new Cards is a Topic setting, `new_cards_per_day` in
+  `topic.toml`, 10 unless set.
 
 ### Level, Goal, Pace and Tasks
 
@@ -392,6 +411,18 @@ hours before any learning happens is exactly what v1 produced.
   results. Suggestions come later, once there is data to tune them.
 - Tasks are non-study steps toward the Goal. They appear in `status` when relevant and are
   marked done through the core.
+  - The Goal's optional deadline, the Pace as dated periods (`[[pace]]`, each with `from` and
+    `hours_per_week`; the first may start "from now on"), the daily cap on new Cards and the
+    Tasks (`[[tasks]]`: id, title, optional `by` date and `after` Milestone) live in
+    `topic.toml`, set through `topic_update` and kept with any keys Lamplight does not know.
+    A setting a hand edit broke is reported in `status` and left out; the rest stands.
+  - A Task is relevant while it is open and, if it names a Milestone with `after`, once that
+    Milestone is done. Its `by` date is shown as written, never counted as late. Whether it
+    is done comes from the History (`task.done`, `task.reopened`), so a Task the learner wrote
+    into `topic.toml` by hand can be marked done too.
+  - A Topic's state (`active`, `paused`, `finished`) is recorded by `topic_state.set` and
+    replayed, never stored in a file. Paused hides its Cards and Forecasts; finished hides
+    its Forecasts and keeps its Cards coming back at growing intervals.
 
 ## Knowledge
 
@@ -441,7 +472,7 @@ apply. Search results carry an absolute path. Conversion leaves the Library.
 Every write names its Topic. Tools are named after things that happen in the domain.
 
 - **Read**: `status`, `syllabus`, `lesson`, `due_cards` (sized to Energy), `cards`, `history`,
-  `check_results`, `library_search`, `sources`, `evidence`.
+  `check_results`, `library_search`, `sources`, `evidence`, `tasks`.
 - **Topics**: `topic_create`, `topic_update` (Goal, Pace, Level, Approach, Knowledge base,
   Tasks, pause, finish), `task_done`, `assessment_record`, `source_add`, `source_update`,
   `evidence_record`, `evidence_retract`.
