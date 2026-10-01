@@ -83,6 +83,12 @@ func (c *Core) Status(ctx context.Context) (Status, error) {
 			continue
 		}
 		if _, err := home.Stat(filepath.Join(name, topicFile)); err != nil {
+			// Only a folder without topic.toml is not a Topic; one whose
+			// settings cannot be checked is reported, never hidden.
+			if !errors.Is(err, fs.ErrNotExist) {
+				status.Problems = append(status.Problems, TopicProblem{ID: name, Code: CodeInternal,
+					Message: internalError("checking "+topicFile+" of "+name, err).Error()})
+			}
 			continue
 		}
 		topic, err := loadTopic(home, c.home, name)
@@ -183,7 +189,12 @@ func (c *Core) readState(home *os.Root) (localState, error) {
 	return state, nil
 }
 
+// setRecentTopic records the most recent Topic. It never overwrites local
+// state written by a newer version of study.
 func (c *Core) setRecentTopic(home *os.Root, id string) error {
+	if _, err := c.readState(home); err != nil {
+		return err
+	}
 	if err := home.MkdirAll(localDir, 0o755); err != nil {
 		return internalError("creating "+localDir, err)
 	}

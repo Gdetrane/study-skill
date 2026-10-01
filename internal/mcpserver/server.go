@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -65,10 +66,48 @@ func New(c *core.Core, version string) *mcp.Server {
 	return server
 }
 
+// shutdownGrace is how long Serve waits, once ctx is cancelled, for the
+// session to finish on its own, and again after closing the streams.
+var shutdownGrace = 2 * time.Second
+
 // Serve runs the server over in and out (stdin and stdout for study mcp)
-// until the client disconnects.
+// until the client disconnects or ctx is cancelled.
+//
+// A cancelled session waits for responses already being written, so a client
+// that stopped reading could block it forever. Serve therefore gives the
+// session a grace period, then closes the streams (which interrupts blocked
+// pipe I/O), and returns after a second grace period even if a write is still
+// stuck.
 func Serve(ctx context.Context, c *core.Core, version string, in io.Reader, out io.Writer) error {
-	return New(c, version).Run(ctx, &mcp.IOTransport{Reader: io.NopCloser(in), Writer: nopWriteCloser{out}})
+	rc, ok := in.(io.ReadCloser)
+	if !ok {
+		rc = io.NopCloser(in)
+	}
+	wc, ok := out.(io.WriteCloser)
+	if !ok {
+		wc = nopWriteCloser{out}
+	}
+	done := make(chan error, 1)
+	go func() { done <- New(c, version).Run(ctx, &mcp.IOTransport{Reader: rc, Writer: wc}) }()
+
+	select {
+	case err := <-done:
+		return err
+	case <-ctx.Done():
+	}
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(shutdownGrace):
+	}
+	_ = rc.Close()
+	_ = wc.Close()
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(shutdownGrace):
+		return ctx.Err()
+	}
 }
 
 type nopWriteCloser struct{ io.Writer }

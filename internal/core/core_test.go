@@ -412,3 +412,51 @@ func TestRelativeStudyHomeIsRefused(t *testing.T) {
 		t.Fatalf("err = %v, want invalid_argument for a relative STUDY_HOME", err)
 	}
 }
+
+func TestStatusReportsATopicItCannotCheck(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads any folder")
+	}
+	ctx := context.Background()
+	home := t.TempDir()
+	c := testCore(t, home, "")
+	for _, title := range []string{"C", "Physics"} {
+		if _, err := c.CreateTopic(ctx, core.TopicSpec{Title: title}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	locked := filepath.Join(home, "c")
+	if err := os.Chmod(locked, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
+
+	status, err := testCore(t, home, "").Status(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(status.Problems) != 1 || status.Problems[0].ID != "c" || status.Problems[0].Code != core.CodeInternal {
+		t.Errorf("problems = %+v, want Topic c reported, not hidden", status.Problems)
+	}
+	if len(status.Topics) != 1 || status.Topics[0].ID != "physics" {
+		t.Errorf("topics = %+v", status.Topics)
+	}
+}
+
+func TestCreateTopicKeepsNewerLocalState(t *testing.T) {
+	home := t.TempDir()
+	state := filepath.Join(home, ".lamplight", "state.toml")
+	newer := "format = 99\nrecent_topic = \"physics\"\nsomething_new = true\n"
+	if err := os.MkdirAll(filepath.Dir(state), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(state, []byte(newer), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := testCore(t, home, "").CreateTopic(context.Background(), core.TopicSpec{Title: "C"}); err != nil {
+		t.Fatalf("creating a Topic must still succeed: %v", err)
+	}
+	if got, _ := os.ReadFile(state); string(got) != newer {
+		t.Errorf("state.toml written by a newer study was replaced:\n%s", got)
+	}
+}
