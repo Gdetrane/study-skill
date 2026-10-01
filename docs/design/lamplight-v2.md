@@ -341,7 +341,9 @@ hours before any learning happens is exactly what v1 produced.
     as given; NotebookLM's carry no page numbers), `learner` and `estimate`.
   - The core reads a file's bytes only to hash it, never blocking on a FIFO or device, and
     stops when the request is cancelled.
-  - TODO(#25): `status` marks the Syllabus's Lessons without Evidence.
+  - `status` marks the Lessons started or done that cite no Evidence, once the Topic has
+    Sources or a NotebookLM Knowledge base (`lessons_without_evidence`); they are never
+    blocked.
 - **Later**: Knowledge base plugins are MCP servers implementing Lamplight's fixed contract
   (add a Source, search for Evidence, list Sources). The first is a generic local RAG
   plugin: layout-aware conversion (Docling), hybrid keyword and embedding search, reranking.

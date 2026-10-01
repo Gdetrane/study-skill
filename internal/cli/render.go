@@ -130,6 +130,7 @@ func writeStatus(w io.Writer, s core.Status) error {
 		}
 		fmt.Fprintf(&b, "  %s%s%s\n", id, t.Title, kb)
 	}
+	writeLessonsWithoutEvidence(&b, s.Topics)
 	writeFlags(&b, s.Topics)
 	writeProblems(&b, s.Problems)
 	_, err := io.WriteString(w, b.String())
@@ -365,4 +366,20 @@ func sentence(s string) string {
 		return s
 	}
 	return strings.ToUpper(s[:1]) + s[1:] + "."
+}
+
+// writeLessonsWithoutEvidence lists the Lessons that cite no Evidence yet.
+// They are a reminder, never a block.
+func writeLessonsWithoutEvidence(w io.Writer, topics []core.Topic) {
+	header := false
+	for _, t := range topics {
+		if len(t.LessonsWithoutEvidence) == 0 {
+			continue
+		}
+		if !header {
+			fmt.Fprintf(w, "\n%s\n", styleLabel.Render("Lessons without Evidence:"))
+			header = true
+		}
+		fmt.Fprintf(w, "  %s: %s\n", styleLabel.Render(t.ID), strings.Join(t.LessonsWithoutEvidence, ", "))
+	}
 }

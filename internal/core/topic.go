@@ -53,6 +53,10 @@ type Topic struct {
 	// Resume is where the learner stopped, once the Topic has a Syllabus
 	// or a Session: show its Next step first.
 	Resume *ResumePoint `json:"resume,omitempty"`
+	// LessonsWithoutEvidence are the Lessons started or done that cite no
+	// Evidence, once the Topic has Sources or a NotebookLM Knowledge base.
+	// They are marked, never blocked.
+	LessonsWithoutEvidence []string `json:"lessons_without_evidence,omitempty"`
 }
 
 // TopicSpec describes a Topic to create.
@@ -492,6 +496,7 @@ func (c *Core) loadTopic(home *os.Root, id string) (Topic, error) {
 	if r := s.study.resume(); !r.empty() {
 		topic.Resume = &r
 	}
+	topic.LessonsWithoutEvidence = s.lessonsWithoutEvidence(s.citingLessons(topic.KnowledgeBase))
 	// A marker while the lock is held is a write in progress, not an
 	// interrupted one.
 	if hasIntent(home, id) && !lockHeld(home, id) {

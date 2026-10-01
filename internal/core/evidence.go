@@ -306,11 +306,30 @@ func cleanQuote(s string) (string, error) {
 	return s, nil
 }
 
+// citingLessons returns the Syllabus's Lessons that should cite Evidence:
+// those started or done, in Syllabus order, once the Topic has Sources or a
+// NotebookLM Knowledge base to cite. Lessons not started yet are left out, so
+// status does not mark the whole Syllabus.
+func (s *replayed) citingLessons(kb *KnowledgeBase) []string {
+	syllabus := s.study.syllabus
+	hasNotebook := kb != nil && kb.Kind == KnowledgeBaseNotebookLM
+	if syllabus == nil || (len(s.knowledge().sources) == 0 && !hasNotebook) {
+		return nil
+	}
+	var lessons []string
+	for _, m := range syllabus.Milestones {
+		for _, l := range m.Lessons {
+			if st := s.study.lessons[l.ID]; st != nil && (st.phase != "" || st.completed != nil) {
+				lessons = append(lessons, l.ID)
+			}
+		}
+	}
+	return lessons
+}
+
 // lessonsWithoutEvidence returns the lessons, of those given, that cite no
 // Evidence, retracted Evidence aside. Lessons without Evidence are marked in
 // status, never blocked.
-//
-// TODO(#25): status marks the Syllabus's Lessons that this returns.
 func (s *replayed) lessonsWithoutEvidence(lessons []string) []string {
 	cited := map[string]bool{}
 	for _, e := range s.knowledge().evidence {

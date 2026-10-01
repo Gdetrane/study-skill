@@ -923,3 +923,22 @@ func TestUpdateTopicSaysWhatChangedBeforeAFailure(t *testing.T) {
 		t.Errorf("err = %v, want it to say only the title changed", err)
 	}
 }
+
+func TestStatusMarksLessonsWithoutEvidence(t *testing.T) {
+	m := learningTopic(t)
+	practicing(t, m)
+	if topic, err := m.readTopic("c"); err != nil || topic.LessonsWithoutEvidence != nil {
+		t.Fatalf("without Sources = %v, %v; want nothing marked", topic.LessonsWithoutEvidence, err)
+	}
+
+	book := m.addSource(t, SourceSpec{File: writeBook(t, filepath.Join(t.TempDir(), "answers.pdf"), "%PDF-1.4 the answer is 42")})
+	topic, err := m.readTopic("c")
+	if err != nil || !slices.Equal(topic.LessonsWithoutEvidence, []string{"answer"}) {
+		t.Fatalf("a started Lesson citing nothing = %v, %v; want [answer]", topic.LessonsWithoutEvidence, err)
+	}
+
+	m.recordEvidence(t, EvidenceSpec{Lesson: "answer", Source: book.ID, Quote: "the answer is 42"})
+	if topic, err = m.readTopic("c"); err != nil || topic.LessonsWithoutEvidence != nil {
+		t.Errorf("after citing Evidence = %v, %v; want nothing marked", topic.LessonsWithoutEvidence, err)
+	}
+}
