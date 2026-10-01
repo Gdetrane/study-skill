@@ -70,6 +70,15 @@ func learningTopic(t *testing.T) *machine {
 	return m
 }
 
+// practicing moves Lesson answer to practicing, which shows the learner its
+// Check.
+func practicing(t *testing.T, m *machine) {
+	t.Helper()
+	if _, err := m.SetPhase(context.Background(), "c", PhaseSpec{Lesson: "answer", Phase: PhasePracticing}); err != nil {
+		t.Fatalf("SetPhase(practicing): %v", err)
+	}
+}
+
 func TestARevisionChangesTheSyllabusOnlyOnceApproved(t *testing.T) {
 	ctx := context.Background()
 	m := newTopic(t)
@@ -223,6 +232,8 @@ func TestTheCompletionRule(t *testing.T) {
 		}
 	}
 
+	canComplete(false, "never shown")
+	practicing(t, m)
 	canComplete(false, "has never run")
 	failed := check(OutcomeFailed)
 	if c := failed.Criteria[0]; c.ExitCode != 1 || !strings.Contains(c.Output, "not 42") {
@@ -245,7 +256,7 @@ func TestTheCompletionRule(t *testing.T) {
 	}
 	canComplete(true, "")
 	writeFile(t, m, "lessons/answer.md", strings.Replace(answerLesson, "holds the answer", "holds the right answer", 1))
-	canComplete(false, "the Check changed")
+	canComplete(false, "the Check changed since it was shown")
 	writeFile(t, m, "lessons/answer.md", answerLesson+"\nMore text never changes the Check.\n")
 	canComplete(true, "")
 
@@ -293,7 +304,8 @@ func TestAnAttemptErrorsWhenTheCheckCannotRun(t *testing.T) {
 	}
 	writeFile(t, m, "lessons/answer.md", strings.Replace(answerLesson, "[sh, check.sh]", "[sh, -c, 'echo changed >> answer.txt']", 1))
 	a, err = m.RunCheck(ctx, "c", "answer", CheckOptions{})
-	if err != nil || a.Outcome != OutcomeErrored || !strings.Contains(a.Reason, "changed while the Check ran") {
+	if err != nil || a.Outcome != OutcomeErrored || !strings.Contains(a.Reason, "changed answer.txt in practice/answer/") ||
+		!strings.Contains(a.Reason, ".gitignore") {
 		t.Errorf("work changed by the Check: %+v, %v", a, err)
 	}
 	writeFile(t, m, "lessons/answer.md", "---\ncheck:\n  - id: style\n    rubric: Names are clear\n---\n")
@@ -306,6 +318,7 @@ func TestACrashDuringCompletionIsFinishedByTheNextCall(t *testing.T) {
 	ctx := context.Background()
 	m := learningTopic(t)
 	writeFile(t, m, "practice/answer/answer.txt", "42\n")
+	practicing(t, m)
 	if _, err := m.RunCheck(ctx, "c", "answer", CheckOptions{}); err != nil {
 		t.Fatal(err)
 	}
@@ -340,6 +353,7 @@ func TestReviewsDecideDraftsAndScheduleCards(t *testing.T) {
 	ctx := context.Background()
 	m := learningTopic(t)
 	writeFile(t, m, "practice/answer/answer.txt", "42\n")
+	practicing(t, m)
 	if _, err := m.RunCheck(ctx, "c", "answer", CheckOptions{}); err != nil {
 		t.Fatal(err)
 	}

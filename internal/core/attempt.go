@@ -82,10 +82,13 @@ type CheckOptions struct {
 // it is reached only through the CLI, from the agent's own shell, where the
 // agent's sandbox applies; the MCP server never runs a Check (ADR-0009).
 //
-// Each criterion's command runs in the practice folder with STUDY_TOPIC,
-// STUDY_LESSON and STUDY_HELDOUT_DIR set; it passes when it exits with 0.
-// The work is snapshotted before and after: if it changed while the Check
-// ran, the Attempt is errored.
+// Each criterion's command runs in the practice folder, in a process group
+// of its own, with STUDY_TOPIC, STUDY_LESSON and STUDY_HELDOUT_DIR set; it
+// passes when it exits with 0 and leaves nothing running. The work is
+// snapshotted before and after (see checkpoint.SnapshotWork): work the
+// snapshot cannot fully see, or that changed while the Check ran, makes the
+// Attempt errored. When ctx is cancelled, as when study receives SIGTERM,
+// every process the Check started is stopped and nothing is recorded.
 func (c *Core) RunCheck(ctx context.Context, topicID, lessonID string, opts CheckOptions) (Attempt, error) {
 	timeout := opts.Timeout
 	if timeout <= 0 {
@@ -108,20 +111,29 @@ func (c *Core) RunCheck(ctx context.Context, topicID, lessonID string, opts Chec
 	if err != nil {
 		return Attempt{}, err
 	}
-	practice := "practice/" + lessonID
-	work := filepath.Join(dir, filepath.FromSlash(practice))
-	if info, err := os.Lstat(work); err != nil || !info.IsDir() {
+	practice := practiceFolder(lessonID)
+	workDir := filepath.Join(dir, filepath.FromSlash(practice))
+	if info, err := os.Lstat(workDir); err != nil || !info.IsDir() {
 		return Attempt{}, &Error{Code: CodeFailedPrecondition, Message: practice +
 			"/ does not exist in " + topicID + ": the Lesson's exercise lives there"}
 	}
 
-	before, err := checkpoint.Snapshot(ctx, dir, practice)
-	if err != nil {
+	d := attemptRecordedData{Lesson: lessonID, CheckVersion: version, Outcome: OutcomePassed}
+	before, err := checkpoint.SnapshotWork(ctx, dir, practice)
+	switch {
+	case blindSpot(err):
+		// Nothing runs on work the snapshot cannot see whole.
+		d.Outcome, d.Reason = OutcomeErrored, blindSpotReason(practice, err)
+		return c.recordAttempt(ctx, topicID, d, nil)
+	case err != nil:
 		return Attempt{}, checkpointError(topicID, dir, err)
 	}
-	d := attemptRecordedData{Lesson: lessonID, CheckVersion: version, Snapshot: before, Outcome: OutcomePassed}
+	d.Snapshot = before.Hash
 	for _, crit := range check {
-		r := runCriterion(ctx, crit, work, timeout, []string{
+		if ctx.Err() != nil {
+			break
+		}
+		r := runCriterion(ctx, crit, workDir, timeout, []string{
 			"STUDY_TOPIC=" + topicID,
 			"STUDY_LESSON=" + lessonID,
 			"STUDY_HELDOUT_DIR=" + filepath.Join(dir, ".heldout", lessonID),
@@ -134,36 +146,83 @@ func (c *Core) RunCheck(ctx context.Context, topicID, lessonID string, opts Chec
 		}
 		d.Criteria = append(d.Criteria, r)
 	}
-	if err := ctx.Err(); err != nil {
-		return Attempt{}, err
+	if ctx.Err() != nil {
+		return Attempt{}, &Error{Code: CodeCanceled, Err: ctx.Err(), Message: "the Check of " + lessonID +
+			" was stopped before it finished, and every program it started was stopped too; no Attempt was recorded"}
 	}
-	after, err := checkpoint.Snapshot(ctx, dir, practice)
-	if err != nil {
+	after, err := checkpoint.SnapshotWork(ctx, dir, practice)
+	switch {
+	case blindSpot(err):
+		d.Outcome, d.Reason = OutcomeErrored, "while the Check ran, "+blindSpotReason(practice, err)
+	case err != nil:
 		return Attempt{}, checkpointError(topicID, dir, err)
-	}
-	if after != before {
+	case after.Hash != before.Hash:
 		d.Outcome = OutcomeErrored
-		d.Reason = "the work in " + practice + "/ changed while the Check ran: run it again"
+		d.Reason = fmt.Sprintf("the Check changed %s in %s/ while it ran; if a Check writes files, such as "+
+			"build outputs, list them in %s/.gitignore, then run it again", strings.Join(after.Changed(before), ", "),
+			practice, practice)
 	}
+	return c.recordAttempt(ctx, topicID, d, d.Criteria)
+}
 
-	recorded := d
-	recorded.Criteria = make([]CriterionResult, len(d.Criteria))
-	for i, r := range d.Criteria {
-		r.Output = "" // shown, never recorded: it could reveal test data
-		recorded.Criteria[i] = r
+// recordAttempt records an Attempt and returns it with the output of each
+// criterion, which is shown but never recorded: it could reveal test data.
+func (c *Core) recordAttempt(ctx context.Context, topicID string, d attemptRecordedData, shown []CriterionResult) (Attempt, error) {
+	d.Criteria = make([]CriterionResult, len(shown))
+	for i, r := range shown {
+		r.Output = ""
+		d.Criteria[i] = r
 	}
 	ev, err := c.writeTopic(ctx, topicID, func(*replayed, *topicView) (*change, error) {
-		return &change{Type: eventAttemptRecorded, Data: recorded}, nil
+		return &change{Type: eventAttemptRecorded, Data: d}, nil
 	}, false)
 	if err != nil {
 		return Attempt{}, err
 	}
-	return Attempt{ID: ev.ID, Lesson: lessonID, CheckVersion: version, Snapshot: before, Outcome: d.Outcome,
-		Criteria: d.Criteria, Reason: d.Reason, At: ev.Wall}, nil
+	if shown == nil {
+		shown = []CriterionResult{}
+	}
+	return Attempt{ID: ev.ID, Lesson: d.Lesson, CheckVersion: d.CheckVersion, Snapshot: d.Snapshot, Outcome: d.Outcome,
+		Criteria: shown, Reason: d.Reason, At: ev.Wall}, nil
 }
 
-// runCriterion runs one criterion's command. The command never inherits
-// stdin, and its output is kept, bounded, for the agent to read.
+func practiceFolder(lessonID string) string { return "practice/" + lessonID }
+
+// blindSpot reports whether err is work a snapshot cannot see whole.
+func blindSpot(err error) bool {
+	for _, e := range []error{checkpoint.ErrHiddenEntries, checkpoint.ErrNestedRepository,
+		checkpoint.ErrLinkOutside, checkpoint.ErrAllIgnored} {
+		if errors.Is(err, e) {
+			return true
+		}
+	}
+	return false
+}
+
+// blindSpotReason explains work a snapshot cannot see whole, and what to do.
+func blindSpotReason(practice string, err error) string {
+	switch {
+	case errors.Is(err, checkpoint.ErrHiddenEntries):
+		return fmt.Sprintf("%v; clear the flag with git update-index --no-skip-worktree --no-assume-unchanged", err)
+	case errors.Is(err, checkpoint.ErrNestedRepository):
+		return fmt.Sprintf("%v; a Check can only judge work whose every file the Topic's own repository sees, "+
+			"so move the other repository out of %s/", err, practice)
+	case errors.Is(err, checkpoint.ErrLinkOutside):
+		return fmt.Sprintf("%v; copy what it points to into %s/ instead", err, practice)
+	default:
+		return fmt.Sprintf("every file in %s/ is ignored, so there is no work to judge; check its .gitignore", practice)
+	}
+}
+
+// checkGrace is how long a Check's programs get to stop after SIGTERM before
+// they are killed, and how long study waits for output from programs a
+// finished criterion left running.
+const checkGrace = 2 * time.Second
+
+// runCriterion runs one criterion's command in a process group of its own.
+// The command never inherits stdin, and its output is kept, bounded, for the
+// agent to read. When it exits, anything left running in its group is
+// killed, and the criterion is errored: a Check must finish what it starts.
 func runCriterion(ctx context.Context, crit Criterion, dir string, timeout time.Duration, env []string) CriterionResult {
 	r := CriterionResult{ID: crit.ID}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
@@ -175,16 +234,23 @@ func runCriterion(ctx context.Context, crit Criterion, dir string, timeout time.
 	cmd := exec.CommandContext(ctx, name, crit.Run[1:]...)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), env...)
+	ownProcessGroup(cmd)
 	out := &tailBuffer{max: maxOutputBytes}
 	cmd.Stdout, cmd.Stderr = out, out
 	err := cmd.Run()
+	leftover := cmd.Process != nil && stopGroup(cmd.Process.Pid)
 	r.Output = out.String()
 	var exit *exec.ExitError
 	switch {
-	case err == nil:
-		r.Outcome = OutcomePassed
 	case errors.Is(ctx.Err(), context.DeadlineExceeded):
 		r.Outcome, r.ExitCode, r.Reason = OutcomeErrored, -1, fmt.Sprintf("it ran for longer than %s", timeout)
+	case ctx.Err() != nil:
+		r.Outcome, r.ExitCode, r.Reason = OutcomeErrored, -1, "it was stopped"
+	case leftover || errors.Is(err, exec.ErrWaitDelay):
+		r.Outcome, r.ExitCode, r.Reason = OutcomeErrored, -1,
+			"it left programs running in the background, which were stopped; a Check must finish everything it starts"
+	case err == nil:
+		r.Outcome = OutcomePassed
 	case errors.As(err, &exit) && exit.ExitCode() >= 0:
 		r.Outcome, r.ExitCode = OutcomeFailed, exit.ExitCode()
 	case errors.As(err, &exit):
@@ -227,7 +293,6 @@ func replayAttemptRecorded(s *replayed, ev event) error {
 	l := s.study.lesson(d.Lesson)
 	l.attempts = append(l.attempts, Attempt{ID: ev.ID, Lesson: d.Lesson, CheckVersion: d.CheckVersion,
 		Snapshot: d.Snapshot, Outcome: d.Outcome, Criteria: d.Criteria, Reason: d.Reason, At: wallOf(ev)})
-	s.recordVersion(checkItem(d.Lesson), d.CheckVersion, ev.ID)
 	return nil
 }
 
@@ -280,18 +345,19 @@ type work struct {
 	check        []Criterion
 	checkVersion string
 	snapshot     string
-	// missing explains why the Check or the work cannot be read.
+	// missing explains why the Check or the work cannot be judged.
 	missing error
 }
 
-// currentWork reads a Lesson's Check and snapshots its practice folder.
+// currentWork reads a Lesson's Check and snapshots its practice folder,
+// writing nothing, not even git objects.
 func (c *Core) currentWork(ctx context.Context, topicID, dir, lessonID string) (work, error) {
-	var w work
+	w := work{check: []Criterion{}}
 	home, topic, err := c.openTopicFolder(topicID)
 	if err != nil {
 		return w, err
 	}
-	w.check, w.checkVersion, err = readCheck(topic, lessonID)
+	check, version, err := readCheck(topic, lessonID)
 	topic.Close()
 	home.Close()
 	if CodeOf(err) == CodeFailedPrecondition || CodeOf(err) == CodeCorrupt {
@@ -301,33 +367,51 @@ func (c *Core) currentWork(ctx context.Context, topicID, dir, lessonID string) (
 	if err != nil {
 		return w, err
 	}
-	practice := "practice/" + lessonID
+	w.check, w.checkVersion = check, version
+	practice := practiceFolder(lessonID)
 	if _, err := os.Lstat(filepath.Join(dir, filepath.FromSlash(practice))); errors.Is(err, fs.ErrNotExist) {
 		w.missing = &Error{Code: CodeFailedPrecondition, Message: practice + "/ does not exist"}
 		return w, nil
 	}
-	if w.snapshot, err = checkpoint.Snapshot(ctx, dir, practice); err != nil {
+	snap, err := checkpoint.SnapshotWork(ctx, dir, practice)
+	if blindSpot(err) {
+		w.missing = &Error{Code: CodeFailedPrecondition, Message: blindSpotReason(practice, err)}
+		return w, nil
+	}
+	if err != nil {
 		return w, checkpointError(topicID, dir, err)
 	}
+	w.snapshot = snap.Hash
 	return w, nil
 }
 
 // completionRule finds the Attempt that allows completing a Lesson: for the
-// current Check version, every criterion passed on an Attempt whose snapshot
-// matches the current work. Changing the work or the Check after a pass
-// means running the Check again.
+// Check version shown to the learner when practicing last started, every
+// criterion passed on an Attempt of that same Check whose snapshot matches
+// the current work, and the Check has not changed since. Changing the work
+// or the Check after a pass means running the Check again, and a changed
+// Check must be shown again through phase_set practicing.
 func completionRule(s *replayed, lessonID string, w work) (Attempt, error) {
 	if w.missing != nil {
 		return Attempt{}, w.missing
 	}
+	cannot := func(reason string) error {
+		return &Error{Code: CodeFailedPrecondition, Message: fmt.Sprintf("Lesson %s cannot be completed yet: %s", lessonID, reason)}
+	}
 	ls := s.study.lessons[lessonID]
-	if ls == nil || len(ls.attempts) == 0 {
-		return Attempt{}, &Error{Code: CodeFailedPrecondition, Message: "the Check of " + lessonID +
-			" has never run: run study check " + lessonID + " in your shell"}
+	if ls == nil || ls.shownCheck == "" {
+		return Attempt{}, cannot("its Check was never shown to the learner: move it to practicing with phase_set first")
+	}
+	if w.checkVersion != ls.shownCheck {
+		return Attempt{}, cannot("the Check changed since it was shown to the learner when practicing started; " +
+			"show the learner the new Check with phase_set practicing, then run it again")
+	}
+	if len(ls.attempts) == 0 {
+		return Attempt{}, cannot("its Check has never run: run study check " + lessonID + " in your shell")
 	}
 	for i := len(ls.attempts) - 1; i >= 0; i-- {
 		a := ls.attempts[i]
-		if a.Outcome == OutcomePassed && a.CheckVersion == w.checkVersion && a.Snapshot == w.snapshot {
+		if a.Outcome == OutcomePassed && a.CheckVersion == ls.shownCheck && a.Snapshot == w.snapshot {
 			return a, nil
 		}
 	}
@@ -336,13 +420,12 @@ func completionRule(s *replayed, lessonID string, w work) (Attempt, error) {
 	switch {
 	case last.Outcome != OutcomePassed:
 		reason = "the last Attempt " + last.Outcome
-	case last.CheckVersion != w.checkVersion:
-		reason = "the Check changed since it last passed"
+	case last.CheckVersion != ls.shownCheck:
+		reason = "the Check that last passed is not the one shown to the learner"
 	case last.Snapshot != w.snapshot:
 		reason = "the work changed since the Check last passed"
 	}
-	return Attempt{}, &Error{Code: CodeFailedPrecondition, Message: fmt.Sprintf(
-		"Lesson %s cannot be completed yet: %s; run study check %s in your shell on the current work", lessonID, reason, lessonID)}
+	return Attempt{}, cannot(reason + "; run study check " + lessonID + " in your shell on the current work")
 }
 
 // cleanTextBlock is cleanText for multi-line text: line breaks and tabs are

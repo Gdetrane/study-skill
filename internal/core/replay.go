@@ -39,6 +39,7 @@ var eventKinds = map[string]eventKind{
 	eventAttemptRecorded:  {apply: applyNothing, replay: replayAttemptRecorded},
 	eventLessonCompleted:  {apply: applyLessonCompleted, replay: replayLessonCompleted},
 	eventReviewRecorded:   {apply: applyReviewRecorded, replay: replayReviewRecorded},
+	eventCheckpointTaken:  {apply: applyNothing, replay: replayCheckpointTaken},
 }
 
 // errUnknownItem marks an Event that refers to an item the History does not

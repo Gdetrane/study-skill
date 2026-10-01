@@ -27,6 +27,29 @@ type studyState struct {
 	cards    map[string]*cardState
 	// cardOrder lists Card IDs in the order they were created.
 	cardOrder []string
+	// turn is whose turn it is, across all Lessons: the learner's while a
+	// Lesson is practicing, the agent's otherwise. Empty means the agent's.
+	turn string
+	// owed is the Checkpoint a turn switch or a completion called for and
+	// that has not been taken yet, if any. A later one replaces it: one
+	// Checkpoint then covers both.
+	owed *owedCheckpoint
+}
+
+// owedCheckpoint is a Checkpoint the History calls for: the Event that
+// called for it, the role of the turn that ended, and the message.
+type owedCheckpoint struct {
+	event   string
+	role    string
+	message string
+}
+
+// currentTurn is whose turn it is: "agent" or "learner".
+func (st *studyState) currentTurn() string {
+	if st.turn == "" {
+		return "agent"
+	}
+	return st.turn
 }
 
 func newStudyState() studyState {
@@ -41,10 +64,15 @@ func newStudyState() studyState {
 // lessonState is one Lesson's progress.
 type lessonState struct {
 	// phase is the Lesson's Phase: teaching, practicing or feedback.
-	phase    string
-	attempts []Attempt
-	// completed is the completion, once the Lesson is done.
-	completed *lessonCompletedData
+	phase string
+	// shownCheck is the version of the Check shown to the learner when
+	// practicing last started: the one completion counts.
+	shownCheck string
+	attempts   []Attempt
+	// completed is the completion, once the Lesson is done, and
+	// completedBy the Event that recorded it.
+	completed   *lessonCompletedData
+	completedBy string
 }
 
 func (st *studyState) lesson(id string) *lessonState {

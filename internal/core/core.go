@@ -239,7 +239,10 @@ const (
 	// a state that prevents it, such as a git merge in progress.
 	CodeFailedPrecondition ErrorCode = "failed_precondition"
 	// CodeBusy means another program holds a lock; retrying shortly may work.
-	CodeBusy     ErrorCode = "busy"
+	CodeBusy ErrorCode = "busy"
+	// CodeCanceled means the command was stopped, by SIGTERM or Ctrl-C,
+	// before it finished; what it would have recorded was not recorded.
+	CodeCanceled ErrorCode = "canceled"
 	CodeInternal ErrorCode = "internal"
 )
 

@@ -4,7 +4,7 @@
     "id": "<id>",
     "lesson": "answer",
     "check_version": "sha256:a2ffe2f214592d8bbe0619a7a3ea3a97d6f0f61743f8eade44cde16d33a5a379",
-    "snapshot": "1f830cbafd924365247da1d524fe4f35006ca861",
+    "snapshot": "<snapshot>",
     "outcome": "failed",
     "criteria": [
       {

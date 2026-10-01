@@ -83,6 +83,9 @@ type phaseSetData struct {
 	// CheckVersion is the version of the Check shown to the learner when
 	// practicing starts.
 	CheckVersion string `json:"check_version,omitempty"`
+	// TurnEnded is the role whose turn this Phase ended, "agent" or
+	// "learner", when the turn passed; a Checkpoint is owed for it.
+	TurnEnded string `json:"turn_ended,omitempty"`
 }
 
 // SessionSpec describes a Session to open.
@@ -193,15 +196,23 @@ type PhaseResult struct {
 	Topic  string `json:"topic"`
 	Lesson string `json:"lesson"`
 	Phase  string `json:"phase"`
-	// Changed is false when the Lesson already was in that Phase.
+	// Changed is false when the Lesson already was in that Phase, with the
+	// same Next step and Check: nothing was recorded.
 	Changed bool `json:"changed"`
-	// Checkpoint is the Checkpoint taken because the turn passed between
-	// the agent and the learner.
+	TurnCheckpoint
+	DryRun bool `json:"dry_run,omitempty"`
+}
+
+// TurnCheckpoint reports the Checkpoint a write took because the turn passed
+// between the agent and the learner, or a Lesson was completed.
+type TurnCheckpoint struct {
 	Checkpoint *CheckpointResult `json:"checkpoint,omitempty"`
-	// CheckpointError explains a Checkpoint that could not be taken. The
-	// Phase is recorded anyway.
+	// CheckpointError explains a Checkpoint that could not be taken; the
+	// write itself is recorded anyway. The Checkpoint stays owed: once the
+	// problem is fixed, call checkpoint with CheckpointRole, or the next
+	// phase_set or lesson_complete takes it.
 	CheckpointError string `json:"checkpoint_error,omitempty"`
-	DryRun          bool   `json:"dry_run,omitempty"`
+	CheckpointRole  string `json:"checkpoint_role,omitempty"`
 }
 
 // turnOwner is whose turn a Phase is: the learner's while practicing, the
@@ -215,8 +226,12 @@ func turnOwner(phase string) string {
 
 // SetPhase moves a Lesson to a Phase: teaching, practicing or feedback.
 // Practicing needs the Lesson's Check, which is shown to the learner first;
-// its version is recorded. When the turn passes between the agent and the
-// learner, a Checkpoint saves the work of the one whose turn ended.
+// its version is recorded, and it is the Check that completion counts. When
+// the turn passes between the agent and the learner, whatever the Lesson, a
+// Checkpoint is owed for the turn that ended, and taken. A Checkpoint owed
+// earlier, because it failed or a crash interrupted it, is taken too.
+// Asking for the Phase, Next step and Check the Lesson already has records
+// nothing.
 func (c *Core) SetPhase(ctx context.Context, topicID string, spec PhaseSpec) (PhaseResult, error) {
 	switch spec.Phase {
 	case PhaseTeaching, PhasePracticing, PhaseFeedback:
@@ -228,7 +243,6 @@ func (c *Core) SetPhase(ctx context.Context, topicID string, spec PhaseSpec) (Ph
 		return PhaseResult{}, err
 	}
 	result := PhaseResult{Topic: topicID, Lesson: spec.Lesson, Phase: spec.Phase, DryRun: spec.DryRun}
-	previous := ""
 	ev, err := c.writeTopic(ctx, topicID, func(s *replayed, view *topicView) (*change, error) {
 		if _, err := requireLesson(s, topicID, spec.Lesson); err != nil {
 			return nil, err
@@ -236,12 +250,6 @@ func (c *Core) SetPhase(ctx context.Context, topicID string, spec PhaseSpec) (Ph
 		ls := s.study.lessons[spec.Lesson]
 		if ls != nil && ls.completed != nil {
 			return nil, &Error{Code: CodeFailedPrecondition, Message: "Lesson " + spec.Lesson + " is done"}
-		}
-		if ls != nil {
-			previous = ls.phase
-		}
-		if previous == spec.Phase && step == "" {
-			return nil, nil
 		}
 		d := phaseSetData{Lesson: spec.Lesson, Phase: spec.Phase, NextStep: step}
 		if spec.Phase == PhasePracticing {
@@ -251,28 +259,41 @@ func (c *Core) SetPhase(ctx context.Context, topicID string, spec PhaseSpec) (Ph
 			}
 			d.CheckVersion = version
 		}
+		if ls != nil && ls.phase == spec.Phase && s.study.turn == turnOwner(spec.Phase) &&
+			(step == "" || s.study.nextStep != nil && s.study.nextStep.Step == step && s.study.nextStep.Lesson == spec.Lesson) &&
+			(spec.Phase != PhasePracticing || d.CheckVersion == ls.shownCheck) {
+			return nil, nil
+		}
+		if before := s.study.currentTurn(); before != turnOwner(spec.Phase) {
+			d.TurnEnded = before
+		}
 		return &change{Type: eventPhaseSet, Data: d}, nil
 	}, spec.DryRun)
 	if err != nil {
 		return PhaseResult{}, err
 	}
 	result.Changed = ev != nil
-	before := turnOwner(previous)
-	if previous == "" {
-		before = "agent" // a Session starts with the agent's turn
+	if !spec.DryRun {
+		result.TurnCheckpoint = c.takeOwedCheckpoint(ctx, topicID)
 	}
-	if ev == nil || spec.DryRun || before == turnOwner(spec.Phase) {
-		return result, nil
-	}
-	cp, err := c.Checkpoint(ctx, CheckpointSpec{Topic: topicID, Role: before,
-		Message: fmt.Sprintf("%s: %s", spec.Lesson, spec.Phase)})
-	if err != nil {
-		result.CheckpointError = err.Error()
-		c.log.Warn("could not take a Checkpoint at a turn switch", "topic", topicID, "err", err)
-		return result, nil
-	}
-	result.Checkpoint = &cp
 	return result, nil
+}
+
+// takeOwedCheckpoint takes the Checkpoint the History says is owed, if any.
+// Failing to take it does not fail the write that called for it: the result
+// says why, and the Checkpoint stays owed.
+func (c *Core) takeOwedCheckpoint(ctx context.Context, topicID string) TurnCheckpoint {
+	s, _, err := c.replayTopic(ctx, topicID)
+	if err != nil || s.study.owed == nil {
+		return TurnCheckpoint{}
+	}
+	owed := s.study.owed
+	cp, err := c.Checkpoint(ctx, CheckpointSpec{Topic: topicID, Role: owed.role, Message: owed.message})
+	if err != nil {
+		c.log.Warn("could not take an owed Checkpoint", "topic", topicID, "role", owed.role, "err", err)
+		return TurnCheckpoint{CheckpointError: err.Error(), CheckpointRole: owed.role}
+	}
+	return TurnCheckpoint{Checkpoint: &cp}
 }
 
 func replaySessionOpened(s *replayed, ev event) error {
@@ -310,10 +331,17 @@ func replayPhaseSet(s *replayed, ev event) error {
 	}
 	l := s.study.lesson(d.Lesson)
 	l.phase = d.Phase
+	s.study.turn = turnOwner(d.Phase)
+	if d.TurnEnded != "" {
+		s.study.owed = &owedCheckpoint{event: ev.ID, role: d.TurnEnded, message: d.Lesson + ": " + d.Phase}
+	}
 	if d.NextStep != "" {
 		s.study.nextStep = &NextStep{Step: d.NextStep, Lesson: d.Lesson, At: wallOf(ev)}
 	}
 	if d.CheckVersion != "" {
+		// Only showing the Check moves its gating baseline: a Check edited
+		// afterwards stays flagged until it is shown again.
+		l.shownCheck = d.CheckVersion
 		s.recordVersion(checkItem(d.Lesson), d.CheckVersion, ev.ID)
 	}
 	return nil

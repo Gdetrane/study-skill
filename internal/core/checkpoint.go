@@ -2,7 +2,9 @@ package core
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"path/filepath"
 
 	"github.com/mordor-forge/lamplight/v2/internal/checkpoint"
@@ -52,7 +54,54 @@ type LargeFile struct {
 // It holds the Topic lock, so it never commits a write half done, and first
 // finishes an interrupted write, so a Checkpoint never carries an Event
 // without its content, or a cut-off line of the History, to another machine.
+//
+// A Checkpoint of the role the History says is owed, after a turn switch or
+// a completion, settles it: a checkpoint.taken Event records that.
 func (c *Core) Checkpoint(ctx context.Context, spec CheckpointSpec) (CheckpointResult, error) {
+	out, err := c.takeCheckpoint(ctx, spec)
+	if err != nil || spec.DryRun {
+		return out, err
+	}
+	_, err = c.writeTopic(ctx, spec.Topic, func(s *replayed, _ *topicView) (*change, error) {
+		owed := s.study.owed
+		if owed == nil || owed.role != spec.Role {
+			return nil, nil
+		}
+		return &change{Type: eventCheckpointTaken, Data: checkpointTakenData{
+			For: owed.event, Role: spec.Role, Commit: out.Commit, Committed: out.Committed,
+		}}, nil
+	}, false)
+	if err != nil {
+		// The Checkpoint is taken; it stays owed in the History, and the
+		// next one, skipped if nothing changed, settles it.
+		c.log.Warn("could not record a Checkpoint the History owed", "topic", spec.Topic, "err", err)
+	}
+	return out, nil
+}
+
+const eventCheckpointTaken = "checkpoint.taken"
+
+// checkpointTakenData is the payload of a checkpoint.taken Event: the
+// Checkpoint that settled the one owed by Event For.
+type checkpointTakenData struct {
+	For       string `json:"for"`
+	Role      string `json:"role"`
+	Commit    string `json:"commit"`
+	Committed bool   `json:"committed"`
+}
+
+func replayCheckpointTaken(s *replayed, ev event) error {
+	var d checkpointTakenData
+	if err := json.Unmarshal(ev.Data, &d); err != nil {
+		return fmt.Errorf("its payload is unreadable: %v", err)
+	}
+	if s.study.owed != nil && s.study.owed.event == d.For {
+		s.study.owed = nil
+	}
+	return nil
+}
+
+func (c *Core) takeCheckpoint(ctx context.Context, spec CheckpointSpec) (CheckpointResult, error) {
 	role := checkpoint.Role(spec.Role)
 	switch {
 	case role == "":

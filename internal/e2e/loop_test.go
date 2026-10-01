@@ -349,8 +349,12 @@ func TestTheLearnerLoop(t *testing.T) {
 	// The History holds the whole story, once each.
 	types := historyTypes(t, filepath.Join(a.home, "c", "history.jsonl"))
 	want := []string{"topic.created", "revision.proposed", "revision.applied", "session.opened",
-		"phase.set", "phase.set", "phase.set", "attempt.recorded", "phase.set", "phase.set", "attempt.recorded",
-		"lesson.completed", "session.opened", "review.recorded", "session.closed"}
+		"phase.set", "phase.set", "checkpoint.taken", "phase.set", "checkpoint.taken", "attempt.recorded",
+		"phase.set", "checkpoint.taken", "phase.set", "checkpoint.taken", "attempt.recorded",
+		// The crash interrupted the completion before its Checkpoint; the
+		// next day's retry takes it.
+		"lesson.completed", "session.opened", "checkpoint.taken",
+		"review.recorded", "session.closed"}
 	if !slices.Equal(types, want) {
 		t.Errorf("History =\n%v\nwant\n%v", types, want)
 	}

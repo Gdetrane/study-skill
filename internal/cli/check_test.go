@@ -11,8 +11,13 @@ import (
 	"github.com/mordor-forge/lamplight/v2/internal/core"
 )
 
-// eventID matches the test Event IDs, which depend on which tests ran first.
-var eventID = regexp.MustCompile(`\bid\d{3,}\b`)
+// eventID matches the test Event IDs, which depend on which tests ran first,
+// and snapshot the hash of the work, which covers the developer's own global
+// ignore rules.
+var (
+	eventID  = regexp.MustCompile(`\bid\d{3,}\b`)
+	snapshot = regexp.MustCompile(`"snapshot": "sha256:[0-9a-f]+"`)
+)
 
 // withLesson returns a Study home holding Topic c with a one-Lesson Syllabus,
 // the Lesson "answer" with its Check, and its exercise answered wrongly.
@@ -59,6 +64,7 @@ func TestCheckCommand(t *testing.T) {
 		t.Helper()
 		r := runIn(t, home, dir, append([]string{"check"}, args...)...)
 		r.stdout = eventID.ReplaceAllString(r.stdout, "<id>")
+		r.stdout = snapshot.ReplaceAllString(r.stdout, `"snapshot": "<snapshot>"`)
 		return r
 	}
 
