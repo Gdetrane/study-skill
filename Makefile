@@ -1,4 +1,4 @@
-.PHONY: help setup test test-catalog test-fsrs test-e2e validate lint typecheck coverage build clean
+.PHONY: help setup test test-core test-catalog test-fsrs test-e2e validate lint typecheck coverage build build-study clean
 
 help:
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z0-9_-]+:.*## / {printf "%-14s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -6,7 +6,10 @@ help:
 setup: ## Install development dependencies for local checks
 	cd scripts/catalog && uv sync --all-groups
 
-test: validate test-catalog test-fsrs test-e2e ## Run all deterministic tests
+test: validate test-core test-catalog test-fsrs test-e2e ## Run all deterministic tests
+
+test-core: ## Run Lamplight core tests
+	go test ./...
 
 validate: ## Validate skill metadata and repository support files
 	cd scripts/catalog && uv run python ../../scripts/e2e/validate-skill.py ../../SKILL.md
@@ -21,6 +24,8 @@ test-e2e: ## Run the study workspace lifecycle smoke test
 	scripts/e2e/study-lifecycle-smoke.sh
 
 lint: ## Run linters
+	test -z "$$(gofmt -l cmd internal)"
+	go vet ./...
 	cd scripts/catalog && uv run ruff check src tests
 	cd scripts/fsrs && test -z "$$(gofmt -l .)"
 
@@ -30,6 +35,9 @@ typecheck: ## Run static type checks
 coverage: ## Run tests with coverage thresholds
 	cd scripts/catalog && uv run pytest --cov=src/catalog --cov-report=term-missing --cov-report=xml
 	cd scripts/fsrs && go test -coverprofile=coverage.out -covermode=atomic ./...
+
+build-study: ## Build the study binary
+	go build -o study ./cmd/study/
 
 build: ## Build the FSRS scheduler binary
 	cd scripts/fsrs && go build -o fsrs ./cmd/fsrs/

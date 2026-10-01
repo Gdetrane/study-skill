@@ -1,0 +1,4 @@
+Study home: $STUDY_HOME
+
+No Topics yet. Start one with:
+  study topic create --title "Linear algebra"

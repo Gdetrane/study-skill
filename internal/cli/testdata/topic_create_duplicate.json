@@ -1,0 +1,7 @@
+{
+  "ok": false,
+  "error": {
+    "code": "already_exists",
+    "message": "a Topic named linear-algebra already exists"
+  }
+}
