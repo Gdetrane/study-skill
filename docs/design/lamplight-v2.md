@@ -53,7 +53,7 @@ the maintainer's answers to the questions they raised.
 ~/study/                            Study home (STUDY_HOME); not a git repository
   learner.md                        Learner profile
   .lamplight/                       local state: most recent Topic, write markers,
-                                    Library index, caches
+                                    Library index, where Source files are, caches
   .templates/<name>/                optional learner-provided Workbench starters
   llm-data-engineering/             a Topic: its own git repository
     topic.toml                      Goal, Pace periods, Level, Approach, Workbench,
@@ -62,14 +62,14 @@ the maintainer's answers to the questions they raised.
                                     (id, title, hour estimate), in order
     lessons/<lesson-id>.md          Lesson text; YAML header holds the Check and Break points
     cards.jsonl                     Card content, sorted by ID
-    sources.jsonl                   Sources: files (path, content hash) and URLs
+    sources.jsonl                   Sources: files (Topic path or name, content hash) and URLs
     history.jsonl                   Events, append only
     learner.md                      optional per-Topic additions to the Learner profile
     notes/                          Session notes, Assessments, research briefs
     teacher/                        Teacher's notes: answer keys, expected scores
     practice/<lesson-id>/           exercise work on the Workbench
     .heldout/<lesson-id>/           Held-out data: synthetic or public only
-    .gitattributes                  history.jsonl merges by union
+    .gitattributes                  history.jsonl and sources.jsonl merge by union
 ```
 
 - Global config: `$XDG_CONFIG_HOME/lamplight/config.toml`; environment variables such as
@@ -321,14 +321,27 @@ hours before any learning happens is exactly what v1 produced.
   plus content hash) or URLs. The NotebookLM login is checked when a Session opens; Lessons
   without Evidence are marked, never blocked.
   - The Knowledge base lives in `topic.toml`'s `[knowledge_base]` table and is set by a
-    `knowledge_base.set` Event. Sources live in `sources.jsonl`, one per line, each its own
-    item (`sources.jsonl#<id>`), added by `source.added` and changed by `source.updated`, so
-    two machines adding Sources never conflict. Evidence lives only in the History
-    (`evidence.recorded`), held until its Source is known.
-  - Location origins are `source` (read in the Source itself), `knowledge_base` (such as a
-    NotebookLM citation), `learner` and `estimate`.
-  - A moved file is found again through the Library index: a book of the same size whose
-    content hash matches. The core reads a file's bytes only to hash it.
+    `knowledge_base.set` Event; keys a newer version added stay while the kind stays.
+  - The History is the single source of truth for Sources: `source.added` and
+    `source.updated` record them, and `sources.jsonl` is the readable copy, one line per
+    Source and each its own item (`sources.jsonl#<id>`). A line added by hand is
+    `untracked` until recorded. Synced data holds nothing machine-specific: a file inside
+    the Topic is kept by its Topic path, one outside by its name, content hash and size.
+    Where each file is on a computer is local state in `.lamplight/sources/<topic>.json`,
+    found inside the Topic, where it was last found, or in the Library by its content, and
+    updated without recording Events, so switching machines never writes to the History.
+  - `history.jsonl` and `sources.jsonl` merge by union. Two machines adding Sources do not
+    conflict; one Source edited on both is flagged, and duplicate lines a union merge
+    leaves are flagged too, with the History's version used until the next change leaves
+    one line. Duplicate Sources or Evidence added on two machines before syncing are
+    accepted under the one-machine-at-a-time contract.
+  - Evidence lives only in the History: `evidence.recorded`, held until its Source is known,
+    and `evidence.retracted`, which takes it back without deleting it.
+  - Location origins are `source` (read in the Source itself), `knowledge_base` (a citation
+    as given; NotebookLM's carry no page numbers), `learner` and `estimate`.
+  - The core reads a file's bytes only to hash it, never blocking on a FIFO or device, and
+    stops when the request is cancelled.
+  - TODO(#25): `status` marks the Syllabus's Lessons without Evidence.
 - **Later**: Knowledge base plugins are MCP servers implementing Lamplight's fixed contract
   (add a Source, search for Evidence, list Sources). The first is a generic local RAG
   plugin: layout-aware conversion (Docling), hybrid keyword and embedding search, reranking.
@@ -350,7 +363,7 @@ Every write names its Topic. Tools are named after things that happen in the dom
   `library_search`, `sources`, `evidence`.
 - **Topics**: `topic_create`, `topic_update` (Goal, Pace, Level, Approach, Knowledge base,
   Tasks, pause, finish), `task_done`, `assessment_record`, `source_add`, `source_update`,
-  `evidence_record`.
+  `evidence_record`, `evidence_retract`.
 - **Syllabus**: `revision_propose`, `revision_apply`.
 - **Sessions**: `session_open`, `session_close`, `phase_set`, `break_point_reached`,
   `checkpoint`, `hint_record`, `rubric_record`, `lesson_complete`.
