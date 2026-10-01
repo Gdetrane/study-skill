@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"slices"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -307,7 +310,42 @@ func parseSyllabusFile(data []byte, where string) (Syllabus, error) {
 // applied without losing them.
 type syllabusData struct{ Syllabus }
 
-func (d syllabusData) MarshalJSON() ([]byte, error) { return json.Marshal(d.Syllabus.toMap()) }
+func (d syllabusData) MarshalJSON() ([]byte, error) {
+	return json.Marshal(floatsAsFloats(d.Syllabus.toMap()))
+}
+
+// floatsAsFloats writes whole floats with a decimal point (1.0, not 1), so a
+// float setting comes back from the payload as a float and syllabus.toml
+// keeps writing it the way the learner did.
+func floatsAsFloats(v any) any {
+	switch t := v.(type) {
+	case float64:
+		s := strconv.FormatFloat(t, 'f', -1, 64)
+		if !strings.ContainsAny(s, ".eE") && !math.IsInf(t, 0) && !math.IsNaN(t) {
+			s += ".0"
+		}
+		return json.Number(s)
+	case map[string]any:
+		out := make(map[string]any, len(t))
+		for k, e := range t {
+			out[k] = floatsAsFloats(e)
+		}
+		return out
+	case []map[string]any:
+		out := make([]any, len(t))
+		for i, e := range t {
+			out[i] = floatsAsFloats(e)
+		}
+		return out
+	case []any:
+		out := make([]any, len(t))
+		for i, e := range t {
+			out[i] = floatsAsFloats(e)
+		}
+		return out
+	}
+	return v
+}
 
 func (d *syllabusData) UnmarshalJSON(data []byte) error {
 	dec := json.NewDecoder(bytes.NewReader(data))
@@ -336,24 +374,37 @@ func keepExtras(next Syllabus, current *Syllabus) Syllabus {
 			lessons[l.ID] = l
 		}
 	}
-	if next.Extra == nil {
-		next.Extra = current.Extra
-	}
+	next.Extra = mergeExtras(current.Extra, next.Extra)
 	out := next
 	out.Milestones = make([]Milestone, len(next.Milestones))
 	for i, m := range next.Milestones {
-		if m.Extra == nil {
-			m.Extra = milestones[m.ID].Extra
-		}
+		m.Extra = mergeExtras(milestones[m.ID].Extra, m.Extra)
 		ls := make([]SyllabusLesson, len(m.Lessons))
 		for j, l := range m.Lessons {
-			if l.Extra == nil {
-				l.Extra = lessons[l.ID].Extra
-			}
+			l.Extra = mergeExtras(lessons[l.ID].Extra, l.Extra)
 			ls[j] = l
 		}
 		m.Lessons = ls
 		out.Milestones[i] = m
+	}
+	return out
+}
+
+// mergeExtras overlays the settings a proposed entity carries on those it
+// has now, so a proposal that sets one setting keeps the others.
+func mergeExtras(current, next map[string]any) map[string]any {
+	if len(next) == 0 {
+		return current
+	}
+	if len(current) == 0 {
+		return next
+	}
+	out := make(map[string]any, len(current)+len(next))
+	for k, v := range current {
+		out[k] = v
+	}
+	for k, v := range next {
+		out[k] = v
 	}
 	return out
 }

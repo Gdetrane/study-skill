@@ -1,6 +1,7 @@
 package core
 
 import (
+	"bytes"
 	"fmt"
 	"strconv"
 	"strings"
@@ -8,6 +9,8 @@ import (
 
 // Kinds of change a Revision makes to the Syllabus.
 const (
+	ChangeFileAdopted      = "file_adopted"
+	ChangeSettings         = "settings_changed"
 	ChangeFirstSyllabus    = "first_syllabus"
 	ChangeMilestoneAdded   = "milestone_added"
 	ChangeMilestoneRemoved = "milestone_removed"
@@ -74,12 +77,17 @@ func numberLessons(s *Syllabus) (map[string]numbered, []string) {
 	return out, order
 }
 
-// revisionChanges compares the replayed Syllabus with a proposed one.
-func revisionChanges(s *replayed, next Syllabus) RevisionChanges {
+// revisionChanges compares the replayed Syllabus with a proposed one;
+// fromFile marks a Revision that adopts a hand edit of syllabus.toml. A
+// Revision that changes nothing has no changes, unless it adopts the file.
+func revisionChanges(s *replayed, next Syllabus, fromFile bool) RevisionChanges {
 	out := RevisionChanges{Changes: []SyllabusChange{}, Renumbered: []Renumbering{}}
 	add := func(kind, milestone, lesson, format string, args ...any) {
 		out.Changes = append(out.Changes, SyllabusChange{Kind: kind, Milestone: milestone, Lesson: lesson,
 			Text: fmt.Sprintf(format, args...)})
+	}
+	if fromFile {
+		add(ChangeFileAdopted, "", "", "Adopts %s as edited by hand", syllabusFile)
 	}
 	current := s.study.syllabus
 	if current == nil {
@@ -169,8 +177,10 @@ func revisionChanges(s *replayed, next Syllabus) RevisionChanges {
 		case n.lesson.Skipped && !o.lesson.Skipped:
 			text := fmt.Sprintf("Skips Lesson %s %q", n.number, n.lesson.Title)
 			if ls := s.study.lessons[id]; ls != nil && ls.completed == nil && (ls.phase != "" || len(ls.attempts) > 0) {
+				// TODO(#26): Cards for what was already covered, through
+				// card_add, which accepts a skipped Lesson.
 				out.SkippedInProgress = append(out.SkippedInProgress, id)
-				text += " (in progress: offer Cards for what was already covered)"
+				text += ", which was in progress"
 			}
 			add(ChangeLessonSkipped, n.milestone.ID, id, "%s", text)
 		case !n.lesson.Skipped && o.lesson.Skipped:
@@ -187,8 +197,12 @@ func revisionChanges(s *replayed, next Syllabus) RevisionChanges {
 			add(ChangeLessonRemoved, o.milestone.ID, id, "Removes Lesson %s %q", o.number, o.lesson.Title)
 		}
 	}
-	if len(out.Changes) == 0 {
-		add("", "", "", "Changes nothing the learner can see")
+	if visible := len(out.Changes) > 0 && !(fromFile && len(out.Changes) == 1); !visible {
+		a, errA := encodeSyllabus(*current)
+		b, errB := encodeSyllabus(next)
+		if errA == nil && errB == nil && !bytes.Equal(a, b) {
+			add(ChangeSettings, "", "", "Changes settings Lamplight does not know")
+		}
 	}
 	out.Text = joinChanges(out.Changes)
 	if len(out.Renumbered) > 0 {

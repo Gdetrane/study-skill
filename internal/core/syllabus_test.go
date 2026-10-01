@@ -111,7 +111,9 @@ func TestARevisionsBaseIsTheRecordedVersion(t *testing.T) {
 	ctx := context.Background()
 	m := newTopic(t)
 	withSyllabus(t, m)
-	p, err := m.ProposeRevision(ctx, "c", RevisionSpec{Summary: "Retitle", Syllabus: oneLessonSyllabus})
+	retitled := clone(oneLessonSyllabus)
+	retitled.Milestones[0].Title = "Foundations"
+	p, err := m.ProposeRevision(ctx, "c", RevisionSpec{Summary: "Retitle", Syllabus: retitled})
 	if err != nil {
 		t.Fatal(err)
 	}

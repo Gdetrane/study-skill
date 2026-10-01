@@ -82,11 +82,6 @@ func (c *Core) CompleteLesson(ctx context.Context, topicID string, spec Complete
 	if _, err := requireLesson(s, topicID, spec.Lesson); err != nil {
 		return LessonCompletion{}, err
 	}
-	if ls := s.study.lessons[spec.Lesson]; ls == nil || ls.completed == nil {
-		if _, err := requireStudiedLesson(s, topicID, spec.Lesson); err != nil {
-			return LessonCompletion{}, err
-		}
-	}
 	// The work and the Check as they are now, unless the Lesson is done.
 	// They are read before the write takes the lock, because snapshotting
 	// the work runs git.
@@ -100,6 +95,11 @@ func (c *Core) CompleteLesson(ctx context.Context, topicID string, spec Complete
 		if ls := s.study.lessons[spec.Lesson]; ls != nil && ls.completed != nil {
 			c.describeCompletion(s, view, topicID, spec.Lesson, drafts, &result)
 			return nil, nil
+		}
+		// Checked under the lock, so a Revision skipping the Lesson in the
+		// meantime is seen.
+		if _, err := requireStudiedLesson(s, topicID, spec.Lesson); err != nil {
+			return nil, err
 		}
 		if cur.check == nil {
 			return nil, &Error{Code: CodeBusy, Message: "Lesson " + spec.Lesson + " changed while it was being completed: try again"}
@@ -210,7 +210,12 @@ func replayLessonCompleted(s *replayed, ev event) error {
 		return nil
 	}
 	if s.study.syllabus != nil {
-		if sl, ok := s.study.syllabus.lesson(d.Lesson); ok && sl.Skipped {
+		switch sl, ok := s.study.syllabus.lesson(d.Lesson); {
+		case !ok:
+			s.flag(newFlag(FlagConflict, syllabusFile, []string{ev.ID}, d.Lesson,
+				fmt.Sprintf("Lesson %s was completed although a Revision removed it, probably on two machines: "+
+					"it counts as done; add it back through a Revision, or dismiss this flag", d.Lesson)))
+		case sl.Skipped:
 			s.flag(newFlag(FlagConflict, syllabusFile, []string{ev.ID}, d.Lesson,
 				fmt.Sprintf("Lesson %s was completed although a Revision skipped it, probably on two machines: "+
 					"it counts as done; check the Syllabus with the learner", d.Lesson)))

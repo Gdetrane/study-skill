@@ -141,8 +141,20 @@ type replayed struct {
 	// know is the Topic's Sources and Evidence; see knowledge().
 	know *knowledgeState
 
-	seen  map[string][]byte            // Event ID → its line, to apply each ID once
-	bases map[string]map[string]string // item → version changed from → Event ID
+	// repeat is set by an Event's replay when the Event repeats a change
+	// already replayed, such as one Revision approved on two machines: its
+	// items then change nothing.
+	repeat bool
+
+	seen  map[string][]byte                // Event ID → its line, to apply each ID once
+	bases map[string]map[string]baseChange // item → version changed from → the change
+}
+
+// baseChange is an Event that changed an item from a version, and the
+// version it left.
+type baseChange struct {
+	event string
+	after string
 }
 
 type heldEvent struct {
@@ -180,7 +192,7 @@ func replay(events []event) *replayed {
 		dismissed: map[string]string{},
 		study:     newStudyState(),
 		seen:      map[string][]byte{},
-		bases:     map[string]map[string]string{},
+		bases:     map[string]map[string]baseChange{},
 	}
 	var held []heldEvent
 	for _, ev := range events {
@@ -222,6 +234,10 @@ func (s *replayed) apply(ev event) error {
 		return err
 	}
 	s.applied = append(s.applied, ev)
+	if s.repeat {
+		s.repeat = false
+		return nil
+	}
 	for _, it := range ev.Items {
 		if it.Before == it.After {
 			// The Event left the item as it was, but it is still the
@@ -231,14 +247,16 @@ func (s *replayed) apply(ev event) error {
 			continue
 		}
 		if s.bases[it.Item] == nil {
-			s.bases[it.Item] = map[string]string{}
+			s.bases[it.Item] = map[string]baseChange{}
 		}
-		if other, ok := s.bases[it.Item][it.Before]; ok {
-			s.flag(newFlag(FlagConflict, it.Item, []string{other, ev.ID}, "",
+		// Two Events that made the same change from one version, such as
+		// one Revision approved on two machines, agree: no conflict.
+		if other, ok := s.bases[it.Item][it.Before]; ok && other.after != it.After {
+			s.flag(newFlag(FlagConflict, it.Item, []string{other.event, ev.ID}, "",
 				fmt.Sprintf("%s was changed twice from the same version, by Events %s and %s, "+
-					"probably on two machines: check it by hand", it.Item, other, ev.ID)))
+					"probably on two machines: check it by hand", it.Item, other.event, ev.ID)))
 		}
-		s.bases[it.Item][it.Before] = ev.ID
+		s.bases[it.Item][it.Before] = baseChange{event: ev.ID, after: it.After}
 		// The item is at a new version, so a later change from it starts
 		// a new run: a version that comes back (A, B, then A again) is not
 		// a conflict with the Event that first changed it.
@@ -265,7 +283,16 @@ func (s *replayed) retry(held []heldEvent) []heldEvent {
 	return held
 }
 
-func (s *replayed) flag(f Flag) { s.flags = append(s.flags, f) }
+// flag records a flag, once: a conflict that two checks find has one ID,
+// and the first message is kept.
+func (s *replayed) flag(f Flag) {
+	for _, g := range s.flags {
+		if g.ID == f.ID {
+			return
+		}
+	}
+	s.flags = append(s.flags, f)
+}
 
 // isGating reports whether an item approves or gates progress: the Syllabus,
 // which only approved Revisions change, and each Lesson's Check. Lamplight

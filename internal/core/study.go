@@ -22,7 +22,10 @@ type studyState struct {
 	// the Event that declined each.
 	declined   map[string]bool
 	declinedBy map[string]string
-	lessons    map[string]*lessonState
+	// appliedWith and declinedWith are how the learner answered each.
+	appliedWith  map[string]Approval
+	declinedWith map[string]Approval
+	lessons      map[string]*lessonState
 	// sessions are the Sessions opened, in order.
 	sessions []*sessionState
 	// nextStep is the latest Next step recorded, cleared when its Lesson
@@ -58,12 +61,14 @@ func (st *studyState) currentTurn() string {
 
 func newStudyState() studyState {
 	return studyState{
-		proposals:  map[string]revisionProposedData{},
-		applied:    map[string]bool{},
-		declined:   map[string]bool{},
-		declinedBy: map[string]string{},
-		lessons:    map[string]*lessonState{},
-		cards:      map[string]*cardState{},
+		proposals:    map[string]revisionProposedData{},
+		applied:      map[string]bool{},
+		declined:     map[string]bool{},
+		declinedBy:   map[string]string{},
+		appliedWith:  map[string]Approval{},
+		declinedWith: map[string]Approval{},
+		lessons:      map[string]*lessonState{},
+		cards:        map[string]*cardState{},
 	}
 }
 

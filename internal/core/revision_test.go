@@ -101,7 +101,7 @@ func TestRevisionsInsertMoveAndSkipLessons(t *testing.T) {
 	skipped := clone(moved)
 	skipped.Milestones[0].Lessons[2].Skipped = true
 	p = revise(t, m, skipped)
-	if !slices.Equal(p.Changes.SkippedInProgress, []string{"values"}) || !strings.Contains(p.Changes.Text, "offer Cards") {
+	if !slices.Equal(p.Changes.SkippedInProgress, []string{"values"}) || !strings.Contains(p.Changes.Text, `Skips Lesson 1.3 "Values", which was in progress`) {
 		t.Errorf("skipping in progress: %+v\n%s", p.Changes.SkippedInProgress, p.Changes.Text)
 	}
 	if got := lessonNumbers(t, m); got["values"] != "1.3 skipped" {
@@ -351,10 +351,12 @@ func TestADeclinedRevisionIsNeverApplied(t *testing.T) {
 		t.Errorf("a chat decline without the learner's words: err = %v", err)
 	}
 	res, err := m.DeclineRevision(ctx, "c", p.Revision, Approval{Via: ViaTerminal, Shown: "Apply?", LearnerSaid: "not yet"}, false)
-	if err != nil || !res.Declined || !res.Changed {
+	if err != nil || !res.Changed || res.Decision.Via != ViaTerminal {
 		t.Fatalf("declining: %+v, %v", res, err)
 	}
-	if again, err := m.DeclineRevision(ctx, "c", p.Revision, Approval{Via: ViaChat, LearnerSaid: "no"}, false); err != nil || again.Changed {
+	// Declining again changes nothing and reports the decision recorded.
+	if again, err := m.DeclineRevision(ctx, "c", p.Revision, Approval{Via: ViaChat, LearnerSaid: "no"}, false); err != nil || again.Changed ||
+		again.Decision.LearnerSaid != "not yet" {
 		t.Errorf("declining twice: %+v, %v", again, err)
 	}
 	if _, err := m.ApplyRevision(ctx, "c", p.Revision, Approval{Via: ViaChat, LearnerSaid: "yes after all"}, false); CodeOf(err) != CodeFailedPrecondition ||
@@ -364,7 +366,9 @@ func TestADeclinedRevisionIsNeverApplied(t *testing.T) {
 	if v, err := m.SyllabusOf(ctx, "c"); err != nil || len(v.Proposals) != 0 || len(v.Milestones) != 2 {
 		t.Errorf("after declining: %d proposals, %d Milestones, %v", len(v.Proposals), len(v.Milestones), err)
 	}
-	applied := revise(t, m, clone(twoMilestones))
+	more := clone(twoMilestones)
+	more.Milestones[1].Lessons = append(more.Milestones[1].Lessons, SyllabusLesson{ID: "generics", Title: "Generics"})
+	applied := revise(t, m, more)
 	if _, err := m.DeclineRevision(ctx, "c", applied.Revision, Approval{Via: ViaChat, LearnerSaid: "no"}, false); CodeOf(err) != CodeFailedPrecondition {
 		t.Errorf("declining an applied Revision: err = %v", err)
 	}

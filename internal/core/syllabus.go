@@ -4,7 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
+	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 const syllabusFile = "syllabus.toml"
@@ -149,7 +153,7 @@ func (s Syllabus) validate() (Syllabus, error) {
 			if err != nil {
 				return s, at(where, err)
 			}
-			if l.Hours < 0 || l.Hours > maxLessonHours {
+			if math.IsNaN(l.Hours) || math.IsInf(l.Hours, 0) || l.Hours < 0 || l.Hours > maxLessonHours {
 				return s, invalidf("%s has %v hours: give an estimate between 0 and %d", where, l.Hours, maxLessonHours)
 			}
 			clean.Lessons = append(clean.Lessons, SyllabusLesson{ID: l.ID, Title: lt, Hours: l.Hours, Skipped: l.Skipped, Extra: l.Extra})
@@ -249,9 +253,9 @@ func (a Approval) check(declining bool) (Approval, error) {
 			return a, err
 		}
 	case ViaElicitation, ViaTerminal:
-		if a.LearnerSaid, err = cleanText("learner's "+what, a.LearnerSaid, maxSummaryRunes); err != nil {
-			return a, err
-		}
+		// The learner typed this themselves, after answering: it is kept
+		// as well as it can be, and never fails their answer.
+		a.LearnerSaid = directWords(a.LearnerSaid, maxSummaryRunes)
 		if a.Shown == "" {
 			return a, invalidf("an %s %s must record what the learner was shown", a.Via, what)
 		}
@@ -294,24 +298,39 @@ func (p RevisionProposal) Question() string {
 	return fmt.Sprintf("Lamplight asks: apply this change to the Syllabus of %s?\n\n%s\n\n%s", p.Topic, p.Summary, p.Changes.Text)
 }
 
-// RevisionApplied is the result of ApplyRevision and DeclineRevision.
+// RevisionApplied is the result of ApplyRevision.
 type RevisionApplied struct {
 	Topic    string   `json:"topic"`
 	Revision string   `json:"revision"`
 	Syllabus Syllabus `json:"syllabus"`
-	// Approval is how the learner answered.
+	// Approval is how the learner answered: the approval recorded, also
+	// when the Revision was applied before.
 	Approval Approval `json:"approval"`
-	// Declined is true when the learner said no: nothing changed, and the
-	// Revision can no longer be applied.
+	// Declined is true when Lamplight asked the learner directly through
+	// revision_apply and they said no: nothing changed, and the Revision
+	// can no longer be applied.
 	Declined bool `json:"declined,omitempty"`
 	// Changed is false when the answer was already recorded.
 	Changed bool `json:"changed"`
 	DryRun  bool `json:"dry_run,omitempty"`
 }
 
+// RevisionDeclined is the result of DeclineRevision.
+type RevisionDeclined struct {
+	Topic    string `json:"topic"`
+	Revision string `json:"revision"`
+	// Decision is how the learner said no: the one recorded, also when the
+	// Revision was declined before.
+	Decision Approval `json:"decision"`
+	// Changed is false when the learner had already declined it.
+	Changed bool `json:"changed"`
+	DryRun  bool `json:"dry_run,omitempty"`
+}
+
 // ProposeRevision records a proposed change to the Syllabus, the first
 // Syllabus included. Nothing changes until the learner approves it with
-// ApplyRevision. Done and skipped Lessons are never rewritten.
+// ApplyRevision. Done and skipped Lessons are never rewritten, and a
+// Revision that changes nothing is refused, unless it adopts a hand edit.
 //
 // While syllabus.toml differs from the version the History recorded, it was
 // edited outside Lamplight: only a Revision that adopts the edit, with
@@ -357,7 +376,10 @@ func (c *Core) ProposeRevision(ctx context.Context, topicID string, spec Revisio
 		if err := keepsSettledLessons(s, syllabus); err != nil {
 			return nil, err
 		}
-		changes = revisionChanges(s, syllabus)
+		changes = revisionChanges(s, syllabus, spec.FromFile)
+		if len(changes.Changes) == 0 {
+			return nil, invalidf("the proposed Syllabus is the Syllabus %s already has: there is nothing to approve", topicID)
+		}
 		d.Syllabus = syllabusData{syllabus}
 		return &change{Type: eventRevisionProposed, Data: d}, nil
 	}, spec.DryRun)
@@ -377,36 +399,45 @@ func editedOutside(topicID string) error {
 }
 
 // Revision returns a proposed Revision with its change against the current
-// Syllabus, so an adapter can ask the learner about it. It fails when the
-// Revision can no longer be applied: already applied or declined, or based
-// on a Syllabus that has changed since.
+// Syllabus, so an adapter can ask the learner whether to apply it. It fails
+// when applying it would fail anyway, so the learner is never asked for an
+// answer that would be thrown away: already applied or declined, based on a
+// Syllabus that has changed since, syllabus.toml edited outside Lamplight,
+// or a done or skipped Lesson it would rewrite.
 func (c *Core) Revision(ctx context.Context, topicID, revision string) (RevisionProposal, error) {
+	p, err := c.ProposedRevision(ctx, topicID, revision)
+	if err != nil {
+		return RevisionProposal{}, err
+	}
+	if _, err := c.ApplyRevision(ctx, topicID, revision, Approval{}, true); err != nil {
+		return RevisionProposal{}, err
+	}
+	return p, nil
+}
+
+// ProposedRevision returns a Revision still waiting for the learner, stale
+// or not, with its change against the current Syllabus: what an adapter
+// shows when the learner may decline it.
+func (c *Core) ProposedRevision(ctx context.Context, topicID, revision string) (RevisionProposal, error) {
 	s, _, err := c.replayTopic(ctx, topicID)
 	if err != nil {
 		return RevisionProposal{}, err
 	}
-	p, err := pendingRevision(s, topicID, revision)
-	if err != nil {
-		return RevisionProposal{}, err
-	}
-	return RevisionProposal{Topic: topicID, Revision: revision, Summary: p.Summary, Syllabus: p.Syllabus.Syllabus,
-		Changes: revisionChanges(s, p.Syllabus.Syllabus)}, nil
-}
-
-// pendingRevision returns a proposed Revision that can still be answered.
-func pendingRevision(s *replayed, topicID, revision string) (revisionProposedData, error) {
 	p, ok := s.study.proposals[revision]
 	switch {
 	case !ok:
-		return p, &Error{Code: CodeNotFound, Message: fmt.Sprintf("Topic %s has no proposed Revision %s", topicID, revision)}
+		return RevisionProposal{}, noSuchRevision(topicID, revision)
 	case s.study.applied[revision]:
-		return p, &Error{Code: CodeFailedPrecondition, Message: fmt.Sprintf("Revision %s of %s is already applied", revision, topicID)}
+		return RevisionProposal{}, &Error{Code: CodeFailedPrecondition, Message: fmt.Sprintf("Revision %s of %s is already applied", revision, topicID)}
 	case s.study.declined[revision]:
-		return p, declinedRevision(topicID, revision)
-	case p.Base != s.versions[syllabusFile].hash:
-		return p, staleRevision(topicID, revision)
+		return RevisionProposal{}, declinedRevision(topicID, revision)
 	}
-	return p, nil
+	return RevisionProposal{Topic: topicID, Revision: revision, Summary: p.Summary, Syllabus: p.Syllabus.Syllabus,
+		Changes: revisionChanges(s, p.Syllabus.Syllabus, p.FromFile), Stale: p.Base != s.versions[syllabusFile].hash}, nil
+}
+
+func noSuchRevision(topicID, revision string) error {
+	return &Error{Code: CodeNotFound, Message: fmt.Sprintf("Topic %s has no proposed Revision %s", topicID, revision)}
 }
 
 func declinedRevision(topicID, revision string) error {
@@ -424,7 +455,8 @@ func staleRevision(topicID, revision string) error {
 // it. It refuses when another Revision was applied since this one was
 // proposed, when the learner declined it, or when syllabus.toml was edited
 // by hand, unless the Revision adopts exactly that edit. Applying a
-// Revision twice changes nothing. A dry run needs no approval.
+// Revision twice changes nothing, and returns the approval recorded the
+// first time. A dry run needs no approval.
 func (c *Core) ApplyRevision(ctx context.Context, topicID, revision string, approval Approval, dryRun bool) (RevisionApplied, error) {
 	if !dryRun {
 		var err error
@@ -436,10 +468,11 @@ func (c *Core) ApplyRevision(ctx context.Context, topicID, revision string, appr
 	ev, err := c.writeTopic(ctx, topicID, func(s *replayed, view *topicView) (*change, error) {
 		p, ok := s.study.proposals[revision]
 		if !ok {
-			return nil, &Error{Code: CodeNotFound, Message: fmt.Sprintf("Topic %s has no proposed Revision %s", topicID, revision)}
+			return nil, noSuchRevision(topicID, revision)
 		}
 		syllabus = p.Syllabus.Syllabus
 		if s.study.applied[revision] {
+			approval = s.study.appliedWith[revision]
 			return nil, nil
 		}
 		if s.study.declined[revision] {
@@ -471,23 +504,22 @@ func (c *Core) ApplyRevision(ctx context.Context, topicID, revision string, appr
 
 // DeclineRevision records that the learner said no to a proposed Revision.
 // Nothing in the Syllabus changes, and the Revision can no longer be
-// applied. Declining twice changes nothing.
-func (c *Core) DeclineRevision(ctx context.Context, topicID, revision string, decision Approval, dryRun bool) (RevisionApplied, error) {
+// applied. Declining twice changes nothing, and returns the decision
+// recorded the first time.
+func (c *Core) DeclineRevision(ctx context.Context, topicID, revision string, decision Approval, dryRun bool) (RevisionDeclined, error) {
 	if !dryRun {
 		var err error
 		if decision, err = decision.check(true); err != nil {
-			return RevisionApplied{}, err
+			return RevisionDeclined{}, err
 		}
 	}
-	var syllabus Syllabus
 	ev, err := c.writeTopic(ctx, topicID, func(s *replayed, _ *topicView) (*change, error) {
-		p, ok := s.study.proposals[revision]
-		if !ok {
-			return nil, &Error{Code: CodeNotFound, Message: fmt.Sprintf("Topic %s has no proposed Revision %s", topicID, revision)}
+		if _, ok := s.study.proposals[revision]; !ok {
+			return nil, noSuchRevision(topicID, revision)
 		}
-		syllabus = p.Syllabus.Syllabus
 		switch {
 		case s.study.declined[revision]:
+			decision = s.study.declinedWith[revision]
 			return nil, nil
 		case s.study.applied[revision]:
 			return nil, &Error{Code: CodeFailedPrecondition, Message: fmt.Sprintf(
@@ -496,24 +528,33 @@ func (c *Core) DeclineRevision(ctx context.Context, topicID, revision string, de
 		return &change{Type: eventRevisionDeclined, Data: revisionDeclinedData{Revision: revision, Decision: decision}}, nil
 	}, dryRun)
 	if err != nil {
-		return RevisionApplied{}, err
+		return RevisionDeclined{}, err
 	}
-	return RevisionApplied{Topic: topicID, Revision: revision, Syllabus: syllabus, Approval: decision, Declined: true,
-		Changed: ev != nil, DryRun: dryRun}, nil
+	return RevisionDeclined{Topic: topicID, Revision: revision, Decision: decision, Changed: ev != nil, DryRun: dryRun}, nil
 }
 
 // keepsSettledLessons refuses a Syllabus that rewrites a Lesson already done
 // or skipped: such a Lesson keeps its id, title, hours and Milestone, and a
 // done Lesson cannot be skipped. A skipped Lesson can be taken back.
+//
+// A done Lesson the current Syllabus no longer holds was removed on another
+// machine; that is flagged, and the learner settles it by adding the Lesson
+// back or dismissing the flag, so it does not block other Revisions.
 func keepsSettledLessons(s *replayed, next Syllabus) error {
 	for id, l := range s.study.lessons {
-		if l.completed != nil {
-			if err := keepsLesson(s.study.syllabus, next, id, "done"); err != nil {
-				return err
+		if l.completed == nil {
+			continue
+		}
+		if s.study.syllabus != nil {
+			if _, ok := s.study.syllabus.lesson(id); !ok {
+				continue
 			}
-			if nl, ok := next.lesson(id); ok && nl.Skipped {
-				return &Error{Code: CodeFailedPrecondition, Message: fmt.Sprintf("Lesson %s is done, so it cannot be skipped", id)}
-			}
+		}
+		if err := keepsLesson(s.study.syllabus, next, id, "done"); err != nil {
+			return err
+		}
+		if nl, ok := next.lesson(id); ok && nl.Skipped {
+			return &Error{Code: CodeFailedPrecondition, Message: fmt.Sprintf("Lesson %s is done, so it cannot be skipped", id)}
 		}
 	}
 	if s.study.syllabus != nil {
@@ -554,6 +595,23 @@ func keepsLesson(current *Syllabus, next Syllabus, id, settled string) error {
 	return nil
 }
 
+// directWords keeps what a learner typed when Lamplight asked them
+// directly: one line, printable, valid UTF-8, at most max characters.
+func directWords(s string, max int) string {
+	s = strings.ToValidUTF8(s, "")
+	s = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, s)
+	s = strings.Join(strings.Fields(s), " ")
+	if utf8.RuneCountInString(s) > max {
+		s = string([]rune(s)[:max])
+	}
+	return s
+}
+
 func applyRevisionApplied(ev event, item string, _ []byte, _ bool) ([]byte, bool, error) {
 	if item != syllabusFile {
 		return nil, false, corruptf("Event %s (%s) cannot edit %s", ev.ID, ev.Type, item)
@@ -575,19 +633,46 @@ func replayRevisionProposed(s *replayed, ev event) error {
 	return nil
 }
 
+// itemAfter is the version an Event left an item at, or "" if it does not
+// edit it.
+func itemAfter(ev event, item string) string {
+	for _, it := range ev.Items {
+		if it.Item == item {
+			return it.After
+		}
+	}
+	return ""
+}
+
 func replayRevisionApplied(s *replayed, ev event) error {
 	var d revisionAppliedData
 	if err := json.Unmarshal(ev.Data, &d); err != nil {
 		return fmt.Errorf("its payload is unreadable: %v", err)
 	}
-	if _, ok := s.study.proposals[d.Revision]; !ok {
+	p, ok := s.study.proposals[d.Revision]
+	if !ok {
 		return fmt.Errorf("%w: Revision %s", errUnknownItem, d.Revision)
+	}
+	if s.study.applied[d.Revision] {
+		// The same Revision approved on two machines: one Syllabus, no
+		// conflict, and the second application changes nothing.
+		s.repeat = true
+		return nil
 	}
 	syllabus := d.Syllabus.Syllabus
 	if s.study.declined[d.Revision] {
 		s.flag(newFlag(FlagConflict, syllabusFile, []string{s.study.declinedBy[d.Revision], ev.ID}, d.Revision,
 			fmt.Sprintf("Revision %s was both declined and applied, probably on two machines: it stays applied; "+
 				"check the Syllabus with the learner", d.Revision)))
+	}
+	// A Revision approved for a Syllabus that another Event had already
+	// changed: two machines changed the Syllabus from one version, and the
+	// earlier change is lost unless the learner restores it.
+	if recorded := s.versions[syllabusFile]; p.Base != recorded.hash && itemAfter(ev, syllabusFile) != recorded.hash {
+		s.flag(newFlag(FlagConflict, syllabusFile, []string{recorded.event, ev.ID}, "",
+			fmt.Sprintf("Revision %s was approved for a Syllabus that Event %s had already changed, probably on two "+
+				"machines: the Syllabus now follows Revision %s, so check with the learner whether the earlier change "+
+				"should be proposed again", d.Revision, recorded.event, d.Revision)))
 	}
 	// A Revision never rewrites a done Lesson; one that does was proposed
 	// on another machine before the Lesson was completed here.
@@ -614,6 +699,14 @@ func replayRevisionApplied(s *replayed, ev event) error {
 	}
 	s.study.syllabus = &syllabus
 	s.study.applied[d.Revision] = true
+	s.study.appliedWith[d.Revision] = d.Approval
+	// A Next step of a Lesson the Revision skipped or removed no longer
+	// leads the Resume point.
+	if ns := s.study.nextStep; ns != nil && ns.Lesson != "" {
+		if l, ok := syllabus.lesson(ns.Lesson); !ok || l.Skipped {
+			s.study.nextStep = nil
+		}
+	}
 	return nil
 }
 
@@ -635,6 +728,7 @@ func replayRevisionDeclined(s *replayed, ev event) error {
 	}
 	s.study.declined[d.Revision] = true
 	s.study.declinedBy[d.Revision] = ev.ID
+	s.study.declinedWith[d.Revision] = d.Decision
 	return nil
 }
 
@@ -721,7 +815,10 @@ func (c *Core) SyllabusOf(ctx context.Context, topicID string) (SyllabusView, er
 		}
 		p := s.study.proposals[ev.ID]
 		view.Proposals = append(view.Proposals, RevisionProposal{Topic: topicID, Revision: ev.ID, Summary: p.Summary,
-			Syllabus: p.Syllabus.Syllabus, Changes: revisionChanges(s, p.Syllabus.Syllabus), Stale: p.Base != recorded})
+			Syllabus: p.Syllabus.Syllabus, Changes: revisionChanges(s, p.Syllabus.Syllabus, p.FromFile), Stale: p.Base != recorded})
+	}
+	if unfinishedItems(home, topicID, s)[syllabusFile] {
+		return view, nil
 	}
 	if data, exists, err := readItem(topic, syllabusFile); err == nil && contentHash(data, exists) != recorded {
 		view.EditedOutside = true
