@@ -1,0 +1,7 @@
+{
+  "ok": false,
+  "error": {
+    "code": "invalid_argument",
+    "message": "the grade must be met, partly or not_met, not \"excellent\""
+  }
+}

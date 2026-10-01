@@ -142,11 +142,29 @@ func addLearnerLoop(server *mcp.Server, c *core.Core) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:  "check_results",
 		Title: "Check results",
-		Description: "Show a Lesson's Check, its Attempts and whether the Lesson can be completed now. Attempts are " +
-			"recorded by running study check in your shell.",
+		Description: "Show a Lesson's Check, its Attempts, each rubric item's grade, each held-out criterion's counted " +
+			"measurement and whether the Lesson can be completed now. Nothing runs: Attempts are recorded by running " +
+			"study check in your shell. Held-out results are diagnostic and never decide completion; show the learner " +
+			"only their scores and summaries, never the Held-out data. When next is set, follow it.",
 		Annotations: read,
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in lessonInput) (*mcp.CallToolResult, core.CheckResults, error) {
 		r, err := c.CheckResultsOf(ctx, in.Topic, in.Lesson)
+		return nil, r, toolErr(err)
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:  "rubric_record",
+		Title: "Grade a rubric item",
+		Description: "Grade one rubric item of a Lesson's Check, met, partly or not_met, for the Check shown to the " +
+			"learner and the work as it is now. Ask the learner to check their work against the item first, then " +
+			"grade it and say why in note. For written work, name the files you looked at in looked_at (typed final " +
+			"answers or a photo of paper work, in the Lesson's practice folder); only their paths and hashes are " +
+			"recorded. Completion needs every rubric item graded for the current Check and work, so grade again " +
+			"after the work changes. Grading again with the same values records nothing.",
+		Annotations: idempotent,
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in rubricRecordInput) (*mcp.CallToolResult, core.RubricGraded, error) {
+		r, err := c.RecordRubricGrade(ctx, in.Topic, core.RubricSpec{Lesson: in.Lesson, Criterion: in.Criterion,
+			Grade: in.Grade, Note: in.Note, LookedAt: in.LookedAt})
 		return nil, r, toolErr(err)
 	})
 
@@ -180,6 +198,15 @@ type topicInput struct {
 type lessonInput struct {
 	Topic  string `json:"topic" jsonschema:"the Topic's id, from status"`
 	Lesson string `json:"lesson" jsonschema:"the Lesson's id, from the Syllabus"`
+}
+
+type rubricRecordInput struct {
+	Topic     string   `json:"topic" jsonschema:"the Topic's id, from status"`
+	Lesson    string   `json:"lesson" jsonschema:"the Lesson's id, from the Syllabus"`
+	Criterion string   `json:"criterion" jsonschema:"the rubric item's id, from check_results"`
+	Grade     string   `json:"grade" jsonschema:"met, partly or not_met"`
+	Note      string   `json:"note,omitempty" jsonschema:"what the grade is based on, for the learner"`
+	LookedAt  []string `json:"looked_at,omitempty" jsonschema:"files of the work you looked at, in the Lesson's practice folder"`
 }
 
 type revisionProposeInput struct {

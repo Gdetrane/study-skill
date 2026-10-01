@@ -3,12 +3,13 @@
   "data": {
     "id": "<id>",
     "lesson": "answer",
-    "check_version": "sha256:a2ffe2f214592d8bbe0619a7a3ea3a97d6f0f61743f8eade44cde16d33a5a379",
+    "check_version": "sha256:682669686936d41efb9c271c7762f82cdd842f1a67f6872a196dae30727024c1",
     "snapshot": "<snapshot>",
     "outcome": "failed",
     "criteria": [
       {
         "id": "answer",
+        "kind": "run",
         "outcome": "failed",
         "exit_code": 1,
         "output": "answer.txt holds 41\n"
