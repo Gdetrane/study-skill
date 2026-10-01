@@ -4,25 +4,39 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 )
+
+// maxCardEvidence bounds the Evidence one Card cites.
+const maxCardEvidence = 20
 
 // cardAddedData is the payload of a card.added Event: the new Card in full.
 type cardAddedData struct {
 	Card cardLine `json:"card"`
 }
 
-// cardEditedData is the payload of a card.edited Event: the new prompt or
-// answer, or both.
+// cardEditedData is the payload of a card.edited Event: the new prompt,
+// answer or Evidence, whichever changed. Evidence, when present, replaces
+// the Card's list; an empty list removes it.
 type cardEditedData struct {
-	Card   string `json:"card"`
-	Prompt string `json:"prompt,omitempty"`
-	Answer string `json:"answer,omitempty"`
+	Card     string    `json:"card"`
+	Prompt   string    `json:"prompt,omitempty"`
+	Answer   string    `json:"answer,omitempty"`
+	Evidence *[]string `json:"evidence,omitempty"`
 }
 
 // cardRefData is the payload of the Events that name a Card and nothing
-// else: card.suspended, card.unsuspended and card.deleted.
+// else: card.suspended and card.unsuspended.
 type cardRefData struct {
 	Card string `json:"card"`
+}
+
+// cardDeletedData is the payload of a card.deleted Event. Reviews is how
+// many Reviews of the Card the deleting machine knew, so a Review made on
+// another machine before syncing is flagged whichever Event replays first.
+type cardDeletedData struct {
+	Card    string `json:"card"`
+	Reviews int    `json:"reviews"`
 }
 
 // cardFlaggedData is the payload of a card.flagged Event.
@@ -34,20 +48,23 @@ type cardFlaggedData struct {
 // CardSpec describes a Card to add.
 type CardSpec struct {
 	// Lesson is the Lesson the Card is written from. Empty makes an
-	// Explore Card, written in an Explore Session.
+	// Explore Card, written from free questions.
 	Lesson string
 	Prompt string
 	Answer string
-	DryRun bool
+	// Evidence lists the ids of the Evidence the Card relies on.
+	Evidence []string
+	DryRun   bool
 }
 
-// CardEdit describes a change to a Card's content. Empty fields stay as
-// they are.
+// CardEdit describes a change to a Card. Empty text and nil Evidence stay
+// as they are; an empty, non-nil Evidence removes the Card's.
 type CardEdit struct {
-	Card   string
-	Prompt string
-	Answer string
-	DryRun bool
+	Card     string
+	Prompt   string
+	Answer   string
+	Evidence []string
+	DryRun   bool
 }
 
 // CardChange is the result of an operation on one Card.
@@ -60,18 +77,47 @@ type CardChange struct {
 	DryRun  bool `json:"dry_run,omitempty"`
 }
 
+// checkCardEvidence checks the Evidence a Card cites against the History:
+// each id must be recorded and not retracted. It returns the ids without
+// repeats, in the order given.
+func checkCardEvidence(s *replayed, topicID string, ids []string) ([]string, error) {
+	if len(ids) > maxCardEvidence {
+		return nil, invalidf("a Card cites at most %d pieces of Evidence", maxCardEvidence)
+	}
+	k := s.knowledge()
+	out := []string{} // never nil: an empty list removes a Card's Evidence
+	for _, id := range ids {
+		if slices.Contains(out, id) {
+			continue
+		}
+		i, ok := k.byID[id]
+		if !ok {
+			return nil, &Error{Code: CodeNotFound, Message: fmt.Sprintf("Topic %s has no Evidence %s: study evidence list shows it", topicID, id)}
+		}
+		if k.evidence[i].Retracted {
+			return nil, invalidf("Evidence %s was retracted, so a Card cannot cite it", id)
+		}
+		out = append(out, id)
+	}
+	return out, nil
+}
+
 // AddCard adds a draft Card, from a Lesson or, without one, as an Explore
 // Card. It is a draft until its first Review, and the daily cap limits how
 // many new Cards are offered. Adding a Card with the same Lesson, prompt and
 // answer as one the Topic has returns that Card and records nothing, so a
 // retry never duplicates a Card.
+//
+// An Explore Card needs no open Explore Session: a useful answer comes up in
+// any Session, and the learner may add Cards from the command line with no
+// Session at all.
 func (c *Core) AddCard(ctx context.Context, topicID string, spec CardSpec) (CardChange, error) {
 	draft, err := cleanDraft(CardDraft{Prompt: spec.Prompt, Answer: spec.Answer})
 	if err != nil {
 		return CardChange{}, err
 	}
 	if spec.Lesson == exploreLesson {
-		spec.Lesson = ""
+		return CardChange{}, invalidf("%q is not a Lesson: leave the Lesson out for an Explore Card", exploreLesson)
 	}
 	result := CardChange{Topic: topicID, DryRun: spec.DryRun}
 	ev, err := c.writeTopic(ctx, topicID, func(s *replayed, view *topicView) (*change, error) {
@@ -81,6 +127,10 @@ func (c *Core) AddCard(ctx context.Context, topicID string, spec CardSpec) (Card
 				return nil, err
 			}
 			prefix = spec.Lesson
+		}
+		evidence, err := checkCardEvidence(s, topicID, spec.Evidence)
+		if err != nil {
+			return nil, err
 		}
 		for _, id := range s.study.cardOrder {
 			cs := s.study.cards[id]
@@ -94,9 +144,9 @@ func (c *Core) AddCard(ctx context.Context, topicID string, spec CardSpec) (Card
 			}
 		}
 		line := cardLine{Format: FormatVersion, ID: c.newCardID(s, prefix), Lesson: spec.Lesson,
-			Prompt: draft.Prompt, Answer: draft.Answer}
-		result.Card = Card{ID: line.ID, Number: liveCards(&s.study) + 1,
-			Lesson: line.Lesson, Prompt: line.Prompt, Answer: line.Answer, Draft: true}
+			Prompt: draft.Prompt, Answer: draft.Answer, Evidence: evidence}
+		result.Card = Card{ID: line.ID, Number: liveCards(&s.study) + 1, Lesson: line.Lesson,
+			Prompt: line.Prompt, Answer: line.Answer, Evidence: line.Evidence, Draft: true}
 		return &change{Type: eventCardAdded, Data: cardAddedData{Card: line}, Items: []string{cardItem(line.ID)}}, nil
 	}, spec.DryRun)
 	if err != nil {
@@ -117,12 +167,12 @@ func liveCards(st *studyState) int {
 	return n
 }
 
-// EditCard changes a Card's prompt or answer. Editing a Card the learner
-// flagged settles the flag. Asking for the content the Card already has
+// EditCard changes a Card's prompt, answer or Evidence. Editing a Card the
+// learner flagged settles the flag. Asking for what the Card already has
 // records nothing.
 func (c *Core) EditCard(ctx context.Context, topicID string, edit CardEdit) (CardChange, error) {
-	if edit.Prompt == "" && edit.Answer == "" {
-		return CardChange{}, invalidf("give the Card's new prompt, its new answer, or both")
+	if edit.Prompt == "" && edit.Answer == "" && edit.Evidence == nil {
+		return CardChange{}, invalidf("give the Card's new prompt, answer or Evidence")
 	}
 	var err error
 	if edit.Prompt != "" {
@@ -152,8 +202,17 @@ func (c *Core) EditCard(ctx context.Context, topicID string, edit CardEdit) (Car
 		if edit.Answer != "" && edit.Answer != card.Answer {
 			d.Answer, card.Answer = edit.Answer, edit.Answer
 		}
+		if edit.Evidence != nil {
+			evidence, err := checkCardEvidence(s, topicID, edit.Evidence)
+			if err != nil {
+				return nil, err
+			}
+			if !slices.Equal(evidence, card.Evidence) {
+				d.Evidence, card.Evidence = &evidence, evidence
+			}
+		}
 		result.Card = card
-		if d.Prompt == "" && d.Answer == "" {
+		if d.Prompt == "" && d.Answer == "" && d.Evidence == nil {
 			return nil, nil
 		}
 		result.Card.Flagged = false
@@ -173,7 +232,7 @@ func (c *Core) SuspendCard(ctx context.Context, topicID, cardID string, suspend,
 	if !suspend {
 		typ = eventCardUnsuspended
 	}
-	return c.changeCard(ctx, topicID, cardID, dryRun, func(cs *cardState, card *Card) *change {
+	return c.changeCard(ctx, topicID, cardID, dryRun, func(_ *replayed, cs *cardState, card *Card) *change {
 		if cs.suspended == suspend {
 			return nil
 		}
@@ -201,7 +260,8 @@ func (c *Core) DeleteCard(ctx context.Context, topicID, cardID string, dryRun bo
 			return nil, err
 		}
 		result.Card = card
-		return &change{Type: eventCardDeleted, Data: cardRefData{Card: cardID}, Items: []string{cardItem(cardID)}}, nil
+		return &change{Type: eventCardDeleted, Data: cardDeletedData{Card: cardID, Reviews: len(cs.reviews)},
+			Items: []string{cardItem(cardID)}}, nil
 	}, dryRun)
 	if err != nil {
 		return CardChange{}, err
@@ -212,15 +272,19 @@ func (c *Core) DeleteCard(ctx context.Context, topicID, cardID string, dryRun bo
 
 // FlagCard records that the learner flagged a Card during a Review as wrong
 // or unclear, with an optional note. status shows it until the Card is
-// edited or deleted, or the flag dismissed.
+// edited or deleted, or the flag dismissed. Flagging a Card again with the
+// same note records nothing, unless its flag was dismissed: then it is a new
+// flag.
 func (c *Core) FlagCard(ctx context.Context, topicID, cardID, note string, dryRun bool) (CardChange, error) {
 	note, err := cleanText("note", note, maxCardNoteRunes)
 	if err != nil {
 		return CardChange{}, err
 	}
-	return c.changeCard(ctx, topicID, cardID, dryRun, func(cs *cardState, card *Card) *change {
+	return c.changeCard(ctx, topicID, cardID, dryRun, func(s *replayed, cs *cardState, card *Card) *change {
 		if cs.flaggedBy != "" && cs.flagNote == note {
-			return nil
+			if _, dismissed := s.dismissed[cardFlag(cs).ID]; !dismissed {
+				return nil
+			}
 		}
 		card.Flagged = true
 		return &change{Type: eventCardFlagged, Data: cardFlaggedData{Card: cardID, Note: note}}
@@ -230,7 +294,7 @@ func (c *Core) FlagCard(ctx context.Context, topicID, cardID, note string, dryRu
 // changeCard records the change decide returns for a live Card, or nothing
 // when decide returns nil.
 func (c *Core) changeCard(ctx context.Context, topicID, cardID string, dryRun bool,
-	decide func(cs *cardState, card *Card) *change) (CardChange, error) {
+	decide func(s *replayed, cs *cardState, card *Card) *change) (CardChange, error) {
 	result := CardChange{Topic: topicID, DryRun: dryRun}
 	ev, err := c.writeTopic(ctx, topicID, func(s *replayed, view *topicView) (*change, error) {
 		cs, err := liveCard(s, topicID, cardID)
@@ -241,7 +305,7 @@ func (c *Core) changeCard(ctx context.Context, topicID, cardID string, dryRun bo
 		if err != nil && CodeOf(err) != CodeCorrupt {
 			return nil, err
 		}
-		ch := decide(cs, &card)
+		ch := decide(s, cs, &card)
 		result.Card = card
 		return ch, nil
 	}, dryRun)
@@ -275,12 +339,12 @@ func applyCardEdited(ev event, item string, current []byte, exists bool) ([]byte
 	if !exists {
 		return nil, false, corruptf("Card %s is missing from %s", d.Card, cardsFile)
 	}
-	data, err := patchCard(d.Card, current, d.Prompt, d.Answer)
+	data, err := patchCard(d.Card, current, d.Prompt, d.Answer, d.Evidence)
 	return data, err == nil, err
 }
 
 func applyCardDeleted(ev event, item string, _ []byte, _ bool) ([]byte, bool, error) {
-	var d cardRefData
+	var d cardDeletedData
 	if err := json.Unmarshal(ev.Data, &d); err != nil {
 		return nil, false, corruptf("Event %s has an unreadable payload: %v", ev.ID, err)
 	}
@@ -366,7 +430,7 @@ func replayCardSuspension(suspended bool) func(*replayed, event) error {
 }
 
 func replayCardDeleted(s *replayed, ev event) error {
-	var d cardRefData
+	var d cardDeletedData
 	if err := json.Unmarshal(ev.Data, &d); err != nil {
 		return fmt.Errorf("its payload is unreadable: %v", err)
 	}
@@ -379,9 +443,24 @@ func replayCardDeleted(s *replayed, ev event) error {
 		// the Card is gone.
 		return nil
 	}
+	if missed := len(cs.reviews) - d.Reviews; missed > 0 {
+		// Reviewed on another machine that the deleting one had not synced
+		// with: the Card stays deleted, and the learner decides.
+		s.flag(newFlag(FlagConflict, cardItem(cs.id), []string{ev.ID}, "",
+			fmt.Sprintf("Card %s was deleted by Event %s on a machine that had not seen its %d latest %s, probably "+
+				"made on another machine: it stays deleted; check it with the learner",
+				cs.id, ev.ID, missed, pluralWord(missed, "Review", "Reviews"))))
+	}
 	cs.deleted, cs.droppedBy = true, ev.ID
 	cs.flaggedBy, cs.flagNote = "", ""
 	return nil
+}
+
+func pluralWord(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
 }
 
 func replayCardFlagged(s *replayed, ev event) error {

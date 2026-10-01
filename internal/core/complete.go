@@ -113,12 +113,16 @@ func (c *Core) CompleteLesson(ctx context.Context, topicID string, spec Complete
 			TurnEnded: s.study.currentTurn()}
 		var items []string
 		for _, draft := range drafts {
+			evidence, err := checkCardEvidence(s, topicID, draft.Evidence)
+			if err != nil {
+				return nil, err
+			}
 			line := cardLine{Format: FormatVersion, ID: c.newCardID(s, spec.Lesson), Lesson: spec.Lesson,
-				Prompt: draft.Prompt, Answer: draft.Answer}
+				Prompt: draft.Prompt, Answer: draft.Answer, Evidence: evidence}
 			d.Cards = append(d.Cards, line)
 			items = append(items, cardItem(line.ID))
 			result.Cards = append(result.Cards, Card{ID: line.ID, Number: liveCards(&s.study) + len(result.Cards) + 1,
-				Lesson: line.Lesson, Prompt: line.Prompt, Answer: line.Answer, Draft: true})
+				Lesson: line.Lesson, Prompt: line.Prompt, Answer: line.Answer, Evidence: line.Evidence, Draft: true})
 		}
 		result.Attempt = attempt.ID
 		return &change{Type: eventLessonCompleted, Data: d, Items: items}, nil

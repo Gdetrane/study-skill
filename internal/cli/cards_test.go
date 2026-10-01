@@ -75,8 +75,22 @@ func TestCardCommands(t *testing.T) {
 			return []string{"card", "delete", "linear-algebra", first, "--dry-run"}
 		}, cli.ExitOK},
 		{"card_review.json", func(_, second string) []string {
-			return []string{"card", "review", "linear-algebra", second, "--draft", "keep", "--rating", "good", "--json"}
+			return []string{"card", "review", "linear-algebra", second, "--draft", "keep", "--rating", "good",
+				"--request", "r-1", "--json"}
 		}, cli.ExitOK},
+		{"card_review_retry.json", func(_, second string) []string {
+			return []string{"card", "review", "linear-algebra", second, "--draft", "keep", "--rating", "good",
+				"--request", "r-1", "--json"}
+		}, cli.ExitOK},
+		{"card_delete.txt", func(first, _ string) []string {
+			return []string{"card", "delete", "linear-algebra", first}
+		}, cli.ExitOK},
+		{"card_delete_again.txt", func(first, _ string) []string {
+			return []string{"card", "delete", "linear-algebra", first}
+		}, cli.ExitOK},
+		{"card_edit_evidence_twice.json", func(_, second string) []string {
+			return []string{"card", "edit", "linear-algebra", second, "--evidence", "e1", "--clear-evidence", "--json"}
+		}, cli.ExitUsage},
 		{"card_edit_unknown.json", func(_, _ string) []string {
 			return []string{"card", "edit", "linear-algebra", "explore.nope", "--prompt", "P", "--json"}
 		}, cli.ExitError},

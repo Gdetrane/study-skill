@@ -33,11 +33,13 @@ func addCardTools(server *mcp.Server, c *core.Core) {
 		Name:  "review_record",
 		Title: "Record a Review",
 		Description: "Record the learner's Review of a Card: again, hard, good or easy, as the learner rates their own " +
-			"recall. At a draft's first Review, the learner also keeps, edits (give the new prompt and answer) or drops it.",
+			"recall. At a draft's first Review, the learner also keeps, edits (give the new prompt and answer) or drops it. " +
+			"Give each Review a request id of your own: retrying with it after an error returns the Review already " +
+			"recorded instead of recording it twice.",
 		Annotations: write,
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in reviewRecordInput) (*mcp.CallToolResult, core.ReviewResult, error) {
 		r, err := c.RecordReview(ctx, in.Topic, core.ReviewSpec{Card: in.Card, Rating: in.Rating, Draft: in.Draft,
-			Prompt: in.Prompt, Answer: in.Answer})
+			Prompt: in.Prompt, Answer: in.Answer, Request: in.Request})
 		return nil, r, toolErr(err)
 	})
 
@@ -57,22 +59,25 @@ func addCardTools(server *mcp.Server, c *core.Core) {
 		Name:  "card_add",
 		Title: "Add a Card",
 		Description: "Add a Card: one fact, a prompt without its answer, and the expected answer. Give the Lesson it " +
-			"comes from, or no Lesson for an Explore Card from free questions. It is a draft until the learner keeps, " +
-			"edits or drops it at its first Review. Cards from a Lesson's completion go with lesson_complete instead.",
+			"comes from, or no Lesson for an Explore Card from free questions. Cite the Evidence it relies on when there " +
+			"is some. Text may span lines, for code. It is a draft until the learner keeps, edits or drops it at its " +
+			"first Review. Cards from a Lesson's completion go with lesson_complete instead.",
 		Annotations: write,
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in cardAddInput) (*mcp.CallToolResult, core.CardChange, error) {
-		r, err := c.AddCard(ctx, in.Topic, core.CardSpec{Lesson: in.Lesson, Prompt: in.Prompt, Answer: in.Answer})
+		r, err := c.AddCard(ctx, in.Topic, core.CardSpec{Lesson: in.Lesson, Prompt: in.Prompt, Answer: in.Answer,
+			Evidence: in.Evidence})
 		return nil, r, toolErr(err)
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:  "card_edit",
 		Title: "Edit a Card",
-		Description: "Change a Card's prompt, its answer, or both, keeping its schedule. Editing a Card the learner " +
-			"flagged settles the flag.",
+		Description: "Change a Card's prompt, answer or Evidence, keeping its schedule. Evidence, when given, " +
+			"replaces the Card's list; an empty list removes it. Editing a Card the learner flagged settles the flag.",
 		Annotations: idempotent,
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in cardEditInput) (*mcp.CallToolResult, core.CardChange, error) {
-		r, err := c.EditCard(ctx, in.Topic, core.CardEdit{Card: in.Card, Prompt: in.Prompt, Answer: in.Answer})
+		r, err := c.EditCard(ctx, in.Topic, core.CardEdit{Card: in.Card, Prompt: in.Prompt, Answer: in.Answer,
+			Evidence: in.Evidence})
 		return nil, r, toolErr(err)
 	})
 
@@ -107,12 +112,13 @@ type dueCardsInput struct {
 }
 
 type reviewRecordInput struct {
-	Topic  string `json:"topic" jsonschema:"the Topic's id"`
-	Card   string `json:"card" jsonschema:"the Card's id, from due_cards"`
-	Rating string `json:"rating,omitempty" jsonschema:"again, hard, good or easy; not needed to drop a draft"`
-	Draft  string `json:"draft,omitempty" jsonschema:"at a draft's first Review: keep, edit or drop"`
-	Prompt string `json:"prompt,omitempty" jsonschema:"the new prompt, when editing a draft"`
-	Answer string `json:"answer,omitempty" jsonschema:"the new answer, when editing a draft"`
+	Topic   string `json:"topic" jsonschema:"the Topic's id"`
+	Card    string `json:"card" jsonschema:"the Card's id, from due_cards"`
+	Rating  string `json:"rating,omitempty" jsonschema:"again, hard, good or easy; not needed to drop a draft"`
+	Draft   string `json:"draft,omitempty" jsonschema:"at a draft's first Review: keep, edit or drop"`
+	Prompt  string `json:"prompt,omitempty" jsonschema:"the new prompt, when editing a draft"`
+	Answer  string `json:"answer,omitempty" jsonschema:"the new answer, when editing a draft"`
+	Request string `json:"request,omitempty" jsonschema:"your own id for this Review, so a retry records nothing"`
 }
 
 type cardsInput struct {
@@ -126,17 +132,19 @@ type cardInput struct {
 }
 
 type cardAddInput struct {
-	Topic  string `json:"topic" jsonschema:"the Topic's id"`
-	Lesson string `json:"lesson,omitempty" jsonschema:"the Lesson the Card comes from; leave out for an Explore Card"`
-	Prompt string `json:"prompt" jsonschema:"the question, without its answer"`
-	Answer string `json:"answer" jsonschema:"the expected answer"`
+	Topic    string   `json:"topic" jsonschema:"the Topic's id"`
+	Lesson   string   `json:"lesson,omitempty" jsonschema:"the Lesson the Card comes from; leave out for an Explore Card"`
+	Prompt   string   `json:"prompt" jsonschema:"the question, without its answer"`
+	Answer   string   `json:"answer" jsonschema:"the expected answer"`
+	Evidence []string `json:"evidence,omitempty" jsonschema:"ids of the Evidence the Card relies on, from evidence"`
 }
 
 type cardEditInput struct {
-	Topic  string `json:"topic" jsonschema:"the Topic's id"`
-	Card   string `json:"card" jsonschema:"the Card's id, from cards or due_cards"`
-	Prompt string `json:"prompt,omitempty" jsonschema:"the new prompt; leave out to keep it"`
-	Answer string `json:"answer,omitempty" jsonschema:"the new answer; leave out to keep it"`
+	Topic    string   `json:"topic" jsonschema:"the Topic's id"`
+	Card     string   `json:"card" jsonschema:"the Card's id, from cards or due_cards"`
+	Prompt   string   `json:"prompt,omitempty" jsonschema:"the new prompt; leave out to keep it"`
+	Answer   string   `json:"answer,omitempty" jsonschema:"the new answer; leave out to keep it"`
+	Evidence []string `json:"evidence,omitempty" jsonschema:"the Card's Evidence ids; leave out to keep them, [] removes them"`
 }
 
 type cardSuspendInput struct {

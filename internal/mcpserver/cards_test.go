@@ -48,6 +48,16 @@ func TestCardTools(t *testing.T) {
 		t.Errorf("card_suspend with suspended false = %+v", unsuspended)
 	}
 
+	// A retried Review with the same request records nothing.
+	for i, want := range []bool{true, false} {
+		var r core.ReviewResult
+		decode(t, call(t, session, "review_record", map[string]any{"topic": "c", "card": added.Card.ID, "draft": "keep",
+			"rating": "good", "request": "agent-7"}), &r)
+		if r.Changed != want || r.Card.Draft {
+			t.Errorf("review_record call %d = %+v, want changed %v", i+1, r, want)
+		}
+	}
+
 	var deleted core.CardChange
 	decode(t, call(t, session, "card_delete", map[string]any{"topic": "c", "card": added.Card.ID}), &deleted)
 	if !deleted.Changed {

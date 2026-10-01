@@ -108,6 +108,9 @@ func (s Syllabus) validate() (Syllabus, error) {
 		if err := validateEntityID(kind, id); err != nil {
 			return at(where, err)
 		}
+		if id == exploreLesson {
+			return invalidf("the id %q is reserved for Explore Cards; give the %s another id", id, kind)
+		}
 		if other, ok := seen[id]; ok {
 			return invalidf("%s: the id %q is already used by %s", where, id, other)
 		}

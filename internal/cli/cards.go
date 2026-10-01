@@ -106,12 +106,14 @@ func (a *app) cardCommand() *cobra.Command {
 	add.Flags().StringVar(&spec.Lesson, "lesson", "", "the Lesson the Card comes from; leave out for an Explore Card")
 	add.Flags().StringVar(&spec.Prompt, "prompt", "", "the question, without its answer")
 	add.Flags().StringVar(&spec.Answer, "answer", "", "the expected answer")
+	add.Flags().StringSliceVar(&spec.Evidence, "evidence", nil, "ids of the Evidence the Card relies on")
 	add.Flags().BoolVar(&spec.DryRun, "dry-run", false, "show the Card that would be added without recording it")
 
 	var edit core.CardEdit
+	var clearEvidence bool
 	editCmd := &cobra.Command{
 		Use:     "edit <topic> <card>",
-		Short:   "Change a Card's prompt or answer, keeping its schedule",
+		Short:   "Change a Card's prompt, answer or Evidence, keeping its schedule",
 		Example: `  study card edit c pointers.k3x9a2bq --answer "The value stored in x"`,
 		Args:    exactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -120,12 +122,22 @@ func (a *app) cardCommand() *cobra.Command {
 				return a.fail(err)
 			}
 			edit.Card = args[1]
+			switch {
+			case clearEvidence && cmd.Flags().Changed("evidence"):
+				return a.fail(usageError{fmt.Errorf("give --evidence or --clear-evidence, not both")})
+			case clearEvidence:
+				edit.Evidence = []string{}
+			case !cmd.Flags().Changed("evidence"):
+				edit.Evidence = nil
+			}
 			res, err := c.EditCard(cmd.Context(), args[0], edit)
 			return result(cmd, res, err, "edit")
 		},
 	}
 	editCmd.Flags().StringVar(&edit.Prompt, "prompt", "", "the new prompt")
 	editCmd.Flags().StringVar(&edit.Answer, "answer", "", "the new answer")
+	editCmd.Flags().StringSliceVar(&edit.Evidence, "evidence", nil, "the Evidence ids the Card relies on, replacing its list")
+	editCmd.Flags().BoolVar(&clearEvidence, "clear-evidence", false, "remove the Card's Evidence")
 	editCmd.Flags().BoolVar(&edit.DryRun, "dry-run", false, "show the Card as it would be without recording it")
 
 	var undo, suspendDryRun bool
@@ -213,6 +225,7 @@ func (a *app) cardCommand() *cobra.Command {
 	reviewCmd.Flags().StringVar(&review.Draft, "draft", "", "at a draft's first Review: keep, edit or drop")
 	reviewCmd.Flags().StringVar(&review.Prompt, "prompt", "", "the new prompt, with --draft edit")
 	reviewCmd.Flags().StringVar(&review.Answer, "answer", "", "the new answer, with --draft edit")
+	reviewCmd.Flags().StringVar(&review.Request, "request", "", "your own id for this Review, so a retry records nothing")
 	reviewCmd.Flags().BoolVar(&review.DryRun, "dry-run", false, "show the result without recording it")
 	_ = reviewCmd.RegisterFlagCompletionFunc("rating", cobra.FixedCompletions(
 		[]string{core.RatingAgain, core.RatingHard, core.RatingGood, core.RatingEasy}, cobra.ShellCompDirectiveNoFileComp))
@@ -297,6 +310,10 @@ func writeCardChange(w io.Writer, res core.CardChange, verb string) error {
 	switch {
 	case res.DryRun && res.Changed:
 		_, err = fmt.Fprintf(w, "Would %s %s, %s\n", verb, label, res.Card.ID)
+	case !res.Changed && verb == "delete":
+		_, err = fmt.Fprintf(w, "Card %s was already deleted or dropped: nothing changed\n", res.Card.ID)
+	case !res.Changed && verb == "add":
+		_, err = fmt.Fprintf(w, "%s %s already has that prompt and answer: nothing added\n", label, res.Card.ID)
 	case !res.Changed:
 		_, err = fmt.Fprintf(w, "%s %s was already as asked: nothing changed\n", label, res.Card.ID)
 	default:

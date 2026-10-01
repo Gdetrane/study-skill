@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -86,12 +87,15 @@ type cardLine struct {
 	Lesson string `json:"lesson,omitempty"`
 	Prompt string `json:"prompt"`
 	Answer string `json:"answer"`
+	// Evidence lists the ids of the Evidence the Card relies on.
+	Evidence []string `json:"evidence,omitempty"`
 }
 
 // CardDraft is a new Card's content.
 type CardDraft struct {
-	Prompt string `json:"prompt" jsonschema:"the question, without its answer"`
-	Answer string `json:"answer" jsonschema:"the expected answer"`
+	Prompt   string   `json:"prompt" jsonschema:"the question, without its answer"`
+	Answer   string   `json:"answer" jsonschema:"the expected answer"`
+	Evidence []string `json:"evidence,omitempty" jsonschema:"ids of the Evidence the Card relies on, from evidence"`
 }
 
 // Card is a Card with its state, computed from the History.
@@ -106,6 +110,8 @@ type Card struct {
 	Lesson string `json:"lesson,omitempty"`
 	Prompt string `json:"prompt"`
 	Answer string `json:"answer"`
+	// Evidence lists the ids of the Evidence the Card relies on.
+	Evidence []string `json:"evidence,omitempty"`
 	// Draft is true until the Card's first Review.
 	Draft bool `json:"draft"`
 	// Suspended Cards are never offered for Review until unsuspended.
@@ -141,6 +147,11 @@ type cardState struct {
 	// decided is when the draft was decided: kept, edited or dropped at
 	// its first Review. It counts towards that day's cap on new Cards.
 	decided time.Time
+	// decision is that first decision, so a retry is recognised.
+	decision *reviewRecordedData
+	// dueAt caches due, once dueKnown.
+	dueAt    time.Time
+	dueKnown bool
 }
 
 type review struct {
@@ -154,8 +165,14 @@ func (cs *cardState) draft() bool { return len(cs.reviews) == 0 }
 // Review or deleted.
 func (cs *cardState) gone() bool { return cs.dropped || cs.deleted }
 
-// due is when the Card is next due; zero for a draft.
-func (cs *cardState) due() time.Time { return schedule(cs.reviews) }
+// due is when the Card is next due; zero for a draft. Replay is over when
+// anyone asks, so it is scheduled once.
+func (cs *cardState) due() time.Time {
+	if !cs.dueKnown {
+		cs.dueAt, cs.dueKnown = schedule(cs.reviews), true
+	}
+	return cs.dueAt
+}
 
 // lessonShown is the Lesson a Card names: empty for an Explore Card.
 func (cs *cardState) lessonShown() string {
@@ -174,7 +191,7 @@ func cleanDraft(d CardDraft) (CardDraft, error) {
 	if err != nil {
 		return d, err
 	}
-	return CardDraft{Prompt: prompt, Answer: answer}, nil
+	return CardDraft{Prompt: prompt, Answer: answer, Evidence: d.Evidence}, nil
 }
 
 // CheckCardDraft checks a Card's prompt and answer as adding or editing it
@@ -225,22 +242,35 @@ func encodeCard(line cardLine) ([]byte, error) {
 	return data, nil
 }
 
-// patchCard replaces a Card line's prompt and answer, those given, keeping
-// every other field, including fields this version of study does not know.
-func patchCard(cardID string, current []byte, prompt, answer string) ([]byte, error) {
+// patchCard replaces a Card line's prompt, answer and Evidence, those given,
+// keeping every other field, including fields this version of study does
+// not know. An empty Evidence list removes the field.
+func patchCard(cardID string, current []byte, prompt, answer string, evidence *[]string) ([]byte, error) {
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(current, &fields); err != nil {
 		return nil, corruptf("Card %s in %s is not valid: %v", cardID, cardsFile, err)
 	}
-	for key, value := range map[string]string{"prompt": prompt, "answer": answer} {
-		if value == "" {
-			continue
-		}
+	set := func(key string, value any) error {
 		raw, err := json.Marshal(value)
 		if err != nil {
-			return nil, internalError("encoding a Card", err)
+			return internalError("encoding a Card", err)
 		}
 		fields[key] = raw
+		return nil
+	}
+	for key, value := range map[string]string{"prompt": prompt, "answer": answer} {
+		if value != "" {
+			if err := set(key, value); err != nil {
+				return nil, err
+			}
+		}
+	}
+	if evidence != nil {
+		if len(*evidence) == 0 {
+			delete(fields, "evidence")
+		} else if err := set("evidence", *evidence); err != nil {
+			return nil, err
+		}
 	}
 	data, err := json.Marshal(fields)
 	if err != nil {
@@ -258,6 +288,9 @@ type reviewRecordedData struct {
 	Draft  string `json:"draft,omitempty"`
 	Prompt string `json:"prompt,omitempty"`
 	Answer string `json:"answer,omitempty"`
+	// Request is the client's id for the Review, so a retry with it
+	// records nothing.
+	Request string `json:"request,omitempty"`
 }
 
 // ReviewSpec describes a Review.
@@ -272,16 +305,23 @@ type ReviewSpec struct {
 	// Prompt and Answer replace the Card's content when editing a draft.
 	Prompt string
 	Answer string
-	DryRun bool
+	// Request is an optional id the client chooses for this Review. A
+	// retry with the same id returns the Review already recorded.
+	Request string
+	DryRun  bool
 }
 
-// ReviewResult is the result of RecordReview.
+// ReviewResult is the result of RecordReview: the Card as it is after the
+// Review, or would be after a dry run.
 type ReviewResult struct {
 	Topic   string `json:"topic"`
 	Card    Card   `json:"card"`
 	Rating  string `json:"rating,omitempty"`
 	Dropped bool   `json:"dropped"`
-	DryRun  bool   `json:"dry_run,omitempty"`
+	// Changed is false when the Review was already recorded, by a retry
+	// with the same request or the same first decision on a draft.
+	Changed bool `json:"changed"`
+	DryRun  bool `json:"dry_run,omitempty"`
 }
 
 func checkRating(r string) error {
@@ -310,14 +350,27 @@ func liveCard(s *replayed, topicID, cardID string) (*cardState, error) {
 	return cs, nil
 }
 
+var requestPattern = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,64}$`)
+
+// sameDecision reports whether spec repeats a draft's recorded first
+// decision, as a retry after an error or a crash does.
+func sameDecision(d *reviewRecordedData, spec ReviewSpec, edit CardDraft) bool {
+	return d != nil && d.Draft == spec.Draft && d.Rating == spec.Rating && d.Prompt == edit.Prompt && d.Answer == edit.Answer
+}
+
 // RecordReview records one Review of a Card. At a draft's first Review the
 // learner keeps, edits or drops it; a dropped Card is removed from
-// cards.jsonl and never scheduled.
+// cards.jsonl and never scheduled. A retry, with the same request id or
+// repeating a draft's first decision, returns what was recorded and records
+// nothing.
 func (c *Core) RecordReview(ctx context.Context, topicID string, spec ReviewSpec) (ReviewResult, error) {
 	if spec.Draft != DraftDrop || spec.Rating != "" {
 		if err := checkRating(spec.Rating); err != nil {
 			return ReviewResult{}, err
 		}
+	}
+	if spec.Request != "" && !requestPattern.MatchString(spec.Request) {
+		return ReviewResult{}, invalidf("the request id must be 1 to 64 letters, digits, dots, colons, hyphens or underscores")
 	}
 	var edit CardDraft
 	switch spec.Draft {
@@ -334,7 +387,18 @@ func (c *Core) RecordReview(ctx context.Context, topicID string, spec ReviewSpec
 		return ReviewResult{}, invalidf("draft must be keep, edit or drop, not %q", spec.Draft)
 	}
 	result := ReviewResult{Topic: topicID, Rating: spec.Rating, Dropped: spec.Draft == DraftDrop, DryRun: spec.DryRun}
-	_, err := c.writeTopic(ctx, topicID, func(s *replayed, view *topicView) (*change, error) {
+	var preview []review // in a dry run, the Card's Reviews with this one
+	ev, err := c.writeTopic(ctx, topicID, func(s *replayed, view *topicView) (*change, error) {
+		if r, ok := s.study.requests[spec.Request]; spec.Request != "" && ok {
+			if r.Card != spec.Card {
+				return nil, invalidf("request %s already recorded a Review of Card %s, not %s", spec.Request, r.Card, spec.Card)
+			}
+			result.Rating, result.Dropped = r.Rating, r.Draft == DraftDrop
+			return nil, nil
+		}
+		if cs := s.study.cards[spec.Card]; cs != nil && spec.Draft != "" && sameDecision(cs.decision, spec, edit) {
+			return nil, nil
+		}
 		cs, err := liveCard(s, topicID, spec.Card)
 		if err != nil {
 			return nil, err
@@ -345,34 +409,62 @@ func (c *Core) RecordReview(ctx context.Context, topicID string, spec ReviewSpec
 		case !cs.draft() && spec.Draft != "":
 			return nil, invalidf("Card %s is not a draft any more", spec.Card)
 		}
-		d := reviewRecordedData{Card: spec.Card, Rating: spec.Rating, Draft: spec.Draft, Prompt: edit.Prompt, Answer: edit.Answer}
+		d := reviewRecordedData{Card: spec.Card, Rating: spec.Rating, Draft: spec.Draft, Prompt: edit.Prompt,
+			Answer: edit.Answer, Request: spec.Request}
 		ch := &change{Type: eventReviewRecorded, Data: d}
 		if spec.Draft == DraftEdit || spec.Draft == DraftDrop {
 			ch.Items = []string{cardItem(spec.Card)}
 		}
-		card, err := readCard(view, s, cs)
-		if err != nil {
-			return nil, err
-		}
-		if spec.Draft == DraftEdit {
-			card.Prompt, card.Answer, card.Flagged = edit.Prompt, edit.Answer, false
-		}
-		result.Card = card
+		preview = append(append([]review{}, cs.reviews...), review{at: c.now(), rating: spec.Rating})
 		return ch, nil
 	}, spec.DryRun)
 	if err != nil {
 		return ReviewResult{}, err
 	}
-	if !result.Dropped {
-		s, _, err := c.replayTopic(ctx, topicID)
-		if err != nil {
-			return ReviewResult{}, err
-		}
-		if cs := s.study.cards[spec.Card]; cs != nil {
-			result.Card.Draft, result.Card.Due = cs.draft(), cs.due()
+	result.Changed = ev != nil
+	card, err := c.cardNow(ctx, topicID, spec.Card)
+	if err != nil {
+		return ReviewResult{}, err
+	}
+	result.Card = card
+	if spec.DryRun && result.Changed && !result.Dropped {
+		result.Card.Draft, result.Card.Due = false, schedule(preview)
+		if spec.Draft == DraftEdit {
+			result.Card.Prompt, result.Card.Answer, result.Card.Flagged = edit.Prompt, edit.Answer, false
 		}
 	}
 	return result, nil
+}
+
+// cardNow reads one Card as it is now, dropped and deleted Cards included,
+// with the content the History knows once its line is gone.
+func (c *Core) cardNow(ctx context.Context, topicID, cardID string) (Card, error) {
+	if err := ctx.Err(); err != nil {
+		return Card{}, err
+	}
+	home, topic, err := c.openTopicFolder(topicID)
+	if err != nil {
+		return Card{}, err
+	}
+	defer home.Close()
+	defer topic.Close()
+	h, err := readHistory(topic, topicID)
+	if err != nil {
+		return Card{}, err
+	}
+	s := replayHistory(h)
+	cs := s.study.cards[cardID]
+	switch {
+	case cs == nil:
+		return Card{ID: cardID}, nil
+	case cs.gone():
+		return Card{ID: cardID, Lesson: cs.lessonShown(), Prompt: cs.prompt, Answer: cs.answer}, nil
+	}
+	card, err := readCard(newView(topic, s), s, cs)
+	if err != nil && CodeOf(err) != CodeCorrupt {
+		return Card{}, err
+	}
+	return card, nil
 }
 
 // readCard reads a Card's content from cards.jsonl, which is authoritative
@@ -383,7 +475,7 @@ func readCard(view *topicView, s *replayed, cs *cardState) (Card, error) {
 		return Card{}, err
 	}
 	card := Card{ID: cs.id, Number: s.study.cardNumber(cs.id), Lesson: cs.lessonShown(), Draft: cs.draft(),
-		Suspended: cs.suspended, Flagged: cs.flaggedBy != "", Due: cs.due()}
+		Suspended: cs.suspended, Flagged: s.cardFlagged(cs), Due: cs.due()}
 	if !exists {
 		return card, &Error{Code: CodeCorrupt, Message: fmt.Sprintf("Card %s is missing from %s", cs.id, cardsFile)}
 	}
@@ -391,25 +483,25 @@ func readCard(view *topicView, s *replayed, cs *cardState) (Card, error) {
 	if err := json.Unmarshal(data, &line); err != nil {
 		return card, corruptf("Card %s in %s is not valid: %v", cs.id, cardsFile, err)
 	}
-	card.Prompt, card.Answer = line.Prompt, line.Answer
+	card.Prompt, card.Answer, card.Evidence = line.Prompt, line.Answer, line.Evidence
 	return card, nil
 }
 
 // cardNumber is a Card's display number: its position among the Cards not
-// dropped or deleted, in the order they were written, from 1.
+// dropped or deleted, in the order they were written, from 1. The numbers
+// are counted once per replay.
 func (st *studyState) cardNumber(id string) int {
-	n := 0
-	for _, other := range st.cardOrder {
-		cs := st.cards[other]
-		if cs.gone() {
-			continue
-		}
-		n++
-		if other == id {
-			return n
+	if st.numbers == nil {
+		st.numbers = make(map[string]int, len(st.cardOrder))
+		n := 0
+		for _, other := range st.cardOrder {
+			if !st.cards[other].gone() {
+				n++
+				st.numbers[other] = n
+			}
 		}
 	}
-	return 0
+	return st.numbers[id]
 }
 
 func applyReviewRecorded(ev event, item string, current []byte, exists bool) ([]byte, bool, error) {
@@ -426,7 +518,7 @@ func applyReviewRecorded(ev event, item string, current []byte, exists bool) ([]
 	if !exists {
 		return nil, false, corruptf("Card %s is missing from %s", d.Card, cardsFile)
 	}
-	data, err := patchCard(d.Card, current, d.Prompt, d.Answer)
+	data, err := patchCard(d.Card, current, d.Prompt, d.Answer, nil)
 	return data, err == nil, err
 }
 
@@ -452,12 +544,26 @@ func replayReviewRecorded(s *replayed, ev event) error {
 	if cs == nil {
 		return fmt.Errorf("%w: Card %s", errUnknownItem, d.Card)
 	}
+	if d.Request != "" {
+		if _, ok := s.study.requests[d.Request]; !ok {
+			s.study.requests[d.Request] = d
+		}
+	}
 	if cs.gone() {
 		goneConflict(s, cs, ev, "reviewed")
 		return nil
 	}
-	if d.Draft != "" && cs.decided.IsZero() {
-		cs.decided = wallOf(ev)
+	if d.Draft != "" {
+		if cs.decision != nil {
+			// The draft was decided on another machine too, before
+			// syncing: the first decision counts, and the learner checks.
+			s.flag(newFlag(FlagConflict, cardItem(cs.id), []string{ev.ID}, "",
+				fmt.Sprintf("Card %s was decided twice at its first Review, probably on two machines: "+
+					"the first decision (%s) counts and Event %s's (%s) was set aside; check it with the learner",
+					cs.id, cs.decision.Draft, ev.ID, d.Draft)))
+			return nil
+		}
+		cs.decision, cs.decided = &d, wallOf(ev)
 	}
 	if d.Draft == DraftDrop {
 		cs.dropped, cs.droppedBy = true, ev.ID
@@ -494,6 +600,9 @@ type DueCards struct {
 
 // dueLimit returns how many Cards to offer, and the Energy that decided it.
 func dueLimit(s *replayed, q DueQuery) (int, string, error) {
+	if _, ok := dueLimitByEnergy[q.Energy]; q.Energy != "" && !ok {
+		return 0, "", invalidf("energy must be full, half or fumes, not %q", q.Energy)
+	}
 	switch {
 	case q.Limit < 0:
 		return 0, "", invalidf("the limit must be positive")
@@ -545,6 +654,10 @@ func (st *studyState) draftsLeftToday(now time.Time) int {
 // Energy: those due first, earliest first, then drafts in the order they
 // were written, as many as today's cap on new Cards allows. Suspended Cards
 // are never offered. It never says how many more Cards are due.
+//
+// TODO(#28): status and session_open need only whether Cards are ready and
+// when the next falls due; a boolean or a next-due query should replace
+// counting what this returns.
 func (c *Core) DueCardsOf(ctx context.Context, topicID string, q DueQuery) (DueCards, error) {
 	s, _, err := c.replayTopic(ctx, topicID)
 	if err != nil {
@@ -647,16 +760,31 @@ func (c *Core) ListCards(ctx context.Context, topicID string, q CardQuery) (Card
 func (st *studyState) cardFlags() []Flag {
 	var flags []Flag
 	for _, id := range st.cardOrder {
-		cs := st.cards[id]
-		if cs.gone() || cs.flaggedBy == "" {
-			continue
+		if cs := st.cards[id]; !cs.gone() && cs.flaggedBy != "" {
+			flags = append(flags, cardFlag(cs))
 		}
-		msg := fmt.Sprintf("the learner flagged Card %s during a Review as wrong or unclear", id)
-		if cs.flagNote != "" {
-			msg += ": " + cs.flagNote
-		}
-		msg += "; fix it with card_edit, or delete it"
-		flags = append(flags, newFlag(FlagCardFlagged, cardItem(id), []string{cs.flaggedBy}, "", msg))
 	}
 	return flags
+}
+
+// cardFlag is the flag of a Card the learner flagged. Its ID follows the
+// card.flagged Event, so flagging the Card again after a dismissal is a new
+// flag.
+func cardFlag(cs *cardState) Flag {
+	msg := fmt.Sprintf("the learner flagged Card %s during a Review as wrong or unclear", cs.id)
+	if cs.flagNote != "" {
+		msg += ": " + cs.flagNote
+	}
+	msg += "; fix it with card_edit, or delete it"
+	return newFlag(FlagCardFlagged, cardItem(cs.id), []string{cs.flaggedBy}, "", msg)
+}
+
+// cardFlagged reports whether a Card carries a flag the learner has not
+// dismissed.
+func (s *replayed) cardFlagged(cs *cardState) bool {
+	if cs.flaggedBy == "" {
+		return false
+	}
+	_, dismissed := s.dismissed[cardFlag(cs).ID]
+	return !dismissed
 }

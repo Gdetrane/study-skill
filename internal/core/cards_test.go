@@ -87,7 +87,7 @@ func TestCardsCanBeAddedEditedSuspendedAndDeleted(t *testing.T) {
 
 	// A field this version does not know survives an edit.
 	path := filepath.Join(m.home, "c", cardsFile)
-	data := strings.Replace(readCardsFile(t, m), `"answer":"42"`, `"answer":"42","evidence":{"source":"kr"}`, 1)
+	data := strings.Replace(readCardsFile(t, m), `"answer":"42"`, `"answer":"42","hint":{"source":"kr"}`, 1)
 	if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +95,7 @@ func TestCardsCanBeAddedEditedSuspendedAndDeleted(t *testing.T) {
 	if err != nil || !edited.Changed || edited.Card.Answer != "Forty-two" || edited.Card.Prompt != "What is the answer?" {
 		t.Fatalf("EditCard = %+v, %v", edited, err)
 	}
-	if got := readCardsFile(t, m); !strings.Contains(got, `"evidence":{"source":"kr"}`) || !strings.Contains(got, "Forty-two") {
+	if got := readCardsFile(t, m); !strings.Contains(got, `"hint":{"source":"kr"}`) || !strings.Contains(got, "Forty-two") {
 		t.Errorf("after the edit, %s =\n%s", cardsFile, got)
 	}
 	if same, err := m.EditCard(ctx, "c", CardEdit{Card: lesson.ID, Answer: "Forty-two"}); err != nil || same.Changed {
