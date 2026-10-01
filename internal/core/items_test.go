@@ -223,8 +223,8 @@ func TestARepeatedEntryReadsTheSameInEitherOrder(t *testing.T) {
 	if string(gotA) != string(gotB) {
 		t.Errorf("machine A reads %s but machine B reads %s", gotA, gotB)
 	}
-	if repeats := jsonlRepeats(onA); len(repeats) != 1 || repeats[0] != "c1" {
-		t.Errorf("repeats = %v, want [c1]", repeats)
+	if idx, err := jsonlIndex(onA); err != nil || len(idx["c1"]) != 2 || len(idx["c2"]) != 1 {
+		t.Errorf("index = %q, %v; want two contents for c1", idx, err)
 	}
 
 	written, err := jsonlPut(onB, "c1", []byte(`{"id":"c1","prompt":"settled"}`), true)
@@ -233,5 +233,55 @@ func TestARepeatedEntryReadsTheSameInEitherOrder(t *testing.T) {
 	}
 	if want := `{"id":"c1","prompt":"settled"}` + "\n" + other + "\n"; string(written) != want {
 		t.Errorf("after writing the entry:\n%s\nwant:\n%s", written, want)
+	}
+}
+
+// TestTheResolverRule pins the rule every reader of an entity follows when a
+// merge leaves several lines for it. The recorded line always sorts last,
+// so a rule that just took the smallest line would fail.
+func TestTheResolverRule(t *testing.T) {
+	recorded := []byte(`{"id":"c","v":"z recorded last"}`)
+	older := []byte(`{"id":"c","v":"b recorded earlier"}`)
+	hand := []byte(`{"id":"c","v":"c edited by hand"}`)
+	hand2 := []byte(`{"id":"c","v":"a edited by hand elsewhere"}`)
+	versions := itemVersions{latest: contentHash(recorded, true), recorded: true,
+		known: map[string]int{contentHash(older, true): 1, contentHash(recorded, true): 2}}
+	removed := itemVersions{latest: "", recorded: true, known: versions.known}
+	for _, tc := range []struct {
+		name        string
+		contents    [][]byte
+		v           itemVersions
+		historyText bool
+		want        []byte
+		exists      bool
+		conflict    bool
+	}{
+		{"one line is the entity", [][]byte{hand}, versions, false, hand, true, false},
+		{"the recorded version beats debris", [][]byte{older, recorded}, versions, false, recorded, true, false},
+		{"a hand edit beats the recorded version", [][]byte{recorded, hand}, versions, false, hand, true, false},
+		{"a hand edit beats debris", [][]byte{older, hand}, versions, false, hand, true, false},
+		{"two hand edits conflict", [][]byte{hand, recorded, hand2}, versions, false, hand2, true, true},
+		{"debris never revives a removed entity", [][]byte{older, recorded}, removed, false, nil, false, false},
+		{"debris alone gives the latest debris", [][]byte{older, recorded},
+			itemVersions{latest: "x", recorded: true, known: versions.known}, false, recorded, true, false},
+		{"the History's text wins", [][]byte{hand, recorded}, versions, true, recorded, true, true},
+		{"debris is no conflict where the History holds the text", [][]byte{older, recorded}, versions, true, recorded, true, false},
+		{"without the History, the smallest line", [][]byte{hand, hand2}, itemVersions{}, false, hand2, true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, exists, unknown := resolveEntity(tc.contents, tc.v, tc.historyText)
+			if string(got) != string(tc.want) || exists != tc.exists {
+				t.Errorf("resolveEntity = %s, %v; want %s, %v", got, exists, tc.want, tc.exists)
+			}
+			if c := conflicting(unknown, tc.historyText); c != tc.conflict {
+				t.Errorf("conflict = %v, want %v", c, tc.conflict)
+			}
+			// The order the merge left the lines in never matters.
+			reversed := slices.Clone(tc.contents)
+			slices.Reverse(reversed)
+			if again, _, _ := resolveEntity(reversed, tc.v, tc.historyText); string(again) != string(got) {
+				t.Errorf("in reverse order: %s, want %s", again, got)
+			}
+		})
 	}
 }

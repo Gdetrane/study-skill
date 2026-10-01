@@ -141,6 +141,10 @@ type replayed struct {
 	// versions holds, for each item, the version recorded by the last
 	// Event that changed it.
 	versions map[string]version
+	// recorded holds, for each item, every version any Event recorded for
+	// it, before or after, with the position of the last Event that did:
+	// a line a merge leaves at one of these versions is debris.
+	recorded map[string]map[string]int
 	// flags are what replay found, before dismissals are taken out.
 	flags []Flag
 	// dismissed holds the flags the learner dismissed: ID → kind.
@@ -198,6 +202,7 @@ func replayHistory(h historyLog) *replayed {
 func replay(events []event) *replayed {
 	s := &replayed{
 		versions:  map[string]version{},
+		recorded:  map[string]map[string]int{},
 		dismissed: map[string]string{},
 		study:     newStudyState(),
 		seen:      map[string][]byte{},
@@ -248,6 +253,14 @@ func (s *replayed) apply(ev event) error {
 		return nil
 	}
 	for _, it := range ev.Items {
+		if s.recorded[it.Item] == nil {
+			s.recorded[it.Item] = map[string]int{}
+		}
+		for _, hash := range []string{it.Before, it.After} {
+			if hash != "" {
+				s.recorded[it.Item][hash] = len(s.applied)
+			}
+		}
 		if it.Before == it.After {
 			// The Event left the item as it was, but it is still the
 			// version this Event recorded: adopting a hand edit that
@@ -273,6 +286,16 @@ func (s *replayed) apply(ev event) error {
 		s.versions[it.Item] = version{hash: it.After, event: ev.ID}
 	}
 	return nil
+}
+
+// itemVersions returns what the History recorded for an item, for the
+// resolver that picks among the lines a merge leaves (see resolveEntity).
+func (s *replayed) itemVersions(item string) itemVersions {
+	if s == nil {
+		return itemVersions{}
+	}
+	v, ok := s.versions[item]
+	return itemVersions{latest: v.hash, recorded: ok, known: s.recorded[item]}
 }
 
 // retry applies held Events that have become applicable, until none does.
@@ -322,8 +345,7 @@ func isGating(item string) bool {
 func (c *Core) topicFlags(topic *os.Root, s *replayed) []Flag {
 	all := append(append([]Flag{}, s.flags...), c.gatingFlags(topic, s)...)
 	all = append(all, s.study.cardFlags()...)
-	all = append(all, repeatedCardFlags(topic, s)...)
-	all = append(all, sourcesFileFlags(topic)...)
+	all = append(all, entityConflicts(topic, s)...)
 	if ahead := s.latest.Sub(c.now()); ahead > clockAheadLimit {
 		// The flag is named after the earliest Event dated ahead, which
 		// later Events, the dismissal included, never change.
@@ -361,7 +383,7 @@ func (c *Core) gatingFlags(topic *os.Root, s *replayed) []Flag {
 	var flags []Flag
 	for _, item := range items {
 		recorded := s.versions[item]
-		data, exists, err := readItem(topic, item)
+		data, exists, err := readItemWith(topic, item, s.itemVersions(item))
 		if err == nil && contentHash(data, exists) == recorded.hash {
 			continue
 		}
@@ -384,19 +406,4 @@ func (c *Core) gatingFlags(topic *os.Root, s *replayed) []Flag {
 // applyNothing is the applier of Events that edit no items.
 func applyNothing(ev event, item string, _ []byte, _ bool) ([]byte, bool, error) {
 	return nil, false, corruptf("Event %s (%s) cannot edit %s", ev.ID, ev.Type, item)
-}
-
-// repeatedCardFlags flags Cards that appear twice in cards.jsonl with
-// different content, none of them the version the History recorded, as a
-// union merge leaves two machines' edits of one Card. Until the learner
-// settles it, every machine reads the same one of the lines (see
-// jsonlCodec).
-func repeatedCardFlags(topic *os.Root, s *replayed) []Flag {
-	var flags []Flag
-	for _, id := range repeatedCards(topic, s) {
-		flags = append(flags, newFlag(FlagConflict, cardItem(id), nil, "",
-			fmt.Sprintf("Card %s appears twice in %s with different content, probably edited on two machines: "+
-				"keep the right line by hand", id, cardsFile)))
-	}
-	return flags
 }

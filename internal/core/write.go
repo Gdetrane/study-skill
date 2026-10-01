@@ -28,17 +28,53 @@ type change struct {
 type plan func(s *replayed, view *topicView) (*change, error)
 
 // topicView reads a Topic's items: as they are on disk or, in a dry run, as
-// they would be once recovery had finished an interrupted write.
+// they would be once recovery had finished an interrupted write. Every
+// reader of an entity resolves the lines a merge leaves for it the same way,
+// with what the History recorded (see resolveEntity). A view lives for one
+// read or one write, during which the files it reads do not change, so it
+// parses each file once.
 type topicView struct {
 	root    *os.Root
 	pending map[string]itemContent
+	// s is the replayed History; nil for a Topic not created yet.
+	s       *replayed
+	indexes map[string]map[string][][]byte
+}
+
+func newView(root *os.Root, s *replayed) *topicView {
+	return &topicView{root: root, s: s}
 }
 
 func (v *topicView) read(item string) ([]byte, bool, error) {
 	if c, ok := v.pending[item]; ok {
 		return c.data, c.exists, nil
 	}
-	return readItem(v.root, item)
+	file, key, err := parseItem(item)
+	if err != nil {
+		return nil, false, err
+	}
+	codec, _ := codecFor(file)
+	if key == "" || codec.index == nil {
+		return readItemWith(v.root, item, v.s.itemVersions(item))
+	}
+	idx, ok := v.indexes[file]
+	if !ok {
+		data, exists, err := readFile(v.root, file)
+		if err != nil {
+			return nil, false, err
+		}
+		if exists {
+			if idx, err = codec.index(data); err != nil {
+				return nil, false, corruptf("%s is damaged: %v", file, err)
+			}
+		}
+		if v.indexes == nil {
+			v.indexes = map[string]map[string][][]byte{}
+		}
+		v.indexes[file] = idx
+	}
+	content, exists, _ := resolveEntity(idx[key], v.s.itemVersions(item), codec.historyText)
+	return content, exists, nil
 }
 
 // Points where a test can interrupt a write, as a crash would. See Core.crash.
@@ -95,12 +131,12 @@ func (c *Core) writeTopic(ctx context.Context, topicID string, p plan, dryRun bo
 	if err := refuseNewer(topicID, s); err != nil {
 		return nil, err
 	}
-	ch, err := p(s, &topicView{root: topic})
+	ch, err := p(s, newView(topic, s))
 	if err != nil || ch == nil {
 		return nil, err
 	}
 	wall := c.now()
-	ev, contents, err := c.prepareEvent(&topicView{root: topic}, *ch, nextEventTime(wall, s.latest), wall)
+	ev, contents, err := c.prepareEvent(newView(topic, s), *ch, nextEventTime(wall, s.latest), wall)
 	if err != nil {
 		return nil, err
 	}
@@ -151,7 +187,8 @@ func (c *Core) planDryRun(home, topic *os.Root, topicID string, p plan) (*event,
 	if err := refuseNewer(topicID, s); err != nil {
 		return nil, err
 	}
-	view := &topicView{root: topic, pending: map[string]itemContent{}}
+	view := newView(topic, s)
+	view.pending = map[string]itemContent{}
 	// A dry run decides nothing, so it logs nothing.
 	steps, err := c.recoverySteps(slog.New(slog.DiscardHandler), home, topic, topicID, h, s)
 	if err != nil {
@@ -302,7 +339,7 @@ func (c *Core) recoverySteps(log *slog.Logger, home, topic *os.Root, topicID str
 	}
 	var steps []recoveryStep
 	for _, it := range ev.Items {
-		current, exists, err := readItem(topic, it.Item)
+		current, exists, err := readItemWith(topic, it.Item, s.itemVersions(it.Item))
 		if CodeOf(err) == CodeCorrupt {
 			return nil, corruptf("%s in Topic %s cannot be read (%v), so an interrupted write (Event %s) cannot be finished: "+
 				"fix or restore it and try again", it.Item, topicID, err, ev.ID)
