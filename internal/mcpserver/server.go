@@ -24,7 +24,7 @@ const Instructions = `Lamplight keeps the learner's study state. Follow these ru
 2. Every tool that writes names its Topic explicitly. The Active topic is only a default for reading.
 3. Never edit Lamplight's state files yourself (topic.toml, syllabus.toml, history.jsonl, cards.jsonl). Write lesson text, notes and exercise files directly.
 4. Never show counts of overdue or late work. Show where the learner is and one next action.
-5. Call checkpoint at every turn switch: role "learner" when the learner hands their work to you, "agent" when you hand the turn back. Never run git commit yourself. phase_set and lesson_complete take these Checkpoints for you.
+5. Every turn switch gets a Checkpoint: role "learner" when the learner hands their work to you, "agent" when you hand the turn back. phase_set and lesson_complete take these Checkpoints for you; outside them, call checkpoint. When a result has checkpoint_error, tell the learner, and once the problem is fixed call checkpoint with its checkpoint_role. Never run git commit yourself.
 6. Whenever a Session stops, at a Break point or when the learner leaves, record a Next step that starts with a verb with session_close. When a Session opens with an unclosed one, ask the learner for the missing note.
 7. Run a Lesson's Check only with "study check <lesson> --topic <topic>" in your own shell, never any other way; it records the Attempt. Write the Check in the YAML header of lessons/<lesson-id>.md and show it to the learner before practicing starts.
 8. Change the Syllabus only through revision_propose, then revision_apply once the learner has approved it in their own words.`

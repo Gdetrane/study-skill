@@ -105,7 +105,8 @@ type SessionOpened struct {
 	Resume ResumePoint `json:"resume"`
 	// Unclosed is the previous Session when it ended without a Next step,
 	// for instance because the terminal was closed: ask the learner for
-	// the missing note and look at what changed since the last Checkpoint.
+	// the missing note, and record it with session_close naming that
+	// Session.
 	Unclosed *SessionInfo `json:"unclosed,omitempty"`
 	DryRun   bool         `json:"dry_run,omitempty"`
 }
@@ -154,27 +155,49 @@ func (c *Core) OpenSession(ctx context.Context, topicID string, spec SessionSpec
 	return result, nil
 }
 
-// CloseSession closes the open Session with a Next step, starting with a
-// verb, and free-text context.
-func (c *Core) CloseSession(ctx context.Context, topicID, nextStep, notes string, dryRun bool) (SessionClosed, error) {
-	step, err := requiredText("Next step", nextStep, maxNextStepRunes)
+// CloseSpec describes closing a Session.
+type CloseSpec struct {
+	// Session is the Session to close; the latest one when empty. Naming
+	// an older Session gives it the note it never got, when it ended
+	// without one.
+	Session string
+	// NextStep is the concrete next action, starting with a verb.
+	NextStep string
+	// Context is what the learner needs to know to take it.
+	Context string
+	DryRun  bool
+}
+
+// CloseSession closes a Session with a Next step, starting with a verb, and
+// free-text context.
+//
+// TODO(#28): show what changed since the last Checkpoint when a Session was
+// left unclosed.
+func (c *Core) CloseSession(ctx context.Context, topicID string, spec CloseSpec) (SessionClosed, error) {
+	step, err := requiredText("Next step", spec.NextStep, maxNextStepRunes)
 	if err != nil {
 		return SessionClosed{}, err
 	}
-	note, err := cleanTextBlock("context", notes, maxContextRunes)
+	note, err := cleanTextBlock("context", spec.Context, maxContextRunes)
 	if err != nil {
 		return SessionClosed{}, err
 	}
-	result := SessionClosed{Topic: topicID, DryRun: dryRun}
+	result := SessionClosed{Topic: topicID, DryRun: spec.DryRun}
 	_, err = c.writeTopic(ctx, topicID, func(s *replayed, _ *topicView) (*change, error) {
-		last := s.study.lastSession()
-		if last == nil || last.closed {
+		session := s.study.lastSession()
+		if spec.Session != "" {
+			session = s.study.session(spec.Session)
+			if session == nil {
+				return nil, &Error{Code: CodeNotFound, Message: "Topic " + topicID + " has no Session " + spec.Session}
+			}
+		}
+		if session == nil || session.closed {
 			return nil, &Error{Code: CodeFailedPrecondition, Message: "no Session is open in " + topicID + ": open one with session_open"}
 		}
-		result.Session = last.id
+		result.Session = session.id
 		result.NextStep = NextStep{Step: step, Context: note, Lesson: s.study.currentLesson(), At: c.now().UTC().Truncate(clockTick)}
-		return &change{Type: eventSessionClosed, Data: sessionClosedData{Session: last.id, NextStep: step, Context: note}}, nil
-	}, dryRun)
+		return &change{Type: eventSessionClosed, Data: sessionClosedData{Session: session.id, NextStep: step, Context: note}}, nil
+	}, spec.DryRun)
 	if err != nil {
 		return SessionClosed{}, err
 	}
@@ -310,12 +333,7 @@ func replaySessionClosed(s *replayed, ev event) error {
 	if err := json.Unmarshal(ev.Data, &d); err != nil {
 		return fmt.Errorf("its payload is unreadable: %v", err)
 	}
-	var session *sessionState
-	for _, ss := range s.study.sessions {
-		if ss.id == d.Session {
-			session = ss
-		}
-	}
+	session := s.study.session(d.Session)
 	if session == nil {
 		return fmt.Errorf("%w: Session %s", errUnknownItem, d.Session)
 	}
@@ -352,6 +370,15 @@ func replayPhaseSet(s *replayed, ev event) error {
 // status can flag later edits made outside Lamplight.
 func (s *replayed) recordVersion(item, hash, eventID string) {
 	s.versions[item] = version{hash: hash, event: eventID}
+}
+
+func (st *studyState) session(id string) *sessionState {
+	for _, ss := range st.sessions {
+		if ss.id == id {
+			return ss
+		}
+	}
+	return nil
 }
 
 func (st *studyState) lastSession() *sessionState {

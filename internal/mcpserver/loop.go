@@ -76,7 +76,7 @@ func addLearnerLoop(server *mcp.Server, c *core.Core) {
 			"parse.go\") and the context needed to take it. The learner sees it first when they come back.",
 		Annotations: write,
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in sessionCloseInput) (*mcp.CallToolResult, core.SessionClosed, error) {
-		r, err := c.CloseSession(ctx, in.Topic, in.NextStep, in.Context, false)
+		r, err := c.CloseSession(ctx, in.Topic, core.CloseSpec{Session: in.Session, NextStep: in.NextStep, Context: in.Context})
 		return nil, r, toolErr(err)
 	})
 
@@ -84,8 +84,10 @@ func addLearnerLoop(server *mcp.Server, c *core.Core) {
 		Name:  "phase_set",
 		Title: "Move a Lesson to a Phase",
 		Description: "Move a Lesson to teaching, practicing or feedback. Practicing needs the Lesson's Check, which you " +
-			"show the learner first. When the turn passes between you and the learner, a Checkpoint is taken. After a " +
-			"failed Attempt, go back to practicing with a next_step that names the fix.",
+			"show the learner first. When the turn passes between you and the learner, a Checkpoint is taken; if the " +
+			"result has checkpoint_error, call checkpoint with its checkpoint_role once the problem is fixed. After a " +
+			"failed Attempt, go back to practicing with a next_step that names the fix. The same Phase, Next step and " +
+			"Check again record nothing.",
 		Annotations: idempotent,
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in phaseSetInput) (*mcp.CallToolResult, core.PhaseResult, error) {
 		r, err := c.SetPhase(ctx, in.Topic, core.PhaseSpec{Lesson: in.Lesson, Phase: in.Phase, NextStep: in.NextStep})
@@ -108,8 +110,9 @@ func addLearnerLoop(server *mcp.Server, c *core.Core) {
 		Title: "Complete a Lesson",
 		Description: "Complete a Lesson once its Check passed on the current work: marks it done, saves its draft Cards " +
 			"and takes a Checkpoint. Write Cards that state one fact each, with no answer in the prompt, including " +
-			"at least one from the learner's own mistakes. Calling it again changes nothing, so after an error, call it " +
-			"again.",
+			"at least one from the learner's own mistakes. Completing a Lesson twice records nothing, so after an error " +
+			"or an interruption, call it again with the same arguments. If the result has checkpoint_error, call " +
+			"checkpoint with its checkpoint_role once the problem is fixed.",
 		Annotations: idempotent,
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in lessonCompleteInput) (*mcp.CallToolResult, core.LessonCompletion, error) {
 		r, err := c.CompleteLesson(ctx, in.Topic, core.CompleteSpec{Lesson: in.Lesson, Cards: in.Cards})
@@ -178,6 +181,7 @@ type sessionOpenInput struct {
 
 type sessionCloseInput struct {
 	Topic    string `json:"topic" jsonschema:"the Topic's id"`
+	Session  string `json:"session,omitempty" jsonschema:"the Session to close; the latest when left out; name an unclosed older Session to give it its missing note"`
 	NextStep string `json:"next_step" jsonschema:"the concrete next action, starting with a verb"`
 	Context  string `json:"context,omitempty" jsonschema:"what the learner needs to know to take the Next step"`
 }

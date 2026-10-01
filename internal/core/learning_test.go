@@ -407,7 +407,7 @@ func TestSessionsRecordTheNextStep(t *testing.T) {
 	ctx := context.Background()
 	m := newTopic(t)
 	withSyllabus(t, m)
-	if _, err := m.CloseSession(ctx, "c", "Read the Lesson", "", false); CodeOf(err) != CodeFailedPrecondition {
+	if _, err := m.CloseSession(ctx, "c", CloseSpec{NextStep: "Read the Lesson"}); CodeOf(err) != CodeFailedPrecondition {
 		t.Errorf("closing without a Session: err = %v, want failed_precondition", err)
 	}
 	opened, err := m.OpenSession(ctx, "c", SessionSpec{Energy: EnergyHalf, Focus: FocusLearn})
@@ -417,7 +417,7 @@ func TestSessionsRecordTheNextStep(t *testing.T) {
 	if _, err := m.OpenSession(ctx, "c", SessionSpec{Energy: "tired"}); CodeOf(err) != CodeInvalidArgument {
 		t.Errorf("an unknown Energy: err = %v, want invalid_argument", err)
 	}
-	closed, err := m.CloseSession(ctx, "c", "Write answer.txt", "We stopped before the exercise.", false)
+	closed, err := m.CloseSession(ctx, "c", CloseSpec{NextStep: "Write answer.txt", Context: "We stopped before the exercise."})
 	if err != nil || closed.Session != opened.Session || closed.NextStep.Lesson != "answer" {
 		t.Fatalf("CloseSession = %+v, %v", closed, err)
 	}

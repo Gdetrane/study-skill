@@ -41,10 +41,10 @@ type Options struct {
 	// Logger receives the Log: diagnostics, never the learner's activity.
 	// Defaults to discarding everything.
 	Logger *slog.Logger
-	// Crash is for tests that simulate a crash: it is called at each point
-	// of a write where one could happen (CrashAfterIntent and the other
-	// Crash points), and returning an error stops the write there without
-	// any cleanup, as a crash would.
+	// Crash is only for tests that simulate a crash, and must be nil
+	// otherwise: it is called at each point of a write where one could
+	// happen (CrashAfterIntent and the other Crash points), and returning an
+	// error stops the write there without any cleanup, as a crash would.
 	Crash func(point string) error
 }
 
@@ -58,6 +58,11 @@ const (
 	CrashAfterItem = crashAfterItem
 	// CrashBeforeClear: all content is written, the marker remains.
 	CrashBeforeClear = crashBeforeClear
+	// CrashRecoveryAfterItem: recovery replaced an item of an interrupted
+	// write.
+	CrashRecoveryAfterItem = crashRecoveryAfterItem
+	// CrashRecoveryBeforeClear: recovery is done, the marker remains.
+	CrashRecoveryBeforeClear = crashRecoveryBeforeClear
 )
 
 // Core is the Lamplight core for one Study home.
