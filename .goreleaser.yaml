@@ -1,0 +1,140 @@
+# GoReleaser configuration for Lamplight's `study` binary (ADR-0008).
+# docs/release.md explains how to cut a release and which secrets each
+# publishing step needs. Every step that needs a secret is skipped when that
+# secret is not set, so a release always publishes the GitHub release itself.
+version: 2
+
+project_name: lamplight
+
+before:
+  hooks:
+    - go mod download
+    # Shell completions and the man page, shipped in every package.
+    - ./scripts/release-assets.sh
+
+builds:
+  - id: study
+    main: ./cmd/study
+    binary: study
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X github.com/mordor-forge/lamplight/v2/internal/cli.Version=v{{ .Version }}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: default
+    formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
+      - completions/*
+      - manpages/*
+
+checksum:
+  name_template: checksums.txt
+
+snapshot:
+  # Snapshots are never releases; the v1 tags in this repository must not
+  # make them look like one.
+  version_template: "0.0.0-snapshot+{{ .ShortCommit }}"
+
+changelog:
+  use: github-native
+
+release:
+  prerelease: auto
+
+nfpms:
+  - id: packages
+    package_name: lamplight
+    file_name_template: "{{ .ConventionalFileName }}"
+    homepage: https://github.com/mordor-forge/lamplight
+    description: "Lamplight: see where you are in your studies, and what to do next"
+    license: MIT
+    maintainer: Gdetrane <Gdetrane@users.noreply.github.com>
+    vendor: mordor-forge
+    formats: [deb, rpm]
+    bindir: /usr/bin
+    section: utils
+    contents:
+      - src: completions/study.bash
+        dst: /usr/share/bash-completion/completions/study
+        file_info:
+          mode: 0644
+      # Debian's zsh reads vendor completions from vendor-completions;
+      # Fedora's and others' from site-functions.
+      - src: completions/study.zsh
+        dst: /usr/share/zsh/vendor-completions/_study
+        packager: deb
+        file_info:
+          mode: 0644
+      - src: completions/study.zsh
+        dst: /usr/share/zsh/site-functions/_study
+        packager: rpm
+        file_info:
+          mode: 0644
+      - src: completions/study.fish
+        dst: /usr/share/fish/vendor_completions.d/study.fish
+        file_info:
+          mode: 0644
+      - src: manpages/study.1.gz
+        dst: /usr/share/man/man1/study.1.gz
+        file_info:
+          mode: 0644
+
+homebrew_casks:
+  - name: lamplight
+    binaries: [study]
+    homepage: https://github.com/mordor-forge/lamplight
+    description: "Lamplight: see where you are in your studies, and what to do next"
+    license: MIT
+    repository:
+      owner: mordor-forge
+      name: homebrew-tap
+      token: '{{ envOrDefault "HOMEBREW_TAP_TOKEN" "" }}'
+    directory: Casks
+    # Published only when the tap token is set; prereleases never.
+    skip_upload: '{{ if isEnvSet "HOMEBREW_TAP_TOKEN" }}auto{{ else }}true{{ end }}'
+    commit_msg_template: "lamplight {{ .Tag }}"
+    manpages:
+      - manpages/study.1.gz
+    completions:
+      bash: completions/study.bash
+      zsh: completions/study.zsh
+      fish: completions/study.fish
+    hooks:
+      post:
+        # The binary is not notarized: without this, macOS Gatekeeper refuses
+        # to run a binary downloaded by Homebrew.
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/study"]
+          end
+
+aurs:
+  - name: lamplight-bin
+    homepage: https://github.com/mordor-forge/lamplight
+    description: "Lamplight: see where you are in your studies, and what to do next"
+    license: MIT
+    maintainers:
+      - Gdetrane <Gdetrane@users.noreply.github.com>
+    # The package is named after the project, so it cannot clash with other
+    # packages by name; the binary it installs is /usr/bin/study.
+    provides: [lamplight]
+    conflicts: [lamplight]
+    private_key: '{{ envOrDefault "AUR_KEY" "" }}'
+    git_url: ssh://aur@aur.archlinux.org/lamplight-bin.git
+    # Published only when the AUR key is set; prereleases never.
+    skip_upload: '{{ if isEnvSet "AUR_KEY" }}auto{{ else }}true{{ end }}'
+    commit_msg_template: "lamplight {{ .Tag }}"
+    package: |-
+      install -Dm755 "./study" "${pkgdir}/usr/bin/study"
+      install -Dm644 "./completions/study.bash" "${pkgdir}/usr/share/bash-completion/completions/study"
+      install -Dm644 "./completions/study.zsh" "${pkgdir}/usr/share/zsh/site-functions/_study"
+      install -Dm644 "./completions/study.fish" "${pkgdir}/usr/share/fish/vendor_completions.d/study.fish"
+      install -Dm644 "./manpages/study.1.gz" "${pkgdir}/usr/share/man/man1/study.1.gz"

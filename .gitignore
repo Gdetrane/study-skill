@@ -2,6 +2,8 @@
 /study
 coverage.out
 dist/
+/completions/
+/manpages/
 *.log
 
 # Local environment
