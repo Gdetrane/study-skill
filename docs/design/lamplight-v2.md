@@ -374,8 +374,9 @@ It carries v1's teaching material over explicitly:
 
 ## Repository
 
-The repository is renamed to Lamplight; v1 is tagged and kept on a `v1` branch; v2 is
-written on main.
+The repository is renamed to Lamplight. v2 is developed on the `v2` branch while `main`
+keeps v1 for its users; at release, v1 is tagged and kept on a `v1` branch, and `v2` is
+merged into `main`.
 
 ```
 cmd/study/                  entry point

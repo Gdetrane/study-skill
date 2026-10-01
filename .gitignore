@@ -1,26 +1,12 @@
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-.Python
-.venv/
+# Build and test output
+/study
+coverage.out
+dist/
+*.log
+
+# Local environment
 .env
 .env.*
-.ruff_cache/
-.pytest_cache/
-.coverage
-.coverage.*
-coverage.xml
-htmlcov/
-.mypy_cache/
-.pyright/
-dist/
-build/
-*.egg-info/
-node_modules/
-*.log
-coverage.out
-scripts/fsrs/fsrs
-study-workspace/
-/study
+
+# Agent worktrees
 .claude/worktrees/
