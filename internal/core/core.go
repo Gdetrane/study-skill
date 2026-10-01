@@ -199,7 +199,12 @@ const (
 	CodeNotFound        ErrorCode = "not_found"
 	CodeNewerFormat     ErrorCode = "newer_format"
 	CodeCorrupt         ErrorCode = "corrupt"
-	CodeInternal        ErrorCode = "internal"
+	// CodeFailedPrecondition means the request is valid but the Topic is in
+	// a state that prevents it, such as a git merge in progress.
+	CodeFailedPrecondition ErrorCode = "failed_precondition"
+	// CodeBusy means another program holds a lock; retrying shortly may work.
+	CodeBusy     ErrorCode = "busy"
+	CodeInternal ErrorCode = "internal"
 )
 
 // Error is a domain error with a stable code.

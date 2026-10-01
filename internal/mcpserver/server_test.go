@@ -60,7 +60,7 @@ func TestServerSendsInstructionsAndTools(t *testing.T) {
 			t.Error("status should be marked read-only")
 		}
 	}
-	if strings.Join(names, ",") != "library_search,status,topic_create" {
+	if strings.Join(names, ",") != "checkpoint,library_search,status,topic_create" {
 		t.Errorf("tools = %v", names)
 	}
 }
@@ -172,5 +172,44 @@ func TestLibrarySearch(t *testing.T) {
 	}
 	if !empty.IsError || !strings.Contains(text(empty), "invalid_argument") {
 		t.Errorf("empty query: IsError=%v, content %q", empty.IsError, text(empty))
+	}
+}
+
+func TestCheckpoint(t *testing.T) {
+	ctx := context.Background()
+	withGitIdentity(t)
+	session := connect(t, t.TempDir())
+	call(t, session, "topic_create", map[string]any{"title": "C"})
+
+	var first core.CheckpointResult
+	decode(t, call(t, session, "checkpoint", map[string]any{"topic": "c", "role": "agent", "message": "Lesson 1 notes"}), &first)
+	if !first.Committed || first.Commit == "" {
+		t.Fatalf("first checkpoint = %+v", first)
+	}
+	var again core.CheckpointResult
+	decode(t, call(t, session, "checkpoint", map[string]any{"topic": "c", "role": "learner"}), &again)
+	if again.Committed || again.Commit != first.Commit {
+		t.Errorf("unchanged checkpoint = %+v, want a skip at %s", again, first.Commit)
+	}
+
+	bad, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "checkpoint", Arguments: map[string]any{"topic": "c", "role": "tutor"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bad.IsError || !strings.Contains(text(bad), "invalid_argument") {
+		t.Errorf("unknown role: IsError=%v, content %q", bad.IsError, text(bad))
+	}
+}
+
+// withGitIdentity gives git a fixed identity through a temporary HOME, as a
+// learner's global configuration would, and hides the developer's own.
+func withGitIdentity(t *testing.T) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	config := "[user]\n\tname = Ada Learner\n\temail = ada@example.com\n[maintenance]\n\tauto = false\n"
+	if err := os.WriteFile(filepath.Join(home, ".gitconfig"), []byte(config), 0o644); err != nil {
+		t.Fatal(err)
 	}
 }

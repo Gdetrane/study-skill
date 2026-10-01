@@ -48,6 +48,41 @@ func TestTakeCommitsFirstCheckpointThenSkipsWhenUnchanged(t *testing.T) {
 	}
 }
 
+func TestTakeDryRunCommitsNothing(t *testing.T) {
+	dir := newRepo(t)
+	write(t, dir, "notes.md", "first")
+	first := take(t, dir, checkpoint.Learner, "")
+	write(t, dir, "notes.md", "second")
+	indexBefore, err := os.ReadFile(filepath.Join(dir, ".git", "index"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := checkpoint.Take(context.Background(), dir, checkpoint.Options{Role: checkpoint.Agent, Time: when, DryRun: true})
+	if err != nil {
+		t.Fatalf("Take: %v", err)
+	}
+	if !res.Committed || res.Commit != "" || res.Tree == "" {
+		t.Errorf("dry run with changes = %+v, want a would-commit result with no commit", res)
+	}
+	if head := git(t, dir, "rev-parse", "HEAD"); head != first.Commit {
+		t.Errorf("a dry run moved HEAD from %s to %s", first.Commit, head)
+	}
+	indexAfter, err := os.ReadFile(filepath.Join(dir, ".git", "index"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(indexAfter) != string(indexBefore) {
+		t.Error("a dry run changed the learner's index")
+	}
+
+	write(t, dir, "notes.md", "first")
+	res, err = checkpoint.Take(context.Background(), dir, checkpoint.Options{Role: checkpoint.Agent, Time: when, DryRun: true})
+	if err != nil || res.Committed || res.Commit != first.Commit {
+		t.Errorf("dry run without changes = %+v, %v; want a skip at HEAD", res, err)
+	}
+}
+
 func TestTakeSkipsAnEmptyTopic(t *testing.T) {
 	dir := newRepo(t)
 	res := take(t, dir, checkpoint.Learner, "")

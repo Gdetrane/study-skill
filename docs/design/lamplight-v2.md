@@ -313,12 +313,19 @@ NotebookLM.
 
 Each Checkpoint is a git commit made by the core with low-level commands that cannot run
 programs named in the repository's configuration: `hash-object -w --no-filters`,
-`update-index --cacheinfo`, `write-tree`, `commit-tree --no-gpg-sign` and `update-ref`, run
-with `GIT_CONFIG_GLOBAL=/dev/null`, `GIT_CONFIG_NOSYSTEM=1`, `core.hooksPath=/dev/null` and
-`core.fsmonitor=false`. Diffs for the large-file warning use `--no-textconv --no-ext-diff`.
-This rules out hooks, clean and smudge filters, fsmonitor, textconv, external diff drivers
-and signing programs. The commit author is read from the learner's git configuration
-beforehand and passed explicitly. The cost is that Checkpoints store raw bytes, so
+`update-index --index-info`, `write-tree`, `commit-tree --no-gpg-sign` and `update-ref`, run
+with no inherited `GIT_*` variables, `GIT_CONFIG_GLOBAL=/dev/null`, `GIT_CONFIG_NOSYSTEM=1`,
+`core.hooksPath=/dev/null` and `core.fsmonitor=false`. Diffs for the large-file warning use
+`--no-textconv --no-ext-diff`. This rules out hooks, clean and smudge filters, fsmonitor,
+textconv, external diff drivers and signing programs; ADR-0009 lists the further routes
+(hooks defined in configuration, `core.worktree`, partial-clone fetches) that are closed as
+well. The commit author is read from the learner's git configuration beforehand and passed
+explicitly.
+
+Checkpoints stage into a copy of git's index while holding `.git/index.lock`, then replace
+the index, so `git status` is clean afterwards and a refused Checkpoint leaves the learner's
+index untouched. A Checkpoint never runs `git init`: Topic creation does, and writes the
+default `.gitignore`. The cost is that Checkpoints store raw bytes, so
 line-ending conversion and Git LFS are not applied, which is acceptable for study Topics.
 
 A Checkpoint skips empty commits, refuses to commit during a merge, a rebase or on a

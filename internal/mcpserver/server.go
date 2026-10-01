@@ -22,7 +22,8 @@ const Instructions = `Lamplight keeps the learner's study state. Follow these ru
 1. Call the status tool at the start of every session, and tell the learner which Topic is active and why.
 2. Every tool that writes names its Topic explicitly. The Active topic is only a default for reading.
 3. Never edit Lamplight's state files yourself (topic.toml, syllabus.toml, history.jsonl, cards.jsonl). Write lesson text, notes and exercise files directly.
-4. Never show counts of overdue or late work. Show where the learner is and one next action.`
+4. Never show counts of overdue or late work. Show where the learner is and one next action.
+5. Call checkpoint at every turn switch: role "learner" when the learner hands their work to you, "agent" when you hand the turn back. Never run git commit yourself.`
 
 // More rules join Instructions as their features land: recording a Next step
 // when a Session stops (#28) and running Checks through the CLI (#30).
@@ -65,6 +66,21 @@ func New(c *core.Core, version string) *mcp.Server {
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
+		Name:  "checkpoint",
+		Title: "Save the work in a Topic",
+		Description: "Save the work in a Topic as a git commit at every turn switch: role \"learner\" when the learner's turn " +
+			"ended, \"agent\" when yours did. Nothing is committed when nothing changed. Mention any large_files to the " +
+			"learner: data and model files usually belong in the Topic's .gitignore.",
+		Annotations: &mcp.ToolAnnotations{DestructiveHint: &notDestructive, OpenWorldHint: &closedWorld},
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in checkpointInput) (*mcp.CallToolResult, core.CheckpointResult, error) {
+		res, err := c.Checkpoint(ctx, core.CheckpointSpec{Topic: in.Topic, Role: in.Role, Message: in.Message})
+		if err != nil {
+			return nil, core.CheckpointResult{}, toolError(err)
+		}
+		return nil, res, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
 		Name:  "library_search",
 		Title: "Search the Library",
 		Description: "Find books in the learner's Library, ranked by relevance, with their absolute paths. " +
@@ -79,6 +95,12 @@ func New(c *core.Core, version string) *mcp.Server {
 	})
 
 	return server
+}
+
+type checkpointInput struct {
+	Topic   string `json:"topic" jsonschema:"the Topic's id, from status"`
+	Role    string `json:"role" jsonschema:"whose turn ended: agent or learner"`
+	Message string `json:"message,omitempty" jsonschema:"what happened in the turn, in a few words"`
 }
 
 type librarySearchInput struct {

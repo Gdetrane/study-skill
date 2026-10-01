@@ -17,11 +17,14 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"golang.org/x/text/unicode/norm"
+
+	"github.com/mordor-forge/lamplight/v2/internal/checkpoint"
 )
 
 const (
 	topicFile     = "topic.toml"
 	gitattributes = ".gitattributes"
+	gitignore     = ".gitignore"
 	maxTitleRunes = 200
 	maxGoalRunes  = 500
 )
@@ -143,6 +146,9 @@ func (c *Core) initTopic(ctx context.Context, home *os.Root, dir string, topic T
 		return err
 	}
 	if err := writeFileAtomic(root, gitattributes, []byte(historyFile+" merge=union\n")); err != nil {
+		return err
+	}
+	if err := writeFileAtomic(root, gitignore, []byte(checkpoint.DefaultGitignore())); err != nil {
 		return err
 	}
 	data, err := json.Marshal(map[string]string{"title": topic.Title})

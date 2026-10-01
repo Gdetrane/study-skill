@@ -113,15 +113,18 @@ type Options struct {
 	// LockTimeout bounds the wait for another process's index.lock. Zero
 	// means DefaultLockTimeout.
 	LockTimeout time.Duration
+	// DryRun computes the Checkpoint, including the refusals and the large
+	// files, without committing or touching the learner's index.
+	DryRun bool
 }
 
 // Result describes a Checkpoint.
 type Result struct {
 	// Committed is false when nothing changed since HEAD, so no commit
-	// was made.
+	// was made. In a dry run it says whether a commit would be made.
 	Committed bool
 	// Commit is the new commit, or HEAD when skipped ("" before the first
-	// commit).
+	// commit). In a dry run that would commit, it is "".
 	Commit string
 	// Tree is the tree of the working tree as it was snapshotted.
 	Tree string
@@ -201,6 +204,9 @@ func Take(ctx context.Context, dir string, opts Options) (Result, error) {
 	large, err := r.largeFiles(ctx, headTree, tree, states, threshold)
 	if err != nil {
 		return Result{}, err
+	}
+	if opts.DryRun {
+		return Result{Committed: true, Tree: tree, LargeFiles: large}, nil
 	}
 
 	msg := message(opts.Role, opts.Message)

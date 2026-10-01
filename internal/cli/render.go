@@ -75,3 +75,46 @@ func writeSearchResults(w io.Writer, results []library.Result) error {
 	_, err := io.WriteString(w, b.String())
 	return err
 }
+
+func writeCheckpoint(w io.Writer, res core.CheckpointResult) error {
+	switch {
+	case res.DryRun && res.Committed:
+		fmt.Fprintf(w, "Would checkpoint %s.\n", res.Topic)
+	case !res.Committed && res.Commit == "":
+		fmt.Fprintf(w, "Nothing to checkpoint in %s yet.\n", res.Topic)
+	case !res.Committed:
+		fmt.Fprintf(w, "Nothing changed in %s since Checkpoint %s.\n", res.Topic, short(res.Commit))
+	default:
+		fmt.Fprintf(w, "Checkpoint %s saved in %s.\n", short(res.Commit), res.Topic)
+	}
+	if len(res.LargeFiles) == 0 {
+		return nil
+	}
+	fmt.Fprintln(w, "\nLarge files in this Checkpoint (consider adding them to .gitignore):")
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	for _, f := range res.LargeFiles {
+		fmt.Fprintf(tw, "  %s\t%s\n", f.Path, humanSize(f.Size))
+	}
+	return tw.Flush()
+}
+
+func short(commit string) string {
+	if len(commit) > 12 {
+		return commit[:12]
+	}
+	return commit
+}
+
+// humanSize formats a size in bytes for people: "12.5 MiB".
+func humanSize(n int64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+	div, exp := int64(unit), 0
+	for m := n / unit; m >= unit; m /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGTPE"[exp])
+}
