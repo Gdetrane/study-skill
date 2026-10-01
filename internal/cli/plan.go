@@ -51,6 +51,10 @@ func (a *app) taskCommand() *cobra.Command {
 				verb = "Would add"
 			}
 			for _, t := range res.AddedTasks {
+				if t.ID == "" {
+					fmt.Fprintf(a.out, "%s Task %s %s\n", verb, taskLine(t), styleDim.Render("(a new id)"))
+					continue
+				}
 				fmt.Fprintf(a.out, "%s Task %s %s\n", verb, styleAccent.Render(t.ID), taskLine(t))
 			}
 			return nil
@@ -144,17 +148,19 @@ func (a *app) taskCommand() *cobra.Command {
 			if a.json {
 				return a.writeJSON(envelope{OK: true, Data: res})
 			}
-			if len(res.Tasks) == 0 {
-				_, err := fmt.Fprintln(a.out, "No Tasks.")
-				return err
-			}
 			var b strings.Builder
+			if len(res.Tasks) == 0 {
+				b.WriteString("No Tasks.\n")
+			}
 			for _, t := range res.Tasks {
 				mark := " "
 				if t.Done {
 					mark = styleOK.Render("✓")
 				}
 				fmt.Fprintf(&b, "%s %s %s\n", mark, styleAccent.Render(t.ID), taskLine(t))
+			}
+			for _, p := range res.Problems {
+				fmt.Fprintf(&b, "%s\n", styleWarn.Render(p))
 			}
 			_, err = io.WriteString(a.out, b.String())
 			return err
@@ -178,6 +184,9 @@ func taskLine(t core.Task) string {
 	}
 	if len(details) > 0 {
 		line += styleDim.Render(" (" + strings.Join(details, ", ") + ")")
+	}
+	if t.Note != "" {
+		line += styleDim.Render(": " + t.Note)
 	}
 	return line
 }
@@ -306,5 +315,15 @@ func writePlanSettings(w io.Writer, t core.Topic) {
 	}
 	if t.NewCardsPerDay != core.NewCardsPerDay {
 		fmt.Fprintf(w, "  New Cards a day: %d\n", t.NewCardsPerDay)
+	}
+	if f := t.Forecast; f != nil {
+		for _, m := range f.Milestones {
+			if !m.Done {
+				fmt.Fprintf(w, "  %s\n", m.Text)
+			}
+		}
+		if f.Triage != nil {
+			fmt.Fprintf(w, "  %s %s\n", styleLabel.Render("To consider:"), f.Triage.Text)
+		}
 	}
 }

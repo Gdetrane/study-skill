@@ -2,6 +2,7 @@ package core
 
 import (
 	"slices"
+	"strings"
 	"testing"
 	"time"
 )
@@ -177,18 +178,18 @@ func TestTriage(t *testing.T) {
 	}
 }
 
-func TestTriageWhenMovingIsNotEnough(t *testing.T) {
+func TestTriageWhenTheDeadlineIsToday(t *testing.T) {
 	st := forecastSyllabus()
 	st.syllabus.Milestones[0].Target = "2026-10-01" // today: 600 of 4200
 	st.lessons["a2"] = &lessonState{phase: PhaseTeaching}
 	tr := forecastOf(st, []PacePeriod{{HoursPerWeek: 10}}, "", thursday).Triage
-	// 3600 left over is 515 minutes (8.6 h); only "A one" (5 h) is not
-	// started, which is not enough, so moving Lessons is not offered.
-	if tr == nil || tr.MoveLessons != nil || tr.TrimHours != 8.6 || tr.RaisePaceTo != 70 {
+	// All 10 h today. 3600 left over is 515 minutes (8.6 h): more than half
+	// of Core, so not Stretch goals to trim. Only "A one" (5 h) is not
+	// started, which is not enough to move.
+	if tr == nil || tr.MoveLessons != nil || tr.TrimHours != 0 || tr.RaisePaceTo != 0 || tr.HoursToday != 10 {
 		t.Fatalf("triage = %+v", tr)
 	}
-	if want := "To finish Core by 1 Oct 2026: raise the Pace to about 70 h/week until then, or trim about 8.6 h of " +
-		"Stretch goals."; tr.Text != want {
+	if want := "To finish Core by 1 Oct 2026: work about 10 h on it today."; tr.Text != want {
 		t.Errorf("text = %q", tr.Text)
 	}
 }
@@ -197,10 +198,159 @@ func TestTriageOnceTheDeadlinePassed(t *testing.T) {
 	st := forecastSyllabus()
 	st.syllabus.Milestones[0].Target = "2026-09-30"
 	tr := forecastOf(st, []PacePeriod{{HoursPerWeek: 10}}, "", thursday).Triage
-	if tr == nil || !tr.DeadlinePassed || tr.TrimHours != 0 || tr.RaisePaceTo != 0 ||
-		tr.Text != "The target date of Core, 30 Sep 2026, has passed: choose a new date with a Revision, "+
-			"or move some of its Lessons past it." {
+	if tr == nil || !tr.DeadlinePassed || tr.TrimHours != 0 || tr.RaisePaceTo != 0 || tr.SuggestDeadline != "2026-10-07" ||
+		tr.Text != "The target date of Core, 30 Sep 2026, has passed: choose a new date, such as 7 Oct 2026, when it is "+
+			"forecast to end." {
 		t.Errorf("triage = %+v", tr)
+	}
+	// The Goal's deadline is called the deadline.
+	goal := forecastOf(forecastSyllabus(), []PacePeriod{{HoursPerWeek: 10}}, "2026-09-01", thursday)
+	if core := goal.Milestones[0]; core.DeadlineFrom != DeadlineFromGoal ||
+		core.Text != "At 10 h/week, Core ends 7 Oct 2026; the deadline is 1 Sep 2026." {
+		t.Errorf("core = %+v", core)
+	}
+	if tr := goal.Triage; tr == nil || tr.Text != "The deadline, 1 Sep 2026, has passed: choose a new date, such as "+
+		"7 Oct 2026, when it is forecast to end." {
+		t.Errorf("triage = %+v", goal.Triage)
+	}
+}
+
+// Only options that can still finish the Milestone are offered; when none
+// can, a later date is.
+func TestTriageNeverOffersTheImpossible(t *testing.T) {
+	st := newStudyState()
+	st.syllabus = &Syllabus{Milestones: []Milestone{
+		{ID: "core", Title: "Core", Priority: PriorityMust, Target: "2026-10-02", Lessons: []SyllabusLesson{
+			{ID: "a1", Title: "A one", Hours: 60}}}}}
+	tr := forecastOf(&st, []PacePeriod{{HoursPerWeek: 10}}, "", thursday).Triage
+	// 60 h in two days is 210 h/week, over 168; moving or trimming it all
+	// would empty the Milestone.
+	if tr == nil || tr.RaisePaceTo != 0 || tr.MoveLessons != nil || tr.TrimHours != 0 || tr.SuggestDeadline == "" {
+		t.Fatalf("triage = %+v", tr)
+	}
+	if want := "No change to the Pace or the Lessons can finish Core by 2 Oct 2026: choose a later date, such as " +
+		dateText(tr.SuggestDeadline) + ", when it is forecast to end."; tr.Text != want {
+		t.Errorf("text = %q", tr.Text)
+	}
+	// The Pace offered is never above what topic_update accepts.
+	st.syllabus.Milestones[0].Target = "2026-10-10"
+	if tr := forecastOf(&st, []PacePeriod{{HoursPerWeek: 10}}, "", thursday).Triage; tr == nil || tr.RaisePaceTo > maxHoursPerWeek {
+		t.Errorf("triage = %+v", tr)
+	} else if _, err := checkPace([]PacePeriod{{HoursPerWeek: tr.RaisePaceTo}}); err != nil {
+		t.Errorf("raise_pace_to %v is refused: %v", tr.RaisePaceTo, err)
+	}
+}
+
+func TestTriageMovesTheFewestLessons(t *testing.T) {
+	st := newStudyState()
+	st.syllabus = &Syllabus{Milestones: []Milestone{
+		{ID: "extra", Title: "Extra", Priority: PriorityIfTime, Lessons: []SyllabusLesson{
+			{ID: "b1", Title: "B one", Hours: 1}, {ID: "b2", Title: "B two", Hours: 1}}},
+		{ID: "core", Title: "Core", Priority: PriorityMust, Target: "2026-10-07", Lessons: []SyllabusLesson{
+			{ID: "a1", Title: "A one", Hours: 5}, {ID: "a2", Title: "A two", Hours: 6}}},
+	}}
+	// Seven days at 10 h/week fit 10 h of 13: 3 h over. B one and B two free
+	// only 2 h, so A two moves, and they need not.
+	tr := forecastOf(&st, []PacePeriod{{HoursPerWeek: 10}}, "", thursday).Triage
+	if tr == nil || !slices.Equal(tr.MoveLessons, []string{"a2"}) {
+		t.Errorf("triage = %+v", tr)
+	}
+}
+
+// "Raise" only when the Pace offered is higher than today's.
+func TestTriageSetsThePaceWhenAPeriodBreaks(t *testing.T) {
+	st := newStudyState()
+	st.syllabus = &Syllabus{Milestones: []Milestone{
+		{ID: "core", Title: "Core", Priority: PriorityMust, Target: "2026-10-15", Lessons: []SyllabusLesson{
+			{ID: "a1", Title: "A one", Hours: 5}}}}}
+	pace := []PacePeriod{{HoursPerWeek: 10}, {From: "2026-10-02", HoursPerWeek: 0}}
+	f := forecastOf(&st, pace, "", thursday)
+	if f.Pace != "10 h/week, then a break (0 h/week) from 2 Oct 2026" {
+		t.Errorf("pace = %q", f.Pace)
+	}
+	if tr := f.Triage; tr == nil || tr.RaisePaceTo != 2.5 ||
+		!strings.Contains(tr.Text, "set the Pace to about 2.5 h/week until then") {
+		t.Errorf("triage = %+v", tr)
+	}
+}
+
+// Any estimate is at least a minute of work, so a Milestone is never done
+// while a Lesson is left.
+func TestATinyEstimateIsStillWork(t *testing.T) {
+	st := newStudyState()
+	st.syllabus = &Syllabus{Milestones: []Milestone{
+		{ID: "core", Title: "Core", Priority: PriorityMust, Lessons: []SyllabusLesson{{ID: "a1", Title: "A one", Hours: 0.001}}}}}
+	m := forecastOf(&st, []PacePeriod{{HoursPerWeek: 10}}, "", thursday).Milestones[0]
+	if m.Done || m.Ends != "2026-10-01" || m.RemainingHours != 0.1 {
+		t.Errorf("milestone = %+v", m)
+	}
+	if none := forecastOf(&st, nil, "", thursday).Milestones[0]; none.Text != "Core has a few minutes of work left; set a Pace to see when it ends." {
+		t.Errorf("text = %q", none.Text)
+	}
+	st.syllabus.Milestones[0].Lessons[0].Hours = 0.33
+	if m := forecastOf(&st, []PacePeriod{{HoursPerWeek: 10}}, "", thursday).Milestones[0]; m.RemainingHours != 0.3 {
+		t.Errorf("remaining hours = %v, want 0.3", m.RemainingHours)
+	}
+}
+
+func TestTheHorizon(t *testing.T) {
+	// 1 minute a week takes 600 weeks for 10 h: past ten years.
+	f := forecastOf(forecastSyllabus(), []PacePeriod{{HoursPerWeek: 1.0 / 60}}, "", thursday)
+	if f.Milestones[0].Ends != "" || !strings.Contains(f.Milestones[0].Text, "more than ten years") {
+		t.Errorf("core = %+v", f.Milestones[0])
+	}
+	// Just inside: 10 h at 1 h/week is ten weeks.
+	if got := forecastOf(forecastSyllabus(), []PacePeriod{{HoursPerWeek: 1}}, "", thursday).Milestones[0].Ends; got != "2026-12-09" {
+		t.Errorf("at 1 h/week Core ends %s, want 9 Dec 2026", got)
+	}
+	// Beyond the horizon with a deadline: after it, and a Triage that can
+	// still raise the Pace.
+	st := forecastSyllabus()
+	st.syllabus.Milestones[0].Target = "2026-12-31"
+	f = forecastOf(st, []PacePeriod{{HoursPerWeek: 0}}, "", thursday)
+	if m := f.Milestones[0]; !m.AfterDeadline || m.Ends != "" {
+		t.Errorf("core = %+v", m)
+	}
+	if tr := f.Triage; tr == nil || tr.Ends != "" || tr.RaisePaceTo != 1 || tr.SuggestDeadline != "" {
+		t.Errorf("triage = %+v", tr)
+	}
+}
+
+func TestAPacePeriodStartingToday(t *testing.T) {
+	pace := []PacePeriod{{HoursPerWeek: 0}, {From: "2026-10-01", HoursPerWeek: 10}}
+	f := forecastOf(forecastSyllabus(), pace, "", thursday)
+	if f.Milestones[0].Ends != "2026-10-07" || f.Pace != "10 h/week" {
+		t.Errorf("forecast = %+v", f)
+	}
+}
+
+// Daylight saving changes never add or lose a calendar day: Santiago skips
+// the midnight of 6 Sep 2026, and Beirut that of 29 Mar 2026.
+func TestForecastAcrossDaylightSavingChanges(t *testing.T) {
+	santiago, err := time.LoadLocation("America/Santiago")
+	if err != nil {
+		t.Skip(err)
+	}
+	beirut, err := time.LoadLocation("Asia/Beirut")
+	if err != nil {
+		t.Skip(err)
+	}
+	st := newStudyState()
+	st.syllabus = &Syllabus{Milestones: []Milestone{
+		{ID: "core", Title: "Core", Priority: PriorityMust, Lessons: []SyllabusLesson{{ID: "a1", Title: "A one", Hours: 6}}}}}
+	pace := []PacePeriod{{HoursPerWeek: 7}} // an hour a day
+	if got := forecastOf(&st, pace, "", time.Date(2026, 9, 1, 10, 0, 0, 0, santiago)).Milestones[0].Ends; got != "2026-09-06" {
+		t.Errorf("from 1 Sep in Santiago, Core ends %s, want 6 Sep", got)
+	}
+	st.syllabus.Milestones[0].Lessons[0].Hours = 1
+	if got := forecastOf(&st, pace, "", time.Date(2026, 9, 6, 12, 0, 0, 0, santiago)).Milestones[0].Ends; got != "2026-09-06" {
+		t.Errorf("on 6 Sep in Santiago, Core ends %s, want that day", got)
+	}
+	st.syllabus.Milestones[0].Lessons[0].Hours = 3
+	st.syllabus.Milestones[0].Target = "2026-03-31"
+	f := forecastOf(&st, pace, "", time.Date(2026, 3, 29, 12, 0, 0, 0, beirut))
+	if m := f.Milestones[0]; m.Ends != "2026-03-31" || m.AfterDeadline || f.Triage != nil {
+		t.Errorf("in Beirut: %+v, triage %+v; want 31 Mar, on its target", m, f.Triage)
 	}
 }
 

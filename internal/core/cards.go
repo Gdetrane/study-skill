@@ -642,7 +642,8 @@ func (st *studyState) openSession() *sessionState {
 }
 
 // draftsLeftToday is how many more drafts can be decided today under the
-// daily cap. A day is a calendar day in the location of now.
+// Topic's daily cap (see topicCap). A day is a calendar day in the location
+// of now.
 func (st *studyState) draftsLeftToday(now time.Time, capPerDay int) int {
 	y, m, d := now.Date()
 	start := time.Date(y, m, d, 0, 0, 0, 0, now.Location())
@@ -682,10 +683,7 @@ func (c *Core) DueCardsOf(ctx context.Context, topicID string, q DueQuery) (DueC
 		out.Paused, out.Energy = true, ""
 		return out, nil
 	}
-	capPerDay := NewCardsPerDay
-	if _, p, err := topicPlanSettings(view, topicID); err == nil {
-		capPerDay = p.newCardsPerDay
-	}
+	capPerDay := topicCap(view, topicID)
 	now := c.now()
 	var due, drafts []*cardState
 	for _, id := range s.study.cardOrder {

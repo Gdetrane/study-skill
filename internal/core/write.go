@@ -154,18 +154,18 @@ func (c *Core) writeTopic(ctx context.Context, topicID string, p plan, dryRun bo
 		return nil, err
 	}
 	if err := c.crashAt(crashAfterEvent); err != nil {
-		return nil, err
+		return nil, recordedButUnfinished(topicID, err)
 	}
 	for i, it := range ev.Items {
 		if err := writeItem(topic, it.Item, contents[i]); err != nil {
 			return nil, recordedButUnfinished(topicID, err)
 		}
 		if err := c.crashAt(crashAfterItem); err != nil {
-			return nil, err
+			return nil, recordedButUnfinished(topicID, err)
 		}
 	}
 	if err := c.crashAt(crashBeforeClear); err != nil {
-		return nil, err
+		return nil, recordedButUnfinished(topicID, err)
 	}
 	if err := clearIntent(home, topicID); err != nil {
 		return nil, recordedButUnfinished(topicID, err)
@@ -233,9 +233,33 @@ func refuseNewer(topicID string, s *replayed) error {
 // recordedButUnfinished explains a write that failed after its Event was
 // recorded: the change is not lost, and the next write finishes it.
 func recordedButUnfinished(topicID string, err error) error {
-	return &Error{Code: CodeOf(err), Err: err,
+	return &Error{Code: CodeOf(err), Err: unfinished{err},
 		Message: fmt.Sprintf("the change is recorded in the History of %s, but it could not be finished (%v); "+
 			"the next change to %s finishes it once that is fixed", topicID, err, topicID)}
+}
+
+// unfinished marks the cause of a write that failed after its Event was
+// recorded.
+type unfinished struct{ err error }
+
+func (u unfinished) Error() string { return u.err.Error() }
+func (u unfinished) Unwrap() error { return u.err }
+
+// wasRecorded reports whether a failed write recorded its Event anyway, so
+// recovery will finish it.
+func wasRecorded(err error) bool {
+	var u unfinished
+	return errors.As(err, &u)
+}
+
+// cause is the error behind a write's failure, without the explanation
+// recordedButUnfinished added.
+func cause(err error) error {
+	var u unfinished
+	if errors.As(err, &u) {
+		return u.err
+	}
+	return err
 }
 
 // itemContent is an item's content after an Event, or its absence.

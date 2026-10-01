@@ -87,7 +87,9 @@ func addLearnerLoop(server *mcp.Server, c *core.Core) {
 			"suggested.reason is English you may rephrase. cards.ready says whether Reviews are possible; never mention " +
 			"how many Cards are due. If long_gap is set, start with a short recap and a two-minute warm-up. unclosed " +
 			"lists the Sessions that ended without a Next step, newest first: show the learner changes (what changed " +
-			"since the last Checkpoint), ask for each missing note, and record it with session_close naming the Session.",
+			"since the last Checkpoint), ask for each missing note, and record it with session_close naming the Session. " +
+			"If paused is set, the Topic stays paused: " +
+			"offer to resume it with topic_update or to pick another Topic.",
 		Annotations: write,
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in sessionOpenInput) (*mcp.CallToolResult, core.SessionOpened, error) {
 		r, err := c.OpenSession(ctx, in.Topic, core.SessionSpec{Energy: in.Energy, Focus: in.Focus})

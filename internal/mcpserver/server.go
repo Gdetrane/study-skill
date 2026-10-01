@@ -29,7 +29,8 @@ const Instructions = `Lamplight keeps the learner's study state. Follow these ru
 7. Run a Lesson's Check only with "study check <lesson> --topic <topic>" in your own shell, never any other way; it records the Attempt. Write the Check in the YAML header of lessons/<lesson-id>.md and show it to the learner before practicing starts.
 8. Change the Syllabus only through Revisions: revision_propose, show the learner the change, then revision_apply, which asks the learner directly when this client can; otherwise call it only after they approved in their own words, and record a no with revision_decline.
 9. Review only the Cards due_cards returns: it follows the Session's Energy and a daily cap on new Cards. At a draft's first Review, the learner keeps, edits or drops it. Write Cards with one fact each, no lists, no answer in the prompt, no trivia, and at least one from the learner's own mistakes.
-10. Show Forecasts as they are given, when a Milestone ends at the learner's Pace, never how far behind anything is. When status or syllabus offers a Triage, offer its options and change nothing until the learner chooses: a Revision to move Lessons or trim Stretch goals, or a new Pace with topic_update.`
+10. Show Forecasts as they are given, when a Milestone ends at the learner's Pace, never how far behind anything is. A Triage is something to consider, never the one next action: offer its options and change nothing until the learner chooses, a Revision to move Lessons, trim Stretch goals or change a target date, or topic_update for the Pace or the Goal's deadline.
+11. A paused Topic stays paused until the learner resumes it with topic_update (state active); never resume it yourself. When session_open says paused, offer to resume it or to pick another Topic.`
 
 // New returns an MCP server whose tools call c. logger, if not nil, receives
 // the server's Log; it must never write to the transport's stdout.
@@ -40,6 +41,7 @@ func New(c *core.Core, version string, logger *slog.Logger) *mcp.Server {
 	)
 	closedWorld := false
 	notDestructive := false
+	destructive := true
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:  "status",
@@ -95,8 +97,9 @@ func New(c *core.Core, version string, logger *slog.Logger) *mcp.Server {
 			"are; an empty goal or deadline removes it, and an empty pace removes the Pace. The Knowledge base is kind " +
 			"notebooklm, with the notebook's id, or none; choose it with the learner when creating the Topic. A Pace is " +
 			"dated periods of hours a week, such as 10 until a deadline and then 3; it gives each Milestone a Forecast. " +
-			"A paused Topic offers no Cards and no Forecasts. Asking for the values the Topic already has changes nothing.",
-		Annotations: &mcp.ToolAnnotations{DestructiveHint: &notDestructive, IdempotentHint: true, OpenWorldHint: &closedWorld},
+			"A paused Topic offers no Cards and no Forecasts. remove_tasks deletes Tasks for good. Asking for the values " +
+			"the Topic already has changes nothing.",
+		Annotations: &mcp.ToolAnnotations{DestructiveHint: &destructive, IdempotentHint: true, OpenWorldHint: &closedWorld},
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in topicUpdateInput) (*mcp.CallToolResult, core.TopicUpdate, error) {
 		changes := core.TopicChanges{Title: in.Title, Goal: in.Goal, Deadline: in.Deadline, Pace: in.Pace,
 			NewCardsPerDay: in.NewCardsPerDay, State: in.State, AddTasks: in.AddTasks, RemoveTasks: in.RemoveTasks}

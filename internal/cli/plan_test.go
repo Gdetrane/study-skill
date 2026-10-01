@@ -49,6 +49,7 @@ func TestPlanCommands(t *testing.T) {
 	check("plan_update.json", cli.ExitOK, "topic", "update", "linear-algebra",
 		"--pace", "1", "--pace", "0.5@2026-10-15", "--deadline", "2026-12-15", "--new-cards-per-day", "5", "--json")
 
+	check("plan_task_add_dry_run.txt", cli.ExitOK, "task", "add", "linear-algebra", "Book the exam", "--dry-run")
 	added := check("plan_task_add.json", cli.ExitOK, "task", "add", "linear-algebra", "Book", "the", "exam", "--by", "2026-11-20", "--json")
 	var out struct {
 		Data struct {

@@ -3,3 +3,6 @@ Updated Topic linear-algebra (Linear algebra)
   Deadline: 2026-12-15
   Pace: 0.25 h/week
   New Cards a day: 5
+  At 0.25 h/week, Systems of equations ends 6 Jan 2027; its target is 1 Dec 2026.
+  Vector spaces needs hour estimates for "Subspaces" before it can be forecast.
+  To consider: To finish Systems of equations by 1 Dec 2026: raise the Pace to about 0.5 h/week until then, move "Matrices" past the deadline, or trim about 1.3 h of Stretch goals.

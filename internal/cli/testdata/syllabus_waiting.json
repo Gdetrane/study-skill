@@ -131,6 +131,7 @@
           "title": "Systems of equations",
           "priority": "must",
           "deadline": "2026-12-01",
+          "deadline_from": "target",
           "remaining_hours": 3.5,
           "text": "Systems of equations has about 3.5 h of work left; set a Pace to see when it ends."
         },

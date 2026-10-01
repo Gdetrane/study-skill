@@ -125,8 +125,10 @@ type TopicUpdate struct {
 	// nothing was recorded.
 	Changed bool `json:"changed"`
 	// AddedTasks are the Tasks asked for, with their ids; a Task with the
-	// title of one already there is that Task.
+	// title of one already there is that Task. In a dry run, a new Task
+	// has no id yet.
 	AddedTasks []Task `json:"added_tasks,omitempty"`
+	DryRun     bool   `json:"dry_run,omitempty"`
 }
 
 // topicSettings is the content of topic.toml.
@@ -357,8 +359,8 @@ func (c *Core) UpdateTopic(ctx context.Context, id string, changes TopicChanges)
 	}
 	if len(changes.RemoveTasks) > 0 {
 		for _, t := range changes.RemoveTasks {
-			if !taskIDPattern.MatchString(t) {
-				return TopicUpdate{}, invalidf("%q is not a Task id: study task list shows them", t)
+			if err := checkTaskID(t); err != nil {
+				return TopicUpdate{}, err
 			}
 		}
 		steps = append(steps, topicStep{what: "Tasks removed", plan: planTasksRemoved(id, changes.RemoveTasks)})
@@ -380,16 +382,20 @@ func (c *Core) UpdateTopic(ctx context.Context, id string, changes TopicChanges)
 	for _, step := range steps {
 		ev, err := c.writeTopic(ctx, id, step.plan, changes.DryRun)
 		if err != nil {
-			if len(recorded) > 0 {
-				what := joinAnd(recorded)
-				verb := "was"
-				if strings.Contains(what, " and ") {
-					verb = "were"
-				}
-				return TopicUpdate{}, &Error{Code: CodeOf(err), Err: err, Message: fmt.Sprintf(
-					"the %s of %s %s changed, but not its %s: %v", what, id, verb, step.what, err)}
+			if len(recorded) == 0 {
+				return TopicUpdate{}, err
 			}
-			return TopicUpdate{}, err
+			what := joinAnd(recorded)
+			verb := "was"
+			if strings.Contains(what, " and ") {
+				verb = "were"
+			}
+			msg := fmt.Sprintf("the %s of %s %s changed, but not its %s: %v", what, id, verb, step.what, err)
+			if wasRecorded(err) {
+				msg = fmt.Sprintf("the %s of %s %s changed, and its %s was recorded but not finished: the next change "+
+					"to %s finishes it (%v)", what, id, verb, step.what, id, cause(err))
+			}
+			return TopicUpdate{}, &Error{Code: CodeOf(err), Err: err, Message: msg}
 		}
 		if ev != nil {
 			events = append(events, ev)
@@ -404,13 +410,32 @@ func (c *Core) UpdateTopic(ctx context.Context, id string, changes TopicChanges)
 	var err error
 	if changes.DryRun {
 		topic, err = c.previewTopic(id, events)
+		// A dry run invents no ids: the real run picks its own.
+		for _, ev := range events {
+			if ev.Type != eventTaskAdded {
+				continue
+			}
+			for _, it := range ev.Items {
+				fresh := strings.TrimPrefix(it.Item, tasksFile+"#")
+				for i := range added {
+					if added[i].ID == fresh {
+						added[i].ID = ""
+					}
+				}
+				for i := range topic.Tasks {
+					if topic.Tasks[i].ID == fresh {
+						topic.Tasks[i].ID = ""
+					}
+				}
+			}
+		}
 	} else {
 		topic, err = c.readTopic(id)
 	}
 	if err != nil {
 		return TopicUpdate{}, err
 	}
-	return TopicUpdate{Topic: topic, Changed: len(events) > 0, AddedTasks: added}, nil
+	return TopicUpdate{Topic: topic, Changed: len(events) > 0, AddedTasks: added, DryRun: changes.DryRun}, nil
 }
 
 // planTitleAndGoal plans changing the title or the goal; applied receives
@@ -467,12 +492,21 @@ func (c *Core) previewTopic(id string, events []*event) (Topic, error) {
 	}
 	for _, ev := range events {
 		for _, it := range ev.Items {
-			if it.Item != topicFile {
+			if it.Item == topicFile {
+				if data, exists, err = eventKinds[ev.Type].apply(*ev, topicFile, data, exists); err != nil {
+					return Topic{}, err
+				}
 				continue
 			}
-			if data, exists, err = eventKinds[ev.Type].apply(*ev, topicFile, data, exists); err != nil {
+			current, had, err := view.read(it.Item)
+			if err != nil {
 				return Topic{}, err
 			}
+			next, keep, err := eventKinds[ev.Type].apply(*ev, it.Item, current, had)
+			if err != nil {
+				return Topic{}, err
+			}
+			view.pending[it.Item] = itemContent{data: next, exists: keep}
 		}
 		if ev.Type == eventTopicStateSet {
 			if err := replayTopicStateSet(s, *ev); err != nil {
@@ -488,7 +522,7 @@ func (c *Core) previewTopic(id string, events []*event) (Topic, error) {
 		return Topic{}, err
 	}
 	topic.Title, topic.Goal, topic.KnowledgeBase = settings.Title, settings.Goal, knowledgeBaseOf(settings)
-	c.addPlan(&topic, s, settings)
+	c.addPlan(&topic, s, settings, view)
 	return topic, nil
 }
 
@@ -504,7 +538,8 @@ func applyTopicCreated(ev event, item string, _ []byte, _ bool) ([]byte, bool, e
 	case gitattributes:
 		// These files hold one record per line, so a union merge keeps both
 		// machines' lines; replay and status flag what conflicts.
-		return []byte(historyFile + " merge=union\n" + cardsFile + " merge=union\n" + sourcesFile + " merge=union\n"), true, nil
+		return []byte(historyFile + " merge=union\n" + cardsFile + " merge=union\n" + sourcesFile + " merge=union\n" +
+			tasksFile + " merge=union\n"), true, nil
 	}
 	return nil, false, corruptf("Event %s (%s) cannot edit %s", ev.ID, ev.Type, item)
 }
@@ -551,6 +586,10 @@ func replayTopicUpdated(s *replayed, _ event) error {
 // parseTopicSettings reads topic.toml; where names it in errors.
 func parseTopicSettings(data []byte, where string) (topicSettings, error) {
 	var settings topicSettings
+	if hasConflictMarkers(data) {
+		return settings, corruptf("%s holds a git merge conflict: resolve the merge conflict in %s by keeping one side "+
+			"of each block between <<<<<<< and >>>>>>>, and deleting the marker lines", where, topicFile)
+	}
 	md, err := toml.Decode(string(data), &settings)
 	if err != nil {
 		return settings, corruptf("%s is not valid TOML: %v", where, err)
@@ -570,6 +609,18 @@ func parseTopicSettings(data []byte, where string) (topicSettings, error) {
 		}
 	}
 	return settings, nil
+}
+
+// hasConflictMarkers reports whether a file holds the markers git leaves
+// around a merge conflict.
+func hasConflictMarkers(data []byte) bool {
+	for _, line := range bytes.Split(data, []byte{'\n'}) {
+		if bytes.HasPrefix(line, []byte("<<<<<<< ")) || bytes.HasPrefix(line, []byte(">>>>>>> ")) ||
+			bytes.Equal(bytes.TrimRight(line, "\r"), []byte("=======")) {
+			return true
+		}
+	}
+	return false
 }
 
 // encodeTopicSettings writes topic.toml in the current format: the settings
@@ -653,7 +704,7 @@ func (c *Core) loadTopic(home *os.Root, id string) (Topic, error) {
 		topic.Resume = &r
 	}
 	topic.LessonsWithoutEvidence = s.lessonsWithoutEvidence(s.citingLessons(topic.KnowledgeBase))
-	c.addPlan(&topic, s, settings)
+	c.addPlan(&topic, s, settings, newView(root, s))
 	c.addTopicGuidance(root, s, &topic)
 	if unfinished := unfinishedItems(home, id, s); len(unfinished) > 0 {
 		kept := topic.Flags[:0]
