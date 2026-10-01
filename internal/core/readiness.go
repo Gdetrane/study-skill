@@ -74,7 +74,7 @@ type FocusSuggestion struct {
 func suggestFocus(energy string, r ResumePoint, cards *CardsReady) *FocusSuggestion {
 	ready := cards != nil && cards.Ready
 	exercise := r.Phase == PhasePracticing || r.Phase == PhaseFeedback
-	lesson := "Lesson " + r.LessonTitle
+	lesson := "Lesson “" + r.LessonTitle + "”"
 	switch energy {
 	case EnergyFumes:
 		if ready {

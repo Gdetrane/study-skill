@@ -1,0 +1,7 @@
+{
+  "ok": false,
+  "error": {
+    "code": "not_found",
+    "message": "lessons/answer.md has no Break point done; it declares read"
+  }
+}

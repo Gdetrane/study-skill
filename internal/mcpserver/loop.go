@@ -80,8 +80,13 @@ func addLearnerLoop(server *mcp.Server, c *core.Core) {
 		Name:  "session_open",
 		Title: "Open a Session",
 		Description: "Open a Session on a Topic after the Energy check; it also makes the Topic the most recent one. " +
-			"Show the learner the resume point and its Next step word for word. If unclosed is set, the last Session " +
-			"ended without a Next step: ask the learner for the missing note.",
+			"Read the Learner profile and the Topic's additions (paths in status) first. Show the learner the resume " +
+			"point: the Lesson, the last Break point reached and the Next step word for word. Give energy; leave focus " +
+			"out until the learner chooses, and suggested names the Focus the Energy suggests. cards.ready says whether " +
+			"Reviews are possible; never mention how many Cards are due. If long_gap is set, start with a short recap " +
+			"and a two-minute warm-up. If unclosed is set, the last Session ended without a Next step: show the learner " +
+			"unclosed.changes (what changed since the last Checkpoint), ask for the missing note, and record it with " +
+			"session_close naming unclosed.id.",
 		Annotations: write,
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in sessionOpenInput) (*mcp.CallToolResult, core.SessionOpened, error) {
 		r, err := c.OpenSession(ctx, in.Topic, core.SessionSpec{Energy: in.Energy, Focus: in.Focus})
@@ -91,11 +96,27 @@ func addLearnerLoop(server *mcp.Server, c *core.Core) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:  "session_close",
 		Title: "Close the Session",
-		Description: "Close the open Session with a Next step that starts with a verb (\"Fix the off-by-one in " +
-			"parse.go\") and the context needed to take it. The learner sees it first when they come back.",
+		Description: "Close the open Session with a Next step that starts with a verb and says what to act on (\"Fix " +
+			"the off-by-one in parse.go\", never \"Continue\" or \"The parser is half done\") and the context needed " +
+			"to take it. The learner sees it first when they come back.",
 		Annotations: write,
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in sessionCloseInput) (*mcp.CallToolResult, core.SessionClosed, error) {
 		r, err := c.CloseSession(ctx, in.Topic, core.CloseSpec{Session: in.Session, NextStep: in.NextStep, Context: in.Context})
+		return nil, r, toolErr(err)
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:  "break_point_reached",
+		Title: "Reach a Break point",
+		Description: "Record that the learner reached one of the Break points declared under break_points: in the " +
+			"Lesson's YAML header, with a Next step that starts with a verb and the context needed to take it. The " +
+			"Session can stop there, and the next one resumes from it; the Session stays open until session_close. " +
+			"The same Break point and Next step again record nothing.",
+		Annotations: idempotent,
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in breakPointInput) (*mcp.CallToolResult, core.BreakPointReached, error) {
+		r, err := c.ReachBreakPoint(ctx, in.Topic, core.BreakPointSpec{
+			Lesson: in.Lesson, BreakPoint: in.BreakPoint, NextStep: in.NextStep, Context: in.Context,
+		})
 		return nil, r, toolErr(err)
 	})
 
@@ -186,6 +207,14 @@ type sessionCloseInput struct {
 	Session  string `json:"session,omitempty" jsonschema:"the Session to close; the latest when left out; name an unclosed older Session to give it its missing note"`
 	NextStep string `json:"next_step" jsonschema:"the concrete next action, starting with a verb"`
 	Context  string `json:"context,omitempty" jsonschema:"what the learner needs to know to take the Next step"`
+}
+
+type breakPointInput struct {
+	Topic      string `json:"topic" jsonschema:"the Topic's id"`
+	Lesson     string `json:"lesson" jsonschema:"the Lesson's id"`
+	BreakPoint string `json:"break_point" jsonschema:"the id of a Break point declared in the Lesson's YAML header"`
+	NextStep   string `json:"next_step" jsonschema:"the concrete next action, starting with a verb"`
+	Context    string `json:"context,omitempty" jsonschema:"what the learner needs to know to take the Next step"`
 }
 
 type phaseSetInput struct {

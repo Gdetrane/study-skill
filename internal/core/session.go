@@ -160,6 +160,9 @@ func (c *Core) OpenSession(ctx context.Context, topicID string, spec SessionSpec
 		if last := s.study.lastSession(); last != nil {
 			if !last.closed {
 				result.Unclosed = &UnclosedSession{SessionInfo: *last.info()}
+				// Unclosed reports it, with what changed; this Session
+				// is the open one now.
+				result.Resume.OpenSession = nil
 			}
 			result.LongGap = now.Sub(last.opened) > longGap
 		}

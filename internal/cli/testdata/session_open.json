@@ -1,0 +1,15 @@
+{
+  "ok": true,
+  "data": {
+    "topic": "c",
+    "session": "<id>",
+    "resume": {
+      "lesson": "answer",
+      "lesson_title": "The answer"
+    },
+    "suggested": {
+      "focus": "learn",
+      "reason": "full Energy suits Lesson “The answer”"
+    }
+  }
+}

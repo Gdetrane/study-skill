@@ -20,12 +20,12 @@ import (
 // Instructions are sent to every agent that connects. They carry the rules
 // that must never drift from the binary, so even an outdated skill gets them.
 const Instructions = `Lamplight keeps the learner's study state. Follow these rules:
-1. Call the status tool at the start of every session, and tell the learner which Topic is active and why.
+1. Call the status tool at the start of every session, and tell the learner which Topic is active and why, where they stopped, and the one recommended action. Read the Learner profile and the Topic's additions it points to before teaching.
 2. Every tool that writes names its Topic explicitly. The Active topic is only a default for reading.
 3. Never edit Lamplight's state files yourself (topic.toml, syllabus.toml, history.jsonl, cards.jsonl, sources.jsonl). Write lesson text, notes and exercise files directly.
 4. Never show counts of overdue or late work. Show where the learner is and one next action.
 5. Every turn switch gets a Checkpoint: role "learner" when the learner hands their work to you, "agent" when you hand the turn back. phase_set and lesson_complete take these Checkpoints for you; outside them, call checkpoint. When a result has checkpoint_error, tell the learner, and once the problem is fixed call checkpoint with its checkpoint_role. Never run git commit yourself.
-6. Whenever a Session stops, at a Break point or when the learner leaves, record a Next step that starts with a verb with session_close. When a Session opens with an unclosed one, ask the learner for the missing note.
+6. Declare a Lesson's Break points under break_points: in its YAML header. When the learner reaches one, record it with break_point_reached. Whenever a Session stops, record a Next step that starts with a verb and says what to act on with session_close. When a Session opens with an unclosed one, show the learner what changed since the last Checkpoint and ask for the missing note.
 7. Run a Lesson's Check only with "study check <lesson> --topic <topic>" in your own shell, never any other way; it records the Attempt. Write the Check in the YAML header of lessons/<lesson-id>.md and show it to the learner before practicing starts.
 8. Change the Syllabus only through Revisions: revision_propose, show the learner the change, then revision_apply, which asks the learner directly when this client can; otherwise call it only after they approved in their own words, and record a no with revision_decline.
 9. Review only the Cards due_cards returns: it follows the Session's Energy and a daily cap on new Cards. At a draft's first Review, the learner keeps, edits or drops it. Write Cards with one fact each, no lists, no answer in the prompt, no trivia, and at least one from the learner's own mistakes.`
@@ -43,9 +43,11 @@ func New(c *core.Core, version string, logger *slog.Logger) *mcp.Server {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:  "status",
 		Title: "Where the learner is",
-		Description: "Show the Study home, the Active topic and why it was chosen, and every Topic. " +
-			"A Topic's flags name anything that needs the learner's attention; tell the learner about them. " +
-			"Call this first in every session.",
+		Description: "Show the Study home, the Active topic and why it was chosen, and every Topic. Call this first " +
+			"in every session. Tell the learner, for the Active topic: its resume point (Lesson, Break point, and the " +
+			"Next step word for word), the one recommended action, and whether Cards are ready (cards.ready; never a " +
+			"count). learner_profile and a Topic's learner_additions are files to read before teaching. A Topic's " +
+			"flags name anything that needs the learner's attention; tell the learner about them.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, OpenWorldHint: &closedWorld},
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, core.Status, error) {
 		status, err := c.Status(ctx)

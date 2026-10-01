@@ -266,6 +266,7 @@ func (a *app) rootCommand() *cobra.Command {
 
 	root.AddCommand(status, topic, a.checkpointCommand(), a.checkCommand(), a.libraryCommand(), doctor, serve)
 	root.AddCommand(a.sourceCommand(), a.evidenceCommand(), a.syllabusCommand(), a.revisionCommand(), a.cardCommand(), a.reviewCommand())
+	root.AddCommand(a.sessionCommand())
 	a.completionCommands(root)
 	return root
 }
@@ -414,7 +415,7 @@ func (a *app) runStatus(cmd *cobra.Command, _ []string) error {
 	if a.json {
 		return a.writeJSON(envelope{OK: true, Data: status})
 	}
-	return writeStatus(a.out, status)
+	return writeStatus(a.out, status, c.Now())
 }
 
 // envelope is the JSON shape of every --json result. See docs/cli.md.

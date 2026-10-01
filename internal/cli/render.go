@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/mordor-forge/lamplight/v2/internal/core"
 	"github.com/mordor-forge/lamplight/v2/internal/library"
@@ -90,7 +91,7 @@ func widest(items []string) int {
 }
 
 // writeStatus renders the status for people.
-func writeStatus(w io.Writer, s core.Status) error {
+func writeStatus(w io.Writer, s core.Status, now time.Time) error {
 	var b strings.Builder
 	if len(s.Topics) == 0 {
 		fmt.Fprintf(&b, "%s %s\n\nNo Topics yet. Start one with:\n  %s\n",
@@ -99,19 +100,26 @@ func writeStatus(w io.Writer, s core.Status) error {
 		_, err := io.WriteString(w, b.String())
 		return err
 	}
-	labels := widest([]string{"Study home:", "Active topic:"}) + 2
+	names := []string{"Study home:", "Active topic:"}
+	if s.LearnerProfile != "" {
+		names = append(names, "Learner profile:")
+	}
+	labels := widest(names) + 2
 	fmt.Fprintf(&b, "%s%s\n", styleLabel.Render(pad("Study home:", labels)), s.StudyHome)
 	if t := s.ActiveTopic; t != nil {
 		fmt.Fprintf(&b, "%s%s (%s): %s\n", styleLabel.Render(pad("Active topic:", labels)),
 			styleAccent.Render(t.ID), t.Title, styleDim.Render(t.Reason))
 		for _, topic := range s.Topics {
-			if topic.ID == t.ID && topic.Resume != nil {
-				writeResume(&b, *topic.Resume, labels)
+			if topic.ID == t.ID {
+				writeActiveTopic(&b, topic, s.Recommended, labels, now)
 			}
 		}
 	} else {
 		fmt.Fprintf(&b, "%s%s\n", styleLabel.Render(pad("Active topic:", labels)),
 			styleDim.Render("none yet: start inside a Topic's folder, or name a Topic"))
+	}
+	if s.LearnerProfile != "" {
+		fmt.Fprintf(&b, "%s%s\n", styleLabel.Render(pad("Learner profile:", labels)), s.LearnerProfile)
 	}
 	fmt.Fprintf(&b, "\n%s\n", styleLabel.Render("Topics:"))
 	ids := make([]string, len(s.Topics))
@@ -137,8 +145,32 @@ func writeStatus(w io.Writer, s core.Status) error {
 	return err
 }
 
+// writeActiveTopic shows the Active topic's Resume point, the one action
+// recommended next, whether Cards are ready (never how many), and the
+// Topic's additions to the Learner profile.
+func writeActiveTopic(b *strings.Builder, t core.Topic, rec *core.Recommendation, labels int, now time.Time) {
+	if t.Resume != nil {
+		writeResume(b, *t.Resume, labels)
+	}
+	if rec != nil && rec.Action != core.ActionNextStep {
+		fmt.Fprintf(b, "%s%s\n", styleLabel.Render(pad("Do next:", labels)), styleAccent.Render(rec.Text))
+	}
+	if c := t.Cards; c != nil {
+		switch {
+		case c.Ready:
+			fmt.Fprintf(b, "%s%s\n", styleLabel.Render(pad("Cards:", labels)), "ready to review")
+		case c.NextDue != nil:
+			fmt.Fprintf(b, "%s%s\n", styleLabel.Render(pad("Cards:", labels)),
+				styleDim.Render("next due "+c.NextDue.In(now.Location()).Format("2 Jan 2006")))
+		}
+	}
+	if t.LearnerAdditions != "" {
+		fmt.Fprintf(b, "%s%s\n", styleLabel.Render(pad("Additions:", labels)), styleDim.Render(t.LearnerAdditions))
+	}
+}
+
 // writeResume shows where the learner stopped: the Lesson and its Phase,
-// then the Next step word for word.
+// the last Break point reached, then the Next step word for word.
 func writeResume(b *strings.Builder, r core.ResumePoint, labels int) {
 	switch {
 	case r.Lesson != "":
@@ -149,6 +181,13 @@ func writeResume(b *strings.Builder, r core.ResumePoint, labels int) {
 		fmt.Fprintf(b, "%s%s\n", styleLabel.Render(pad("Lesson:", labels)), where)
 	case r.SyllabusDone:
 		fmt.Fprintf(b, "%s%s\n", styleLabel.Render(pad("Lesson:", labels)), "every Lesson in the Syllabus is done")
+	}
+	if p := r.BreakPoint; p != nil {
+		text := p.ID
+		if p.Describe != "" {
+			text += styleDim.Render(": " + printable(p.Describe))
+		}
+		fmt.Fprintf(b, "%s%s\n", styleLabel.Render(pad("Break point:", labels)), text)
 	}
 	if r.NextStep != nil {
 		fmt.Fprintf(b, "%s%s\n", styleLabel.Render(pad("Next step:", labels)), styleAccent.Render(r.NextStep.Step))

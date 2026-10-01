@@ -1,0 +1,10 @@
+Opened a Session on c.
+Lesson:       answer (The answer)
+Break point:  read: The question is understood
+Next step:    Write a first answer
+Suggested:    learn (go on with Lesson “The answer” at a gentle pace)
+
+The Session opened 1 Oct 09:30 ended without a Next step.
+  Changed since the last Checkpoint:
+    modified  practice/answer/answer.txt
+  Give it its Next step with: study session close c --session <id> --next-step "..."
