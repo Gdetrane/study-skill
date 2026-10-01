@@ -3,8 +3,10 @@ package cli
 import (
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/spf13/cobra"
 
@@ -204,7 +206,7 @@ func (a *app) cardCommand() *cobra.Command {
 			if a.json {
 				return a.writeJSON(envelope{OK: true, Data: res})
 			}
-			return writeReviewResult(a.out, res)
+			return writeReviewResult(a.out, res, c.Now())
 		},
 	}
 	reviewCmd.Flags().StringVar(&review.Rating, "rating", "", "again, hard, good or easy")
@@ -264,10 +266,27 @@ func writeCardList(w io.Writer, cards []core.Card, now time.Time) error {
 	for _, card := range cards {
 		fmt.Fprintf(&b, "%s %s  %s\n", styleLabel.Render(cardLabel(card)), styleDim.Render(card.ID),
 			styleDim.Render(cardState(card, now)))
-		fmt.Fprintf(&b, "  %s\n  %s %s\n", card.Prompt, styleDim.Render("→"), card.Answer)
+		fmt.Fprintf(&b, "  %s\n  %s %s\n", renderCardText(card.Prompt, "  "), styleDim.Render("→"),
+			renderCardText(card.Answer, "    "))
 	}
 	_, err := io.WriteString(w, b.String())
 	return err
+}
+
+// renderCardText prints a Card's text for a terminal: its lines, the later
+// ones indented by indent, tabs kept, and a line holding any other control
+// or bidi character quoted instead (see printable), so Card text can never
+// rewrite the terminal.
+func renderCardText(s, indent string) string {
+	lines := strings.Split(s, "\n")
+	for i, line := range lines {
+		if strings.ContainsFunc(line, func(r rune) bool {
+			return (unicode.IsControl(r) && r != '\t') || unicode.Is(unicode.Bidi_Control, r)
+		}) {
+			lines[i] = strconv.QuoteToASCII(line)
+		}
+	}
+	return strings.Join(lines, "\n"+indent)
 }
 
 func writeCardChange(w io.Writer, res core.CardChange, verb string) error {
@@ -286,7 +305,8 @@ func writeCardChange(w io.Writer, res core.CardChange, verb string) error {
 	return err
 }
 
-func writeReviewResult(w io.Writer, res core.ReviewResult) error {
+func writeReviewResult(w io.Writer, res core.ReviewResult, now time.Time) error {
+	next := "next due " + res.Card.Due.In(now.Location()).Format("2 Jan 2006")
 	var err error
 	switch {
 	case res.Dropped && res.DryRun:
@@ -294,10 +314,9 @@ func writeReviewResult(w io.Writer, res core.ReviewResult) error {
 	case res.Dropped:
 		_, err = fmt.Fprintf(w, "Dropped %s\n", res.Card.ID)
 	case res.DryRun:
-		_, err = fmt.Fprintf(w, "Would record %s for %s\n", res.Rating, res.Card.ID)
+		_, err = fmt.Fprintf(w, "Would record %s for %s; %s\n", res.Rating, res.Card.ID, next)
 	default:
-		_, err = fmt.Fprintf(w, "Recorded %s for %s; next due %s\n", res.Rating, res.Card.ID,
-			res.Card.Due.Format("2 Jan 2006"))
+		_, err = fmt.Fprintf(w, "Recorded %s for %s; %s\n", res.Rating, res.Card.ID, next)
 	}
 	return err
 }
