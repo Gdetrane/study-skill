@@ -133,7 +133,7 @@ the maintainer's answers to the questions they raised.
   | `revision.applied` | Revision, approval (how: `chat`, `elicitation` or `terminal`; the learner's words; the question shown when Lamplight asked), the whole Syllabus | `syllabus.toml` |
   | `revision.declined` | Revision, the learner's answer as for an approval | none |
   | `session.opened` | Energy, Focus | none |
-  | `session.closed` | Session, Next step, context | none |
+  | `session.closed` | Session, Next step, context, the Lesson it is about | none |
   | `break_point.reached` | Lesson, Break point, Next step, context | none |
   | `phase.set` | Lesson, Phase, optional Next step, the Check version shown when practicing starts, the turn it ended | none |
   | `attempt.recorded` | Lesson, Check version, snapshot, outcome, per-criterion outcomes (never output) | none |
@@ -252,8 +252,9 @@ hours before any learning happens is exactly what v1 produced.
    - **Practice**: continue the current exercise from the last Break point.
    - **Reviews**: due Cards only, capped by Energy.
    - **Explore**: free questions; useful answers can become Cards or a Revision proposal.
-   With nothing due at fumes, the offer is "write tomorrow's first step". `session_open`
-   returns the suggestion when it gets an Energy and no Focus yet; the suggestion is never
+   With nothing due at fumes, the offer is "write tomorrow's first step"; without a
+   Syllabus, it is to plan one. `session_open` returns the suggestion when it gets an Energy
+   and no Focus yet, as one value: a Focus, `plan` or `stop`. The suggestion is never
    recorded, only the Focus the learner chooses.
 3. The Learner profile and the Topic's additions are read at the start of every Session;
    `status` gives their paths when the files exist.
@@ -266,25 +267,33 @@ hours before any learning happens is exactly what v1 produced.
    off by a crash is taken by the next `phase_set`, `lesson_complete` or `checkpoint`.
 5. Reaching a Break point, or ending a Session, records a Next step (starting with a verb)
    and free-text context. Break points are declared in order under `break_points:` in the
-   Lesson's YAML header, read apart from the Check so a mistake there never blocks it. A
-   Next step is checked without a language model: it starts with a letter, has at least two
-   words, and does not open with a word that introduces a description ("The parser is…",
-   "Done with…"); the word list is English, so other languages pass on the first two rules. Going back to practicing after a failed Attempt can record one
-   too, naming the fix. The Resume point is the first Lesson not done, its Phase and the
-   latest Next step; a Lesson's completion clears a Next step that belonged to it. If the learner simply closes the terminal, the next Session sees
-   the unclosed Session, shows what changed since the last Checkpoint, and asks for the
-   missing note. The changes are listed the way a Checkpoint would see them, from hashes
-   that are computed but not written, so listing them writes nothing to `.git` and runs no
-   program the repository names (ADR-0009); `session_close` naming the old Session records
-   the note.
+   Lesson's YAML header and read apart from the Check, so a wrong type or value there never
+   makes the Check unreadable (a YAML syntax error breaks the whole header, and `status`
+   flags it). They are reached in the current Lesson only, so the Resume point's Lesson,
+   Break point and Next step belong together. A Next step is checked without a language
+   model: after any opening punctuation it starts with a letter, says what to act on (two
+   words, or four characters in scripts written without spaces), carries no invisible
+   formatting, and does not open with a word that introduces a description ("The parser
+   is…", "I'm on…", "Done with…"); that word list is English, so other languages pass on the
+   other rules. Going back to practicing after a failed Attempt can record one too, naming
+   the fix. The Resume point is the first Lesson not done, its Phase, the last Break point
+   reached in it and the latest Next step; a Lesson's completion clears a Next step that
+   belonged to it, and a Next step that a merge brings in for a Lesson already done,
+   skipped or removed never leads and is flagged. If the learner simply closes the
+   terminal, the next Session sees every Session left unclosed, shows what changed since
+   the last Checkpoint, and asks for the missing notes. The changes are listed the way a
+   Checkpoint would see them, from hashes that are computed but not written, so listing
+   them writes nothing to `.git` and runs no program the repository names (ADR-0009);
+   Lamplight's own state files are left out. `session_close` naming an old Session records
+   its note, which never replaces a Next step recorded in a newer Session.
 6. Completing a Lesson is one idempotent operation: mark it done, save its draft Cards,
    record the Event, take a Checkpoint in the role of the turn it ends (the learner's when
    completing straight from practicing). It is allowed only when the completion rule under
    Checks holds, and its Event records the Attempt and Check version it relied on, so later
    changes to shared code or to the Lesson never reopen it.
 7. After a long gap: a short recap of where the Topic stands and a two-minute warm-up, never
-   the size of the backlog. `session_open` sets `long_gap` when the previous Session was more
-   than a week ago.
+   the size of the backlog. `session_open` sets `long_gap` when the Topic was last worked
+   on, by any Event, more than a week ago.
 
 ### Checks
 
