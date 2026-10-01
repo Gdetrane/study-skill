@@ -12,15 +12,17 @@ const learnerFile = "learner.md"
 
 // Actions that status recommends. The words match the Focuses where they
 // mean the same thing (learn, practice, reviews, explore) and the
-// suggestion plan.
+// suggestions plan, stop and resume_topic.
 const (
-	ActionNextStep = "next_step"
-	ActionPlan     = SuggestPlan
-	ActionLearn    = FocusLearn
-	ActionPractice = FocusPractice
-	ActionFeedback = "feedback"
-	ActionReviews  = FocusReviews
-	ActionExplore  = FocusExplore
+	ActionNextStep    = "next_step"
+	ActionPlan        = SuggestPlan
+	ActionLearn       = FocusLearn
+	ActionPractice    = FocusPractice
+	ActionFeedback    = "feedback"
+	ActionReviews     = FocusReviews
+	ActionExplore     = FocusExplore
+	ActionResumeTopic = SuggestResumeTopic
+	ActionStop        = SuggestStop
 )
 
 // FlagLessonHeader: the current Lesson's YAML header cannot be read, so its
@@ -30,17 +32,20 @@ const FlagLessonHeader = "lesson_header"
 // Recommendation is the one action status recommends for the Active topic.
 type Recommendation struct {
 	Topic string `json:"topic"`
-	// Action is next_step, plan, learn, practice, feedback, reviews or
-	// explore: an enumeration skills can rely on.
+	// Action is next_step, plan, learn, practice, feedback, reviews,
+	// explore, resume_topic or stop: an enumeration skills can rely on.
 	Action string `json:"action"`
 	// Text says what to do in English prose, which the skill may rephrase;
 	// for next_step it is the Next step word for word.
 	Text string `json:"text"`
 }
 
-// recommend picks the one action to take next on a Topic: its Next step
-// when there is one, otherwise the next move in its Syllabus, otherwise
-// Reviews or exploring once every Lesson is done. It never counts anything.
+// recommend picks the one action to take next on a Topic. A paused Topic
+// is resumed or left for another; a finished one offers only its Reviews.
+// Otherwise it is the Topic's Next step when there is one, then the next
+// move in its Syllabus, then Reviews or exploring once every Lesson is
+// done. A Triage is never the recommended action: it is something to
+// consider. It never counts anything.
 func recommend(t Topic) *Recommendation {
 	r := &Recommendation{Topic: t.ID}
 	resume := t.Resume
@@ -50,6 +55,12 @@ func recommend(t Topic) *Recommendation {
 		lesson = "Lesson “" + resume.LessonTitle + "”"
 	}
 	switch {
+	case t.State == TopicPaused:
+		r.Action, r.Text = ActionResumeTopic, "This Topic is paused: resume it, or pick another Topic"
+	case t.State == TopicFinished && ready:
+		r.Action, r.Text = ActionReviews, "This Topic is finished: review the Cards that are ready"
+	case t.State == TopicFinished:
+		r.Action, r.Text = ActionStop, "This Topic is finished, and no Card is ready: nothing to study on it now"
 	case resume != nil && resume.NextStep != nil:
 		r.Action, r.Text = ActionNextStep, resume.NextStep.Step
 	case resume == nil || resume.Lesson == "" && !resume.SyllabusDone:
@@ -74,7 +85,7 @@ func recommend(t Topic) *Recommendation {
 // settings: whether Cards are ready, where its Learner profile additions
 // are, and a flag when the current Lesson's Break points cannot be read.
 func (c *Core) addTopicGuidance(topic *os.Root, s *replayed, t *Topic) {
-	t.Cards = s.study.cardsReady(c.now())
+	t.Cards = cardsReady(s, newView(topic, s), t.ID, c.now())
 	if isRegularFile(topic, learnerFile) {
 		t.LearnerAdditions = filepath.Join(t.Path, learnerFile)
 	}

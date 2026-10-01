@@ -13,14 +13,30 @@ import (
 // counts of what is due are never shown.
 type CardsReady struct {
 	Ready bool `json:"ready"`
+	// Paused is set when the Topic is paused: its Cards wait until the
+	// learner resumes it, so none is ever ready.
+	Paused bool `json:"paused,omitempty"`
 	// NextDue is when the next Card falls due, when none is ready now.
 	NextDue *time.Time `json:"next_due,omitempty"`
 }
 
-// cardsReady reports whether Cards are ready to review at now: a Card due,
-// or a draft today's cap on new Cards still allows. Suspended Cards and
-// Cards gone never count. It is nil for a Topic without Cards.
-func (st *studyState) cardsReady(now time.Time) *CardsReady {
+// cardsReady reports whether a Topic's Cards are ready to review at now,
+// knowing its state and its daily cap on new Cards (see topicCap): a paused
+// Topic's Cards are never ready. Everything that asks whether Cards are
+// ready goes through it. It is nil for a Topic without Cards.
+func cardsReady(s *replayed, view *topicView, topicID string, now time.Time) *CardsReady {
+	out := s.study.cardsReadyUnder(now, topicCap(view, topicID))
+	if out != nil && s.topicState() == TopicPaused {
+		return &CardsReady{Paused: true}
+	}
+	return out
+}
+
+// cardsReadyUnder reports whether Cards are ready to review at now: a Card
+// due, or a draft that capPerDay, the daily cap on new Cards, still allows
+// today. Suspended Cards and Cards gone never count. It is nil for a Topic
+// without Cards.
+func (st *studyState) cardsReadyUnder(now time.Time, capPerDay int) *CardsReady {
 	var next time.Time
 	draftsWaiting, any := false, false
 	for _, cs := range st.cards {
@@ -40,8 +56,9 @@ func (st *studyState) cardsReady(now time.Time) *CardsReady {
 			next = due
 		}
 	}
-	if draftsWaiting {
-		if st.draftsLeftToday(now, NewCardsPerDay) > 0 {
+	// A cap of 0 takes no new Cards: its drafts are never ready.
+	if draftsWaiting && capPerDay > 0 {
+		if st.draftsLeftToday(now, capPerDay) > 0 {
 			return &CardsReady{Ready: true}
 		}
 		y, m, d := now.Date()
@@ -60,30 +77,49 @@ func (st *studyState) cardsReady(now time.Time) *CardsReady {
 	return out
 }
 
-// The two suggestions that are not a Focus.
+// The suggestions that are not a Focus.
 const (
 	// SuggestPlan: the Topic has no Syllabus yet; plan it together first.
 	SuggestPlan = "plan"
-	// SuggestStop: low Energy and nothing due; write tomorrow's first step
-	// as the Next step and end here.
+	// SuggestStop: low Energy and nothing due, so write tomorrow's first
+	// step as the Next step and end here; or a finished Topic with no Card
+	// ready, so there is nothing to study on it now.
 	SuggestStop = "stop"
+	// SuggestResumeTopic: the Topic is paused. It stays paused until the
+	// learner resumes it through topic_update, or picks another Topic.
+	SuggestResumeTopic = "resume_topic"
 )
 
 // FocusSuggestion is what the learner's Energy suggests for the Session.
 // The learner chooses; a suggestion is never recorded.
 type FocusSuggestion struct {
 	// Suggest is a Focus the learner may choose (learn, practice, reviews
-	// or explore), or plan or stop, which are not Focuses.
+	// or explore), or plan, stop or resume_topic, which are not Focuses.
 	Suggest string `json:"suggest"`
 	// Reason is English prose for the learner; the skill may rephrase it.
 	Reason string `json:"reason"`
 }
 
-// suggestFocus suggests a Focus from the Energy, where the learner stopped,
-// and whether Cards are ready. Without a Syllabus it suggests planning one,
-// as status recommends.
-func suggestFocus(energy string, r ResumePoint, cards *CardsReady) *FocusSuggestion {
+// suggestFocus suggests a Focus from the Energy, the Topic's state, where
+// the learner stopped, and whether Cards are ready. Like status's
+// recommendation, it never proposes studying a paused Topic, suggests only
+// Reviews on a finished one, and suggests planning a Syllabus first.
+func suggestFocus(energy, state string, r ResumePoint, cards *CardsReady) *FocusSuggestion {
+	switch energy {
+	case EnergyFull, EnergyHalf, EnergyFumes:
+	default:
+		return nil
+	}
 	ready := cards != nil && cards.Ready
+	switch state {
+	case TopicPaused:
+		return &FocusSuggestion{Suggest: SuggestResumeTopic, Reason: "the Topic is paused, and stays paused until you resume it"}
+	case TopicFinished:
+		if ready {
+			return &FocusSuggestion{Suggest: FocusReviews, Reason: "the Topic is finished, and Cards are ready"}
+		}
+		return &FocusSuggestion{Suggest: SuggestStop, Reason: "the Topic is finished, and no Card is ready: nothing to study on it now"}
+	}
 	exercise := r.Phase == PhasePracticing || r.Phase == PhaseFeedback
 	noSyllabus := r.Lesson == "" && !r.SyllabusDone
 	lesson := "Lesson “" + r.LessonTitle + "”"
@@ -135,7 +171,7 @@ const maxChangesShown = 50
 // are left out of the changes behind an unclosed Session, which are meant to
 // show the learner's work.
 var stateFiles = map[string]bool{
-	topicFile: true, syllabusFile: true, historyFile: true, cardsFile: true, sourcesFile: true,
+	topicFile: true, syllabusFile: true, historyFile: true, cardsFile: true, sourcesFile: true, tasksFile: true,
 }
 
 // FileChange is a file that changed since the last Checkpoint.

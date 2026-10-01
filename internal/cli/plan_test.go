@@ -75,8 +75,15 @@ func TestPlanCommands(t *testing.T) {
 	check("plan_triage.txt", cli.ExitOK, "topic", "update", "linear-algebra", "--pace", "0.25")
 	check("plan_status_triage.txt", cli.ExitOK, "status")
 
+	// A paused Topic is resumed or left for another, never studied, and its
+	// Cards are never ready.
+	if r := run(t, home, "card", "add", "linear-algebra", "--prompt", "What does a pivot column hold?", "--answer", "A pivot"); r.code != cli.ExitOK {
+		t.Fatalf("card add: %d, %s", r.code, r.stderr)
+	}
 	check("plan_pause.txt", cli.ExitOK, "topic", "update", "linear-algebra", "--state", "paused")
+	check("plan_status_paused.txt", cli.ExitOK, "status")
 	check("plan_status_paused.json", cli.ExitOK, "status", "--json")
+	check("plan_session_open_paused.txt", cli.ExitOK, "session", "open", "linear-algebra", "--energy", "full", "--dry-run")
 	check("plan_card_due_paused.txt", cli.ExitOK, "card", "due", "linear-algebra")
 	check("plan_task_remove.txt", cli.ExitOK, "task", "remove", "linear-algebra", task)
 }

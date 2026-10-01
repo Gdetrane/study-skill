@@ -442,12 +442,12 @@ func TestAPausedTopicStaysPaused(t *testing.T) {
 	}
 	defer home.Close()
 	defer root.Close()
-	if got := cardsAvailable(s, newView(root, s), "c", m.now()); !got.Paused || got.Ready {
+	if got := cardsReady(s, newView(root, s), "c", m.now()); got == nil || !got.Paused || got.Ready || got.NextDue != nil {
 		t.Errorf("Cards of a paused Topic = %+v", got)
 	}
 	m.update(t, TopicChanges{State: ptr(TopicActive)})
 	s, _, _ = m.replayTopic(ctx, "c")
-	if got := cardsAvailable(s, newView(root, s), "c", m.now()); got.Paused || !got.Ready {
+	if got := cardsReady(s, newView(root, s), "c", m.now()); got == nil || got.Paused || !got.Ready {
 		t.Errorf("Cards of an active Topic = %+v", got)
 	}
 }

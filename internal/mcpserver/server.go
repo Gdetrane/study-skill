@@ -22,7 +22,7 @@ import (
 const Instructions = `Lamplight keeps the learner's study state. Follow these rules:
 1. Call the status tool at the start of every session, and tell the learner which Topic is active and why, where they stopped, and the one recommended action. Read the Learner profile and the Topic's additions it points to before teaching.
 2. Every tool that writes names its Topic explicitly. The Active topic is only a default for reading.
-3. Never edit Lamplight's state files yourself (topic.toml, syllabus.toml, history.jsonl, cards.jsonl, sources.jsonl). Write lesson text, notes and exercise files directly.
+3. Never edit Lamplight's state files yourself (topic.toml, syllabus.toml, history.jsonl, cards.jsonl, sources.jsonl, tasks.jsonl). Write lesson text, notes and exercise files directly.
 4. Never show counts of overdue or late work. Show where the learner is and one next action.
 5. Every turn switch gets a Checkpoint: role "learner" when the learner hands their work to you, "agent" when you hand the turn back. phase_set and lesson_complete take these Checkpoints for you; outside them, call checkpoint. When a result has checkpoint_error, tell the learner, and once the problem is fixed call checkpoint with its checkpoint_role. Never run git commit yourself.
 6. Declare a Lesson's Break points under break_points: in its YAML header. When the learner reaches one in the current Lesson, record it with break_point_reached. Whenever a Session stops, record a Next step that starts with a verb and says what to act on with session_close. When a Session opens with unclosed ones, show the learner what changed since the last Checkpoint and ask for each missing note.
@@ -30,7 +30,7 @@ const Instructions = `Lamplight keeps the learner's study state. Follow these ru
 8. Change the Syllabus only through Revisions: revision_propose, show the learner the change, then revision_apply, which asks the learner directly when this client can; otherwise call it only after they approved in their own words, and record a no with revision_decline.
 9. Review only the Cards due_cards returns: it follows the Session's Energy and a daily cap on new Cards. At a draft's first Review, the learner keeps, edits or drops it. Write Cards with one fact each, no lists, no answer in the prompt, no trivia, and at least one from the learner's own mistakes.
 10. Show Forecasts as they are given, when a Milestone ends at the learner's Pace, never how far behind anything is. A Triage is something to consider, never the one next action: offer its options and change nothing until the learner chooses, a Revision to move Lessons, trim Stretch goals or change a target date, or topic_update for the Pace or the Goal's deadline.
-11. A paused Topic stays paused until the learner resumes it with topic_update (state active); never resume it yourself. When session_open says paused, offer to resume it or to pick another Topic.`
+11. A paused Topic stays paused until the learner resumes it with topic_update (state active); never resume it yourself. When status recommends resume_topic or session_open says paused, offer to resume it or to pick another Topic, and teach nothing from it until it is resumed. A finished Topic offers only its Reviews.`
 
 // New returns an MCP server whose tools call c. logger, if not nil, receives
 // the server's Log; it must never write to the transport's stdout.

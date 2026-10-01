@@ -165,12 +165,18 @@ without a Next step.
 
 `action` is one of `next_step` (the text is the Next step word for word), `plan` (no
 Syllabus yet), `learn`, `practice` or `feedback` (the current Lesson's Phase), `reviews`
-(every Lesson done, Cards ready) or `explore` (every Lesson done). The words match the
-Focuses and the suggestions of `session_open` wherever they mean the same thing, and the
-list is fixed, so skills can rely on it; `text` is English prose a skill may rephrase. The
-recommendation always agrees with the Resume point. Each Topic's `cards` is
-`{"ready": true}`, or `{"ready": false, "next_due": "..."}`: whether Reviews are possible
-now, never how many Cards are due. `learner_profile` is the Study home's `learner.md` and a
+(every Lesson done, Cards ready) or `explore` (every Lesson done); or, whatever the Resume
+point says, `resume_topic` (the Topic is paused: resume it or pick another Topic), and for a
+finished Topic `reviews` (Cards ready) or `stop` (no Card ready: nothing to study on it now).
+The words match the Focuses and the suggestions of `session_open` wherever they mean the same
+thing, and the list is fixed, so skills can rely on it; `text` is English prose a skill may
+rephrase. An active Topic's recommendation always agrees with its Resume point. A Triage is
+never the recommended action: it is something to consider (see
+[Goal, Pace and Forecasts](#goal-pace-and-forecasts)). Each Topic's `cards` is
+`{"ready": true}`, `{"ready": false, "next_due": "..."}`, or `{"ready": false, "paused": true}`
+while the Topic is paused: whether Reviews are possible now, under the Topic's own daily cap
+on new Cards, never how many Cards are due. Under a cap of 0, drafts alone are never ready and
+give no `next_due`. `learner_profile` is the Study home's `learner.md` and a
 Topic's `learner_additions` its own `learner.md`, when they exist as regular files (a
 symbolic link is not followed); agents read both before teaching.
 
@@ -225,9 +231,13 @@ override and isolate controls (U+202A–U+202E, U+2066–U+2069).
 `session_open` (or `study session open`) returns, besides the Resume point:
 
 - `suggested`, when an Energy is given and no Focus chosen yet: `suggest` is a Focus to offer
-  (`learn`, `practice`, `reviews`, `explore`), `plan` (no Syllabus yet: plan it together)
-  or `stop` (fumes with nothing due: write tomorrow's first step and end here); `reason` is
-  English prose a skill may rephrase. A suggestion is never recorded.
+  (`learn`, `practice`, `reviews`, `explore`), `plan` (no Syllabus yet: plan it together),
+  `stop` (fumes with nothing due: write tomorrow's first step and end here; or a finished
+  Topic with no Card ready) or `resume_topic` (the Topic is paused); `reason` is English
+  prose a skill may rephrase. A paused Topic is never suggested for study, and a finished one
+  only for its Reviews. A suggestion is never recorded.
+- `paused`, when the Topic is paused. The Session opens anyway; the Topic stays paused until
+  the learner resumes it (see [Goal, Pace and Forecasts](#goal-pace-and-forecasts)).
 - `cards`, as in `status`.
 - `long_gap`, when the Topic was last worked on, by any Event, more than a week ago: start
   with a short recap and a warm-up, never with the size of a backlog.
@@ -238,7 +248,7 @@ override and isolate controls (U+202A–U+202E, U+2066–U+2069).
   (`since`; absent before the first Checkpoint, when every file counts as added). `files`
   lists at most 50, each `added`, `modified` or `deleted`, and `more` counts the rest.
   Lamplight's own state files (`topic.toml`, `syllabus.toml`, `history.jsonl`,
-  `cards.jsonl`, `sources.jsonl`) are left out. Listing them writes nothing to `.git` and
+  `cards.jsonl`, `sources.jsonl`, `tasks.jsonl`) are left out. Listing them writes nothing to `.git` and
   runs nothing the repository names; when git cannot list them, such as during a merge,
   `error` says why and the Session opens anyway.
 
@@ -279,8 +289,10 @@ Task can be marked done and removed like the others. A line that is not a Task i
 
 Whether a Topic is `active`, `paused` or `finished`, and which Tasks are done, come from its
 History, never from a file. A paused Topic offers no Cards and has no Forecasts, and stays
-paused until the learner resumes it (`--state active`); opening a Session on it works and says
-`"paused": true`. A finished Topic has no Forecasts and keeps offering its Cards. A Topic made
+paused until the learner resumes it (`--state active`); `status` recommends `resume_topic`,
+and opening a Session on it works and says `"paused": true`. A finished Topic has no
+Forecasts and keeps offering its Cards: `status` recommends `reviews` when they are ready and
+`stop` otherwise. A Topic made
 paused on one machine and finished on another, from the same state, is flagged as a
 `conflict`; marking a Task done on one machine and not done on another is not: the last mark
 wins.

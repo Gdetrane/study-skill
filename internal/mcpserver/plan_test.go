@@ -74,6 +74,20 @@ func TestPlanTools(t *testing.T) {
 	if !due.Paused || len(due.Cards) != 0 {
 		t.Errorf("due_cards of a paused Topic = %+v", due)
 	}
+	var pausedStatus core.Status
+	decode(t, call(t, session, "status", map[string]any{}), &pausedStatus)
+	if r := pausedStatus.Recommended; r == nil || r.Action != core.ActionResumeTopic {
+		t.Errorf("status's recommendation for a paused Topic = %+v", r)
+	}
+	if c := pausedStatus.Topics[0].Cards; c == nil || c.Ready || !c.Paused {
+		t.Errorf("status's Cards of a paused Topic = %+v", c)
+	}
+	var opened core.SessionOpened
+	decode(t, call(t, session, "session_open", map[string]any{"topic": "c", "energy": "fumes"}), &opened)
+	if !opened.Paused || opened.Cards == nil || opened.Cards.Ready || opened.Suggested == nil ||
+		opened.Suggested.Suggest != core.SuggestResumeTopic {
+		t.Errorf("session_open on a paused Topic = %+v", opened)
+	}
 	if msg := toolError(t, session, "topic_update", map[string]any{"topic": "c", "state": "asleep"}); !strings.Contains(msg, "invalid_argument") {
 		t.Errorf("an unknown state: %s", msg)
 	}

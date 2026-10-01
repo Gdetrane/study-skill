@@ -895,17 +895,6 @@ func (st *studyState) milestoneDone(id string) bool {
 	return true
 }
 
-// CardsAvailability says whether a Topic has Cards to review now, without
-// ever counting them.
-type CardsAvailability struct {
-	// Ready is set when a Card is due or a draft can be decided today.
-	Ready bool `json:"ready"`
-	// Paused is set when the Topic is paused: its Cards wait.
-	Paused bool `json:"paused,omitempty"`
-	// NextDue is when the next Card falls due, when none is due now.
-	NextDue time.Time `json:"next_due,omitzero"`
-}
-
 // topicCap is the Topic's daily cap on new Cards decided: its setting, or
 // the default when it sets none or one that cannot be read.
 func topicCap(view *topicView, topicID string) int {
@@ -913,35 +902,6 @@ func topicCap(view *topicView, topicID string) int {
 		return p.newCardsPerDay
 	}
 	return NewCardsPerDay
-}
-
-// cardsAvailable says whether a Topic has Cards to review now, knowing its
-// state and its daily cap on new Cards. Everything that asks whether Cards
-// are available goes through it.
-func cardsAvailable(s *replayed, view *topicView, topicID string, now time.Time) CardsAvailability {
-	if s.topicState() == TopicPaused {
-		return CardsAvailability{Paused: true}
-	}
-	var out CardsAvailability
-	draftsLeft := s.study.draftsLeftToday(now, topicCap(view, topicID)) > 0
-	for _, id := range s.study.cardOrder {
-		cs := s.study.cards[id]
-		switch {
-		case cs.gone() || cs.suspended:
-		case cs.draft():
-			if draftsLeft {
-				out.Ready = true
-			}
-		case !cs.due().After(now):
-			out.Ready = true
-		case out.NextDue.IsZero() || cs.due().Before(out.NextDue):
-			out.NextDue = cs.due()
-		}
-	}
-	if out.Ready {
-		out.NextDue = time.Time{}
-	}
-	return out
 }
 
 // addPlan fills a Topic's plan for status: its state, the Goal's deadline,

@@ -171,9 +171,10 @@ func (c *Core) OpenSession(ctx context.Context, topicID string, spec SessionSpec
 	now := c.now()
 	ev, err := c.writeTopic(ctx, topicID, func(s *replayed, view *topicView) (*change, error) {
 		result.Resume = s.study.resume()
-		result.Paused = s.topicState() == TopicPaused
+		state := s.topicState()
+		result.Paused = state == TopicPaused
 		describeBreakPoint(view.root, &result.Resume)
-		result.Cards = s.study.cardsReady(now)
+		result.Cards = cardsReady(s, view, topicID, now)
 		if open := s.study.unclosedSessions(); len(open) > 0 {
 			result.Unclosed = open
 			// Unclosed reports them, with what changed; this Session is
@@ -184,7 +185,7 @@ func (c *Core) OpenSession(ctx context.Context, topicID string, spec SessionSpec
 			result.LongGap = now.Sub(last) > longGap
 		}
 		if spec.Focus == "" {
-			result.Suggested = suggestFocus(spec.Energy, result.Resume, result.Cards)
+			result.Suggested = suggestFocus(spec.Energy, state, result.Resume, result.Cards)
 		}
 		return &change{Type: eventSessionOpened, Data: sessionOpenedData{Energy: spec.Energy, Focus: spec.Focus}}, nil
 	}, spec.DryRun)

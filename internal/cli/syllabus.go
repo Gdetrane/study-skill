@@ -294,7 +294,7 @@ func writeSyllabus(w io.Writer, v core.SyllabusView) error {
 			fmt.Fprintf(&b, "  %s\n", styleDim.Render(m.Outcome))
 		}
 		if mf := milestoneForecast(v.Forecast, m.ID); mf != nil && !mf.Done {
-			fmt.Fprintf(&b, "  %s\n", styleAccent.Render(mf.Text))
+			fmt.Fprintf(&b, "  %s\n", styleAccent.Render(printable(mf.Text)))
 		}
 		for _, l := range m.Lessons {
 			status := strings.ReplaceAll(l.Status, "_", " ")

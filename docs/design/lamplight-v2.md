@@ -270,17 +270,22 @@ hours before any learning happens is exactly what v1 produced.
    (never the total due), Forecasts, and any relevant Tasks. The recommendation is the Next
    step when there is one, otherwise the next move in the Syllabus (plan it, start, continue,
    practice or go over feedback on the current Lesson), otherwise Reviews or exploring once
-   every Lesson is done. For Cards, `status` says only whether Reviews are possible now, or
-   when the next Card falls due; how many is decided when a Session's Energy is known.
+   every Lesson is done. A paused Topic's recommendation is instead to resume it or pick
+   another Topic (`resume_topic`), and a finished Topic's is its Reviews, or `stop` when no
+   Card is ready. A Triage is never the recommendation. For Cards, `status` says only whether
+   Reviews are possible now, under the Topic's daily cap on new Cards, or when the next Card
+   falls due; a paused Topic's Cards are never ready. How many is decided when a Session's
+   Energy is known.
 2. Energy check (full, half, fumes) suggests a Focus, and the learner chooses:
    - **Learn**: start the next Lesson.
    - **Practice**: continue the current exercise from the last Break point.
    - **Reviews**: due Cards only, capped by Energy.
    - **Explore**: free questions; useful answers can become Cards or a Revision proposal.
    With nothing due at fumes, the offer is "write tomorrow's first step"; without a
-   Syllabus, it is to plan one. `session_open` returns the suggestion when it gets an Energy
-   and no Focus yet, as one value: a Focus, `plan` or `stop`. The suggestion is never
-   recorded, only the Focus the learner chooses.
+   Syllabus, it is to plan one. A paused Topic is never suggested for study, and a finished
+   one only for its Reviews. `session_open` returns the suggestion when it gets an Energy
+   and no Focus yet, as one value: a Focus, `plan`, `stop` or `resume_topic`, the same words
+   `status` recommends. The suggestion is never recorded, only the Focus the learner chooses.
 3. The Learner profile and the Topic's additions are read at the start of every Session;
    `status` gives their paths when the files exist.
 4. A Lesson moves through its Phases: teaching → practicing → feedback. The Check's criteria

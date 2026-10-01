@@ -286,6 +286,7 @@ func TestAnUnclosedSessionShowsWhatChangedSinceTheLastCheckpoint(t *testing.T) {
 	if added.ID == "" {
 		t.Fatal("no Card")
 	}
+	m.update(t, TopicChanges{AddTasks: []TaskSpec{{Title: "Book the exam"}}})
 
 	second, err := m.OpenSession(ctx, "c", SessionSpec{Energy: EnergyHalf})
 	if err != nil {
@@ -301,7 +302,7 @@ func TestAnUnclosedSessionShowsWhatChangedSinceTheLastCheckpoint(t *testing.T) {
 		{Path: "practice/answer/notes.md", Change: "added"},
 	}
 	if !equalChanges(ch.Files, want) {
-		t.Errorf("changes = %+v, want %+v (the History and cards.jsonl left out)", ch.Files, want)
+		t.Errorf("changes = %+v, want %+v (the History, cards.jsonl and tasks.jsonl left out)", ch.Files, want)
 	}
 	if after := gitTree(t, dir); !maps.Equal(before, after) {
 		t.Error("listing the changes wrote to .git")
@@ -447,13 +448,31 @@ func TestSuggestFocus(t *testing.T) {
 		{EnergyFumes, noSyllabus, ready, FocusReviews},
 		{EnergyFumes, noSyllabus, none, SuggestStop},
 	} {
-		got := suggestFocus(tc.energy, tc.resume, tc.cards)
+		got := suggestFocus(tc.energy, TopicActive, tc.resume, tc.cards)
 		if got == nil || got.Suggest != tc.want || got.Reason == "" {
 			t.Errorf("suggestFocus(%s, %+v, %+v) = %+v, want %q", tc.energy, tc.resume, tc.cards, got, tc.want)
 		}
 	}
-	if got := suggestFocus("", learning, ready); got != nil {
+	if got := suggestFocus("", TopicActive, learning, ready); got != nil {
 		t.Errorf("no Energy: %+v, want no suggestion", got)
+	}
+	// A paused Topic is never proposed for study, whatever the Energy; a
+	// finished one only for its Reviews.
+	for _, energy := range []string{EnergyFull, EnergyHalf, EnergyFumes} {
+		for _, resume := range []ResumePoint{learning, practicing, done, noSyllabus} {
+			if got := suggestFocus(energy, TopicPaused, resume, none); got == nil || got.Suggest != SuggestResumeTopic {
+				t.Errorf("paused, %s, %+v: %+v, want %q", energy, resume, got, SuggestResumeTopic)
+			}
+			if got := suggestFocus(energy, TopicFinished, resume, ready); got == nil || got.Suggest != FocusReviews {
+				t.Errorf("finished with Cards ready, %s, %+v: %+v, want %q", energy, resume, got, FocusReviews)
+			}
+			if got := suggestFocus(energy, TopicFinished, resume, none); got == nil || got.Suggest != SuggestStop {
+				t.Errorf("finished with no Card ready, %s, %+v: %+v, want %q", energy, resume, got, SuggestStop)
+			}
+		}
+	}
+	if got := suggestFocus("", TopicPaused, learning, none); got != nil {
+		t.Errorf("paused with no Energy: %+v, want no suggestion", got)
 	}
 }
 
@@ -461,30 +480,30 @@ func TestCardsReadyNeverCounts(t *testing.T) {
 	ctx := context.Background()
 	m := newTopic(t)
 	st := replayFolder(t, filepath.Join(m.home, "c")).study
-	if got := st.cardsReady(t0); got != nil {
+	if got := st.cardsReadyUnder(t0, NewCardsPerDay); got != nil {
 		t.Errorf("a Topic without Cards: %+v", got)
 	}
 	card := m.addCard(t, CardSpec{Prompt: "What is 6 × 7?", Answer: "42"})
 	st = replayFolder(t, filepath.Join(m.home, "c")).study
-	if got := st.cardsReady(t0); got == nil || !got.Ready {
+	if got := st.cardsReadyUnder(t0, NewCardsPerDay); got == nil || !got.Ready {
 		t.Errorf("a draft within today's cap: %+v", got)
 	}
 	if _, err := m.RecordReview(ctx, "c", ReviewSpec{Card: card.ID, Rating: RatingGood, Draft: DraftKeep}); err != nil {
 		t.Fatal(err)
 	}
 	st = replayFolder(t, filepath.Join(m.home, "c")).study
-	got := st.cardsReady(t0)
+	got := st.cardsReadyUnder(t0, NewCardsPerDay)
 	if got == nil || got.Ready || got.NextDue == nil || !got.NextDue.After(t0) {
 		t.Errorf("after its first Review: %+v", got)
 	}
-	if later := st.cardsReady(got.NextDue.Add(time.Second)); later == nil || !later.Ready {
+	if later := st.cardsReadyUnder(got.NextDue.Add(time.Second), NewCardsPerDay); later == nil || !later.Ready {
 		t.Errorf("once due: %+v", later)
 	}
 	if _, err := m.SuspendCard(ctx, "c", card.ID, true, false); err != nil {
 		t.Fatal(err)
 	}
 	st = replayFolder(t, filepath.Join(m.home, "c")).study
-	if got := st.cardsReady(got.NextDue.Add(time.Second)); got != nil {
+	if got := st.cardsReadyUnder(got.NextDue.Add(time.Second), NewCardsPerDay); got != nil {
 		t.Errorf("only a suspended Card: %+v", got)
 	}
 }

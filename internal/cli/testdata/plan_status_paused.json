@@ -10,8 +10,8 @@
     },
     "recommended": {
       "topic": "linear-algebra",
-      "action": "learn",
-      "text": "Start Lesson “Gaussian elimination”"
+      "action": "resume_topic",
+      "text": "This Topic is paused: resume it, or pick another Topic"
     },
     "topics": [
       {
@@ -23,6 +23,10 @@
         "resume": {
           "lesson": "elimination",
           "lesson_title": "Gaussian elimination"
+        },
+        "cards": {
+          "ready": false,
+          "paused": true
         },
         "state": "paused",
         "deadline": "2026-12-15",

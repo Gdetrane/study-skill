@@ -83,13 +83,13 @@ func addLearnerLoop(server *mcp.Server, c *core.Core) {
 			"Read the Learner profile and the Topic's additions (paths in status) first. Show the learner the resume " +
 			"point: the Lesson, the last Break point reached and the Next step word for word. Give energy; leave focus " +
 			"out until the learner chooses: suggested.suggest is learn, practice, reviews or explore (a Focus to " +
-			"offer), plan (no Syllabus yet: plan it together) or stop (write tomorrow's first step and end here); " +
-			"suggested.reason is English you may rephrase. cards.ready says whether Reviews are possible; never mention " +
-			"how many Cards are due. If long_gap is set, start with a short recap and a two-minute warm-up. unclosed " +
-			"lists the Sessions that ended without a Next step, newest first: show the learner changes (what changed " +
-			"since the last Checkpoint), ask for each missing note, and record it with session_close naming the Session. " +
-			"If paused is set, the Topic stays paused: " +
-			"offer to resume it with topic_update or to pick another Topic.",
+			"offer), plan (no Syllabus yet: plan it together), stop (write tomorrow's first step and end here; on a " +
+			"finished Topic, nothing to study now) or resume_topic (the Topic is paused); suggested.reason is English " +
+			"you may rephrase. cards.ready says whether Reviews are possible; never mention how many Cards are due. If " +
+			"long_gap is set, start with a short recap and a two-minute warm-up. unclosed lists the Sessions that ended " +
+			"without a Next step, newest first: show the learner changes (what changed since the last Checkpoint), ask " +
+			"for each missing note, and record it with session_close naming the Session. If paused is set, the Topic " +
+			"stays paused and its Cards wait: offer to resume it with topic_update or to pick another Topic.",
 		Annotations: write,
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in sessionOpenInput) (*mcp.CallToolResult, core.SessionOpened, error) {
 		r, err := c.OpenSession(ctx, in.Topic, core.SessionSpec{Energy: in.Energy, Focus: in.Focus})

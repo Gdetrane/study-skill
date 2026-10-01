@@ -288,12 +288,12 @@ func TestCardsReadyWhenTheDailyCapIsUsed(t *testing.T) {
 	st := replayFolder(t, filepath.Join(m.home, "c")).study
 	kiritimati := time.FixedZone("UTC+14", 14*60*60)
 	now := t0.In(kiritimati) // 23:30 on 1 October there
-	got := st.cardsReady(now)
+	got := st.cardsReadyUnder(now, NewCardsPerDay)
 	tomorrow := time.Date(2026, 10, 2, 0, 0, 0, 0, kiritimati)
 	if got == nil || got.Ready || got.NextDue == nil || !got.NextDue.Equal(tomorrow) {
 		t.Errorf("with the cap used: %+v, want ready tomorrow at %s", got, tomorrow)
 	}
-	if later := st.cardsReady(tomorrow); later == nil || !later.Ready {
+	if later := st.cardsReadyUnder(tomorrow, NewCardsPerDay); later == nil || !later.Ready {
 		t.Errorf("tomorrow: %+v", later)
 	}
 }

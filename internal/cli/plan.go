@@ -92,7 +92,7 @@ func (a *app) taskCommand() *cobra.Command {
 			case doneDryRun:
 				fmt.Fprintf(a.out, "Would mark Task %s %s.\n", res.Task.ID, state)
 			default:
-				fmt.Fprintf(a.out, "Task %s is %s: %s\n", styleAccent.Render(res.Task.ID), state, res.Task.Title)
+				fmt.Fprintf(a.out, "Task %s is %s: %s\n", styleAccent.Render(res.Task.ID), state, printable(res.Task.Title))
 			}
 			return nil
 		},
@@ -160,7 +160,7 @@ func (a *app) taskCommand() *cobra.Command {
 				fmt.Fprintf(&b, "%s %s %s\n", mark, styleAccent.Render(t.ID), taskLine(t))
 			}
 			for _, p := range res.Problems {
-				fmt.Fprintf(&b, "%s\n", styleWarn.Render(p))
+				fmt.Fprintf(&b, "%s\n", styleWarn.Render(printable(p)))
 			}
 			_, err = io.WriteString(a.out, b.String())
 			return err
@@ -241,7 +241,7 @@ func writeForecastNotes(b *strings.Builder, topic string, f *core.Forecast) {
 		fmt.Fprintf(b, "\n%s\n", styleDim.Render(setPaceText(topic)))
 	}
 	if t := f.Triage; t != nil {
-		fmt.Fprintf(b, "\n%s\n  %s\n", styleWarn.Render("To consider:"), t.Text)
+		fmt.Fprintf(b, "\n%s\n  %s\n", styleWarn.Render("To consider:"), printable(t.Text))
 	}
 }
 
@@ -250,7 +250,8 @@ func writeForecastNotes(b *strings.Builder, topic string, f *core.Forecast) {
 func writePlan(b *strings.Builder, t core.Topic, labels int) {
 	switch t.State {
 	case core.TopicPaused:
-		fmt.Fprintf(b, "%s%s\n", styleLabel.Render(pad("State:", labels)), styleDim.Render("paused: no Forecasts, its Cards wait"))
+		fmt.Fprintf(b, "%s%s\n", styleLabel.Render(pad("State:", labels)),
+			styleDim.Render("paused: its Cards wait until you resume it with study topic update "+t.ID+" --state active"))
 	case core.TopicFinished:
 		fmt.Fprintf(b, "%s%s\n", styleLabel.Render(pad("State:", labels)), styleDim.Render("finished: its Cards keep coming back"))
 	}
@@ -264,7 +265,7 @@ func writePlan(b *strings.Builder, t core.Topic, labels int) {
 		var lines []string
 		for _, m := range f.Milestones {
 			if !m.Done {
-				lines = append(lines, m.Text)
+				lines = append(lines, printable(m.Text))
 			}
 		}
 		if f.NeedsPace {
@@ -278,7 +279,7 @@ func writePlan(b *strings.Builder, t core.Topic, labels int) {
 			fmt.Fprintf(b, "%s%s\n", styleLabel.Render(pad(label, labels)), line)
 		}
 		if f.Triage != nil {
-			fmt.Fprintf(b, "%s%s\n", styleLabel.Render(pad("To consider:", labels)), f.Triage.Text)
+			fmt.Fprintf(b, "%s%s\n", styleLabel.Render(pad("To consider:", labels)), printable(f.Triage.Text))
 		}
 	}
 	if len(t.Tasks) > 0 {
@@ -288,7 +289,7 @@ func writePlan(b *strings.Builder, t core.Topic, labels int) {
 		}
 	}
 	for _, p := range t.SettingsProblems {
-		fmt.Fprintf(b, "%s\n", styleWarn.Render("topic.toml: "+p))
+		fmt.Fprintf(b, "%s\n", styleWarn.Render("topic.toml: "+printable(p)))
 	}
 }
 
@@ -319,11 +320,11 @@ func writePlanSettings(w io.Writer, t core.Topic) {
 	if f := t.Forecast; f != nil {
 		for _, m := range f.Milestones {
 			if !m.Done {
-				fmt.Fprintf(w, "  %s\n", m.Text)
+				fmt.Fprintf(w, "  %s\n", printable(m.Text))
 			}
 		}
 		if f.Triage != nil {
-			fmt.Fprintf(w, "  %s %s\n", styleLabel.Render("To consider:"), f.Triage.Text)
+			fmt.Fprintf(w, "  %s %s\n", styleLabel.Render("To consider:"), printable(f.Triage.Text))
 		}
 	}
 }
