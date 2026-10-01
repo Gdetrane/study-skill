@@ -86,24 +86,48 @@ the maintainer's answers to the questions they raised.
   `.lamplight/`. The Event is written first, with everything needed to apply it and, for each
   item it edits (one Card, one Lesson file, the Syllabus), a hash of the item before and
   after. Content files are then replaced atomically and the marker cleared. Every operation
-  is idempotent. Recovery is described below.
+  is idempotent. Checkpoints take the same lock and finish an interrupted write first, so a
+  Checkpoint never carries an Event without its content to another machine. Recovery is
+  described below.
+- **Items** are named relative to the Topic with forward slashes: `<path>` for a whole file
+  (`topic.toml`, `syllabus.toml`), `<path>#<key>` for one entity inside a file
+  (`cards.jsonl#<card-id>`, `lessons/<id>.md#check`). An entity's hash covers only that
+  entity, in a canonical form its file's codec defines, so two machines adding different
+  Cards to one file never conflict, and reformatting a file is not an edit.
 - **Events** carry a unique ID and a time from a hybrid logical clock: the later of the wall
   clock and the latest time already in the History, plus one tick, so an Event written after
-  another was read always sorts after it, whichever machine's clock is ahead. Replay orders
-  Events by time, then by ID, never by position in the file, and applies each ID once. An
-  Event that refers to an item not yet known (a Review of a Card whose creation hasn't
-  arrived) is held, and reported in `status` if it never resolves. Each Event is one append
-  ending in a newline; a last line without one is an interrupted write, which replay
-  ignores and the next write truncates (logging the fragment).
-- **Formats**: every file has a `format` number, and a binary refuses to write a file newer
-  than it understands. File schemas are Lamplight's own types, never go-fsrs structs. Files
-  the core rewrites say in a header comment that comments are not preserved.
+  another was read always sorts after it, whichever machine's clock is ahead. That time only
+  orders Events; each Event also records `wall`, its writer's real clock, which domain logic
+  such as Card scheduling uses. A History dated more than a day ahead of the current clock is
+  flagged in `status`. Replay orders Events by time, then by ID, never by position in the
+  file, and applies each ID once. An Event that refers to an item not yet known (a Review of
+  a Card whose creation hasn't arrived) is held, and reported in `status` if it never
+  resolves. Each Event is one append ending in a newline. A last line without one is either
+  a complete Event whose newline an editor dropped, which is kept and repaired, or an
+  interrupted append, which replay ignores and the next write or Checkpoint truncates
+  (logging the fragment). A line anywhere else that is not an Event is skipped and flagged,
+  never deleted.
+- **Formats**: every file has a `format` number, and one without it is damaged. A binary
+  reads a History with Events newer than it understands, holding them, but refuses to write
+  to it or to any file newer than it understands. Settings it does not know in a file it
+  rewrites are kept. An Event type's payload never changes shape: a new shape is a new type
+  name. File schemas are Lamplight's own types, never go-fsrs structs. Files the core
+  rewrites say in a header comment that comments are not preserved.
+
+  ```json
+  {"format":1,"id":"k3…","time":"2026-10-01T09:30:00.000001Z","wall":"2026-10-01T09:30:00Z",
+   "type":"topic.updated","data":{"title":"C"},
+   "items":[{"item":"topic.toml","before":"sha256:…","after":"sha256:…"}]}
+  ```
 - **Sync**: v2.0 supports using a Topic on one machine at a time, synced through git between
   sessions. History files merge by union, which can leave lines in any order; because
   replay sorts Events, a merge in either direction gives the same state. Conflicting changes
   made on two machines anyway (two edits of one Card, a delete and a Review, a Revision whose
   base no longer matches) are flagged in `status`, never resolved automatically, and textual
-  conflicts in content files such as `cards.jsonl` are resolved by hand.
+  conflicts in content files such as `cards.jsonl` are resolved by hand. Each flag has a
+  stable ID; once the learner has looked at a conflict, a held Event, a damaged line or a
+  clock warning, they can dismiss it, which records a `flag.dismissed` Event and changes no
+  content.
 
 **Recovering an interrupted write.** Because of the lock, at most one Event can be unapplied
 after a crash, and recovery inspects only the one named by the intent marker, comparing each
@@ -111,10 +135,17 @@ item it edits:
 
 | The item matches | Meaning | Recovery |
 |---|---|---|
-| the `before` hash | the write never happened | apply the Event |
+| the `before` hash, and no later Event changed it | the write never happened | apply the Event |
+| the `before` hash, but a later Event changed it since | another machine superseded it | leave it, log it |
 | the `after` hash | the write finished | clear the marker |
 | neither | edited by hand since | keep the edit, log it, never overwrite |
 | nothing (missing or unparseable) | the file is corrupt | stop with a clear error, keep the Event |
+
+When the item matches `before` but this binary's applier writes different bytes from the
+`after` hash (a newer binary formats a file differently), nobody edited the item, so the
+Event is applied with a warning rather than blocking the Topic. Recovery also removes the
+interrupted write's temporary files, which are hidden and covered by the Topic's default
+`.gitignore`. A dry run plans against the Topic as recovery would leave it, without writing.
 
 Hand edits to text need no acknowledgement. For content that approves or gates something
 (the Syllabus and each Lesson's Check), the version recorded by the last Event is compared on

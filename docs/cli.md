@@ -11,10 +11,11 @@ that scripts and agents can rely on. Terms follow [CONTEXT.md](../CONTEXT.md).
 | `study` | Same as `study status`. |
 | `study status` | Shows the Study home, the Active topic and why it was chosen, every Topic, and any Topic that could not be read (`problems`). A broken Topic never stops the others from being listed. |
 | `study topic create --title T [--id ID] [--goal G] [--dry-run]` | Creates a Topic folder with its settings, History and git repository. `--dry-run` validates and shows the result without writing. |
-| `study topic update <topic> [--title T] [--goal G] [--dry-run]` | Changes a Topic's title or goal; flags left out stay as they are, and `--goal ""` removes the goal. The result is `{"topic": ..., "changed": bool}`: asking for the values the Topic already has changes nothing and records nothing. |
+| `study topic update <topic> [--title T] [--goal G] [--dry-run]` | Changes a Topic's title or goal; flags left out stay as they are, and `--goal ""` removes the goal. Settings in `topic.toml` that this version does not know are kept. The result is `{"topic": ..., "changed": bool}`: asking for the values the Topic already has changes nothing and records nothing. |
+| `study topic dismiss-flag <topic> <flag-id> [--dry-run]` | Dismisses one of the Topic's flags, by the id `status` shows, once the learner has looked at it. It records the decision in the History and never changes content. The result is `{"topic": ..., "flag": {...}, "changed": bool}`; dismissing a flag twice changes nothing. Only `held_event`, `conflict`, `damaged_line` and `clock_ahead` flags can be dismissed (see below). |
 | `study library build <folder>` | Indexes the books in a folder (relative to where you run it) and replaces the Library index in the Study home. |
 | `study library search <query> [--limit N]` | Ranks the books in the Library against the query. `--limit` defaults to 10 and is capped at 100; no matches is a success with an empty list. |
-| `study checkpoint --topic ID --role agent\|learner [-m MESSAGE] [--dry-run]` | Saves the Topic's work as a git commit at a turn switch. Skips when nothing changed, refuses during a merge or rebase, and lists large files it saved. Never runs programs named in the Topic's git configuration. |
+| `study checkpoint --topic ID --role agent\|learner [-m MESSAGE] [--dry-run]` | Saves the Topic's work as a git commit at a turn switch. Skips when nothing changed, refuses during a merge or rebase, and lists large files it saved. Never runs programs named in the Topic's git configuration. It waits for a write in progress and finishes an interrupted one first; `--dry-run` refuses (`failed_precondition`) while one is pending. |
 | `study mcp` | Runs the MCP server over stdin and stdout. |
 
 The Study home is `STUDY_HOME` if set, otherwise `study_home` in
@@ -77,17 +78,21 @@ Each Topic in `study status --json` may carry `flags`: things replaying its Hist
 that need the learner's attention. Flags are reported, never resolved automatically.
 
 ```json
-{ "kind": "conflict", "message": "...", "item": "topic.toml", "events": ["...", "..."] }
+{ "id": "3f9c2a71b0", "kind": "conflict", "message": "...", "item": "topic.toml", "events": ["...", "..."] }
 ```
 
-| Kind | Meaning |
-|---|---|
-| `held_event` | An Event could not be applied: it refers to something the History doesn't contain (yet), or this version of `study` doesn't know its type. |
-| `conflict` | Two Events changed one item from the same version, or two different Events share an ID: usually changes made on two machines without syncing in between. |
-| `edited_outside` | Content that approves or gates progress differs from the version its last Event recorded. |
-| `interrupted_write` | A write to the Topic was interrupted; the next write to it finishes the job. |
+| Kind | Meaning | Goes away |
+|---|---|---|
+| `held_event` | An Event could not be applied: it refers to something the History doesn't contain (yet), or a newer version of `study` wrote it. While a Topic holds Events from a newer version, it can be read but not changed (`newer_format`). | when the Event becomes applicable, or when dismissed |
+| `conflict` | Two Events changed one item from the same version, or two different Events share an ID: usually changes made on two machines without syncing in between. | when dismissed, after checking the item by hand |
+| `damaged_line` | A line of `history.jsonl` is not an Event, such as a line cut off by an interrupted write that a merge moved into the middle of the file. It is skipped, never deleted. | when the line is fixed or deleted by hand, or when dismissed |
+| `clock_ahead` | The History holds an Event dated more than a day after this computer's clock, so some machine's clock was wrong. New Events still sort after it. | when the clock catches up, or when dismissed |
+| `edited_outside` | Content that approves or gates progress differs from the version its last Event recorded. | when Lamplight next records that item, or the content is restored |
+| `interrupted_write` | A write to the Topic was interrupted; the next write to it finishes the job. | with the next write or Checkpoint |
 
-`item` and `events` are present when the flag concerns a particular item or Events.
+`id` is stable across runs and machines, so a dismissal recorded on one machine applies on
+every other. `item` and `events` are present when the flag concerns a particular item or
+Events.
 
 ## Writes
 
@@ -96,6 +101,7 @@ change without writing anything.
 
 Every write to a Topic takes the Topic's lock, so the CLI and the MCP server can run at
 the same time. It records its Event in the History before it changes any content, so a
-write interrupted by a crash is finished by the next write. Lock and intent-marker files
-live in the Study home's `.lamplight/` folder, are local to the machine, and are never
-synced.
+write interrupted by a crash is finished by the next write or Checkpoint. A dry run reports
+what the real run would do after finishing such a write, and writes nothing. Lock and
+intent-marker files live in the Study home's `.lamplight/` folder, are local to the
+machine, and are never synced.
