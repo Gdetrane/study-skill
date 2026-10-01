@@ -332,10 +332,11 @@ hours before any learning happens is exactly what v1 produced.
   daily cap allows (10 decided a day). Without an explicit limit, the list is sized to the
   Energy, given or taken from the open Session: 20 at full, 10 at half, 3 at fumes, 10
   without one. Suspended Cards are never offered, and no count of what is due is shown.
-- **Scheduling** replays each Card's Reviews through go-fsrs (v3, fuzz off) from their
-  `wall` times, each clamped to the Card's previous Review so time never runs backwards.
-  Only `schedule()` knows go-fsrs, so moving to v4 (FSRS-6, which needs Go 1.26) changes that
-  function and its tests; it changes replayed schedules too, so it is settled before release.
+- **Scheduling** replays each Card's Reviews through FSRS-6 (go-fsrs v4, which needs Go 1.26;
+  fuzz off) from their `wall` times, each clamped to the Card's previous Review so time never
+  runs backwards. A Card starts at its first Review, never at the current time, so replay
+  does not depend on when it runs. Only `schedule()` knows go-fsrs; a later version changes
+  every replayed schedule, so it comes with a migration once learner data depends on it.
 - Reviews work with the agent (conversational recall) or without it (`study review` in the
   terminal). Paused Topics hide their Cards; finished Topics keep reviewing at growing
   intervals. TODO(#29): paused and finished Topics, once Topics have states, and the daily

@@ -287,7 +287,7 @@ taken from the open Session: 20 Cards at full, 10 at half, 3 at fumes, and 10 wi
 Suspended Cards are never offered. Neither command, nor `study review`, ever says how many
 more Cards are due.
 
-Scheduling replays every Review through FSRS (go-fsrs v3, with fuzz off), using the time
+Scheduling replays every Review through FSRS-6 (go-fsrs v4, with fuzz off), using the time
 each Review was really made, never earlier than the Card's previous Review, so the same
 History always gives the same schedule on every machine.
 
