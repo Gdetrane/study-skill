@@ -9,7 +9,10 @@ that scripts and agents can rely on. Terms follow [CONTEXT.md](../CONTEXT.md).
 | Command | What it does |
 |---|---|
 | `study` | Same as `study status`. |
-| `study status` | Shows the Study home, the Active topic and why it was chosen, every Topic, and any Topic that could not be read (`problems`). A broken Topic never stops the others from being listed. Each Topic can carry `flags`, its Resume point (`resume`) and `lessons_without_evidence`: Lessons started or done that cite no Evidence yet, once the Topic has Sources or a NotebookLM Knowledge base (a reminder, never a block). |
+| `study status` | Shows the Study home, the Active topic and why it was chosen, the one action recommended for it (`recommended`), the Learner profile (`learner_profile`), every Topic, and any Topic that could not be read (`problems`). A broken Topic never stops the others from being listed. Each Topic can carry `flags`, its Resume point (`resume`), whether its Cards are ready (`cards`, never a count), its additions to the Learner profile (`learner_additions`) and `lessons_without_evidence`: Lessons started or done that cite no Evidence yet, once the Topic has Sources or a NotebookLM Knowledge base (a reminder, never a block). See "Where the learner stopped" below. |
+| `study session open <topic> [--energy E] [--focus F] [--dry-run]` | Opens a Session and shows where you stopped. With an Energy and no Focus chosen yet, it suggests a Focus; when the last Session ended without a Next step, it lists what changed since the last Checkpoint. |
+| `study session close <topic> --next-step S [--context C] [--session ID] [--dry-run]` | Closes the Session with a Next step that starts with a verb (see "Next steps" below). `--session` gives a Session left unclosed the note it never got. |
+| `study session break-point <topic> <lesson> <break-point> --next-step S [--context C] [--dry-run]` | Records a Break point the Lesson's header declares, with a Next step. The Session stays open. Reaching the same Break point with the same Next step again changes nothing. |
 | `study topic create --title T [--id ID] [--goal G] [--dry-run]` | Creates a Topic folder with its settings, History and git repository. `--dry-run` validates and shows the result without writing. |
 | `study topic update <topic> [--title T] [--goal G] [--knowledge-base K [--notebook ID]] [--dry-run]` | Changes a Topic's title, goal or Knowledge base (`notebooklm` with the notebook's id, or `none`; see [Sources and Evidence](#sources-and-evidence)); flags left out stay as they are, and `--goal ""` removes the goal. Settings in `topic.toml` that this version does not know are kept. The result is `{"topic": ..., "changed": bool}`: asking for the values the Topic already has changes nothing and records nothing. |
 | `study topic dismiss-flag <topic> <flag-id> [--dry-run]` | Dismisses one of the Topic's flags, by the id `status` shows, once the learner has looked at it. It records the decision in the History and never changes content. The result is `{"topic": ..., "flag": {...}, "changed": bool}`; dismissing a flag twice changes nothing. Only `held_event`, `conflict`, `damaged_line`, `clock_ahead` and `card_flagged` flags can be dismissed (see below). |
@@ -136,14 +139,79 @@ human output shows it under the Active topic:
 ```json
 {
   "lesson": "pointers", "lesson_title": "Pointers", "phase": "practicing",
+  "break_point": { "id": "swap", "describe": "swap() works on two ints" },
   "next_step": { "step": "Fix the off-by-one in parse.c", "context": "...", "lesson": "pointers", "at": "..." },
   "open_session": { "id": "...", "opened": "..." }
 }
 ```
 
 `lesson` is the first Lesson in Syllabus order that is neither done nor skipped;
-`syllabus_done` is `true` instead once every Lesson is. `next_step` is the latest Next step recorded, word for word.
-`open_session` is a Session not closed yet: in progress, or ended without a Next step.
+`syllabus_done` is `true` instead once every Lesson is. `break_point` is the last Break point
+reached in that Lesson, with its description from the Lesson's header. `next_step` is the
+latest Next step recorded, word for word. `open_session` is a Session not closed yet: in
+progress, or ended without a Next step.
+
+`status` also recommends one action for the Active topic, never counting anything:
+
+```json
+"recommended": { "topic": "c", "action": "next_step", "text": "Fix the off-by-one in parse.c" }
+```
+
+`action` is `next_step` (the text is the Next step word for word), `plan` (no Syllabus yet),
+`learn`, `practice` or `feedback` (the current Lesson's Phase), `review` (every Lesson done,
+Cards ready) or `explore` (every Lesson done). Each Topic's `cards` is
+`{"ready": true}`, or `{"ready": false, "next_due": "..."}`: whether Reviews are possible
+now, never how many Cards are due. `learner_profile` is the Study home's `learner.md` and a
+Topic's `learner_additions` its own `learner.md`, when they exist; agents read both before
+teaching.
+
+### Break points
+
+A Lesson declares its Break points, in order, in its YAML header next to the Check:
+
+```yaml
+---
+check:
+  - id: tests
+    run: [go, test, ./...]
+break_points:
+  - id: swap
+    describe: swap() works on two ints
+  - id: arrays
+    describe: The same for arrays
+---
+```
+
+Ids are slugs, unique within the Lesson. They are read apart from the Check, so a mistake in
+the Break points never blocks the Check. `break_point_reached` (or `study session
+break-point`) records one with a Next step; the next Session resumes from it.
+
+### Next steps
+
+A Next step is an action that starts with a verb and says what to act on: "Fix the
+off-by-one in parse.go". `session_close`, `break_point_reached` and a `phase_set` that
+gives one refuse, with `invalid_argument`, a Next step that does not start with a letter,
+is a single word ("Continue"), or starts with a word that introduces a description rather
+than an action ("The parser is half done", "I was on Lesson 3", "Done with the parser").
+The check has no language model behind it: the word list is English, and steps in other
+languages pass on the first two rules.
+
+### Opening a Session
+
+`session_open` (or `study session open`) returns, besides the Resume point:
+
+- `suggested`, when an Energy is given and no Focus chosen: the Focus the Energy suggests
+  and why. At fumes with nothing due it has no Focus: the offer is to write tomorrow's
+  first step and stop.
+- `cards`, as in `status`.
+- `long_gap`, when the previous Session was more than a week ago: start with a short recap
+  and a warm-up, never with the size of a backlog.
+- `unclosed`, when the previous Session ended without a Next step: the Session, the last
+  Checkpoint (`since`), and the files changed since it (`changes`, each `added`, `modified`
+  or `deleted`, at most 50, with `more_changes` for the rest; the History is left out).
+  Listing them writes nothing to `.git`; when git cannot list them, such as during a merge,
+  `changes_error` says why and the Session opens anyway. Close it with `session_close`
+  naming its id.
 
 ## The Syllabus
 

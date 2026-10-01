@@ -134,6 +134,7 @@ the maintainer's answers to the questions they raised.
   | `revision.declined` | Revision, the learner's answer as for an approval | none |
   | `session.opened` | Energy, Focus | none |
   | `session.closed` | Session, Next step, context | none |
+  | `break_point.reached` | Lesson, Break point, Next step, context | none |
   | `phase.set` | Lesson, Phase, optional Next step, the Check version shown when practicing starts, the turn it ended | none |
   | `attempt.recorded` | Lesson, Check version, snapshot, outcome, per-criterion outcomes (never output) | none |
   | `lesson.completed` | Lesson, the Attempt, its Check version and the one shown, snapshot, the turn it ended, draft Cards in full | `cards.jsonl#<id>` each |
@@ -241,14 +242,21 @@ hours before any learning happens is exactly what v1 produced.
 
 1. `status` comes first. It shows the Active topic and why it was chosen, the Resume point
    and its Next step word for word, one recommended action, Cards sized to the Energy
-   (never the total due), Forecasts, and any relevant Tasks.
+   (never the total due), Forecasts, and any relevant Tasks. The recommendation is the Next
+   step when there is one, otherwise the next move in the Syllabus (plan it, start, continue,
+   practice or go over feedback on the current Lesson), otherwise Reviews or exploring once
+   every Lesson is done. For Cards, `status` says only whether Reviews are possible now, or
+   when the next Card falls due; how many is decided when a Session's Energy is known.
 2. Energy check (full, half, fumes) suggests a Focus, and the learner chooses:
    - **Learn**: start the next Lesson.
    - **Practice**: continue the current exercise from the last Break point.
    - **Reviews**: due Cards only, capped by Energy.
    - **Explore**: free questions; useful answers can become Cards or a Revision proposal.
-   With nothing due at fumes, the offer is "write tomorrow's first step".
-3. The Learner profile and the Topic's additions are read at the start of every Session.
+   With nothing due at fumes, the offer is "write tomorrow's first step". `session_open`
+   returns the suggestion when it gets an Energy and no Focus yet; the suggestion is never
+   recorded, only the Focus the learner chooses.
+3. The Learner profile and the Topic's additions are read at the start of every Session;
+   `status` gives their paths when the files exist.
 4. A Lesson moves through its Phases: teaching → practicing → feedback. The Check's criteria
    are shown before practicing starts, and the Check version shown is recorded. A Checkpoint
    is taken at every turn switch, with `[agent]` or `[learner]` authorship: practicing is
@@ -257,18 +265,26 @@ hours before any learning happens is exactly what v1 produced.
    it is owed, and a `checkpoint.taken` Event that it was taken; one that failed or was cut
    off by a crash is taken by the next `phase_set`, `lesson_complete` or `checkpoint`.
 5. Reaching a Break point, or ending a Session, records a Next step (starting with a verb)
-   and free-text context. Going back to practicing after a failed Attempt can record one
+   and free-text context. Break points are declared in order under `break_points:` in the
+   Lesson's YAML header, read apart from the Check so a mistake there never blocks it. A
+   Next step is checked without a language model: it starts with a letter, has at least two
+   words, and does not open with a word that introduces a description ("The parser is…",
+   "Done with…"); the word list is English, so other languages pass on the first two rules. Going back to practicing after a failed Attempt can record one
    too, naming the fix. The Resume point is the first Lesson not done, its Phase and the
    latest Next step; a Lesson's completion clears a Next step that belonged to it. If the learner simply closes the terminal, the next Session sees
    the unclosed Session, shows what changed since the last Checkpoint, and asks for the
-   missing note.
+   missing note. The changes are listed the way a Checkpoint would see them, from hashes
+   that are computed but not written, so listing them writes nothing to `.git` and runs no
+   program the repository names (ADR-0009); `session_close` naming the old Session records
+   the note.
 6. Completing a Lesson is one idempotent operation: mark it done, save its draft Cards,
    record the Event, take a Checkpoint in the role of the turn it ends (the learner's when
    completing straight from practicing). It is allowed only when the completion rule under
    Checks holds, and its Event records the Attempt and Check version it relied on, so later
    changes to shared code or to the Lesson never reopen it.
 7. After a long gap: a short recap of where the Topic stands and a two-minute warm-up, never
-   the size of the backlog.
+   the size of the backlog. `session_open` sets `long_gap` when the previous Session was more
+   than a week ago.
 
 ### Checks
 
