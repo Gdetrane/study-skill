@@ -359,6 +359,36 @@ func TestTheLearnerLoop(t *testing.T) {
 		t.Errorf("History =\n%v\nwant\n%v", types, want)
 	}
 
+	// The Attempts and the completion record what they relied on, and
+	// never a criterion's output.
+	var attempts []attemptPayload
+	var completion completionPayload
+	for _, ev := range historyEvents(t, filepath.Join(a.home, "c", "history.jsonl")) {
+		switch ev.Type {
+		case "attempt.recorded":
+			if bytes.Contains(ev.Data, []byte("output")) || bytes.Contains(ev.Data, []byte("holds 41")) {
+				t.Errorf("an Attempt recorded output: %s", ev.Data)
+			}
+			var p attemptPayload
+			decodePayload(t, ev, &p)
+			p.ID = ev.ID
+			attempts = append(attempts, p)
+		case "lesson.completed":
+			decodePayload(t, ev, &completion)
+		}
+	}
+	if len(attempts) != 2 || attempts[0].Outcome != "failed" || attempts[1].Outcome != "passed" ||
+		attempts[0].Criteria[0].ExitCode != 1 || attempts[1].Criteria[0].ExitCode != 0 ||
+		attempts[0].Snapshot == attempts[1].Snapshot || attempts[0].CheckVersion != attempts[1].CheckVersion ||
+		!strings.HasPrefix(attempts[1].Snapshot, "sha256:") || attempts[1].ID != second.ID {
+		t.Errorf("Attempts = %+v", attempts)
+	}
+	if completion.Lesson != "answer" || completion.Attempt != second.ID || completion.Snapshot != second.Snapshot ||
+		completion.CheckVersion != second.CheckVersion || completion.ShownCheck != second.CheckVersion ||
+		completion.TurnEnded != "agent" || len(completion.Cards) != 1 || completion.Cards[0].ID != done.Cards[0].ID {
+		t.Errorf("completion = %+v", completion)
+	}
+
 	// Checkpoints at every turn switch keep the learner's work apart.
 	log := strings.Split(a.git("log", "--reverse", "--format=%s"), "\n")
 	wantLog := []string{"[agent] answer: practicing", "[learner] answer: feedback", "[agent] answer: practicing",
@@ -375,10 +405,8 @@ func TestTheLearnerLoop(t *testing.T) {
 	}
 
 	// The replayed state: the Lesson is done, the Next step is the last
-	// one recorded, nothing is flagged, and the same History gives the same
-	// state whatever the order of its lines.
+	// one recorded, and nothing is flagged.
 	a.connect()
-	defer a.disconnect()
 	a.call("status", map[string]any{}, &status)
 	topic = status.Topics[0]
 	if len(topic.Flags) != 0 || topic.Resume == nil || topic.Resume.OpenSession != nil ||
@@ -390,7 +418,65 @@ func TestTheLearnerLoop(t *testing.T) {
 	if syllabus.Milestones[0].Lessons[0].Status != core.LessonDone {
 		t.Errorf("Syllabus = %+v", syllabus)
 	}
-	assertSameStateInAnyOrder(t, a)
+	a.call("checkpoint", map[string]any{"topic": "c", "role": "agent", "message": "end of day 2"}, nil)
+	a.disconnect()
+	assertTwoMachinesMerge(t, a)
+}
+
+type attemptPayload struct {
+	ID           string `json:"-"`
+	Lesson       string `json:"lesson"`
+	CheckVersion string `json:"check_version"`
+	Snapshot     string `json:"snapshot"`
+	Outcome      string `json:"outcome"`
+	Criteria     []struct {
+		ID       string `json:"id"`
+		Outcome  string `json:"outcome"`
+		ExitCode int    `json:"exit_code"`
+	} `json:"criteria"`
+}
+
+type completionPayload struct {
+	Lesson       string `json:"lesson"`
+	Attempt      string `json:"attempt"`
+	CheckVersion string `json:"check_version"`
+	ShownCheck   string `json:"shown_check"`
+	Snapshot     string `json:"snapshot"`
+	TurnEnded    string `json:"turn_ended"`
+	Cards        []struct {
+		ID     string `json:"id"`
+		Prompt string `json:"prompt"`
+	} `json:"cards"`
+}
+
+type historyEvent struct {
+	ID   string          `json:"id"`
+	Type string          `json:"type"`
+	Data json.RawMessage `json:"data"`
+}
+
+func historyEvents(t *testing.T, path string) []historyEvent {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var events []historyEvent
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		var ev historyEvent
+		if err := json.Unmarshal([]byte(line), &ev); err != nil {
+			t.Fatalf("a History line is not an Event: %s", line)
+		}
+		events = append(events, ev)
+	}
+	return events
+}
+
+func decodePayload(t *testing.T, ev historyEvent, v any) {
+	t.Helper()
+	if err := json.Unmarshal(ev.Data, v); err != nil {
+		t.Fatalf("%s payload %s: %v", ev.Type, ev.Data, err)
+	}
 }
 
 func hasFlag(flags []core.Flag, kind string) bool {
@@ -421,34 +507,45 @@ func historyTypes(t *testing.T, path string) []string {
 	return types
 }
 
-// assertSameStateInAnyOrder copies the Topic with its History's lines
-// reversed, as a union merge could leave them, and compares what replaying
-// both gives.
-func assertSameStateInAnyOrder(t *testing.T, a *agent) {
+// assertTwoMachinesMerge plays the v2.0 sync contract with real git: the
+// Topic is cloned to a second machine, each machine has a Session and takes
+// a Checkpoint, and each pulls the other's work, the History merging by
+// union. Both machines must then replay to the same state, with every
+// Event of both and nothing flagged.
+func assertTwoMachinesMerge(t *testing.T, a *agent) {
 	t.Helper()
 	ctx := context.Background()
-	other := t.TempDir()
-	if out, err := exec.Command("cp", "-R", filepath.Join(a.home, "c"), filepath.Join(other, "c")).CombinedOutput(); err != nil {
-		t.Fatalf("copying the Topic: %v\n%s", err, out)
+	b := &agent{t: t, home: t.TempDir(), clock: a.clock}
+	gitIn := func(dir string, args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
+		}
 	}
-	history := filepath.Join(other, "c", "history.jsonl")
-	data, err := os.ReadFile(history)
-	if err != nil {
-		t.Fatal(err)
-	}
-	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
-	slices.Reverse(lines)
-	if err := os.WriteFile(history, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	gitIn(b.home, "clone", "-q", filepath.Join(a.home, "c"), "c")
 
-	state := func(home string) string {
-		c, err := core.Open(core.Options{Getenv: func(k string) string {
-			if k == "STUDY_HOME" {
-				return home
-			}
-			return os.Getenv(k)
-		}, Dir: home, Now: func() time.Time { return time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC) }})
+	for _, m := range []*agent{a, b} {
+		c, err := core.Open(m.options())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := c.OpenSession(ctx, "c", core.SessionSpec{Focus: core.FocusExplore}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := c.CloseSession(ctx, "c", core.CloseSpec{NextStep: "Read about the question on " + m.home}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := c.Checkpoint(ctx, core.CheckpointSpec{Topic: "c", Role: "agent", Message: "explore"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	gitIn(filepath.Join(a.home, "c"), "pull", "-q", "--no-rebase", "--no-edit", filepath.Join(b.home, "c"), "main")
+	gitIn(filepath.Join(b.home, "c"), "pull", "-q", "--no-rebase", "--no-edit", filepath.Join(a.home, "c"), "main")
+
+	state := func(m *agent) (string, []string) {
+		c, err := core.Open(m.options())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -468,14 +565,34 @@ func assertSameStateInAnyOrder(t *testing.T, a *agent) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		status.StudyHome, status.Topics[0].Path = "", ""
-		data, err := json.MarshalIndent([]any{syllabus, results, due, status.Topics[0]}, "", "  ")
+		topic := status.Topics[0]
+		topic.Path = ""
+		if len(topic.Flags) != 0 {
+			t.Errorf("flags after the merge on %s: %+v", m.home, topic.Flags)
+		}
+		data, err := json.MarshalIndent([]any{syllabus, results, due, topic}, "", "  ")
 		if err != nil {
 			t.Fatal(err)
 		}
-		return string(data)
+		var types []string
+		for _, ev := range historyEvents(t, filepath.Join(m.home, "c", "history.jsonl")) {
+			types = append(types, ev.Type)
+		}
+		return string(data), types
 	}
-	if got, want := state(other), state(a.home); got != want {
-		t.Errorf("the History in reverse replays to\n%s\nwant\n%s", got, want)
+	stateA, typesA := state(a)
+	stateB, typesB := state(b)
+	if stateA != stateB {
+		t.Errorf("after merging, machine A replays to\n%s\nand machine B to\n%s", stateA, stateB)
+	}
+	closed := 0
+	for _, typ := range typesA {
+		if typ == "session.closed" {
+			closed++
+		}
+	}
+	if closed != 3 || len(typesA) != len(typesB) {
+		t.Errorf("the merged History has %d session.closed Events (want both machines', 3 in all), "+
+			"and %d lines on A, %d on B", closed, len(typesA), len(typesB))
 	}
 }
