@@ -15,6 +15,11 @@ import (
 // next due; zero for a Card never reviewed. Fuzz is off, so the same Reviews
 // always give the same schedule.
 //
+// Short-term learning steps are off too: they bring a Card back within
+// minutes, and Lamplight works in sessions, offering a session's Cards once,
+// so a Card due "in 10 minutes" would only come back next time anyway. Every
+// Review, the first included, schedules the Card in days.
+//
 // Review times come from the writers' clocks, which can run backwards
 // between machines. Each one is clamped to the previous Review of the Card,
 // so the time elapsed between Reviews is never negative, which go-fsrs also
@@ -26,6 +31,7 @@ func schedule(reviews []review) time.Time {
 	}
 	params := fsrs.DefaultParam()
 	params.EnableFuzz = false
+	params.EnableShortTerm = false
 	f := fsrs.NewFSRS(params)
 	card := fsrs.NewCard(reviews[0].at)
 	var last time.Time

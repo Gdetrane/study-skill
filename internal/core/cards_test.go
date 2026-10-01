@@ -193,6 +193,39 @@ func TestAStaleCardLineIsReadPast(t *testing.T) {
 	}
 }
 
+func TestCardTextMaySpanLines(t *testing.T) {
+	ctx := context.Background()
+	m := newTopic(t)
+	card := m.addCard(t, CardSpec{Prompt: "What does this return?\r\nfunc f() int {\r\n\treturn 1\r\n}", Answer: "1"})
+	if card.Prompt != "What does this return?\nfunc f() int {\n\treturn 1\n}" {
+		t.Errorf("prompt = %q, want lines ending in \\n and the tab kept", card.Prompt)
+	}
+	if got := m.due(t, DueQuery{}); len(got) != 1 || got[0].Prompt != card.Prompt {
+		t.Errorf("read back as %+v", got)
+	}
+	for _, bad := range []string{"bell\a", "escape \x1b[2J", "reversed ‮ text"} {
+		if _, err := m.AddCard(ctx, "c", CardSpec{Prompt: bad, Answer: "A"}); CodeOf(err) != CodeInvalidArgument {
+			t.Errorf("prompt %q: err = %v, want invalid_argument", bad, err)
+		}
+		if _, err := m.EditCard(ctx, "c", CardEdit{Card: card.ID, Answer: bad}); CodeOf(err) != CodeInvalidArgument {
+			t.Errorf("answer %q: err = %v, want invalid_argument", bad, err)
+		}
+	}
+}
+
+// Lamplight works in sessions, so FSRS's short-term steps, which bring a
+// Card back within minutes, are off: every Review schedules in days.
+func TestReviewsScheduleInDays(t *testing.T) {
+	m := newTopic(t)
+	for _, rating := range []string{RatingAgain, RatingHard, RatingGood, RatingEasy} {
+		card := m.addCard(t, CardSpec{Prompt: "Rated " + rating, Answer: "A"})
+		res := m.review(t, ReviewSpec{Card: card.ID, Draft: DraftKeep, Rating: rating})
+		if res.Card.Due.Sub(t0) < 24*time.Hour {
+			t.Errorf("a first Review rated %s is due %v, less than a day later", rating, res.Card.Due)
+		}
+	}
+}
+
 func TestTheDailyCapLimitsNewCards(t *testing.T) {
 	m := newTopic(t)
 	for i := range NewCardsPerDay + 3 {

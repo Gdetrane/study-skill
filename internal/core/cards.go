@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 // Cards live in cards.jsonl, one JSON object per line, each an item of its
@@ -164,15 +166,43 @@ func (cs *cardState) lessonShown() string {
 }
 
 func cleanDraft(d CardDraft) (CardDraft, error) {
-	prompt, err := requiredText("Card prompt", d.Prompt, maxCardRunes)
+	prompt, err := cardText("Card prompt", d.Prompt)
 	if err != nil {
 		return d, err
 	}
-	answer, err := requiredText("Card answer", d.Answer, maxCardRunes)
+	answer, err := cardText("Card answer", d.Answer)
 	if err != nil {
 		return d, err
 	}
 	return CardDraft{Prompt: prompt, Answer: answer}, nil
+}
+
+// CheckCardDraft checks a Card's prompt and answer as adding or editing it
+// would, and returns them cleaned, so an adapter can ask again before
+// recording anything.
+func CheckCardDraft(d CardDraft) (CardDraft, error) { return cleanDraft(d) }
+
+// cardText cleans a Card's prompt or answer. Unlike other text, it may span
+// lines and hold tabs, as code does; line endings become "\n", and other
+// control characters, which could rewrite a terminal, are refused.
+func cardText(field, s string) (string, error) {
+	if !utf8.ValidString(s) {
+		return "", invalidf("the %s is not valid UTF-8 text", field)
+	}
+	s = strings.ReplaceAll(strings.ReplaceAll(s, "\r\n", "\n"), "\r", "\n")
+	s = strings.TrimSpace(s)
+	for _, r := range s {
+		if (unicode.IsControl(r) && r != '\n' && r != '\t') || unicode.Is(unicode.Bidi_Control, r) {
+			return "", invalidf("the %s contains a control character", field)
+		}
+	}
+	switch n := utf8.RuneCountInString(s); {
+	case n == 0:
+		return "", invalidf("the %s is empty", field)
+	case n > maxCardRunes:
+		return "", invalidf("the %s is longer than %d characters", field, maxCardRunes)
+	}
+	return s, nil
 }
 
 // newCardID returns a Card ID that cannot collide across machines:

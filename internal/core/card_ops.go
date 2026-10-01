@@ -126,12 +126,12 @@ func (c *Core) EditCard(ctx context.Context, topicID string, edit CardEdit) (Car
 	}
 	var err error
 	if edit.Prompt != "" {
-		if edit.Prompt, err = requiredText("Card prompt", edit.Prompt, maxCardRunes); err != nil {
+		if edit.Prompt, err = cardText("Card prompt", edit.Prompt); err != nil {
 			return CardChange{}, err
 		}
 	}
 	if edit.Answer != "" {
-		if edit.Answer, err = requiredText("Card answer", edit.Answer, maxCardRunes); err != nil {
+		if edit.Answer, err = cardText("Card answer", edit.Answer); err != nil {
 			return CardChange{}, err
 		}
 	}
