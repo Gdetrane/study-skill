@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"sort"
 	"time"
-
-	fsrs "github.com/open-spaced-repetition/go-fsrs/v3"
 )
 
 // Cards live in cards.jsonl, one JSON object per line, each an item of its
@@ -16,8 +14,8 @@ import (
 //	{"format":1,"id":"pointers.k3x9a2bq","lesson":"pointers","prompt":"…","answer":"…"}
 //
 // The file holds content only. Whether a Card is a draft, when it is due and
-// whether it was dropped come from replaying the History: go-fsrs is
-// deterministic, so every replay gives the same schedule.
+// whether it was dropped come from replaying the History: scheduling is
+// deterministic (see schedule), so every replay gives the same schedule.
 //
 // TODO(#26): Explore Cards, card_add, card_edit, card_suspend and
 // card_delete, a daily cap on new Cards, Energy-sized Reviews, paused
@@ -85,29 +83,21 @@ type cardState struct {
 	lesson  string
 	created time.Time
 	reviews []review
-	dropped bool
+	// dropped is set once the learner dropped the draft, by Event
+	// droppedBy.
+	dropped   bool
+	droppedBy string
 }
 
 type review struct {
 	at     time.Time
-	rating fsrs.Rating
+	rating string
 }
 
 func (cs *cardState) draft() bool { return len(cs.reviews) == 0 }
 
-// due replays the Card's Reviews with go-fsrs. Fuzz is off, so the same
-// Reviews always give the same schedule.
-func (cs *cardState) due() time.Time {
-	if cs.draft() {
-		return time.Time{}
-	}
-	f := fsrs.NewFSRS(fsrs.DefaultParam())
-	card := fsrs.NewCard()
-	for _, r := range cs.reviews {
-		card = f.Next(card, r.at, r.rating).Card
-	}
-	return card.Due
-}
+// due is when the Card is next due; zero for a draft.
+func (cs *cardState) due() time.Time { return schedule(cs.reviews) }
 
 func cleanDraft(d CardDraft) (CardDraft, error) {
 	prompt, err := requiredText("Card prompt", d.Prompt, maxCardRunes)
@@ -176,18 +166,12 @@ type ReviewResult struct {
 	DryRun  bool   `json:"dry_run,omitempty"`
 }
 
-func parseRating(r string) (fsrs.Rating, error) {
+func checkRating(r string) error {
 	switch r {
-	case RatingAgain:
-		return fsrs.Again, nil
-	case RatingHard:
-		return fsrs.Hard, nil
-	case RatingGood:
-		return fsrs.Good, nil
-	case RatingEasy:
-		return fsrs.Easy, nil
+	case RatingAgain, RatingHard, RatingGood, RatingEasy:
+		return nil
 	}
-	return 0, invalidf("rating must be again, hard, good or easy, not %q", r)
+	return invalidf("rating must be again, hard, good or easy, not %q", r)
 }
 
 // RecordReview records one Review of a Card. At a draft's first Review the
@@ -195,7 +179,7 @@ func parseRating(r string) (fsrs.Rating, error) {
 // cards.jsonl and never scheduled.
 func (c *Core) RecordReview(ctx context.Context, topicID string, spec ReviewSpec) (ReviewResult, error) {
 	if spec.Draft != DraftDrop || spec.Rating != "" {
-		if _, err := parseRating(spec.Rating); err != nil {
+		if err := checkRating(spec.Rating); err != nil {
 			return ReviewResult{}, err
 		}
 	}
@@ -288,13 +272,24 @@ func applyReviewRecorded(ev event, item string, current []byte, exists bool) ([]
 	if !exists {
 		return nil, false, corruptf("Card %s is missing from %s", d.Card, cardsFile)
 	}
-	var line cardLine
-	if err := json.Unmarshal(current, &line); err != nil {
+	// Only the prompt and the answer change; fields this version of study
+	// does not know are kept.
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(current, &fields); err != nil {
 		return nil, false, corruptf("Card %s in %s is not valid: %v", d.Card, cardsFile, err)
 	}
-	line.Prompt, line.Answer = d.Prompt, d.Answer
-	data, err := encodeCard(line)
-	return data, err == nil, err
+	for key, value := range map[string]string{"prompt": d.Prompt, "answer": d.Answer} {
+		raw, err := json.Marshal(value)
+		if err != nil {
+			return nil, false, internalError("encoding a Card", err)
+		}
+		fields[key] = raw
+	}
+	data, err := json.Marshal(fields)
+	if err != nil {
+		return nil, false, internalError("encoding a Card", err)
+	}
+	return data, true, nil
 }
 
 func replayReviewRecorded(s *replayed, ev event) error {
@@ -306,15 +301,22 @@ func replayReviewRecorded(s *replayed, ev event) error {
 	if cs == nil {
 		return fmt.Errorf("%w: Card %s", errUnknownItem, d.Card)
 	}
-	if d.Draft == DraftDrop {
-		cs.dropped = true
+	if cs.dropped {
+		// Dropped on one machine, reviewed on another: the Card stays
+		// dropped, and the learner decides.
+		s.flag(newFlag(FlagConflict, cardItem(d.Card), []string{cs.droppedBy, ev.ID}, "",
+			fmt.Sprintf("Card %s was dropped by Event %s and then reviewed by Event %s, probably on two machines: "+
+				"it stays dropped; check it with the learner", d.Card, cs.droppedBy, ev.ID)))
 		return nil
 	}
-	rating, err := parseRating(d.Rating)
-	if err != nil {
+	if d.Draft == DraftDrop {
+		cs.dropped, cs.droppedBy = true, ev.ID
+		return nil
+	}
+	if err := checkRating(d.Rating); err != nil {
 		return err
 	}
-	cs.reviews = append(cs.reviews, review{at: wallOf(ev), rating: rating})
+	cs.reviews = append(cs.reviews, review{at: wallOf(ev), rating: d.Rating})
 	return nil
 }
 

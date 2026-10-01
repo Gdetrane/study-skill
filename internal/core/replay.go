@@ -278,6 +278,7 @@ func isGating(item string) bool {
 // History dated ahead of this computer's clock.
 func (c *Core) topicFlags(topic *os.Root, s *replayed) []Flag {
 	all := append(append([]Flag{}, s.flags...), c.gatingFlags(topic, s)...)
+	all = append(all, repeatedCardFlags(topic)...)
 	if ahead := s.latest.Sub(c.now()); ahead > clockAheadLimit {
 		// The flag is named after the earliest Event dated ahead, which
 		// later Events, the dismissal included, never change.
@@ -329,4 +330,21 @@ func (c *Core) gatingFlags(topic *os.Root, s *replayed) []Flag {
 // applyNothing is the applier of Events that edit no items.
 func applyNothing(ev event, item string, _ []byte, _ bool) ([]byte, bool, error) {
 	return nil, false, corruptf("Event %s (%s) cannot edit %s", ev.ID, ev.Type, item)
+}
+
+// repeatedCardFlags flags Cards that appear twice in cards.jsonl with
+// different content, as a union merge leaves two machines' edits of one
+// Card. The first line counts until the learner settles it.
+func repeatedCardFlags(topic *os.Root) []Flag {
+	data, exists, err := readFile(topic, cardsFile)
+	if err != nil || !exists {
+		return nil
+	}
+	var flags []Flag
+	for _, id := range jsonlRepeats(data) {
+		flags = append(flags, newFlag(FlagConflict, cardItem(id), nil, "",
+			fmt.Sprintf("Card %s appears twice in %s with different content, probably edited on two machines: "+
+				"the first counts; keep one of the lines by hand", id, cardsFile)))
+	}
+	return flags
 }

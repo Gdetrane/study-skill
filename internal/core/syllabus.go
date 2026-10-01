@@ -329,6 +329,18 @@ func replayRevisionApplied(s *replayed, ev event) error {
 		return fmt.Errorf("%w: Revision %s", errUnknownItem, d.Revision)
 	}
 	syllabus := d.Syllabus
+	// A Revision never removes a done Lesson; one that does was proposed on
+	// another machine before the Lesson was completed here.
+	for id, l := range s.study.lessons {
+		if l.completed == nil {
+			continue
+		}
+		if _, ok := syllabus.lesson(id); !ok {
+			s.flag(newFlag(FlagConflict, syllabusFile, []string{l.completedBy, ev.ID}, id,
+				fmt.Sprintf("Revision %s removed Lesson %s, which Event %s had completed, probably on two machines: "+
+					"check the Syllabus with the learner", d.Revision, id, l.completedBy)))
+		}
+	}
 	s.study.syllabus = &syllabus
 	s.study.applied[d.Revision] = true
 	return nil

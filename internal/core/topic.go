@@ -294,7 +294,9 @@ func applyTopicCreated(ev event, item string, _ []byte, _ bool) ([]byte, bool, e
 		data, err := encodeTopicSettings(topicSettings{Title: d.Title, Goal: d.Goal})
 		return data, err == nil, err
 	case gitattributes:
-		return []byte(historyFile + " merge=union\n"), true, nil
+		// Both files hold one record per line, so a union merge keeps both
+		// machines' lines; replay and status flag what conflicts.
+		return []byte(historyFile + " merge=union\n" + cardsFile + " merge=union\n"), true, nil
 	}
 	return nil, false, corruptf("Event %s (%s) cannot edit %s", ev.ID, ev.Type, item)
 }

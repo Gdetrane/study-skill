@@ -71,7 +71,7 @@ func TestCreateTopicWritesItsFolder(t *testing.T) {
 			t.Errorf("topic.toml lacks %q:\n%s", line, settings)
 		}
 	}
-	if got := readFile(t, topic.Path, ".gitattributes"); got != "history.jsonl merge=union\n" {
+	if got := readFile(t, topic.Path, ".gitattributes"); got != "history.jsonl merge=union\ncards.jsonl merge=union\n" {
 		t.Errorf(".gitattributes = %q", got)
 	}
 	if _, err := os.Stat(filepath.Join(topic.Path, ".git")); err != nil {
