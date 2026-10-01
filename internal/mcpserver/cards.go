@@ -23,7 +23,8 @@ func addCardTools(server *mcp.Server, c *core.Core) {
 		Title: "Cards to review",
 		Description: "List the Cards to review now: those due, then drafts waiting for their first Review, as many as " +
 			"today's cap on new Cards allows. Without a limit, the list is sized to the Energy: the one given, else the " +
-			"open Session's. Suspended Cards are never listed. Never tell the learner how many Cards are due.",
+			"open Session's. Suspended Cards are never listed, and a paused Topic lists none (paused is then true). " +
+			"Never tell the learner how many Cards are due.",
 		Annotations: read,
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in dueCardsInput) (*mcp.CallToolResult, core.DueCards, error) {
 		r, err := c.DueCardsOf(ctx, in.Topic, core.DueQuery{Limit: in.Limit, Energy: in.Energy})

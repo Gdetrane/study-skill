@@ -24,7 +24,8 @@ import (
 // Explore Session rather than from a Lesson, are explore.<random suffix>, so
 // two machines adding Cards never pick the same ID.
 //
-// TODO(#29): paused Topics hide their Cards, once Topics have states.
+// A paused Topic offers no Cards; a finished one keeps offering them, at the
+// growing intervals FSRS gives.
 
 const cardsFile = "cards.jsonl"
 
@@ -49,10 +50,9 @@ const (
 	// DefaultDueLimit and MaxDueLimit bound due_cards.
 	DefaultDueLimit = 10
 	MaxDueLimit     = 100
-	// NewCardsPerDay is the daily cap: at most this many draft Cards are
+	// NewCardsPerDay is the daily cap unless the Topic sets its own
+	// (new_cards_per_day in topic.toml): at most this many draft Cards are
 	// decided (kept, edited or dropped) a day, so new Cards never pile up.
-	//
-	// TODO(#29): a Topic setting, next to Pace.
 	NewCardsPerDay = 10
 )
 
@@ -598,6 +598,9 @@ type DueCards struct {
 	Topic string `json:"topic"`
 	// Energy is the Energy the list was sized to, when it was.
 	Energy string `json:"energy,omitempty"`
+	// Paused is set when the Topic is paused: its Cards wait until it is
+	// active again, and none are offered.
+	Paused bool   `json:"paused,omitempty"`
 	Cards  []Card `json:"cards"`
 }
 
@@ -640,7 +643,7 @@ func (st *studyState) openSession() *sessionState {
 
 // draftsLeftToday is how many more drafts can be decided today under the
 // daily cap. A day is a calendar day in the location of now.
-func (st *studyState) draftsLeftToday(now time.Time) int {
+func (st *studyState) draftsLeftToday(now time.Time, capPerDay int) int {
 	y, m, d := now.Date()
 	start := time.Date(y, m, d, 0, 0, 0, 0, now.Location())
 	end := start.AddDate(0, 0, 1)
@@ -650,7 +653,7 @@ func (st *studyState) draftsLeftToday(now time.Time) int {
 			decided++
 		}
 	}
-	return max(0, NewCardsPerDay-decided)
+	return max(0, capPerDay-decided)
 }
 
 // DueCardsOf returns the Cards to review now, sized to the limit or the
@@ -674,6 +677,15 @@ func (c *Core) DueCardsOf(ctx context.Context, topicID string, q DueQuery) (DueC
 	defer home.Close()
 	defer topic.Close()
 	view := newView(topic, s)
+	out := DueCards{Topic: topicID, Energy: energy, Cards: []Card{}}
+	if s.topicState() == TopicPaused {
+		out.Paused, out.Energy = true, ""
+		return out, nil
+	}
+	capPerDay := NewCardsPerDay
+	if _, p, err := topicPlanSettings(view, topicID); err == nil {
+		capPerDay = p.newCardsPerDay
+	}
 	now := c.now()
 	var due, drafts []*cardState
 	for _, id := range s.study.cardOrder {
@@ -687,10 +699,9 @@ func (c *Core) DueCardsOf(ctx context.Context, topicID string, q DueQuery) (DueC
 		}
 	}
 	sort.SliceStable(due, func(i, j int) bool { return due[i].due().Before(due[j].due()) })
-	if left := s.study.draftsLeftToday(now); len(drafts) > left {
+	if left := s.study.draftsLeftToday(now, capPerDay); len(drafts) > left {
 		drafts = drafts[:left]
 	}
-	out := DueCards{Topic: topicID, Energy: energy, Cards: []Card{}}
 	for _, cs := range append(due, drafts...) {
 		if len(out.Cards) == limit {
 			break

@@ -10,8 +10,8 @@
     },
     "recommended": {
       "topic": "linear-algebra",
-      "action": "plan",
-      "text": "Plan the Syllabus together, and approve it"
+      "action": "learn",
+      "text": "Start Lesson “Gaussian elimination”"
     },
     "topics": [
       {
@@ -20,8 +20,18 @@
         "goal": "Solve systems by hand",
         "path": "$STUDY_HOME/linear-algebra",
         "created": "2026-10-01T09:30:00Z",
-        "state": "active",
-        "new_cards_per_day": 10
+        "resume": {
+          "lesson": "elimination",
+          "lesson_title": "Gaussian elimination"
+        },
+        "state": "paused",
+        "deadline": "2026-12-15",
+        "pace": [
+          {
+            "hours_per_week": 0.25
+          }
+        ],
+        "new_cards_per_day": 5
       }
     ],
     "problems": []

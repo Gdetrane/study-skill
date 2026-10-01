@@ -41,7 +41,7 @@ func (st *studyState) cardsReady(now time.Time) *CardsReady {
 		}
 	}
 	if draftsWaiting {
-		if st.draftsLeftToday(now) > 0 {
+		if st.draftsLeftToday(now, NewCardsPerDay) > 0 {
 			return &CardsReady{Ready: true}
 		}
 		y, m, d := now.Date()

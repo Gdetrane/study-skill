@@ -83,6 +83,16 @@ func (s *Syllabus) lesson(id string) (SyllabusLesson, bool) {
 	return l, ok
 }
 
+// milestone returns a Milestone by its id.
+func (s *Syllabus) milestone(id string) (Milestone, bool) {
+	for _, m := range s.Milestones {
+		if m.ID == id {
+			return m, true
+		}
+	}
+	return Milestone{}, false
+}
+
 // find returns a Lesson, the Milestone that holds it, and whether it was
 // found.
 func (s *Syllabus) find(id string) (SyllabusLesson, Milestone, bool) {
@@ -758,6 +768,9 @@ type SyllabusView struct {
 	// cannot be adopted as it is.
 	EditedOutside bool   `json:"edited_outside,omitempty"`
 	FileError     string `json:"file_error,omitempty"`
+	// Forecast says when each Milestone ends at the Topic's Pace; none
+	// while the Topic is paused or finished.
+	Forecast *Forecast `json:"forecast,omitempty"`
 }
 
 // MilestoneView is a Milestone with its Lessons' progress.
@@ -821,6 +834,9 @@ func (c *Core) SyllabusOf(ctx context.Context, topicID string) (SyllabusView, er
 				mv.Lessons = append(mv.Lessons, lv)
 			}
 			view.Milestones = append(view.Milestones, mv)
+		}
+		if _, p, err := topicPlanSettings(newView(topic, s), topicID); err == nil && s.topicState() == TopicActive {
+			view.Forecast = forecastOf(&s.study, p.pace, p.deadline, c.now())
 		}
 	}
 	recorded := s.versions[syllabusFile].hash

@@ -179,23 +179,12 @@ func (c *Core) writeTopic(ctx context.Context, topicID string, p plan, dryRun bo
 // planDryRun plans a write without writing anything, not even the lock:
 // against the Topic as recovery would leave it.
 func (c *Core) planDryRun(home, topic *os.Root, topicID string, p plan) (*event, error) {
-	h, err := readHistory(topic, topicID)
+	s, view, err := c.recoveredView(home, topic, topicID)
 	if err != nil {
 		return nil, err
 	}
-	s := replayHistory(h)
 	if err := refuseNewer(topicID, s); err != nil {
 		return nil, err
-	}
-	view := newView(topic, s)
-	view.pending = map[string]itemContent{}
-	// A dry run decides nothing, so it logs nothing.
-	steps, err := c.recoverySteps(slog.New(slog.DiscardHandler), home, topic, topicID, h, s)
-	if err != nil {
-		return nil, err
-	}
-	for _, st := range steps {
-		view.pending[st.item] = st.content
 	}
 	ch, err := p(s, view)
 	if err != nil || ch == nil {
@@ -207,6 +196,27 @@ func (c *Core) planDryRun(home, topic *os.Root, topicID string, p plan) (*event,
 		return nil, err
 	}
 	return &ev, nil
+}
+
+// recoveredView replays a Topic and views its items as they would be once
+// recovery had finished an interrupted write, without writing anything.
+func (c *Core) recoveredView(home, topic *os.Root, topicID string) (*replayed, *topicView, error) {
+	h, err := readHistory(topic, topicID)
+	if err != nil {
+		return nil, nil, err
+	}
+	s := replayHistory(h)
+	view := newView(topic, s)
+	view.pending = map[string]itemContent{}
+	// A dry run decides nothing, so it logs nothing.
+	steps, err := c.recoverySteps(slog.New(slog.DiscardHandler), home, topic, topicID, h, s)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, st := range steps {
+		view.pending[st.item] = st.content
+	}
+	return s, view, nil
 }
 
 // refuseNewer refuses to write a Topic whose History holds Events written by

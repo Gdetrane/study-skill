@@ -1,0 +1,4 @@
+Would update Topic linear-algebra (Linear algebra)
+  Goal: Solve systems by hand
+  Deadline: 2026-12-15
+  Pace: 1 h/week

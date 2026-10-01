@@ -59,7 +59,7 @@ func TestCreateTopicWritesItsFolder(t *testing.T) {
 	want := core.Topic{
 		ID: "linear-algebra-calculus", Title: "Linear Algebra & Calculus",
 		Goal: "Solve linear systems by hand", Path: filepath.Join(home, "linear-algebra-calculus"),
-		Created: fixedNow,
+		Created: fixedNow, State: core.TopicActive, NewCardsPerDay: core.NewCardsPerDay,
 	}
 	if !reflect.DeepEqual(topic, want) {
 		t.Fatalf("topic = %+v, want %+v", topic, want)

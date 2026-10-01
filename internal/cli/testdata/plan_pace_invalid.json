@@ -1,0 +1,7 @@
+{
+  "ok": false,
+  "error": {
+    "code": "usage",
+    "message": "--pace \"lots\": give hours a week, such as 10, or 3@2026-11-16 for a period starting that day"
+  }
+}

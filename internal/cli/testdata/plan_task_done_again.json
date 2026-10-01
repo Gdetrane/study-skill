@@ -1,0 +1,13 @@
+{
+  "ok": true,
+  "data": {
+    "topic": "linear-algebra",
+    "task": {
+      "id": "book-the-exam.<id>",
+      "title": "Book the exam",
+      "by": "2026-11-20",
+      "done": true
+    },
+    "changed": false
+  }
+}

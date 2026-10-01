@@ -303,6 +303,10 @@ func (s *reviewSession) run(ctx context.Context, due core.DueCards, why string) 
 		intro += styleDim.Render(", sized to " + due.Energy + " Energy")
 	}
 	s.say("%s", intro)
+	if due.Paused {
+		s.say("\n%s", pausedText(s.topic))
+		return nil
+	}
 	if len(due.Cards) == 0 {
 		s.say("\nNothing to review now.")
 		return nil

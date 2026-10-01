@@ -63,6 +63,22 @@ type Topic struct {
 	// LearnerAdditions is the path of the Topic's additions to the Learner
 	// profile, when they exist.
 	LearnerAdditions string `json:"learner_additions,omitempty"`
+
+	// The plan; see plan.go. State is active, paused or finished.
+	State string `json:"state"`
+	// Deadline is the Goal's deadline, YYYY-MM-DD.
+	Deadline string       `json:"deadline,omitempty"`
+	Pace     []PacePeriod `json:"pace,omitempty"`
+	// NewCardsPerDay is the daily cap on new Cards decided.
+	NewCardsPerDay int `json:"new_cards_per_day"`
+	// Forecast says when each Milestone ends at the Pace; none while the
+	// Topic is paused or finished, or before it has a Syllabus.
+	Forecast *Forecast `json:"forecast,omitempty"`
+	// Tasks are the open Tasks relevant now.
+	Tasks []Task `json:"tasks,omitempty"`
+	// SettingsProblems says what in topic.toml could not be read, such as
+	// a hand-edited Pace; the rest of the Topic stands.
+	SettingsProblems []string `json:"settings_problems,omitempty"`
 }
 
 // TopicSpec describes a Topic to create.
@@ -86,6 +102,17 @@ type TopicChanges struct {
 	Goal *string
 	// KnowledgeBase chooses the Topic's Knowledge base.
 	KnowledgeBase *KnowledgeBase
+	// Deadline sets the Goal's deadline, YYYY-MM-DD; empty removes it.
+	Deadline *string
+	// Pace replaces the Pace periods; an empty list removes the Pace.
+	Pace *[]PacePeriod
+	// NewCardsPerDay sets the daily cap on new Cards decided.
+	NewCardsPerDay *int
+	// State pauses or finishes the Topic, or makes it active again.
+	State *string
+	// AddTasks adds Tasks; RemoveTasks removes Tasks by id.
+	AddTasks    []TaskSpec
+	RemoveTasks []string
 	// DryRun validates the request and returns the Topic as it would be,
 	// without writing anything.
 	DryRun bool
@@ -97,6 +124,9 @@ type TopicUpdate struct {
 	// Changed is false when the Topic already had the requested values, so
 	// nothing was recorded.
 	Changed bool `json:"changed"`
+	// AddedTasks are the Tasks asked for, with their ids; a Task with the
+	// title of one already there is that Task.
+	AddedTasks []Task `json:"added_tasks,omitempty"`
 }
 
 // topicSettings is the content of topic.toml.
@@ -155,7 +185,7 @@ func (c *Core) CreateTopic(ctx context.Context, spec TopicSpec) (Topic, error) {
 	}
 	wall := c.now()
 	topic := Topic{ID: id, Title: title, Goal: goal, Path: filepath.Join(c.home, id),
-		Created: nextEventTime(wall, time.Time{})}
+		Created: nextEventTime(wall, time.Time{}), State: TopicActive, NewCardsPerDay: NewCardsPerDay}
 	if _, err := os.Lstat(topic.Path); err == nil {
 		return Topic{}, alreadyExists(id)
 	} else if !errors.Is(err, fs.ErrNotExist) {
@@ -231,14 +261,28 @@ func (c *Core) initTopic(ctx context.Context, home *os.Root, dir string, topic T
 	return gitInit(ctx, filepath.Join(c.home, dir))
 }
 
-// UpdateTopic changes a Topic's title, goal or Knowledge base. Asking for
-// the values it already has changes nothing and records no Event.
+// topicStep is one change UpdateTopic records with its own Event.
+type topicStep struct {
+	// what names the change for errors, such as "Pace". describe, when
+	// set, names what the step's Event actually changed.
+	what     string
+	plan     plan
+	describe func() string
+}
+
+// UpdateTopic changes a Topic's settings: title, goal, Knowledge base, the
+// Goal's deadline, the Pace, the daily cap on new Cards, Tasks and the
+// Topic's state. Asking for the values it already has changes nothing and
+// records no Event.
 //
-// The Knowledge base is recorded by its own Event type, so changing it with
-// the title or goal records two Events. Everything is validated first, so
-// the second write can only fail for reasons such as a full disk; the error
-// then says the first change was recorded.
+// Each kind of change is recorded by its own Event type, so one update can
+// record several Events. Everything is validated first, so a later write
+// can only fail for reasons such as a full disk; the error then says which
+// changes were recorded.
 func (c *Core) UpdateTopic(ctx context.Context, id string, changes TopicChanges) (TopicUpdate, error) {
+	if err := checkTopicID(id); err != nil {
+		return TopicUpdate{}, err
+	}
 	var want topicUpdatedData
 	if changes.Title != nil {
 		title, err := cleanText("title", *changes.Title, maxTitleRunes)
@@ -265,82 +309,187 @@ func (c *Core) UpdateTopic(ctx context.Context, id string, changes TopicChanges)
 		}
 		kb = &checked
 	}
-	settingsChange := want.Title != nil || want.Goal != nil
-	if !settingsChange && kb == nil {
-		return TopicUpdate{}, invalidf("nothing to change: give a new title, goal or Knowledge base")
-	}
-	changed := false
-	// The settings as the write finds them: after recovery, in a dry run too.
-	var current topicSettings
-	// applied is what the first Event changed, for an error after it.
-	var applied topicUpdatedData
-	if settingsChange {
-		ev, err := c.writeTopic(ctx, id, func(_ *replayed, view *topicView) (*change, error) {
-			data, exists, err := view.read(topicFile)
-			if err != nil {
-				return nil, err
-			}
-			if !exists {
-				return nil, corruptf("%s of %s is missing", topicFile, id)
-			}
-			if current, err = parseTopicSettings(data, filepath.Join(id, topicFile)); err != nil {
-				return nil, err
-			}
-			var diff topicUpdatedData
-			if want.Title != nil && *want.Title != current.Title {
-				diff.Title = want.Title
-			}
-			if want.Goal != nil && *want.Goal != current.Goal {
-				diff.Goal = want.Goal
-			}
-			if diff.Title == nil && diff.Goal == nil {
-				return nil, nil
-			}
-			applied = diff
-			return &change{Type: eventTopicUpdated, Data: diff, Items: []string{topicFile}}, nil
-		}, changes.DryRun)
-		if err != nil {
-			return TopicUpdate{}, err
-		}
-		changed = ev != nil
-	}
-	if kb != nil {
-		ev, err := c.writeTopic(ctx, id, planKnowledgeBase(id, *kb), changes.DryRun)
-		if err != nil {
-			if changed {
-				what := "title and goal of " + id + " were"
+	var steps []topicStep
+	if want.Title != nil || want.Goal != nil {
+		var applied topicUpdatedData
+		steps = append(steps, topicStep{what: "title and goal", plan: planTitleAndGoal(id, want, &applied),
+			describe: func() string {
 				switch {
 				case applied.Goal == nil:
-					what = "title of " + id + " was"
+					return "title"
 				case applied.Title == nil:
-					what = "goal of " + id + " was"
+					return "goal"
+				}
+				return "title and goal"
+			}})
+	}
+	if kb != nil {
+		steps = append(steps, topicStep{what: "Knowledge base", plan: planKnowledgeBase(id, *kb)})
+	}
+	if changes.Deadline != nil {
+		deadline, err := checkDate("deadline", *changes.Deadline)
+		if err != nil {
+			return TopicUpdate{}, err
+		}
+		steps = append(steps, topicStep{what: "deadline", plan: planDeadline(id, deadline)})
+	}
+	if changes.Pace != nil {
+		pace, err := checkPace(*changes.Pace)
+		if err != nil {
+			return TopicUpdate{}, err
+		}
+		steps = append(steps, topicStep{what: "Pace", plan: planPace(id, pace)})
+	}
+	if changes.NewCardsPerDay != nil {
+		n := *changes.NewCardsPerDay
+		if n < 0 || n > maxNewCardsPerDay {
+			return TopicUpdate{}, invalidf("the daily cap on new Cards must be from 0 to %d, not %d", maxNewCardsPerDay, n)
+		}
+		steps = append(steps, topicStep{what: "daily cap on new Cards", plan: planNewCardsPerDay(id, n)})
+	}
+	var added []Task
+	if len(changes.AddTasks) > 0 {
+		specs, err := checkTaskSpecs(changes.AddTasks)
+		if err != nil {
+			return TopicUpdate{}, err
+		}
+		steps = append(steps, topicStep{what: "Tasks", plan: c.planTasksAdded(id, specs, &added)})
+	}
+	if len(changes.RemoveTasks) > 0 {
+		for _, t := range changes.RemoveTasks {
+			if !taskIDPattern.MatchString(t) {
+				return TopicUpdate{}, invalidf("%q is not a Task id: study task list shows them", t)
+			}
+		}
+		steps = append(steps, topicStep{what: "Tasks removed", plan: planTasksRemoved(id, changes.RemoveTasks)})
+	}
+	if changes.State != nil {
+		state, err := checkTopicState(*changes.State)
+		if err != nil {
+			return TopicUpdate{}, err
+		}
+		steps = append(steps, topicStep{what: "state", plan: planTopicState(state)})
+	}
+	if len(steps) == 0 {
+		return TopicUpdate{}, invalidf("nothing to change: give a title, goal, Knowledge base, deadline, Pace, " +
+			"daily cap on new Cards, Tasks or state")
+	}
+
+	var events []*event
+	var recorded []string
+	for _, step := range steps {
+		ev, err := c.writeTopic(ctx, id, step.plan, changes.DryRun)
+		if err != nil {
+			if len(recorded) > 0 {
+				what := joinAnd(recorded)
+				verb := "was"
+				if strings.Contains(what, " and ") {
+					verb = "were"
 				}
 				return TopicUpdate{}, &Error{Code: CodeOf(err), Err: err, Message: fmt.Sprintf(
-					"the %s changed, but not its Knowledge base: %v", what, err)}
+					"the %s of %s %s changed, but not its %s: %v", what, id, verb, step.what, err)}
 			}
 			return TopicUpdate{}, err
 		}
-		changed = changed || ev != nil
+		if ev != nil {
+			events = append(events, ev)
+			what := step.what
+			if step.describe != nil {
+				what = step.describe()
+			}
+			recorded = append(recorded, what)
+		}
 	}
-	topic, err := c.readTopic(id)
+	var topic Topic
+	var err error
+	if changes.DryRun {
+		topic, err = c.previewTopic(id, events)
+	} else {
+		topic, err = c.readTopic(id)
+	}
 	if err != nil {
 		return TopicUpdate{}, err
 	}
-	if changes.DryRun {
-		if settingsChange {
-			topic.Title, topic.Goal = current.Title, current.Goal
+	return TopicUpdate{Topic: topic, Changed: len(events) > 0, AddedTasks: added}, nil
+}
+
+// planTitleAndGoal plans changing the title or the goal; applied receives
+// what the Event changes.
+func planTitleAndGoal(id string, want topicUpdatedData, applied *topicUpdatedData) plan {
+	return func(_ *replayed, view *topicView) (*change, error) {
+		data, exists, err := view.read(topicFile)
+		if err != nil {
+			return nil, err
 		}
-		if want.Title != nil {
-			topic.Title = *want.Title
+		if !exists {
+			return nil, corruptf("%s of %s is missing", topicFile, id)
 		}
-		if want.Goal != nil {
-			topic.Goal = *want.Goal
+		current, err := parseTopicSettings(data, filepath.Join(id, topicFile))
+		if err != nil {
+			return nil, err
 		}
-		if kb != nil {
-			topic.KnowledgeBase = kb
+		var diff topicUpdatedData
+		if want.Title != nil && *want.Title != current.Title {
+			diff.Title = want.Title
+		}
+		if want.Goal != nil && *want.Goal != current.Goal {
+			diff.Goal = want.Goal
+		}
+		if diff.Title == nil && diff.Goal == nil {
+			return nil, nil
+		}
+		*applied = diff
+		return &change{Type: eventTopicUpdated, Data: diff, Items: []string{topicFile}}, nil
+	}
+}
+
+// previewTopic is the Topic as it would be after events, which a dry run
+// planned but did not write: their changes to topic.toml are applied in
+// memory, as recovery would apply them, and so is a change of state.
+func (c *Core) previewTopic(id string, events []*event) (Topic, error) {
+	topic, err := c.readTopic(id)
+	if err != nil {
+		return Topic{}, err
+	}
+	home, root, err := c.openTopicFolder(id)
+	if err != nil {
+		return Topic{}, err
+	}
+	defer home.Close()
+	defer root.Close()
+	s, view, err := c.recoveredView(home, root, id)
+	if err != nil {
+		return Topic{}, err
+	}
+	data, exists, err := view.read(topicFile)
+	if err != nil {
+		return Topic{}, err
+	}
+	for _, ev := range events {
+		for _, it := range ev.Items {
+			if it.Item != topicFile {
+				continue
+			}
+			if data, exists, err = eventKinds[ev.Type].apply(*ev, topicFile, data, exists); err != nil {
+				return Topic{}, err
+			}
+		}
+		if ev.Type == eventTopicStateSet {
+			if err := replayTopicStateSet(s, *ev); err != nil {
+				return Topic{}, err
+			}
 		}
 	}
-	return TopicUpdate{Topic: topic, Changed: changed}, nil
+	if !exists {
+		return Topic{}, corruptf("%s of %s is missing", topicFile, id)
+	}
+	settings, err := parseTopicSettings(data, filepath.Join(id, topicFile))
+	if err != nil {
+		return Topic{}, err
+	}
+	topic.Title, topic.Goal, topic.KnowledgeBase = settings.Title, settings.Goal, knowledgeBaseOf(settings)
+	c.addPlan(&topic, s, settings)
+	return topic, nil
 }
 
 func applyTopicCreated(ev event, item string, _ []byte, _ bool) ([]byte, bool, error) {
@@ -504,6 +653,7 @@ func (c *Core) loadTopic(home *os.Root, id string) (Topic, error) {
 		topic.Resume = &r
 	}
 	topic.LessonsWithoutEvidence = s.lessonsWithoutEvidence(s.citingLessons(topic.KnowledgeBase))
+	c.addPlan(&topic, s, settings)
 	c.addTopicGuidance(root, s, &topic)
 	if unfinished := unfinishedItems(home, id, s); len(unfinished) > 0 {
 		kept := topic.Flags[:0]
