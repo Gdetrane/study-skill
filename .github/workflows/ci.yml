@@ -3,7 +3,7 @@ name: CI
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, v2]
 
 jobs:
   catalog:
@@ -71,3 +71,20 @@ jobs:
           go-version: "1.22"
       - name: Run lifecycle smoke test
         run: scripts/e2e/study-lifecycle-smoke.sh
+
+  core:
+    name: Lamplight core
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+      - name: Format check
+        run: test -z "$(gofmt -l cmd internal)"
+      - name: Vet
+        run: go vet ./...
+      - name: Test
+        run: go test -race ./...

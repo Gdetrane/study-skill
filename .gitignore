@@ -22,3 +22,5 @@ node_modules/
 coverage.out
 scripts/fsrs/fsrs
 study-workspace/
+/study
+.claude/worktrees/

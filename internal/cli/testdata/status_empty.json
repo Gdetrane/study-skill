@@ -1,0 +1,9 @@
+{
+  "ok": true,
+  "data": {
+    "study_home": "$STUDY_HOME",
+    "active_topic": null,
+    "topics": [],
+    "problems": []
+  }
+}

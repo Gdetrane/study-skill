@@ -1,0 +1,6 @@
+Study home:    $STUDY_HOME
+Active topic:  linear-algebra (Linear algebra): you started inside its folder
+
+Topics:
+  linear-algebra  Linear algebra
+  physics         Physics

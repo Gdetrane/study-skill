@@ -191,7 +191,7 @@ _Avoid_: Workspace root, study directory
 
 **Active topic**:
 The Topic the agent is working on: the one whose folder it started in, otherwise the one
-worked on most recently.
+worked on most recently, otherwise the only Topic.
 
 **Resume point**:
 Where the learner stopped within a Topic: the Lesson, its Phase, the last Break point
