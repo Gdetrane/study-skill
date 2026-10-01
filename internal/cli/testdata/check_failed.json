@@ -1,0 +1,19 @@
+{
+  "ok": true,
+  "data": {
+    "id": "<id>",
+    "lesson": "answer",
+    "check_version": "sha256:a2ffe2f214592d8bbe0619a7a3ea3a97d6f0f61743f8eade44cde16d33a5a379",
+    "snapshot": "1f830cbafd924365247da1d524fe4f35006ca861",
+    "outcome": "failed",
+    "criteria": [
+      {
+        "id": "answer",
+        "outcome": "failed",
+        "exit_code": 1,
+        "output": "answer.txt holds 41\n"
+      }
+    ],
+    "at": "2026-10-01T09:30:00Z"
+  }
+}

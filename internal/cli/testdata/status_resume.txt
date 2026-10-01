@@ -1,0 +1,7 @@
+Study home:    $STUDY_HOME
+Active topic:  c (C): you started inside its folder
+Lesson:        answer (The answer), feedback
+Next step:     Fix the answer in answer.txt
+
+Topics:
+  c  C

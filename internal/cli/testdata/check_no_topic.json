@@ -1,0 +1,7 @@
+{
+  "ok": false,
+  "error": {
+    "code": "usage",
+    "message": "name the Topic with --topic, or run the command inside the Topic's folder"
+  }
+}

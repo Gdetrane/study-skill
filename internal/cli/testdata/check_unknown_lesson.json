@@ -1,0 +1,7 @@
+{
+  "ok": false,
+  "error": {
+    "code": "not_found",
+    "message": "the Syllabus of c has no Lesson missing"
+  }
+}
