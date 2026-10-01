@@ -10,7 +10,9 @@ require (
 	github.com/charmbracelet/fang v1.0.0
 	github.com/charmbracelet/x/term v0.2.2
 	github.com/modelcontextprotocol/go-sdk v1.8.0
+	github.com/open-spaced-repetition/go-fsrs/v3 v3.3.1
 	github.com/spf13/cobra v1.10.2
+	go.yaml.in/yaml/v3 v3.0.4
 	golang.org/x/sys v0.47.0
 	golang.org/x/text v0.24.0
 )

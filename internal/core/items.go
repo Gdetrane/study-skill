@@ -10,6 +10,8 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+
+	"github.com/BurntSushi/toml"
 )
 
 // Items are what an Event edits, each recorded with its hash before and
@@ -35,8 +37,11 @@ type fileCodec struct {
 }
 
 // fileCodecs maps file patterns (path.Match syntax, slash-separated) to the
-// codec of their entities. Cards (#26) and Checks register theirs here.
-var fileCodecs []codecEntry
+// codec of their entities.
+var fileCodecs = []codecEntry{
+	{pattern: cardsFile, codec: jsonlCodec},
+	{pattern: "lessons/*.md", codec: lessonCodec},
+}
 
 type codecEntry struct {
 	pattern string
@@ -159,6 +164,11 @@ func validateItem(item string, data []byte) error {
 	case topicFile:
 		_, err := parseTopicSettings(data, item)
 		return err
+	case syllabusFile:
+		var f syllabusFileFormat
+		if _, err := toml.Decode(string(data), &f); err != nil {
+			return corruptf("%s is not valid TOML: %v", item, err)
+		}
 	}
 	return nil
 }

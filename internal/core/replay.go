@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"sort"
 	"strings"
 	"time"
@@ -27,9 +28,17 @@ type eventKind struct {
 
 // eventKinds lists every Event type the core records.
 var eventKinds = map[string]eventKind{
-	eventTopicCreated:  {apply: applyTopicCreated, replay: replayTopicCreated},
-	eventTopicUpdated:  {apply: applyTopicUpdated, replay: replayTopicUpdated},
-	eventFlagDismissed: {apply: applyNothing, replay: replayFlagDismissed},
+	eventTopicCreated:     {apply: applyTopicCreated, replay: replayTopicCreated},
+	eventTopicUpdated:     {apply: applyTopicUpdated, replay: replayTopicUpdated},
+	eventFlagDismissed:    {apply: applyNothing, replay: replayFlagDismissed},
+	eventRevisionProposed: {apply: applyNothing, replay: replayRevisionProposed},
+	eventRevisionApplied:  {apply: applyRevisionApplied, replay: replayRevisionApplied},
+	eventSessionOpened:    {apply: applyNothing, replay: replaySessionOpened},
+	eventSessionClosed:    {apply: applyNothing, replay: replaySessionClosed},
+	eventPhaseSet:         {apply: applyNothing, replay: replayPhaseSet},
+	eventAttemptRecorded:  {apply: applyNothing, replay: replayAttemptRecorded},
+	eventLessonCompleted:  {apply: applyLessonCompleted, replay: replayLessonCompleted},
+	eventReviewRecorded:   {apply: applyReviewRecorded, replay: replayReviewRecorded},
 }
 
 // errUnknownItem marks an Event that refers to an item the History does not
@@ -125,6 +134,8 @@ type replayed struct {
 	flags []Flag
 	// dismissed holds the flags the learner dismissed: ID → kind.
 	dismissed map[string]string
+	// study is the learning state: Syllabus, Lessons, Sessions and Cards.
+	study studyState
 
 	seen  map[string][]byte            // Event ID → its line, to apply each ID once
 	bases map[string]map[string]string // item → version changed from → Event ID
@@ -163,6 +174,7 @@ func replay(events []event) *replayed {
 	s := &replayed{
 		versions:  map[string]version{},
 		dismissed: map[string]string{},
+		study:     newStudyState(),
 		seen:      map[string][]byte{},
 		bases:     map[string]map[string]string{},
 	}
@@ -247,12 +259,18 @@ func (s *replayed) retry(held []heldEvent) []heldEvent {
 
 func (s *replayed) flag(f Flag) { s.flags = append(s.flags, f) }
 
-// isGating reports whether an item approves or gates progress, such as the
-// Syllabus or a Lesson's Check. Lamplight compares such items with the
-// version their last Event recorded, and status flags a difference. The
-// Syllabus and Checks add their items here as they arrive; nothing gates
-// progress yet.
-func isGating(string) bool { return false }
+// isGating reports whether an item approves or gates progress: the Syllabus,
+// which only approved Revisions change, and each Lesson's Check. Lamplight
+// compares such items with the version their last Event recorded, and status
+// flags a difference.
+func isGating(item string) bool {
+	if item == syllabusFile {
+		return true
+	}
+	file, key, _ := strings.Cut(item, "#")
+	ok, _ := path.Match("lessons/*.md", file)
+	return ok && key == checkKey
+}
 
 // topicFlags returns the flags of a replayed Topic that the learner has not
 // dismissed: what replay found, gating items edited outside Lamplight, and a
