@@ -1,0 +1,59 @@
+Opened a Session on c.
+Welcome back: start with a short recap and a two-minute warm-up.
+Lesson:       answer (The answer)
+Suggested:    stop here (nothing is due: write tomorrow's first step as the Next step, and stop here)
+
+The Session <id> opened 1 Oct 09:30 ended without a Next step.
+  Changed since the last Checkpoint:
+    added     practice/answer/try00.txt
+    added     practice/answer/try01.txt
+    added     practice/answer/try02.txt
+    added     practice/answer/try03.txt
+    added     practice/answer/try04.txt
+    added     practice/answer/try05.txt
+    added     practice/answer/try06.txt
+    added     practice/answer/try07.txt
+    added     practice/answer/try08.txt
+    added     practice/answer/try09.txt
+    added     practice/answer/try10.txt
+    added     practice/answer/try11.txt
+    added     practice/answer/try12.txt
+    added     practice/answer/try13.txt
+    added     practice/answer/try14.txt
+    added     practice/answer/try15.txt
+    added     practice/answer/try16.txt
+    added     practice/answer/try17.txt
+    added     practice/answer/try18.txt
+    added     practice/answer/try19.txt
+    added     practice/answer/try20.txt
+    added     practice/answer/try21.txt
+    added     practice/answer/try22.txt
+    added     practice/answer/try23.txt
+    added     practice/answer/try24.txt
+    added     practice/answer/try25.txt
+    added     practice/answer/try26.txt
+    added     practice/answer/try27.txt
+    added     practice/answer/try28.txt
+    added     practice/answer/try29.txt
+    added     practice/answer/try30.txt
+    added     practice/answer/try31.txt
+    added     practice/answer/try32.txt
+    added     practice/answer/try33.txt
+    added     practice/answer/try34.txt
+    added     practice/answer/try35.txt
+    added     practice/answer/try36.txt
+    added     practice/answer/try37.txt
+    added     practice/answer/try38.txt
+    added     practice/answer/try39.txt
+    added     practice/answer/try40.txt
+    added     practice/answer/try41.txt
+    added     practice/answer/try42.txt
+    added     practice/answer/try43.txt
+    added     practice/answer/try44.txt
+    added     practice/answer/try45.txt
+    added     practice/answer/try46.txt
+    added     practice/answer/try47.txt
+    added     practice/answer/try48.txt
+    added     practice/answer/try49.txt
+    and 5 more
+  Give each its Next step with: study session close c --session <id> --next-step "..."

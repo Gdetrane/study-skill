@@ -10,25 +10,31 @@ import (
 // of every Session; Lamplight only points to them.
 const learnerFile = "learner.md"
 
-// Actions that status recommends.
+// Actions that status recommends. The words match the Focuses where they
+// mean the same thing (learn, practice, reviews, explore) and the
+// suggestion plan.
 const (
 	ActionNextStep = "next_step"
-	ActionPlan     = "plan"
-	ActionLearn    = "learn"
-	ActionPractice = "practice"
+	ActionPlan     = SuggestPlan
+	ActionLearn    = FocusLearn
+	ActionPractice = FocusPractice
 	ActionFeedback = "feedback"
-	ActionReview   = "review"
-	ActionExplore  = "explore"
+	ActionReviews  = FocusReviews
+	ActionExplore  = FocusExplore
 )
+
+// FlagLessonHeader: the current Lesson's YAML header cannot be read, so its
+// Break points are unknown. Fixing the header clears it.
+const FlagLessonHeader = "lesson_header"
 
 // Recommendation is the one action status recommends for the Active topic.
 type Recommendation struct {
 	Topic string `json:"topic"`
-	// Action is next_step, plan, learn, practice, feedback, review or
-	// explore.
+	// Action is next_step, plan, learn, practice, feedback, reviews or
+	// explore: an enumeration skills can rely on.
 	Action string `json:"action"`
-	// Text says what to do, for the learner; for next_step it is the Next
-	// step word for word.
+	// Text says what to do in English prose, which the skill may rephrase;
+	// for next_step it is the Next step word for word.
 	Text string `json:"text"`
 }
 
@@ -49,7 +55,7 @@ func recommend(t Topic) *Recommendation {
 	case resume == nil || resume.Lesson == "" && !resume.SyllabusDone:
 		r.Action, r.Text = ActionPlan, "Plan the Syllabus together, and approve it"
 	case resume.SyllabusDone && ready:
-		r.Action, r.Text = ActionReview, "Review the Cards that are ready"
+		r.Action, r.Text = ActionReviews, "Review the Cards that are ready"
 	case resume.SyllabusDone:
 		r.Action, r.Text = ActionExplore, "Every Lesson is done: decide together what comes next"
 	case resume.Phase == PhasePracticing:
@@ -65,12 +71,18 @@ func recommend(t Topic) *Recommendation {
 }
 
 // addTopicGuidance fills in what status shows of a Topic beyond its
-// settings: whether Cards are ready and where its Learner profile additions
-// are.
+// settings: whether Cards are ready, where its Learner profile additions
+// are, and a flag when the current Lesson's Break points cannot be read.
 func (c *Core) addTopicGuidance(topic *os.Root, s *replayed, t *Topic) {
 	t.Cards = s.study.cardsReady(c.now())
 	if isRegularFile(topic, learnerFile) {
 		t.LearnerAdditions = filepath.Join(t.Path, learnerFile)
+	}
+	if r := t.Resume; r != nil && r.Lesson != "" {
+		if _, err := readBreakPoints(topic, r.Lesson); err != nil {
+			t.Flags = append(t.Flags, newFlag(FlagLessonHeader, lessonFile(r.Lesson), nil, "",
+				err.Error()+"; fix the YAML header to see the Lesson's Break points"))
+		}
 	}
 }
 
@@ -91,7 +103,8 @@ func (c *Core) addGuidance(home *os.Root, status *Status) {
 }
 
 // isRegularFile reports whether name in root is a regular file, never
-// following a symbolic link.
+// following a symbolic link: a learner.md that is a symlink is not pointed
+// to, so status never sends an agent outside the Study home.
 func isRegularFile(root *os.Root, name string) bool {
 	info, err := root.Lstat(name)
 	return err == nil && info.Mode().IsRegular()

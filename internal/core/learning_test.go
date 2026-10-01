@@ -430,7 +430,7 @@ func TestSessionsRecordTheNextStep(t *testing.T) {
 		t.Fatalf("second Session = %+v, %v", second, err)
 	}
 	third, err := m.OpenSession(ctx, "c", SessionSpec{})
-	if err != nil || third.Unclosed == nil || third.Unclosed.ID != second.Session {
+	if err != nil || len(third.Unclosed) != 1 || third.Unclosed[0].ID != second.Session {
 		t.Fatalf("third Session = %+v, %v; want the second reported as unclosed", third, err)
 	}
 	topic, err := m.readTopic("c")

@@ -36,6 +36,23 @@ func TestNextStepsStartWithAVerb(t *testing.T) {
 		"Write answer.txt",
 		"Correggi il parser",     // not English: passes on the language-neutral rules
 		"Read section 2.3 again", // digits after the verb are fine
+		"Re-run the tests",
+		"Next, rerun the Check",
+		"Lesson 3: write the swap function",
+		// Opening punctuation and symbols are skipped.
+		"- fix the parser",
+		"`go test ./...` again, then fix the failure",
+		"\"Fix\" the parser",
+		"**Fix** the parser",
+		"¿Puedes revisar el ejercicio 3?",
+		"«Rileggi» il capitolo 2",
+		// Scripts without spaces between words need four characters.
+		"复习第三课的指针练习",
+		"ポインタの練習問題を解く",
+		"ทบทวนบทเรียนที่สาม",
+		"Überarbeite den Parser",
+		"Перепиши парсер",
+		"مراجعة الدرس الثالث",
 	} {
 		if got, err := checkNextStep("  " + step + " "); err != nil || got != step {
 			t.Errorf("checkNextStep(%q) = %q, %v; want it accepted", step, got, err)
@@ -44,13 +61,26 @@ func TestNextStepsStartWithAVerb(t *testing.T) {
 	for _, step := range []string{
 		"",
 		"Continue",
-		"- fix the parser",
+		"Continue.",
 		"1. Fix the parser",
 		"The parser is half done",
 		"I was on lesson 3",
 		"Done with the parser",
-		"Next: fix the parser",
 		"Maybe fix the parser",
+		// The first word is its leading run of letters, so contractions
+		// count by their first part.
+		"I'm on lesson 3",
+		"I’m on lesson 3",
+		"It's half done",
+		"We're at exercise 2",
+		"There's one more exercise",
+		"All done for today",
+		"Stuck on recursion",
+		"复习", // too short to say what to act on
+		// Invisible formatting and bidirectional controls are refused.
+		"Continue ​",
+		"Fix​ the parser",
+		"Fix‮ the parser",
 	} {
 		if _, err := checkNextStep(step); CodeOf(err) != CodeInvalidArgument {
 			t.Errorf("checkNextStep(%q): err = %v, want invalid_argument", step, err)
@@ -251,31 +281,75 @@ func TestAnUnclosedSessionShowsWhatChangedSinceTheLastCheckpoint(t *testing.T) {
 	dir := filepath.Join(m.home, "c")
 	before := gitTree(t, dir)
 
+	// Lamplight's own state files change too, and are left out.
+	added := m.addCard(t, CardSpec{Prompt: "What is 6 × 7?", Answer: "42"})
+	if added.ID == "" {
+		t.Fatal("no Card")
+	}
+
 	second, err := m.OpenSession(ctx, "c", SessionSpec{Energy: EnergyHalf})
 	if err != nil {
 		t.Fatal(err)
 	}
-	u := second.Unclosed
-	if u == nil || u.ID != first.Session || u.Since == "" || u.ChangesError != "" {
-		t.Fatalf("unclosed = %+v", u)
+	ch := second.Changes
+	if len(second.Unclosed) != 1 || second.Unclosed[0].ID != first.Session || ch == nil || ch.Since == "" || ch.Error != "" {
+		t.Fatalf("unclosed = %+v, changes = %+v", second.Unclosed, ch)
 	}
 	want := []FileChange{
 		{Path: "practice/answer/answer.txt", Change: "modified"},
 		{Path: "practice/answer/check.sh", Change: "deleted"},
 		{Path: "practice/answer/notes.md", Change: "added"},
 	}
-	if !equalChanges(u.Changes, want) {
-		t.Errorf("changes = %+v, want %+v (the History left out)", u.Changes, want)
+	if !equalChanges(ch.Files, want) {
+		t.Errorf("changes = %+v, want %+v (the History and cards.jsonl left out)", ch.Files, want)
 	}
 	if after := gitTree(t, dir); !maps.Equal(before, after) {
 		t.Error("listing the changes wrote to .git")
 	}
 	// The learner's note goes to the Session that missed it.
-	if _, err := m.CloseSession(ctx, "c", CloseSpec{Session: u.ID, NextStep: "Run the Check on 42"}); err != nil {
+	if _, err := m.CloseSession(ctx, "c", CloseSpec{Session: first.Session, NextStep: "Run the Check on 42"}); err != nil {
 		t.Errorf("closing the unclosed Session: %v", err)
 	}
-	if third, err := m.OpenSession(ctx, "c", SessionSpec{}); err != nil || third.Unclosed == nil || third.Unclosed.ID != second.Session {
+	if third, err := m.OpenSession(ctx, "c", SessionSpec{}); err != nil || len(third.Unclosed) != 1 || third.Unclosed[0].ID != second.Session {
 		t.Errorf("the next Session = %+v, %v; want the second one reported", third.Unclosed, err)
+	}
+}
+
+// At most 50 changed files are listed; More counts the rest.
+func TestTheChangesListedAreCapped(t *testing.T) {
+	ctx := context.Background()
+	m := learningTopic(t)
+	if _, err := m.OpenSession(ctx, "c", SessionSpec{}); err != nil {
+		t.Fatal(err)
+	}
+	takeCheckpoint(t, m)
+	for i := range maxChangesShown + 7 {
+		writeFile(t, m, fmt.Sprintf("practice/answer/f%02d.txt", i), "x\n")
+	}
+	opened, err := m.OpenSession(ctx, "c", SessionSpec{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ch := opened.Changes; ch == nil || len(ch.Files) != maxChangesShown || ch.More != 7 ||
+		ch.Files[0].Path != "practice/answer/f00.txt" {
+		t.Errorf("changes = %d files, more %d", len(ch.Files), ch.More)
+	}
+}
+
+// Before the first Checkpoint, every file counts as added, and since is
+// absent.
+func TestChangesBeforeTheFirstCheckpoint(t *testing.T) {
+	ctx := context.Background()
+	m := learningTopic(t)
+	if _, err := m.OpenSession(ctx, "c", SessionSpec{}); err != nil {
+		t.Fatal(err)
+	}
+	opened, err := m.OpenSession(ctx, "c", SessionSpec{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ch := opened.Changes; ch == nil || ch.Since != "" || len(ch.Files) == 0 || ch.Files[0].Change != "added" {
+		t.Errorf("changes = %+v", ch)
 	}
 }
 
@@ -306,8 +380,8 @@ func TestAnUnclosedSessionOpensEvenWhenChangesCannotBeListed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenSession during a merge: %v", err)
 	}
-	if u := opened.Unclosed; u == nil || u.ChangesError == "" || !strings.Contains(u.ChangesError, "merge") || len(u.Changes) != 0 {
-		t.Errorf("unclosed = %+v", u)
+	if ch := opened.Changes; len(opened.Unclosed) != 1 || ch == nil || !strings.Contains(ch.Error, "merge") || len(ch.Files) != 0 {
+		t.Errorf("unclosed = %+v, changes = %+v", opened.Unclosed, ch)
 	}
 }
 
@@ -318,7 +392,7 @@ func TestSessionsSuggestAFocusAndNoticeALongGap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s := opened.Suggested; s == nil || s.Focus != FocusLearn || opened.LongGap {
+	if s := opened.Suggested; s == nil || s.Suggest != FocusLearn || opened.LongGap {
 		t.Errorf("first Session: suggested %+v, long gap %v", s, opened.LongGap)
 	}
 	if opened, err = m.OpenSession(ctx, "c", SessionSpec{Energy: EnergyFull, Focus: FocusExplore}); err != nil || opened.Suggested != nil {
@@ -332,12 +406,23 @@ func TestSessionsSuggestAFocusAndNoticeALongGap(t *testing.T) {
 	if opened, err = m.OpenSession(ctx, "c", SessionSpec{}); err != nil || opened.LongGap {
 		t.Errorf("a day later: long gap %v, %v", opened.LongGap, err)
 	}
+	// The gap runs from the last activity, not from when the last Session
+	// opened: a long Session closed an hour ago is no gap.
+	m.setClock(t0.Add(16 * 24 * time.Hour))
+	if _, err := m.CloseSession(ctx, "c", CloseSpec{NextStep: "Write answer.txt"}); err != nil {
+		t.Fatal(err)
+	}
+	m.setClock(t0.Add(16*24*time.Hour + time.Hour))
+	if opened, err = m.OpenSession(ctx, "c", SessionSpec{}); err != nil || opened.LongGap {
+		t.Errorf("an hour after closing a week-long Session: long gap %v, %v", opened.LongGap, err)
+	}
 }
 
 func TestSuggestFocus(t *testing.T) {
 	learning := ResumePoint{Lesson: "answer", LessonTitle: "The answer"}
 	practicing := ResumePoint{Lesson: "answer", LessonTitle: "The answer", Phase: PhasePracticing}
 	done := ResumePoint{SyllabusDone: true}
+	noSyllabus := ResumePoint{}
 	ready, none := &CardsReady{Ready: true}, (*CardsReady)(nil)
 	for _, tc := range []struct {
 		energy string
@@ -349,14 +434,21 @@ func TestSuggestFocus(t *testing.T) {
 		{EnergyFull, practicing, ready, FocusPractice},
 		{EnergyFull, done, ready, FocusReviews},
 		{EnergyFull, done, none, FocusExplore},
+		{EnergyFull, noSyllabus, ready, SuggestPlan},
+		{EnergyFull, noSyllabus, none, SuggestPlan},
 		{EnergyHalf, practicing, none, FocusPractice},
 		{EnergyHalf, learning, ready, FocusReviews},
 		{EnergyHalf, learning, none, FocusLearn},
+		{EnergyHalf, done, none, FocusExplore},
+		{EnergyHalf, noSyllabus, ready, FocusReviews},
+		{EnergyHalf, noSyllabus, none, SuggestPlan},
 		{EnergyFumes, practicing, ready, FocusReviews},
-		{EnergyFumes, practicing, none, ""},
+		{EnergyFumes, practicing, none, SuggestStop},
+		{EnergyFumes, noSyllabus, ready, FocusReviews},
+		{EnergyFumes, noSyllabus, none, SuggestStop},
 	} {
 		got := suggestFocus(tc.energy, tc.resume, tc.cards)
-		if got == nil || got.Focus != tc.want || got.Reason == "" {
+		if got == nil || got.Suggest != tc.want || got.Reason == "" {
 			t.Errorf("suggestFocus(%s, %+v, %+v) = %+v, want %q", tc.energy, tc.resume, tc.cards, got, tc.want)
 		}
 	}
@@ -446,7 +538,7 @@ func TestStatusRecommendsOneAction(t *testing.T) {
 		cards  *CardsReady
 		want   string
 	}{
-		{&ResumePoint{SyllabusDone: true}, &CardsReady{Ready: true}, ActionReview},
+		{&ResumePoint{SyllabusDone: true}, &CardsReady{Ready: true}, ActionReviews},
 		{&ResumePoint{SyllabusDone: true}, nil, ActionExplore},
 		{&ResumePoint{Lesson: "a", LessonTitle: "A", Phase: PhaseFeedback}, nil, ActionFeedback},
 		{&ResumePoint{Lesson: "a", LessonTitle: "A", Phase: PhaseTeaching}, nil, ActionLearn},
@@ -477,7 +569,7 @@ func TestAnUnclosedSessionTravelsBetweenMachines(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if opened.Unclosed == nil || opened.Unclosed.ID != left.Session ||
+	if len(opened.Unclosed) != 1 || opened.Unclosed[0].ID != left.Session ||
 		opened.Resume.BreakPoint == nil || opened.Resume.BreakPoint.Describe != "The question is understood" ||
 		opened.Resume.NextStep == nil || opened.Resume.NextStep.Step != "Write a first answer" {
 		t.Fatalf("on b: unclosed %+v, resume %+v", opened.Unclosed, opened.Resume)

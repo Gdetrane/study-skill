@@ -60,57 +60,83 @@ func (st *studyState) cardsReady(now time.Time) *CardsReady {
 	return out
 }
 
-// FocusSuggestion is the Focus the learner's Energy suggests, with the
-// reason. The learner chooses; a suggestion is never recorded.
+// The two suggestions that are not a Focus.
+const (
+	// SuggestPlan: the Topic has no Syllabus yet; plan it together first.
+	SuggestPlan = "plan"
+	// SuggestStop: low Energy and nothing due; write tomorrow's first step
+	// as the Next step and end here.
+	SuggestStop = "stop"
+)
+
+// FocusSuggestion is what the learner's Energy suggests for the Session.
+// The learner chooses; a suggestion is never recorded.
 type FocusSuggestion struct {
-	// Focus is learn, practice, reviews or explore; empty at fumes with
-	// nothing due, when the offer is to write tomorrow's first step.
-	Focus  string `json:"focus,omitempty"`
+	// Suggest is a Focus the learner may choose (learn, practice, reviews
+	// or explore), or plan or stop, which are not Focuses.
+	Suggest string `json:"suggest"`
+	// Reason is English prose for the learner; the skill may rephrase it.
 	Reason string `json:"reason"`
 }
 
 // suggestFocus suggests a Focus from the Energy, where the learner stopped,
-// and whether Cards are ready.
+// and whether Cards are ready. Without a Syllabus it suggests planning one,
+// as status recommends.
 func suggestFocus(energy string, r ResumePoint, cards *CardsReady) *FocusSuggestion {
 	ready := cards != nil && cards.Ready
 	exercise := r.Phase == PhasePracticing || r.Phase == PhaseFeedback
+	noSyllabus := r.Lesson == "" && !r.SyllabusDone
 	lesson := "Lesson “" + r.LessonTitle + "”"
+	practice := &FocusSuggestion{Suggest: FocusPractice, Reason: "continue the exercise of " + lesson + " from where it stopped"}
+	plan := &FocusSuggestion{Suggest: SuggestPlan, Reason: "there is no Syllabus yet: plan it together first"}
+	explore := &FocusSuggestion{Suggest: FocusExplore, Reason: "every Lesson is done: explore what comes next"}
 	switch energy {
 	case EnergyFumes:
 		if ready {
-			return &FocusSuggestion{Focus: FocusReviews, Reason: "a few Reviews fit low Energy"}
+			return &FocusSuggestion{Suggest: FocusReviews, Reason: "a few Reviews fit low Energy"}
 		}
-		return &FocusSuggestion{Reason: "nothing is due: write tomorrow's first step as the Next step, and stop here"}
+		return &FocusSuggestion{Suggest: SuggestStop, Reason: "nothing is due: write tomorrow's first step as the Next step, and stop here"}
 	case EnergyHalf:
 		switch {
 		case exercise:
-			return &FocusSuggestion{Focus: FocusPractice, Reason: "continue the exercise of " + lesson + " from where it stopped"}
+			return practice
 		case ready:
-			return &FocusSuggestion{Focus: FocusReviews, Reason: "Cards are ready, and Reviews fit half Energy"}
+			return &FocusSuggestion{Suggest: FocusReviews, Reason: "Cards are ready, and Reviews fit half Energy"}
+		case noSyllabus:
+			return plan
 		case r.Lesson != "":
-			return &FocusSuggestion{Focus: FocusLearn, Reason: "go on with " + lesson + " at a gentle pace"}
+			return &FocusSuggestion{Suggest: FocusLearn, Reason: "go on with " + lesson + " at a gentle pace"}
 		}
-		return &FocusSuggestion{Focus: FocusExplore, Reason: "every Lesson is done: explore what comes next"}
+		return explore
 	case EnergyFull:
 		switch {
 		case exercise:
-			return &FocusSuggestion{Focus: FocusPractice, Reason: "continue the exercise of " + lesson + " from where it stopped"}
+			return practice
+		case noSyllabus:
+			return plan
 		case r.Lesson != "":
-			return &FocusSuggestion{Focus: FocusLearn, Reason: "full Energy suits " + lesson}
+			return &FocusSuggestion{Suggest: FocusLearn, Reason: "full Energy suits " + lesson}
 		case ready:
-			return &FocusSuggestion{Focus: FocusReviews, Reason: "every Lesson is done, and Cards are ready"}
+			return &FocusSuggestion{Suggest: FocusReviews, Reason: "every Lesson is done, and Cards are ready"}
 		}
-		return &FocusSuggestion{Focus: FocusExplore, Reason: "every Lesson is done: explore what comes next"}
+		return explore
 	}
 	return nil
 }
 
-// longGap is how long since the previous Session counts as a long gap,
+// longGap is how long since the Topic's last activity counts as a long gap,
 // after which a Session starts with a short recap and a warm-up.
 const longGap = 7 * 24 * time.Hour
 
 // maxChangesShown bounds the files listed for an unclosed Session.
 const maxChangesShown = 50
+
+// stateFiles are the files Lamplight itself writes as Events happen. They
+// are left out of the changes behind an unclosed Session, which are meant to
+// show the learner's work.
+var stateFiles = map[string]bool{
+	topicFile: true, syllabusFile: true, historyFile: true, cardsFile: true, sourcesFile: true,
+}
 
 // FileChange is a file that changed since the last Checkpoint.
 type FileChange struct {
@@ -119,45 +145,55 @@ type FileChange struct {
 	Change string `json:"change"`
 }
 
-// UnclosedSession is a Session that ended without a Next step, for instance
-// because the terminal was closed, with what changed in the Topic since its
-// last Checkpoint, to help the learner remember where they stopped.
-type UnclosedSession struct {
-	SessionInfo
-	// Since is the last Checkpoint's commit, "" before the first.
+// WorkChanges is what changed in a Topic's files since its last
+// Checkpoint, to help the learner remember where an unclosed Session
+// stopped. Lamplight's own state files are left out.
+type WorkChanges struct {
+	// Since is the last Checkpoint's commit; absent when the Topic has no
+	// Checkpoint yet, so every file counts as added.
 	Since string `json:"since,omitempty"`
-	// Changes are the files changed since, by path, at most 50; History
-	// writes are left out.
-	Changes []FileChange `json:"changes"`
-	// MoreChanges is how many more files changed than are listed.
-	MoreChanges int `json:"more_changes,omitempty"`
-	// ChangesError says why the changes could not be listed, such as a
-	// git merge in progress. The Session opens anyway.
-	ChangesError string `json:"changes_error,omitempty"`
+	// Files are the changed files, by path, at most 50.
+	Files []FileChange `json:"files"`
+	// More is how many more files changed than are listed.
+	More int `json:"more,omitempty"`
+	// Error says why the changes could not be listed, such as a git merge
+	// in progress. The Session opens anyway.
+	Error string `json:"error,omitempty"`
 }
 
 // workChanges lists what changed in a Topic since its last Checkpoint,
 // writing nothing (ADR-0009: no program the repository names is run).
-func (c *Core) workChanges(ctx context.Context, topicID string, u *UnclosedSession) {
-	u.Changes = []FileChange{}
+func (c *Core) workChanges(ctx context.Context, topicID string) *WorkChanges {
+	out := &WorkChanges{Files: []FileChange{}}
 	ch, err := checkpoint.ChangesSince(ctx, c.topicDir(topicID))
 	if err != nil {
 		why := checkpointError(topicID, c.topicDir(topicID), err).Error()
-		u.ChangesError = "the changes since the last Checkpoint cannot be listed: " +
+		out.Error = "the changes since the last Checkpoint cannot be listed: " +
 			strings.TrimPrefix(why, "cannot checkpoint "+topicID+": ")
-		return
+		return out
 	}
-	u.Since = ch.Since
+	out.Since = ch.Since
 	for _, f := range ch.Files {
-		if f.Path == historyFile {
-			// The History changes with every Event; it is not the
-			// learner's work.
+		if stateFiles[f.Path] {
 			continue
 		}
-		if len(u.Changes) == maxChangesShown {
-			u.MoreChanges++
+		if len(out.Files) == maxChangesShown {
+			out.More++
 			continue
 		}
-		u.Changes = append(u.Changes, FileChange{Path: f.Path, Change: f.Kind})
+		out.Files = append(out.Files, FileChange{Path: f.Path, Change: f.Kind})
 	}
+	return out
+}
+
+// latestActivity is when the Topic was last worked on: the latest real time
+// an Event was written.
+func latestActivity(s *replayed) time.Time {
+	var latest time.Time
+	for _, ev := range s.applied {
+		if w := wallOf(ev); w.After(latest) {
+			latest = w
+		}
+	}
+	return latest
 }

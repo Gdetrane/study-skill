@@ -1,0 +1,10 @@
+Study home:       $STUDY_HOME
+Active topic:     c (C): you started inside its folder
+Lesson:           answer (The answer)
+Do next:          Start Lesson “The answer”
+Cards:            ready to review
+Additions:        $STUDY_HOME/c/learner.md
+Learner profile:  $STUDY_HOME/learner.md
+
+Topics:
+  c  C

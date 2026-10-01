@@ -53,8 +53,10 @@ type Criterion struct {
 }
 
 // lessonHeader is the part of a Lesson file's YAML header that holds the
-// Check. It is read on its own, so a mistake elsewhere in the header, such
-// as in the Break points, never makes the Check unreadable. Settings
+// Check. It is read on its own, so a wrong type or invalid value elsewhere
+// in the header, such as in the Break points, never makes the Check
+// unreadable; a YAML syntax error breaks the whole header, as it would any
+// header. Settings
 // Lamplight does not know are ignored.
 type lessonHeader struct {
 	Check []criterionYAML `yaml:"check"`

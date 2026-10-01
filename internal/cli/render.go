@@ -136,7 +136,7 @@ func writeStatus(w io.Writer, s core.Status, now time.Time) error {
 		if t.KnowledgeBase != nil {
 			kb = styleDim.Render("  Knowledge base: " + describeKnowledgeBase(t.KnowledgeBase))
 		}
-		fmt.Fprintf(&b, "  %s%s%s\n", id, t.Title, kb)
+		fmt.Fprintf(&b, "  %s%s%s\n", id, printable(t.Title), kb)
 	}
 	writeLessonsWithoutEvidence(&b, s.Topics)
 	writeFlags(&b, s.Topics)
@@ -150,31 +150,36 @@ func writeStatus(w io.Writer, s core.Status, now time.Time) error {
 // Topic's additions to the Learner profile.
 func writeActiveTopic(b *strings.Builder, t core.Topic, rec *core.Recommendation, labels int, now time.Time) {
 	if t.Resume != nil {
-		writeResume(b, *t.Resume, labels)
+		writeResume(b, *t.Resume, labels, now)
 	}
 	if rec != nil && rec.Action != core.ActionNextStep {
-		fmt.Fprintf(b, "%s%s\n", styleLabel.Render(pad("Do next:", labels)), styleAccent.Render(rec.Text))
+		fmt.Fprintf(b, "%s%s\n", styleLabel.Render(pad("Do next:", labels)), styleAccent.Render(printable(rec.Text)))
 	}
-	if c := t.Cards; c != nil {
-		switch {
-		case c.Ready:
-			fmt.Fprintf(b, "%s%s\n", styleLabel.Render(pad("Cards:", labels)), "ready to review")
-		case c.NextDue != nil:
-			fmt.Fprintf(b, "%s%s\n", styleLabel.Render(pad("Cards:", labels)),
-				styleDim.Render("next due "+c.NextDue.In(now.Location()).Format("2 Jan 2006")))
-		}
-	}
+	writeCardsReady(b, t.Cards, labels, now)
 	if t.LearnerAdditions != "" {
-		fmt.Fprintf(b, "%s%s\n", styleLabel.Render(pad("Additions:", labels)), styleDim.Render(t.LearnerAdditions))
+		fmt.Fprintf(b, "%s%s\n", styleLabel.Render(pad("Additions:", labels)), styleDim.Render(printable(t.LearnerAdditions)))
+	}
+}
+
+// writeCardsReady says whether Cards are ready to review, never how many.
+func writeCardsReady(b *strings.Builder, c *core.CardsReady, labels int, now time.Time) {
+	switch {
+	case c == nil:
+	case c.Ready:
+		fmt.Fprintf(b, "%s%s\n", styleLabel.Render(pad("Cards:", labels)), "ready to review")
+	case c.NextDue != nil:
+		fmt.Fprintf(b, "%s%s\n", styleLabel.Render(pad("Cards:", labels)),
+			styleDim.Render("next due "+c.NextDue.In(now.Location()).Format("2 Jan 2006")))
 	}
 }
 
 // writeResume shows where the learner stopped: the Lesson and its Phase,
-// the last Break point reached, then the Next step word for word.
-func writeResume(b *strings.Builder, r core.ResumePoint, labels int) {
+// the last Break point reached, then the Next step word for word. Text the
+// learner or an agent wrote goes through printable, line by line.
+func writeResume(b *strings.Builder, r core.ResumePoint, labels int, now time.Time) {
 	switch {
 	case r.Lesson != "":
-		where := fmt.Sprintf("%s (%s)", styleAccent.Render(r.Lesson), r.LessonTitle)
+		where := fmt.Sprintf("%s (%s)", styleAccent.Render(printable(r.Lesson)), printable(r.LessonTitle))
 		if r.Phase != "" {
 			where += ", " + r.Phase
 		}
@@ -183,21 +188,25 @@ func writeResume(b *strings.Builder, r core.ResumePoint, labels int) {
 		fmt.Fprintf(b, "%s%s\n", styleLabel.Render(pad("Lesson:", labels)), "every Lesson in the Syllabus is done")
 	}
 	if p := r.BreakPoint; p != nil {
-		text := p.ID
+		text := printable(p.ID)
 		if p.Describe != "" {
 			text += styleDim.Render(": " + printable(p.Describe))
 		}
 		fmt.Fprintf(b, "%s%s\n", styleLabel.Render(pad("Break point:", labels)), text)
 	}
 	if r.NextStep != nil {
-		fmt.Fprintf(b, "%s%s\n", styleLabel.Render(pad("Next step:", labels)), styleAccent.Render(r.NextStep.Step))
+		fmt.Fprintf(b, "%s%s\n", styleLabel.Render(pad("Next step:", labels)), styleAccent.Render(printable(r.NextStep.Step)))
 		if r.NextStep.Context != "" {
-			fmt.Fprintf(b, "%s%s\n", pad("", labels), styleDim.Render(strings.ReplaceAll(r.NextStep.Context, "\n", "\n"+pad("", labels))))
+			lines := strings.Split(r.NextStep.Context, "\n")
+			for i, line := range lines {
+				lines[i] = printable(line)
+			}
+			fmt.Fprintf(b, "%s%s\n", pad("", labels), styleDim.Render(strings.Join(lines, "\n"+pad("", labels))))
 		}
 	}
 	if r.OpenSession != nil {
 		fmt.Fprintf(b, "%s%s\n", pad("", labels), styleDim.Render("A Session opened "+
-			r.OpenSession.Opened.Format("2 Jan 15:04")+" is still open."))
+			r.OpenSession.Opened.In(now.Location()).Format("2 Jan 15:04")+" is still open."))
 	}
 }
 
@@ -207,7 +216,7 @@ func writeProblems(b *strings.Builder, problems []core.TopicProblem) {
 	}
 	fmt.Fprintf(b, "\n%s\n", styleWarn.Render("Topics that could not be read:"))
 	for _, p := range problems {
-		fmt.Fprintf(b, "  %s: %s\n", styleLabel.Render(p.ID), p.Message)
+		fmt.Fprintf(b, "  %s: %s\n", styleLabel.Render(printable(p.ID)), printable(p.Message))
 	}
 }
 

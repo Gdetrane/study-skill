@@ -69,12 +69,19 @@ func (c *Core) ReachBreakPoint(ctx context.Context, topicID string, spec BreakPo
 		if ls != nil && ls.completed != nil {
 			return nil, &Error{Code: CodeFailedPrecondition, Message: "Lesson " + spec.Lesson + " is done"}
 		}
+		// The Resume point's Lesson, Break point and Next step belong
+		// together, so Break points are reached in the current Lesson only.
+		if current := s.study.currentLesson(); spec.Lesson != current {
+			return nil, &Error{Code: CodeFailedPrecondition, Message: "Lesson " + spec.Lesson +
+				" is not the current Lesson, " + current + " (the first Lesson not done): Break points are reached " +
+				"in the current Lesson; complete it, or skip it through a Revision, first"}
+		}
 		point, err := findBreakPoint(view.root, spec.Lesson, spec.BreakPoint)
 		if err != nil {
 			return nil, err
 		}
 		result.BreakPoint = point
-		result.NextStep = NextStep{Step: step, Context: note, Lesson: spec.Lesson, At: c.now().UTC().Truncate(clockTick)}
+		result.NextStep = NextStep{Step: step, Context: note, Lesson: spec.Lesson}
 		if ls != nil && ls.breakPoint == point.ID && s.study.nextStep != nil &&
 			*s.study.nextStep == (NextStep{Step: step, Context: note, Lesson: spec.Lesson, At: s.study.nextStep.At}) {
 			result.NextStep = *s.study.nextStep
@@ -87,7 +94,9 @@ func (c *Core) ReachBreakPoint(ctx context.Context, topicID string, spec BreakPo
 	if err != nil {
 		return BreakPointReached{}, err
 	}
-	result.Changed = ev != nil
+	if result.Changed = ev != nil; result.Changed {
+		result.NextStep.At = ev.Wall
+	}
 	return result, nil
 }
 
@@ -96,6 +105,12 @@ func (c *Core) ReachBreakPoint(ctx context.Context, topicID string, spec BreakPo
 func findBreakPoint(topic *os.Root, lessonID, id string) (BreakPoint, error) {
 	if err := validateEntityID("Break point", id); err != nil {
 		return BreakPoint{}, err
+	}
+	if _, exists, err := readFile(topic, lessonFile(lessonID)); err != nil {
+		return BreakPoint{}, err
+	} else if !exists {
+		return BreakPoint{}, &Error{Code: CodeNotFound, Message: "the Lesson file " + lessonFile(lessonID) +
+			" is missing: write the Lesson, with its Break points under break_points: in the YAML header, first"}
 	}
 	points, err := readBreakPoints(topic, lessonID)
 	if err != nil {
@@ -121,8 +136,15 @@ func replayBreakPointReached(s *replayed, ev event) error {
 	if err := json.Unmarshal(ev.Data, &d); err != nil {
 		return fmt.Errorf("its payload is unreadable: %v", err)
 	}
+	if err := validateEntityID("Break point", d.BreakPoint); err != nil {
+		return err
+	}
+	step := &NextStep{Step: d.NextStep, Context: d.Context, Lesson: d.Lesson, At: wallOf(ev)}
+	if s.staleNextStep(ev, step) {
+		return nil
+	}
 	s.study.lesson(d.Lesson).breakPoint = d.BreakPoint
-	s.study.nextStep = &NextStep{Step: d.NextStep, Context: d.Context, Lesson: d.Lesson, At: wallOf(ev)}
+	s.setNextStep(step)
 	return nil
 }
 

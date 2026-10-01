@@ -541,11 +541,22 @@ func cleanText(field, s string, maxRunes int) (string, error) {
 		if unicode.IsControl(r) {
 			return "", invalidf("the %s contains a control character", field)
 		}
+		if isBidiControl(r) {
+			return "", invalidf("the %s contains a bidirectional control character (U+%04X), which can make text "+
+				"display differently from what it says", field, r)
+		}
 	}
 	if utf8.RuneCountInString(s) > maxRunes {
 		return "", invalidf("the %s is longer than %d characters", field, maxRunes)
 	}
 	return s, nil
+}
+
+// isBidiControl reports whether r is a bidirectional embedding, override or
+// isolate control (U+202A–U+202E, U+2066–U+2069), which can reorder how text
+// is displayed in a terminal.
+func isBidiControl(r rune) bool {
+	return r >= 0x202A && r <= 0x202E || r >= 0x2066 && r <= 0x2069
 }
 
 // slugify turns a title into a Topic id: "Lineare Algebra für Anfänger"

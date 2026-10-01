@@ -47,7 +47,12 @@ type sessionState struct {
 	energy string
 	focus  string
 	opened time.Time
+	// seq is the position of its opening in replay order.
+	seq    int
 	closed bool
+	// closedBy is the Event that closed it, and note its Next step.
+	closedBy string
+	note     string
 }
 
 // NextStep is the concrete action, starting with a verb, shown first when
@@ -71,6 +76,10 @@ type sessionClosedData struct {
 	Session  string `json:"session"`
 	NextStep string `json:"next_step"`
 	Context  string `json:"context,omitempty"`
+	// Lesson is the Lesson the Next step is about: the current Lesson when
+	// it was written, so replay can tell a Next step that a merge made
+	// stale.
+	Lesson string `json:"lesson,omitempty"`
 }
 
 // phaseSetData is the payload of a phase.set Event.
@@ -103,19 +112,22 @@ type SessionOpened struct {
 	Session string `json:"session"`
 	// Resume is where the learner stopped, to show first.
 	Resume ResumePoint `json:"resume"`
-	// Unclosed is the previous Session when it ended without a Next step,
-	// for instance because the terminal was closed, with what changed
-	// since the last Checkpoint: show the learner, ask for the missing
-	// note, and record it with session_close naming that Session.
-	Unclosed *UnclosedSession `json:"unclosed,omitempty"`
-	// Suggested is the Focus the Energy suggests, when an Energy is given
-	// and no Focus was chosen yet. The learner chooses.
+	// Unclosed are the Sessions that ended without a Next step, newest
+	// first, for instance because the terminal was closed; a merge can
+	// leave one from each machine. Show the learner Changes, ask for each
+	// missing note, and record it with session_close naming the Session.
+	Unclosed []SessionInfo `json:"unclosed,omitempty"`
+	// Changes is what changed since the last Checkpoint, when a Session
+	// was left unclosed.
+	Changes *WorkChanges `json:"changes,omitempty"`
+	// Suggested is what the Energy suggests, when an Energy is given and no
+	// Focus was chosen yet. The learner chooses.
 	Suggested *FocusSuggestion `json:"suggested,omitempty"`
 	// Cards says whether Cards are ready to review, never how many.
 	Cards *CardsReady `json:"cards,omitempty"`
-	// LongGap is true when the previous Session was more than a week ago:
-	// start with a short recap of where the Topic stands and a two-minute
-	// warm-up, never with the size of any backlog.
+	// LongGap is true when the Topic was last worked on more than a week
+	// ago: start with a short recap of where the Topic stands and a
+	// two-minute warm-up, never with the size of any backlog.
 	LongGap bool `json:"long_gap,omitempty"`
 	DryRun  bool `json:"dry_run,omitempty"`
 }
@@ -157,14 +169,14 @@ func (c *Core) OpenSession(ctx context.Context, topicID string, spec SessionSpec
 		result.Resume = s.study.resume()
 		describeBreakPoint(view.root, &result.Resume)
 		result.Cards = s.study.cardsReady(now)
-		if last := s.study.lastSession(); last != nil {
-			if !last.closed {
-				result.Unclosed = &UnclosedSession{SessionInfo: *last.info()}
-				// Unclosed reports it, with what changed; this Session
-				// is the open one now.
-				result.Resume.OpenSession = nil
-			}
-			result.LongGap = now.Sub(last.opened) > longGap
+		if open := s.study.unclosedSessions(); len(open) > 0 {
+			result.Unclosed = open
+			// Unclosed reports them, with what changed; this Session is
+			// the open one now.
+			result.Resume.OpenSession = nil
+		}
+		if last := latestActivity(s); !last.IsZero() {
+			result.LongGap = now.Sub(last) > longGap
 		}
 		if spec.Focus == "" {
 			result.Suggested = suggestFocus(spec.Energy, result.Resume, result.Cards)
@@ -175,8 +187,8 @@ func (c *Core) OpenSession(ctx context.Context, topicID string, spec SessionSpec
 		return SessionOpened{}, err
 	}
 	result.Session = ev.ID
-	if result.Unclosed != nil {
-		c.workChanges(ctx, topicID, result.Unclosed)
+	if len(result.Unclosed) > 0 {
+		result.Changes = c.workChanges(ctx, topicID)
 	}
 	return result, nil
 }
@@ -208,7 +220,7 @@ func (c *Core) CloseSession(ctx context.Context, topicID string, spec CloseSpec)
 		return SessionClosed{}, err
 	}
 	result := SessionClosed{Topic: topicID, DryRun: spec.DryRun}
-	_, err = c.writeTopic(ctx, topicID, func(s *replayed, _ *topicView) (*change, error) {
+	ev, err := c.writeTopic(ctx, topicID, func(s *replayed, _ *topicView) (*change, error) {
 		session := s.study.lastSession()
 		if spec.Session != "" {
 			session = s.study.session(spec.Session)
@@ -216,16 +228,24 @@ func (c *Core) CloseSession(ctx context.Context, topicID string, spec CloseSpec)
 				return nil, &Error{Code: CodeNotFound, Message: "Topic " + topicID + " has no Session " + spec.Session}
 			}
 		}
-		if session == nil || session.closed {
-			return nil, &Error{Code: CodeFailedPrecondition, Message: "no Session is open in " + topicID + ": open one with session_open"}
+		switch {
+		case session == nil:
+			return nil, &Error{Code: CodeFailedPrecondition, Message: "Topic " + topicID + " has no Session yet: open one first"}
+		case session.closed:
+			return nil, &Error{Code: CodeFailedPrecondition, Message: "Session " + session.id + " of " + topicID +
+				" is already closed; to give an older Session its missing note, name that Session"}
 		}
 		result.Session = session.id
-		result.NextStep = NextStep{Step: step, Context: note, Lesson: s.study.currentLesson(), At: c.now().UTC().Truncate(clockTick)}
-		return &change{Type: eventSessionClosed, Data: sessionClosedData{Session: session.id, NextStep: step, Context: note}}, nil
+		lesson := s.study.currentLesson()
+		result.NextStep = NextStep{Step: step, Context: note, Lesson: lesson}
+		return &change{Type: eventSessionClosed, Data: sessionClosedData{
+			Session: session.id, NextStep: step, Context: note, Lesson: lesson,
+		}}, nil
 	}, spec.DryRun)
 	if err != nil {
 		return SessionClosed{}, err
 	}
+	result.NextStep.At = ev.Wall
 	return result, nil
 }
 
@@ -354,7 +374,8 @@ func replaySessionOpened(s *replayed, ev event) error {
 	if err := json.Unmarshal(ev.Data, &d); err != nil {
 		return fmt.Errorf("its payload is unreadable: %v", err)
 	}
-	s.study.sessions = append(s.study.sessions, &sessionState{id: ev.ID, energy: d.Energy, focus: d.Focus, opened: wallOf(ev)})
+	s.study.sessions = append(s.study.sessions, &sessionState{id: ev.ID, energy: d.Energy, focus: d.Focus,
+		opened: wallOf(ev), seq: len(s.applied)})
 	return nil
 }
 
@@ -367,9 +388,85 @@ func replaySessionClosed(s *replayed, ev event) error {
 	if session == nil {
 		return fmt.Errorf("%w: Session %s", errUnknownItem, d.Session)
 	}
-	session.closed = true
-	s.study.nextStep = &NextStep{Step: d.NextStep, Context: d.Context, Lesson: s.study.currentLesson(), At: wallOf(ev)}
+	if session.closed {
+		// Closed on two machines: the first note counts.
+		if session.note != d.NextStep {
+			s.flag(newFlag(FlagConflict, "", []string{session.closedBy, ev.ID}, "session "+d.Session,
+				fmt.Sprintf("Session %s was closed twice with different Next steps, by Events %s and %s, probably on "+
+					"two machines: the first counts (%q); check it with the learner", d.Session, session.closedBy, ev.ID,
+					session.note)))
+		}
+		return nil
+	}
+	session.closed, session.closedBy, session.note = true, ev.ID, d.NextStep
+	lesson := d.Lesson
+	if lesson == "" {
+		lesson = s.study.currentLesson()
+	}
+	step := &NextStep{Step: d.NextStep, Context: d.Context, Lesson: lesson, At: wallOf(ev)}
+	if s.staleNextStep(ev, step) || s.study.superseded(session) {
+		return nil
+	}
+	s.setNextStep(step)
 	return nil
+}
+
+// setNextStep makes step the latest Next step, noting where in replay order
+// it was recorded.
+func (s *replayed) setNextStep(step *NextStep) {
+	s.study.nextStep, s.study.nextStepSeq = step, len(s.applied)
+}
+
+// superseded reports whether a late note for session must leave the current
+// Next step alone: the current one was recorded after a newer Session
+// opened, so it is newer than anything the late note says.
+func (st *studyState) superseded(session *sessionState) bool {
+	if st.nextStep == nil {
+		return false
+	}
+	for i, ss := range st.sessions {
+		if ss == session && i+1 < len(st.sessions) {
+			return st.nextStepSeq > st.sessions[i+1].seq
+		}
+	}
+	return false
+}
+
+// staleReason says why a Next step for lessonID can no longer lead the
+// Resume point: its Lesson is done, was skipped, or is no longer in the
+// Syllabus. It is "" while the Lesson is still to study, and for a Next
+// step about no Lesson.
+func (st *studyState) staleReason(lessonID string) string {
+	if lessonID == "" {
+		return ""
+	}
+	if l := st.lessons[lessonID]; l != nil && l.completed != nil {
+		return "is done"
+	}
+	if st.syllabus == nil {
+		return ""
+	}
+	switch sl, ok := st.syllabus.lesson(lessonID); {
+	case !ok:
+		return "is no longer in the Syllabus"
+	case sl.Skipped:
+		return "was skipped"
+	}
+	return ""
+}
+
+// staleNextStep flags a Next step that arrives, through a merge, for a
+// Lesson that is already done, skipped or removed, and reports it so the
+// caller leaves the Resume point alone.
+func (s *replayed) staleNextStep(ev event, step *NextStep) bool {
+	why := s.study.staleReason(step.Lesson)
+	if why == "" {
+		return false
+	}
+	s.flag(newFlag(FlagConflict, lessonFile(step.Lesson), []string{ev.ID}, "next step",
+		fmt.Sprintf("Event %s records the Next step %q for Lesson %s, which %s, probably on two machines: it is "+
+			"not shown; record a new Next step, or dismiss this flag", ev.ID, step.Step, step.Lesson, why)))
+	return true
 }
 
 func replayPhaseSet(s *replayed, ev event) error {
@@ -384,7 +481,9 @@ func replayPhaseSet(s *replayed, ev event) error {
 		s.study.owed = &owedCheckpoint{event: ev.ID, role: d.TurnEnded, message: d.Lesson + ": " + d.Phase}
 	}
 	if d.NextStep != "" {
-		s.study.nextStep = &NextStep{Step: d.NextStep, Lesson: d.Lesson, At: wallOf(ev)}
+		if step := (&NextStep{Step: d.NextStep, Lesson: d.Lesson, At: wallOf(ev)}); !s.staleNextStep(ev, step) {
+			s.setNextStep(step)
+		}
 	}
 	if d.CheckVersion != "" {
 		// Only showing the Check moves its gating baseline: a Check edited
@@ -471,11 +570,28 @@ func (st *studyState) resume() ResumePoint {
 	} else if st.syllabus != nil {
 		r.SyllabusDone = true
 	}
-	r.NextStep = st.nextStep
-	if last := st.lastSession(); last != nil && !last.closed {
-		r.OpenSession = last.info()
+	// A Next step whose Lesson is done, skipped or gone never leads, in
+	// whatever order a merge left the Events.
+	if ns := st.nextStep; ns != nil && st.staleReason(ns.Lesson) == "" {
+		r.NextStep = ns
+	}
+	if open := st.unclosedSessions(); len(open) > 0 {
+		r.OpenSession = &open[0]
 	}
 	return r
+}
+
+// unclosedSessions are the Sessions not closed yet, newest first: in
+// progress, or ended without a Next step. A merge can leave several, one
+// from each machine.
+func (st *studyState) unclosedSessions() []SessionInfo {
+	var out []SessionInfo
+	for i := len(st.sessions) - 1; i >= 0; i-- {
+		if ss := st.sessions[i]; !ss.closed {
+			out = append(out, *ss.info())
+		}
+	}
+	return out
 }
 
 // empty reports whether there is nothing to resume yet: no Syllabus and no

@@ -1,13 +1,19 @@
 package cli_test
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/mordor-forge/lamplight/v2/internal/cli"
+	"github.com/mordor-forge/lamplight/v2/internal/core"
 )
 
 var commitHash = regexp.MustCompile(`\b[0-9a-f]{40}\b`)
@@ -62,18 +68,89 @@ func TestSessionCommands(t *testing.T) {
 	raw := run(t, home, "session", "open", "c", "--dry-run", "--json")
 	var env struct {
 		Data struct {
-			Unclosed struct {
+			Unclosed []struct {
 				ID string `json:"id"`
 			} `json:"unclosed"`
 		} `json:"data"`
 	}
-	if err := json.Unmarshal([]byte(raw.stdout), &env); err != nil || env.Data.Unclosed.ID == "" {
+	// Both Sessions were left unclosed: the first, whose close was refused
+	// above, and the second. Each gets its note, the older first.
+	if err := json.Unmarshal([]byte(raw.stdout), &env); err != nil || len(env.Data.Unclosed) != 2 {
 		t.Fatalf("dry run: %v, %s", err, raw.stdout)
 	}
-	closed := session("close", "c", "--session", env.Data.Unclosed.ID, "--next-step", "Run the Check on 42")
+	if r := session("close", "c", "--session", env.Data.Unclosed[1].ID, "--next-step", "Read the question again"); r.code != cli.ExitOK {
+		t.Errorf("closing the older Session: exit %d, %s", r.code, r.stderr)
+	}
+	closed := session("close", "c", "--session", env.Data.Unclosed[0].ID, "--next-step", "Run the Check on 42")
 	if closed.code != cli.ExitOK {
 		t.Errorf("closing the unclosed Session: exit %d, %s", closed.code, closed.stderr)
 	}
 	golden(t, "session_close.txt", closed.stdout)
 	golden(t, "status_after_session.txt", runIn(t, home, topic, "status").stdout)
+}
+
+// runAt runs the command line like runIn, with the clock at now.
+func runAt(t *testing.T, home string, now time.Time, args ...string) result {
+	t.Helper()
+	opts := options(home, home)
+	opts.Now = func() time.Time { return now }
+	var stdout, stderr bytes.Buffer
+	code := cli.Run(context.Background(), args, strings.NewReader(""), &stdout, &stderr, opts)
+	out := strings.ReplaceAll(stdout.String(), home, "$STUDY_HOME")
+	out = eventID.ReplaceAllString(out, "<id>")
+	return result{code: code, stdout: out, stderr: stderr.String()}
+}
+
+// After a week away, with a Session left unclosed and many files changed:
+// a welcome back, every unclosed Session, and the changes capped.
+func TestSessionOpenAfterALongGap(t *testing.T) {
+	setGitIdentity(t)
+	home := withLesson(t)
+	c, err := core.Open(options(home, home))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.OpenSession(context.Background(), "c", core.SessionSpec{}); err != nil {
+		t.Fatal(err)
+	}
+	if r := run(t, home, "checkpoint", "--topic", "c", "--role", "agent"); r.code != cli.ExitOK {
+		t.Fatalf("checkpoint: %s", r.stderr)
+	}
+	for i := range 55 {
+		path := filepath.Join(home, "c", "practice", "answer", fmt.Sprintf("try%02d.txt", i))
+		if err := os.WriteFile(path, []byte("x\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	golden(t, "session_open_long_gap.txt", runAt(t, home, fixedNow.Add(8*24*time.Hour), "session", "open", "c", "--energy", "fumes").stdout)
+}
+
+// status shows the Learner profile, the Topic's additions and whether Cards
+// are ready.
+func TestStatusShowsGuidance(t *testing.T) {
+	home := withLesson(t)
+	c, err := core.Open(options(home, home))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.AddCard(context.Background(), "c", core.CardSpec{Prompt: "What is 6 × 7?", Answer: "42"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{filepath.Join(home, "learner.md"), filepath.Join(home, "c", "learner.md")} {
+		if err := os.WriteFile(path, []byte("Examples first.\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	golden(t, "status_guidance.txt", runIn(t, home, filepath.Join(home, "c"), "status").stdout)
+}
+
+func setGitIdentity(t *testing.T) {
+	t.Helper()
+	gitHome := t.TempDir()
+	t.Setenv("HOME", gitHome)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(gitHome, ".config"))
+	config := "[user]\n\tname = Ada Learner\n\temail = ada@example.com\n[maintenance]\n\tauto = false\n"
+	if err := os.WriteFile(filepath.Join(gitHome, ".gitconfig"), []byte(config), 0o644); err != nil {
+		t.Fatal(err)
+	}
 }

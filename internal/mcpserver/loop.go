@@ -82,11 +82,12 @@ func addLearnerLoop(server *mcp.Server, c *core.Core) {
 		Description: "Open a Session on a Topic after the Energy check; it also makes the Topic the most recent one. " +
 			"Read the Learner profile and the Topic's additions (paths in status) first. Show the learner the resume " +
 			"point: the Lesson, the last Break point reached and the Next step word for word. Give energy; leave focus " +
-			"out until the learner chooses, and suggested names the Focus the Energy suggests. cards.ready says whether " +
-			"Reviews are possible; never mention how many Cards are due. If long_gap is set, start with a short recap " +
-			"and a two-minute warm-up. If unclosed is set, the last Session ended without a Next step: show the learner " +
-			"unclosed.changes (what changed since the last Checkpoint), ask for the missing note, and record it with " +
-			"session_close naming unclosed.id.",
+			"out until the learner chooses: suggested.suggest is learn, practice, reviews or explore (a Focus to " +
+			"offer), plan (no Syllabus yet: plan it together) or stop (write tomorrow's first step and end here); " +
+			"suggested.reason is English you may rephrase. cards.ready says whether Reviews are possible; never mention " +
+			"how many Cards are due. If long_gap is set, start with a short recap and a two-minute warm-up. unclosed " +
+			"lists the Sessions that ended without a Next step, newest first: show the learner changes (what changed " +
+			"since the last Checkpoint), ask for each missing note, and record it with session_close naming the Session.",
 		Annotations: write,
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in sessionOpenInput) (*mcp.CallToolResult, core.SessionOpened, error) {
 		r, err := c.OpenSession(ctx, in.Topic, core.SessionSpec{Energy: in.Energy, Focus: in.Focus})
@@ -109,9 +110,10 @@ func addLearnerLoop(server *mcp.Server, c *core.Core) {
 		Name:  "break_point_reached",
 		Title: "Reach a Break point",
 		Description: "Record that the learner reached one of the Break points declared under break_points: in the " +
-			"Lesson's YAML header, with a Next step that starts with a verb and the context needed to take it. The " +
-			"Session can stop there, and the next one resumes from it; the Session stays open until session_close. " +
-			"The same Break point and Next step again record nothing.",
+			"Lesson's YAML header, with a Next step that starts with a verb and the context needed to take it. Only " +
+			"the current Lesson (the Resume point's) has Break points to reach. The Session can stop there, and the " +
+			"next one resumes from it; the Session stays open until session_close. Reaching the Break point the Lesson " +
+			"is already at, with the same Next step and context, records nothing.",
 		Annotations: idempotent,
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in breakPointInput) (*mcp.CallToolResult, core.BreakPointReached, error) {
 		r, err := c.ReachBreakPoint(ctx, in.Topic, core.BreakPointSpec{
@@ -126,8 +128,9 @@ func addLearnerLoop(server *mcp.Server, c *core.Core) {
 		Description: "Move a Lesson to teaching, practicing or feedback. Practicing needs the Lesson's Check, which you " +
 			"show the learner first. When the turn passes between you and the learner, a Checkpoint is taken; if the " +
 			"result has checkpoint_error, call checkpoint with its checkpoint_role once the problem is fixed. After a " +
-			"failed Attempt, go back to practicing with a next_step that names the fix. The same Phase, Next step and " +
-			"Check again record nothing.",
+			"failed Attempt, go back to practicing with a next_step that names the fix; like every Next step it starts " +
+			"with a verb and says what to act on. Asking for the Phase, Next step and Check the Lesson already has " +
+			"records nothing.",
 		Annotations: idempotent,
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in phaseSetInput) (*mcp.CallToolResult, core.PhaseResult, error) {
 		r, err := c.SetPhase(ctx, in.Topic, core.PhaseSpec{Lesson: in.Lesson, Phase: in.Phase, NextStep: in.NextStep})
@@ -221,7 +224,7 @@ type phaseSetInput struct {
 	Topic    string `json:"topic" jsonschema:"the Topic's id"`
 	Lesson   string `json:"lesson" jsonschema:"the Lesson's id"`
 	Phase    string `json:"phase" jsonschema:"teaching, practicing or feedback"`
-	NextStep string `json:"next_step,omitempty" jsonschema:"a Next step for the new Phase, such as the fix a failed Attempt calls for"`
+	NextStep string `json:"next_step,omitempty" jsonschema:"a Next step for the new Phase, starting with a verb and saying what to act on, such as the fix a failed Attempt calls for"`
 }
 
 type lessonCompleteInput struct {

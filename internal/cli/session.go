@@ -116,9 +116,15 @@ func (a *app) sessionCommand() *cobra.Command {
 	return group
 }
 
-// writeSessionOpened shows where the learner stopped, the Focus their Energy
-// suggests, whether Cards are ready, and a Session left unclosed with what
-// changed since the last Checkpoint.
+// suggestionWords are how human output names a suggestion.
+var suggestionWords = map[string]string{
+	core.SuggestPlan: "plan the Syllabus",
+	core.SuggestStop: "stop here",
+}
+
+// writeSessionOpened shows where the learner stopped, what their Energy
+// suggests, whether Cards are ready, and the Sessions left unclosed with
+// what changed since the last Checkpoint.
 func writeSessionOpened(w io.Writer, res core.SessionOpened, now time.Time) error {
 	var b strings.Builder
 	verb := "Opened"
@@ -130,45 +136,50 @@ func writeSessionOpened(w io.Writer, res core.SessionOpened, now time.Time) erro
 		fmt.Fprintf(&b, "%s\n", styleDim.Render("Welcome back: start with a short recap and a two-minute warm-up."))
 	}
 	labels := widest([]string{"Break point:", "Next step:", "Suggested:"}) + 2
-	writeResume(&b, res.Resume, labels)
+	writeResume(&b, res.Resume, labels, now)
 	if s := res.Suggested; s != nil {
-		focus := s.Focus
-		if focus == "" {
-			focus = "stop here"
+		words := s.Suggest
+		if w, ok := suggestionWords[words]; ok {
+			words = w
 		}
-		fmt.Fprintf(&b, "%s%s %s\n", styleLabel.Render(pad("Suggested:", labels)), styleAccent.Render(focus), styleDim.Render("("+s.Reason+")"))
+		fmt.Fprintf(&b, "%s%s %s\n", styleLabel.Render(pad("Suggested:", labels)), styleAccent.Render(words), styleDim.Render("("+s.Reason+")"))
 	}
-	if c := res.Cards; c != nil {
-		switch {
-		case c.Ready:
-			fmt.Fprintf(&b, "%s%s\n", styleLabel.Render(pad("Cards:", labels)), "ready to review")
-		case c.NextDue != nil:
-			fmt.Fprintf(&b, "%s%s\n", styleLabel.Render(pad("Cards:", labels)),
-				styleDim.Render("next due "+c.NextDue.In(now.Location()).Format("2 Jan 2006")))
+	writeCardsReady(&b, res.Cards, labels, now)
+	if len(res.Unclosed) > 0 {
+		b.WriteString("\n")
+		for _, u := range res.Unclosed {
+			fmt.Fprintf(&b, "%s\n", styleWarn.Render("The Session "+u.ID+" opened "+u.Opened.In(now.Location()).Format("2 Jan 15:04")+
+				" ended without a Next step."))
 		}
-	}
-	if u := res.Unclosed; u != nil {
-		fmt.Fprintf(&b, "\n%s\n", styleWarn.Render("The Session opened "+u.Opened.In(now.Location()).Format("2 Jan 15:04")+
-			" ended without a Next step."))
-		switch {
-		case u.ChangesError != "":
-			fmt.Fprintf(&b, "  %s\n", styleDim.Render(u.ChangesError))
-		case len(u.Changes) == 0:
-			fmt.Fprintf(&b, "  %s\n", styleDim.Render("Nothing changed since the last Checkpoint."))
-		default:
-			fmt.Fprintf(&b, "  %s\n", "Changed since the last Checkpoint:")
-			for _, f := range u.Changes {
-				fmt.Fprintf(&b, "    %s %s\n", pad(f.Change, 9), printable(f.Path))
-			}
-			if u.MoreChanges > 0 {
-				fmt.Fprintf(&b, "    %s\n", styleDim.Render(fmt.Sprintf("and %d more", u.MoreChanges)))
-			}
-		}
-		fmt.Fprintf(&b, "  %s\n", styleDim.Render("Give it its Next step with: study session close "+res.Topic+
-			" --session "+u.ID+" --next-step \"...\""))
+		writeWorkChanges(&b, res.Changes)
+		fmt.Fprintf(&b, "  %s\n", styleDim.Render("Give each its Next step with: study session close "+res.Topic+
+			" --session <id> --next-step \"...\""))
 	}
 	_, err := io.WriteString(w, b.String())
 	return err
+}
+
+// writeWorkChanges lists what changed since the last Checkpoint.
+func writeWorkChanges(b *strings.Builder, ch *core.WorkChanges) {
+	since := "since the last Checkpoint"
+	if ch != nil && ch.Since == "" {
+		since = "since the Topic was created (no Checkpoint yet)"
+	}
+	switch {
+	case ch == nil:
+	case ch.Error != "":
+		fmt.Fprintf(b, "  %s\n", styleDim.Render(printable(ch.Error)))
+	case len(ch.Files) == 0:
+		fmt.Fprintf(b, "  %s\n", styleDim.Render("Nothing changed "+since+"."))
+	default:
+		fmt.Fprintf(b, "  Changed %s:\n", since)
+		for _, f := range ch.Files {
+			fmt.Fprintf(b, "    %s %s\n", pad(f.Change, 9), printable(f.Path))
+		}
+		if ch.More > 0 {
+			fmt.Fprintf(b, "    %s\n", styleDim.Render(fmt.Sprintf("and %d more", ch.More)))
+		}
+	}
 }
 
 func writeBreakPointReached(w io.Writer, res core.BreakPointReached) error {
@@ -179,11 +190,11 @@ func writeBreakPointReached(w io.Writer, res core.BreakPointReached) error {
 	case !res.Changed:
 		verb = "Already at"
 	}
-	text := res.BreakPoint.ID
+	text := printable(res.BreakPoint.ID)
 	if res.BreakPoint.Describe != "" {
 		text += " (" + printable(res.BreakPoint.Describe) + ")"
 	}
-	_, err := fmt.Fprintf(w, "%s Break point %s of %s. Next step: %s\n", verb, text, res.Lesson,
+	_, err := fmt.Fprintf(w, "%s Break point %s of %s. Next step: %s\n", verb, text, printable(res.Lesson),
 		styleAccent.Render(printable(res.NextStep.Step)))
 	return err
 }

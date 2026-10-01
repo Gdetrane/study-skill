@@ -91,7 +91,7 @@ func TestAnOlderUnclosedSessionGetsItsNote(t *testing.T) {
 		t.Fatal(err)
 	}
 	second, err := m.OpenSession(ctx, "c", SessionSpec{})
-	if err != nil || second.Unclosed == nil || second.Unclosed.ID != first.Session {
+	if err != nil || len(second.Unclosed) != 1 || second.Unclosed[0].ID != first.Session {
 		t.Fatalf("second Session = %+v, %v", second, err)
 	}
 	note, err := m.CloseSession(ctx, "c", CloseSpec{Session: first.Session, NextStep: "Finish the exercise"})

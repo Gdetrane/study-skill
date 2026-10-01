@@ -36,7 +36,7 @@ func TestSessionsAndBreakPoints(t *testing.T) {
 
 	var opened core.SessionOpened
 	decode(t, call(t, session, "session_open", map[string]any{"topic": "c", "energy": "full"}), &opened)
-	if opened.Suggested == nil || opened.Suggested.Focus != core.FocusLearn || opened.Unclosed != nil {
+	if opened.Suggested == nil || opened.Suggested.Suggest != core.FocusLearn || len(opened.Unclosed) != 0 {
 		t.Errorf("first Session = %+v", opened)
 	}
 	var reached core.BreakPointReached
@@ -58,14 +58,16 @@ func TestSessionsAndBreakPoints(t *testing.T) {
 	}
 	opened = core.SessionOpened{}
 	decode(t, call(t, session, "session_open", map[string]any{"topic": "c", "energy": "fumes"}), &opened)
-	u := opened.Unclosed
-	if u == nil || len(u.Changes) != 1 || u.Changes[0] != (core.FileChange{Path: "practice/answer/answer.txt", Change: "modified"}) {
-		t.Fatalf("unclosed = %+v", u)
+	ch := opened.Changes
+	if len(opened.Unclosed) != 1 || ch == nil || len(ch.Files) != 1 ||
+		ch.Files[0] != (core.FileChange{Path: "practice/answer/answer.txt", Change: "modified"}) {
+		t.Fatalf("unclosed = %+v, changes = %+v", opened.Unclosed, ch)
 	}
-	if opened.Resume.BreakPoint == nil || opened.Resume.BreakPoint.ID != "read" || opened.Suggested == nil || opened.Suggested.Focus != "" {
+	if opened.Resume.BreakPoint == nil || opened.Resume.BreakPoint.ID != "read" || opened.Suggested == nil ||
+		opened.Suggested.Suggest != core.SuggestStop {
 		t.Errorf("second Session: resume %+v, suggested %+v", opened.Resume, opened.Suggested)
 	}
-	call(t, session, "session_close", map[string]any{"topic": "c", "session": u.ID, "next_step": "Run the Check on 42"})
+	call(t, session, "session_close", map[string]any{"topic": "c", "session": opened.Unclosed[0].ID, "next_step": "Run the Check on 42"})
 
 	var status core.Status
 	decode(t, call(t, session, "status", map[string]any{}), &status)

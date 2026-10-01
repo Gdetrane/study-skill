@@ -656,11 +656,8 @@ func (st *studyState) draftsLeftToday(now time.Time) int {
 // DueCardsOf returns the Cards to review now, sized to the limit or the
 // Energy: those due first, earliest first, then drafts in the order they
 // were written, as many as today's cap on new Cards allows. Suspended Cards
-// are never offered. It never says how many more Cards are due.
-//
-// TODO(#28): status and session_open need only whether Cards are ready and
-// when the next falls due; a boolean or a next-due query should replace
-// counting what this returns.
+// are never offered. It never says how many more Cards are due. status and
+// session_open say only whether Cards are ready (see cardsReady).
 func (c *Core) DueCardsOf(ctx context.Context, topicID string, q DueQuery) (DueCards, error) {
 	s, _, err := c.replayTopic(ctx, topicID)
 	if err != nil {
