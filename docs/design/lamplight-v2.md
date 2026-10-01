@@ -69,7 +69,7 @@ the maintainer's answers to the questions they raised.
     notes/                          Session notes, Assessments, research briefs
     teacher/                        Teacher's notes: answer keys, expected scores
     practice/<lesson-id>/           exercise work on the Workbench
-    .heldout/<lesson-id>/           Held-out data: synthetic or public only
+    .heldout/<lesson-id>/           Held-out data: synthetic or public only, committed
     .gitattributes                  history.jsonl and sources.jsonl merge by union
 ```
 
@@ -137,8 +137,9 @@ the maintainer's answers to the questions they raised.
   | `session.closed` | Session, Next step, context, the Lesson it is about | none |
   | `break_point.reached` | Lesson, Break point, Next step, context | none |
   | `phase.set` | Lesson, Phase, optional Next step, the Check version shown when practicing starts, the turn it ended | none |
-  | `attempt.recorded` | Lesson, Check version, snapshot, outcome, per-criterion outcomes (never output) | none |
-  | `lesson.completed` | Lesson, the Attempt, its Check version and the one shown, snapshot, the turn it ended, draft Cards in full | `cards.jsonl#<id>` each |
+  | `attempt.recorded` | Lesson, Check version, snapshot, outcome, per criterion its kind, outcome, results file and, for held-out criteria, whether it was counted when run (never output) | none |
+  | `rubric.graded` | Lesson, rubric item, grade, note, the Check version and snapshot graded, the files of the work it looked at (path and hash), the grade it replaces | none |
+  | `lesson.completed` | Lesson, the Attempt and the rubric grades it relied on, its Check version and the one shown, snapshot, the turn it ended, draft Cards in full | `cards.jsonl#<id>` each |
   | `review.recorded` | Card, rating, for a draft keep, edit (new content) or drop, and the client's optional request id | `cards.jsonl#<id>` on edit or drop |
   | `card.added` | the new Card in full, Evidence ids included | `cards.jsonl#<id>` |
   | `card.edited` | Card, the new prompt, answer or Evidence | `cards.jsonl#<id>` |
@@ -333,37 +334,60 @@ hours before any learning happens is exactly what v1 produced.
     checks themselves first;
   - **held-out**: an evaluation on Held-out data. In v2.0 it is diagnostic: it never blocks
     completion, and its scores feed the Level signals.
+- Each criterion in the Lesson's YAML header has exactly one of `run` (an argument list),
+  `rubric` (what to grade) or `held_out` (an argument list); the Check's version is the
+  hash of its criteria, kinds included.
 - Checks run only through `study check <lesson>` in the agent's own shell (ADR-0009).
-  Commands are argument lists, not shell strings. The core passes `STUDY_LESSON` and
-  `STUDY_HELDOUT_DIR`, and reads per-criterion scores from a JSON results file. The thin
-  learner loop implements run criteria only, passing on exit status 0; rubric and held-out
-  criteria and results files come with the Checks module. Each command runs in its own
-  process group, which is stopped as a whole on a timeout or SIGTERM; a command that leaves
-  programs running is errored.
+  Commands are argument lists, not shell strings. The core passes `STUDY_TOPIC`,
+  `STUDY_LESSON` and `STUDY_RESULTS` to every command, and `STUDY_HELDOUT_DIR` to held-out
+  commands only, so a run criterion, whose output is shown, never sees the Held-out data. A
+  command may write a JSON results file to `STUDY_RESULTS`, in a folder of its own outside
+  the practice folder so writing it never changes the work: `passed`, `score` out of `max`,
+  named `metrics` and a `summary`, at most 64 KiB, validated, and recorded without any other
+  field; held-out commands must write one. Each command runs in its own process group,
+  which is stopped as a whole on a timeout or SIGTERM; a command that leaves programs
+  running is errored. Long runs report progress on stderr.
 - Each run is an **Attempt**, recorded with the Lesson, a hash of the Check's criteria (its
   version), a snapshot hash of `practice/<lesson-id>/` computed with the same filter-free git
-  commands as Checkpoints, per-criterion scores, and an outcome: `passed`, `failed` (a valid
-  results file) or `errored` (no or invalid results, or the command crashed). The snapshot
-  writes nothing to `.git`, covers the ignore rules that apply as well as the files, and
-  refuses work with a blind spot (files the index hides, a nested repository, a link
+  commands as Checkpoints, per-criterion scores, and an outcome: `passed`, `failed` (a
+  command that exits with another status, or a valid results file that says so) or
+  `errored` (no or invalid results where they are needed, or the command crashed). The
+  Attempt's outcome comes from its run criteria alone; held-out results never change it. The
+  snapshot writes nothing to `.git`, covers the ignore rules that apply as well as the files,
+  and refuses work with a blind spot (files the index hides, a nested repository, a link
   leading outside the folder, a folder whose files are all ignored) with an `errored`
-  Attempt.
+  Attempt. A Check with only rubric items has nothing to run.
 - **Completion rule**: a Lesson can be completed when, for the Check version shown to the
   learner when practicing last started, which must still be the current one, every run
   criterion passed on an Attempt whose snapshot matches the current work, and every rubric
-  item has a grade. Only showing a Check moves its recorded version, so a Check edited
-  afterwards stays flagged until it is shown again. Changing the work or the criteria after a pass means running the
-  Check again.
+  item has a grade for that Check and that work, whatever the grade. Only showing a Check
+  moves its recorded version, so a Check edited afterwards stays flagged until it is shown
+  again. Changing the work or the criteria after a pass means running the Check, and
+  grading, again. `lesson.completed` records the Attempt and the grades it relied on.
+- **Rubric grades** are `met`, `partly` or `not_met`, with a note, recorded by
+  `rubric_record` (or `study rubric grade`) after the learner checks their own work against
+  the item. Grading an item again replaces its grade; two grades that replace the same one
+  were given on two machines and are flagged.
 - **Held-out runs**: the first run that produces results is the counted measurement; later
   runs are recorded as "not counted". The count is kept per Lesson and criterion, so editing
   the Check can't create a fresh first run, and an `errored` run never uses it up. Only the
   results file is shown for held-out criteria, never raw output, so the test data doesn't
-  leak.
+  leak. Each run records whether it was counted when it ran; replay decides, and a run that
+  claimed the count but sorts after another, as when two machines measured first, is
+  flagged.
+- **Held-out data** lives in `.heldout/<lesson-id>/`, committed with the Topic so every
+  machine measures on the same data; it is synthetic or public, never personal data.
+  "Out of the learner's sight" is a convention the agent keeps, not a lock: the agent
+  writes the data before practicing starts and never shows it, and Lamplight never prints
+  it, never lists its file names among an unclosed Session's changes, and never records a
+  held-out command's output.
 - A failed Attempt sends the Lesson from feedback back to practicing, with a Next step that
-  names the fix.
+  names the fix: `phase_set practicing` refuses without one, and `check_results` says so.
 - Per-Lesson criteria allow Lessons with special needs (a GPU, a container) and project
   Topics where one codebase grows across Lessons.
-- Written work can be submitted as typed final answers or a photo of paper work.
+- Written work can be submitted as typed final answers or a photo of paper work: files in
+  the practice folder, part of the work's snapshot and its Checkpoints. A rubric grade names
+  the files it looked at by path and content hash; their bytes never reach the History.
 
 ### Cards and Reviews
 

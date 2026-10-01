@@ -34,6 +34,8 @@ that scripts and agents can rely on. Terms follow [CONTEXT.md](../CONTEXT.md).
 | `study revision decline <topic> <revision> [--learner-said S] [--dry-run]` | Records that the learner said no. The Syllabus is unchanged, and the Revision can no longer be applied. The result is `{"topic", "revision", "decision", "changed"}`; `apply` returns `{"topic", "revision", "syllabus", "approval", "changed"}`. Answering again changes nothing and reports the answer recorded the first time, on a terminal too. |
 | `study checkpoint --topic ID --role agent\|learner [-m MESSAGE] [--dry-run]` | Saves the Topic's work as a git commit at a turn switch. Skips when nothing changed, refuses during a merge or rebase, and lists large files it saved. Never runs programs named in the Topic's git configuration. It waits for a write in progress and finishes an interrupted one first; `--dry-run` refuses (`failed_precondition`) while one is pending. |
 | `study check <lesson> [--topic ID] [--timeout D]` | Runs a Lesson's Check on the current work and records the Attempt (see "Checks" below). Without `--topic`, it uses the Topic whose folder it runs in. |
+| `study rubric grade <lesson> <criterion> --grade G [...]` | Grades a rubric item of a Lesson's Check (see "Checks"). |
+| `study results <lesson> [--topic ID]` | Shows a Lesson's Check results and whether it can be completed (see "Checks"). |
 | `study review [topic] [--energy E] [--limit N]` | Reviews the due Cards in the terminal, without an agent (see "Cards and Reviews" below). Without a Topic, it reviews the Active topic. Interactive only: with `--json` it is a usage error. |
 | `study card list <topic> [--lesson L]` | Lists the Topic's Cards in the order they were written, with their display numbers and state. `--lesson explore` lists the Explore Cards. |
 | `study card due <topic> [--energy E] [--limit N]` | Lists the Cards to review now, sized to the Energy, never saying how many more are due. A paused Topic lists none, and its result says `"paused": true`. |
@@ -426,24 +428,48 @@ Rules a Revision follows:
 
 ## Checks
 
-A Lesson's Check is written in the YAML header of `lessons/<lesson-id>.md`:
+A Lesson's Check is written in the YAML header of `lessons/<lesson-id>.md`. Each criterion
+has an id and exactly one of `run`, `rubric` or `held_out` (at most 30 criteria):
 
 ```yaml
 ---
 check:
   - id: tests
     describe: The tests pass
-    run: [go, test, ./...]
+    run: [go, test, ./...]              # a command that can be repeated
+  - id: names
+    rubric: Every function name says what it does   # graded by the agent
+  - id: accuracy
+    describe: Accuracy on the test set
+    held_out: [python3, eval.py]        # evaluated on the Held-out data
 ---
 ```
 
-`study check <lesson>` runs each criterion's command, an argument list rather than a shell
-string, in `practice/<lesson-id>/`, with `STUDY_TOPIC`, `STUDY_LESSON` and
-`STUDY_HELDOUT_DIR` set and no standard input.
+The Check's version is the hash of its criteria, kinds included, so editing a rubric item's
+text changes it too.
 
-- **Outcomes.** A criterion passes when its command exits with 0, fails when it exits with
-  another status, and errors when it cannot start, is stopped by a signal, runs longer
-  than `--timeout` (default 30 minutes), or leaves programs running in the background.
+`study check <lesson>` runs each run and held-out criterion's command, an argument list
+rather than a shell string, in `practice/<lesson-id>/`, with no standard input and these
+variables set:
+
+| Variable | Set for | Meaning |
+|---|---|---|
+| `STUDY_TOPIC`, `STUDY_LESSON` | every command | the Topic's and the Lesson's ids |
+| `STUDY_RESULTS` | every command | where the command may write its results file, in a folder of its own outside the practice folder |
+| `STUDY_HELDOUT_DIR` | held-out commands only | the Lesson's Held-out data, `.heldout/<lesson-id>/` in the Topic |
+
+A Check with only rubric items has nothing to run (`failed_precondition`): grade its items
+instead. Progress goes to stderr: each criterion as it starts, and every 15 seconds while a
+long one runs; with `--json`, only the latter, so a quick Check keeps stderr empty.
+
+- **Outcomes.** A run criterion passes when its command exits with 0 and its results file,
+  if any, does not say `"passed": false`; it fails when the command exits with another
+  status or the results say so; and it errors when the command cannot start, is stopped by
+  a signal, runs longer than `--timeout` (default 30 minutes), leaves programs running in
+  the background, or writes a results file that is not valid. A held-out criterion follows
+  the same rules but must write a results file: without one, or without Held-out data, it
+  is errored. **The Attempt's outcome comes from its run criteria alone**: held-out results
+  are diagnostic and never change it.
 - **Processes.** Each command runs in a process group of its own. On a timeout, or when
   `study` receives SIGTERM or Ctrl-C, the whole group gets SIGTERM, then SIGKILL after
   two seconds; whatever a command leaves running when it exits is killed too. A Check
@@ -459,14 +485,33 @@ string, in `practice/<lesson-id>/`, with `STUDY_TOPIC`, `STUDY_LESSON` and
   assume-unchanged, another git repository in the folder, a symbolic link leading outside
   it, or a folder whose files are all ignored.
 
-`study check --json` prints the Attempt with the end of each criterion's output. The
-History records the Attempt without any output, which could reveal test data:
+**Results files.** A command may write a JSON object of at most 64 KiB to `STUDY_RESULTS`.
+Every field is optional, other fields are ignored and never recorded, and an invalid file
+makes the criterion errored:
+
+```json
+{"format": 1, "passed": true, "score": 17, "max": 20,
+ "metrics": {"precision": 0.91, "recall": 0.88}, "summary": "17 of 20 cases"}
+```
+
+`format` is 1 (a newer one asks to upgrade `study`); `score` is at least 0 and at most
+`max`, which defaults to 1 and must be more than 0; `metrics` holds at most 20 numbers named
+with lowercase letters, digits, `_`, `.` and `-`; `summary` is text of at most 1,000
+characters for the learner.
+
+`study check --json` prints the Attempt with the end of each run criterion's output. The
+History records the Attempt without any output, which could reveal test data, and a
+held-out criterion's output is never kept at all:
 
 ```json
 {
   "id": "...", "lesson": "pointers", "check_version": "sha256:...", "snapshot": "sha256:...",
   "outcome": "failed", "at": "...",
-  "criteria": [{ "id": "tests", "outcome": "failed", "exit_code": 1, "output": "the end of what it printed" }]
+  "criteria": [
+    { "id": "tests", "kind": "run", "outcome": "failed", "exit_code": 1, "output": "the end of what it printed" },
+    { "id": "accuracy", "kind": "held-out", "outcome": "passed", "exit_code": 0, "counted": true,
+      "results": { "score": 0.87, "max": 1, "summary": "87 of 100 cases" } }
+  ]
 }
 ```
 
@@ -474,12 +519,39 @@ The exit code is 0 whenever the Attempt was recorded, whatever its outcome. Chec
 only through the command line, from the agent's own shell, so the agent's sandbox applies
 (ADR-0009); the MCP server reads Attempts (`check_results`) but never runs a Check.
 
-A Lesson can be completed only on an Attempt that passed with the Check shown to the
-learner when practicing last started (through `phase_set`) and with the work as it is now.
-A Check edited afterwards is flagged in `status` and must be shown again.
+**Held-out data** lives in `.heldout/<lesson-id>/`, which is committed with the Topic so
+every machine measures on the same data. It is synthetic or public, never personal data.
+Lamplight never shows its contents, the files' names (they are left out of the changes an
+unclosed Session lists) or a held-out command's output, only its results. The first run of
+a held-out criterion in a Lesson that produces results is its **counted** measurement;
+later runs are recorded as not counted, so editing the Check never makes a fresh first run,
+and an errored run never uses the count up. Two machines that both measured first are
+flagged.
 
-Rubric and held-out criteria, and per-criterion results files, arrive in a later version;
-until then a Check with one is reported as `corrupt`.
+**Rubric items** are graded by the agent, after the learner checks their own work against
+them, with `study rubric grade` or the MCP `rubric_record` tool: `met`, `partly` or
+`not_met`, with an optional note. A grade is for the Check shown to the learner and the
+work as it is now. **Written work** is files in the practice folder: typed final answers in
+a text file, or a photo of paper work; a grade names the files it looked at, and only their
+paths and content hashes are recorded.
+
+| Command | What it does |
+|---|---|
+| `study rubric grade <lesson> <criterion> --grade G [--note N] [--looked-at FILE]... [--topic ID] [--dry-run]` | Grades a rubric item. Without `--topic`, it uses the Topic whose folder it runs in. The same grade, note and files again record nothing. |
+| `study results <lesson> [--topic ID]` | Shows the Check, the Attempts, each rubric item's grade (and whether it is for the current Check and work), each held-out criterion's counted measurement and latest run, whether the Lesson can be completed, and what to do next. Runs nothing. Without `--topic`, it uses the Active topic. |
+
+**Completion.** A Lesson can be completed when, for the Check shown to the learner when
+practicing last started (through `phase_set`), which must still be the current one, every
+run criterion passed on an Attempt of the current work, and every rubric item has a grade,
+whatever it is, for that Check and that work. Held-out results never decide it. A Check
+edited afterwards is flagged in `status` and must be shown again; changing the work after a
+pass means running the Check, and grading, again. `lesson_complete` records the Attempt and
+the grades it relied on, and a done Lesson is never reopened.
+
+**After a failed Attempt** during feedback, the agent gives feedback, then moves the Lesson
+back to practicing with `phase_set` and a Next step that names the fix: without one,
+`phase_set` refuses with `invalid_argument`. `study results` and `check_results` say so in
+`next`.
 
 ## Cards and Reviews
 
