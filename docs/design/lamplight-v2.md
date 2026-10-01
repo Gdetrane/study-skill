@@ -137,11 +137,11 @@ the maintainer's answers to the questions they raised.
   | `phase.set` | Lesson, Phase, optional Next step, the Check version shown when practicing starts, the turn it ended | none |
   | `attempt.recorded` | Lesson, Check version, snapshot, outcome, per-criterion outcomes (never output) | none |
   | `lesson.completed` | Lesson, the Attempt, its Check version and the one shown, snapshot, the turn it ended, draft Cards in full | `cards.jsonl#<id>` each |
-  | `review.recorded` | Card, rating, and for a draft keep, edit (new content) or drop | `cards.jsonl#<id>` on edit or drop |
-  | `card.added` | the new Card in full | `cards.jsonl#<id>` |
-  | `card.edited` | Card, the new prompt or answer | `cards.jsonl#<id>` |
+  | `review.recorded` | Card, rating, for a draft keep, edit (new content) or drop, and the client's optional request id | `cards.jsonl#<id>` on edit or drop |
+  | `card.added` | the new Card in full, Evidence ids included | `cards.jsonl#<id>` |
+  | `card.edited` | Card, the new prompt, answer or Evidence | `cards.jsonl#<id>` |
   | `card.suspended`, `card.unsuspended` | Card | none |
-  | `card.deleted` | Card | `cards.jsonl#<id>` (removed) |
+  | `card.deleted` | Card, how many of its Reviews the deleting machine knew | `cards.jsonl#<id>` (removed) |
   | `card.flagged` | Card, the learner's note | none |
   | `checkpoint.taken` | the Event whose Checkpoint it settles, role, commit | none |
 
@@ -320,21 +320,37 @@ hours before any learning happens is exactly what v1 produced.
   trivia, at least one Card from the learner's own mistakes.
 - Cards can be added, edited, suspended and deleted; `study review` has a key to flag one.
   A flagged Card shows as a `card_flagged` flag in `status` until it is edited or deleted,
-  or the flag is dismissed. Adding a Card with the same content twice, or deleting one
-  already gone, records nothing.
-- Explore Cards, written in an Explore Session, have IDs `explore.<random suffix>`.
+  or the flag is dismissed; flagging it again after a dismissal is a new flag. Adding a Card
+  with the same Lesson and content twice, or deleting one already gone, records nothing.
+- Prompts and answers may span lines and hold tabs, for code Topics. A Card cites Evidence
+  by id, checked against the History; retracted Evidence is refused.
+- Explore Cards have IDs `explore.<random suffix>`, so `explore` is reserved and no Lesson
+  may use it. Adding one needs no open Explore Session: a useful answer comes up in any
+  Session, and the learner may add Cards from the command line with no Session at all.
   New Cards are appended to `cards.jsonl` rather than kept sorted by ID: a union merge keeps
   two machines' changes apart only when they touch different parts of the file, and
-  inserting in ID order makes them overlap. When a merge still leaves a stale copy of a
-  Card's line, the version the History recorded is read and the copy is not flagged.
-  Display numbers ("Card 4") come from the order Cards were written.
+  inserting in ID order makes them overlap. Display numbers ("Card 4") come from the order
+  Cards were written.
+- **Lines a merge leaves**: every reader and write of a `path#key` item, for Cards and
+  Sources alike, picks among the lines a union merge left by one rule. A line at the version
+  the History recorded last is the entity, and lines at versions an earlier Event recorded
+  are debris. A line at a version the History never recorded is an edit made outside
+  Lamplight: where the file is authoritative for text (`cards.jsonl`), one such edit wins and
+  several are a conflict; where the History holds the text (`sources.jsonl`), the recorded
+  version wins and any such edit is a conflict. A write leaves a single line.
+- **Retries and conflicts**: a Review may carry the client's request id; a retry with it, or
+  a repeated first decision on a draft, records nothing and returns what was recorded. A
+  delete records how many Reviews it had seen, so a delete and a Review made on two
+  machines are flagged whichever replays first, as is a draft decided on both.
 - **Sizing**: the Cards offered are those due, earliest first, then drafts, as many as the
   daily cap allows (10 decided a day). Without an explicit limit, the list is sized to the
   Energy, given or taken from the open Session: 20 at full, 10 at half, 3 at fumes, 10
   without one. Suspended Cards are never offered, and no count of what is due is shown.
 - **Scheduling** replays each Card's Reviews through FSRS-6 (go-fsrs v4, which needs Go 1.26;
   fuzz off) from their `wall` times, each clamped to the Card's previous Review so time never
-  runs backwards. A Card starts at its first Review, never at the current time, so replay
+  runs backwards. Short-term learning steps are off: Lamplight works in sessions and offers a
+  session's Cards once, so every Review, the first included, schedules in days, and "again"
+  means the Card comes back next time. A Card starts at its first Review, never at the current time, so replay
   does not depend on when it runs. Only `schedule()` knows go-fsrs; a later version changes
   every replayed schedule, so it comes with a migration once learner data depends on it.
 - Reviews work with the agent (conversational recall) or without it (`study review` in the

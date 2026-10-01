@@ -30,12 +30,12 @@ that scripts and agents can rely on. Terms follow [CONTEXT.md](../CONTEXT.md).
 | `study review [topic] [--energy E] [--limit N]` | Reviews the due Cards in the terminal, without an agent (see "Cards and Reviews" below). Without a Topic, it reviews the Active topic. Interactive only: with `--json` it is a usage error. |
 | `study card list <topic> [--lesson L]` | Lists the Topic's Cards in the order they were written, with their display numbers and state. `--lesson explore` lists the Explore Cards. |
 | `study card due <topic> [--energy E] [--limit N]` | Lists the Cards to review now, sized to the Energy, never saying how many more are due. |
-| `study card add <topic> --prompt P --answer A [--lesson L] [--dry-run]` | Adds a draft Card from a Lesson, or without `--lesson` an Explore Card. Adding the same Card again changes nothing. |
-| `study card edit <topic> <card> [--prompt P] [--answer A] [--dry-run]` | Changes a Card's prompt or answer, keeping its schedule; settles a flag on the Card. |
+| `study card add <topic> --prompt P --answer A [--lesson L] [--evidence E,...] [--dry-run]` | Adds a draft Card from a Lesson, or without `--lesson` an Explore Card, citing Evidence by id. Adding the same Card again changes nothing. |
+| `study card edit <topic> <card> [--prompt P] [--answer A] [--evidence E,... \| --clear-evidence] [--dry-run]` | Changes a Card's prompt, answer or Evidence, keeping its schedule; settles a flag on the Card. |
 | `study card suspend <topic> <card> [--undo] [--dry-run]` | Stops offering a Card for Review, or with `--undo` offers it again. |
 | `study card delete <topic> <card> [--dry-run]` | Deletes a Card for good; deleting it again changes nothing. |
 | `study card flag <topic> <card> [--note N] [--dry-run]` | Flags a Card as wrong or unclear, so it shows in `status` until fixed. |
-| `study card review <topic> <card> --rating R [--draft keep\|edit\|drop] [--prompt P --answer A] [--dry-run]` | Records one Review, for scripts; at a draft's first Review `--draft` is required. |
+| `study card review <topic> <card> --rating R [--draft keep\|edit\|drop] [--prompt P --answer A] [--request ID] [--dry-run]` | Records one Review, for scripts; at a draft's first Review `--draft` is required. A retry with the same `--request`, or repeating a draft's first decision, returns the Review already recorded (`changed: false`). A dry run shows the Card after the Review. |
 | `study doctor` | Diagnoses the setup and says how to fix what it finds. It works even when nothing else does. Exits 1 when a Finding failed. |
 | `study completion install [--shell S] [--dir D] [--yes] [--force] [--dry-run]` | Installs completions for bash, zsh or fish (default: from `$SHELL`) for your user. |
 | `study completion uninstall [--shell S] [--dry-run]` | Removes what `install` added, for every shell or only `--shell`. |
@@ -272,31 +272,62 @@ until then a Check with one is reported as `corrupt`.
 ## Cards and Reviews
 
 A Card is one fact: a prompt and its expected answer, one line of `cards.jsonl`, in the order
-Cards were written. Its ID is `<lesson-id>.<random suffix>`, or `explore.<random suffix>` for
-an Explore Card written without a Lesson; its display number ("Card 4") comes from its
-position among the Topic's Cards. Whether a Card is a draft, suspended, flagged or due is
-replayed from the History, never stored in the file. A git merge can leave a stale copy of a
-Card's line beside the version the History recorded; that copy is read past, and the Card's
-next change removes it.
+Cards were written. Prompts and answers may span lines and hold tabs, for code; other control
+characters are refused. A Card may cite Evidence by id (`--evidence`, `evidence` in MCP); the
+ids must be recorded in the Topic's History and not retracted. Its ID is
+`<lesson-id>.<random suffix>`, or `explore.<random suffix>` for an Explore Card written
+without a Lesson, which is why no Lesson may be called `explore`. Its display number
+("Card 4") comes from its position among the Topic's Cards. Whether a Card is a draft,
+suspended, flagged or due is replayed from the History, never stored in the file.
 
 A new Card is a draft until its first Review, where the learner keeps, edits or drops it.
-Each day at most 10 drafts are decided, so new Cards never pile up: `study card due` and
+Each day, counted on this computer's clock, at most 10 drafts are decided, so new Cards
+never pile up: `study card due` and
 `due_cards` offer the Cards due first, earliest first, then as many drafts as are left of
 the day's cap. Without `--limit`, the list is sized to the Energy, given with `--energy` or
 taken from the open Session: 20 Cards at full, 10 at half, 3 at fumes, and 10 without one.
 Suspended Cards are never offered. Neither command, nor `study review`, ever says how many
 more Cards are due.
 
-Scheduling replays every Review through FSRS-6 (go-fsrs v4, with fuzz off), using the time
-each Review was really made, never earlier than the Card's previous Review, so the same
-History always gives the same schedule on every machine.
+Scheduling replays every Review through FSRS-6 (go-fsrs v4, with fuzz and short-term steps
+off), using the time each Review was really made, never earlier than the Card's previous
+Review, so the same History always gives the same schedule on every machine. Every Review,
+the first included, schedules the Card in days: Lamplight works in sessions, so a Card due
+"in 10 minutes" would only come back next time anyway.
 
-`study review` shows each Card's prompt, waits while the learner recalls the answer, and
-shows it on Enter. The learner then rates their recall: `1` again, `2` hard, `3` good,
+Reviews are safe to retry. A Review given a request id records nothing when the same id comes
+again, and returns what was recorded; repeating a draft's first decision does the same. A
+Review of a Card deleted on another machine, a delete that had not seen a Review made
+elsewhere, and a draft decided on two machines are flagged in `status`.
+
+`study review` shows each Card's prompt and asks the learner to recall the answer. Enter
+shows it; the learner may type their answer first, and it is shown beside the real one to
+compare. A line holding just `f` flags the Card as wrong or unclear, `s` skips it and `q`
+stops. The learner then rates their recall with a single key: `1` again, `2` hard, `3` good,
 `4` easy. At a new Card's first Review, `k` keeps it, `e` edits it (an empty line keeps the
-prompt or the answer) and `d` drops it. `f` flags a Card as wrong or unclear, `s` skips it
-and `q` stops; every Review made so far is kept. In a terminal each key is one keystroke;
-otherwise each key is read from one line of standard input, so a script can drive it.
+prompt or the answer; the edit is shown and saved only after `y`) and `d` drops it, after
+asking `y/N`. Before each question, whatever was typed ahead is discarded, so a key only ever
+answers a question already on screen; arrow keys and other escape sequences are ignored.
+Ctrl-C, SIGINT, SIGTERM or SIGHUP stop the session like `q`: the terminal is restored, every
+Review made so far is kept, and `study` exits with 0 after "Stopped.". In a terminal each
+key is one keystroke; otherwise each answer is read from one line of standard input, so a
+script can drive it.
+
+### Lines a merge leaves
+
+`cards.jsonl` and `sources.jsonl` merge by union, so syncing can leave several lines for one
+Card or Source. Every reader and every write picks among them by one rule, using what the
+History recorded:
+
+- a line at the version the History recorded last is the entity;
+- lines at versions an earlier Event recorded are debris of the merge, and are ignored;
+- a line at a version the History never recorded is an edit made outside Lamplight. In
+  `cards.jsonl`, which is authoritative for text, one such edit wins, as a hand edit does
+  without a merge, and several are a conflict in `status`. In `sources.jsonl`, whose text the
+  History holds, the recorded version wins and any such edit is a conflict.
+
+The order of the lines never matters, so every machine reads the same entity, and the next
+change to it leaves a single line.
 
 ## Writes
 
