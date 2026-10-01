@@ -1,8 +1,9 @@
 name: Release
 
 # Publishes a release with GoReleaser when a version tag is pushed; see
-# docs/release.md. GitHub runs this workflow only from the default branch, so
-# it takes effect once v2 is merged into main.
+# docs/release.md. GitHub runs the workflow file of the tagged commit, so any
+# v* tag on a commit that has this file releases: tag only release commits
+# (on main once v2 is merged, or a release candidate on v2).
 on:
   push:
     tags: ["v*"]

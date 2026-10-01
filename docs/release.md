@@ -44,8 +44,9 @@ conflict.
 - [ ] Rename the repository to `lamplight` (#18), so the module path
   `github.com/mordor-forge/lamplight/v2` resolves and the cask and PKGBUILD point at the
   right releases.
-- [ ] Merge `v2` into `main`. GitHub runs tag workflows only from the default branch's
-  workflow files, so `release.yml` takes effect from then on.
+- [ ] Merge `v2` into `main`, where releases are tagged. GitHub runs the workflow file of
+  the tagged commit, so a `v*` tag on any commit that has `release.yml` publishes a release:
+  tag only release commits, such as a release candidate on `v2` or a release on `main`.
 - [ ] Add a `LICENSE` file (the README says MIT); the archives and packages should ship it.
 - [ ] Create the tap repository `mordor-forge/homebrew-tap` (public, with a `Casks/`
   folder).
