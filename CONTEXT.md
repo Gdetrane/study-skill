@@ -89,13 +89,19 @@ Where a Topic's exercises are done: code as the subject, code as a tool, or writ
 _Avoid_: Template, practice folder, scaffold
 
 **Check**:
-The criteria a Lesson's exercise must meet: repeatable runs, a single Held-out run, and
-rubric items. Meeting them makes a Lesson done.
+The criteria a Lesson's exercise is measured against: repeatable runs, rubric items, and
+evaluations on Held-out data. Passing the runs and rubric items on the current work makes a
+Lesson done; Held-out results are recorded but don't decide it.
 _Avoid_: Grading, validation
 
+**Attempt**:
+One run of a Lesson's Check against the learner's work as it stood at that moment, with its
+outcome: passed, failed or errored.
+_Avoid_: Try, submission, run
+
 **Held-out data**:
-Test data kept out of the learner's sight while they work; only its first run counts. It is
-always synthetic or public, never personal data.
+Test data kept out of the learner's sight while they work; only the first run that produces
+results counts as its measurement. It is always synthetic or public, never personal data.
 _Avoid_: Hidden tests, secret data
 
 ### Sessions

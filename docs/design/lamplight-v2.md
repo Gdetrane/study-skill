@@ -52,7 +52,8 @@ the maintainer's answers to the questions they raised.
 ```
 ~/study/                            Study home (STUDY_HOME); not a git repository
   learner.md                        Learner profile
-  .lamplight/                       most recent Topic, Library index, caches (rebuildable)
+  .lamplight/                       local state: most recent Topic, write markers,
+                                    Library index, caches
   .templates/<name>/                optional learner-provided Workbench starters
   llm-data-engineering/             a Topic: its own git repository
     topic.toml                      Goal, Pace periods, Level, Approach, Workbench,
@@ -73,26 +74,51 @@ the maintainer's answers to the questions they raised.
 - Global config: `$XDG_CONFIG_HOME/lamplight/config.toml`; environment variables such as
   `STUDY_HOME` override it.
 - **IDs** are short slugs that never change (`pii-in-cli-logs`, or `lesson-01` for imported
-  v1 Lessons). Display numbers ("Lesson 2.3") come from position, so a Revision never
-  renames files. Card IDs are `<lesson-id>.<n>`.
+  v1 Lessons). Display numbers ("Lesson 2.3", "Card 4") come from position, so a Revision
+  never renames files. Card IDs are `<lesson-id>.<random suffix>`, and Explore Cards use
+  `explore.<random suffix>`, so two machines adding Cards never pick the same ID.
 - **Status is never stored.** Lesson status, Topic status (active, paused, finished), the
   Resume point, completed Tasks and Card scheduling are computed by replaying the History
-  (ADR-0005). go-fsrs is deterministic, so every replay gives the same schedule.
-- **Writes** take a per-Topic lock, write the Event first with everything needed to apply
-  it, then update content files atomically. On load, the core replays any Event whose effect
-  is missing. Every operation is idempotent.
-- **Events** carry a unique ID and the time they happened. Replay orders them by time, then
-  by ID, never by position in the file, and applies each ID once. Each Event is one append
+  (ADR-0005). go-fsrs is deterministic, so every replay gives the same schedule. Content
+  files are authoritative for text, so a hand edit always wins; the History is authoritative
+  for status, scheduling and approvals.
+- **Writes** take a per-Topic lock and leave an intent marker in the Study home's
+  `.lamplight/`. The Event is written first, with everything needed to apply it and, for each
+  item it edits (one Card, one Lesson file, the Syllabus), a hash of the item before and
+  after. Content files are then replaced atomically and the marker cleared. Every operation
+  is idempotent. Recovery is described below.
+- **Events** carry a unique ID and a time from a hybrid logical clock: the later of the wall
+  clock and the latest time already in the History, plus one tick, so an Event written after
+  another was read always sorts after it, whichever machine's clock is ahead. Replay orders
+  Events by time, then by ID, never by position in the file, and applies each ID once. An
+  Event that refers to an item not yet known (a Review of a Card whose creation hasn't
+  arrived) is held, and reported in `status` if it never resolves. Each Event is one append
   ending in a newline; a last line without one is an interrupted write, which replay
-  ignores and the next write truncates (logging the fragment), so every Event starts on a
-  record boundary.
+  ignores and the next write truncates (logging the fragment).
 - **Formats**: every file has a `format` number, and a binary refuses to write a file newer
   than it understands. File schemas are Lamplight's own types, never go-fsrs structs. Files
   the core rewrites say in a header comment that comments are not preserved.
-- **Sync**: a Topic can be synced between machines with git. History files merge by union,
-  which can leave lines in any order; because replay sorts Events, a merge in either
-  direction gives the same state. A Revision whose base no longer matches the Syllabus after
-  a merge is flagged in `status` instead of being applied.
+- **Sync**: v2.0 supports using a Topic on one machine at a time, synced through git between
+  sessions. History files merge by union, which can leave lines in any order; because
+  replay sorts Events, a merge in either direction gives the same state. Conflicting changes
+  made on two machines anyway (two edits of one Card, a delete and a Review, a Revision whose
+  base no longer matches) are flagged in `status`, never resolved automatically, and textual
+  conflicts in content files such as `cards.jsonl` are resolved by hand.
+
+**Recovering an interrupted write.** Because of the lock, at most one Event can be unapplied
+after a crash, and recovery inspects only the one named by the intent marker, comparing each
+item it edits:
+
+| The item matches | Meaning | Recovery |
+|---|---|---|
+| the `before` hash | the write never happened | apply the Event |
+| the `after` hash | the write finished | clear the marker |
+| neither | edited by hand since | keep the edit, log it, never overwrite |
+| nothing (missing or unparseable) | the file is corrupt | stop with a clear error, keep the Event |
+
+Hand edits to text need no acknowledgement. For content that approves or gates something
+(the Syllabus and each Lesson's Check), the version recorded by the last Event is compared on
+load, and a mismatch is flagged in `status`.
 
 ## Domain behaviour
 
@@ -154,7 +180,9 @@ hours before any learning happens is exactly what v1 produced.
    the unclosed Session, shows what changed since the last Checkpoint, and asks for the
    missing note.
 6. Completing a Lesson is one idempotent operation: mark it done, save its draft Cards,
-   record the Event, take a Checkpoint.
+   record the Event, take a Checkpoint. It is allowed only when the completion rule under
+   Checks holds, and its Event records the Attempt and Check version it relied on, so later
+   changes to shared code or to the Lesson never reopen it.
 7. After a long gap: a short recap of where the Topic stands and a two-minute warm-up, never
    the size of the backlog.
 
@@ -162,14 +190,28 @@ hours before any learning happens is exactly what v1 produced.
 
 - A Check is a list of criteria, each of one kind:
   - **run**: a command that can be repeated (tests, a build, a script);
-  - **held-out**: an evaluation on Held-out data; the first run counts, later runs are
-    recorded as "not counted";
   - **rubric**: an item graded by the agent, shown before the work starts; the learner
-    checks themselves first.
+    checks themselves first;
+  - **held-out**: an evaluation on Held-out data. In v2.0 it is diagnostic: it never blocks
+    completion, and its scores feed the Level signals.
 - Checks run only through `study check <lesson>` in the agent's own shell (ADR-0009).
   Commands are argument lists, not shell strings. The core passes `STUDY_LESSON` and
-  `STUDY_HELDOUT_DIR`, and reads scores from a JSON results file, so scores (not only pass or
-  fail) are recorded.
+  `STUDY_HELDOUT_DIR`, and reads per-criterion scores from a JSON results file.
+- Each run is an **Attempt**, recorded with the Lesson, a hash of the Check's criteria (its
+  version), a snapshot hash of `practice/<lesson-id>/` computed with the same filter-free git
+  commands as Checkpoints, per-criterion scores, and an outcome: `passed`, `failed` (a valid
+  results file) or `errored` (no or invalid results, or the command crashed).
+- **Completion rule**: a Lesson can be completed when, for the current Check version, every
+  run criterion passed on an Attempt whose snapshot matches the current work, and every
+  rubric item has a grade. Changing the work or the criteria after a pass means running the
+  Check again.
+- **Held-out runs**: the first run that produces results is the counted measurement; later
+  runs are recorded as "not counted". The count is kept per Lesson and criterion, so editing
+  the Check can't create a fresh first run, and an `errored` run never uses it up. Only the
+  results file is shown for held-out criteria, never raw output, so the test data doesn't
+  leak.
+- A failed Attempt sends the Lesson from feedback back to practicing, with a Next step that
+  names the fix.
 - Per-Lesson criteria allow Lessons with special needs (a GPU, a container) and project
   Topics where one codebase grows across Lessons.
 - Written work can be submitted as typed final answers or a photo of paper work.
@@ -259,17 +301,30 @@ logged to stdout.
 
 ## Security
 
-ADR-0009: Checks run only inside the agent's sandbox. The core treats agent input as
-untrusted: Topic files are accessed through Go's `os.Root` (Go 1.24+), IDs are validated,
-git runs with hooks disabled, and child processes never inherit the MCP server's stdin.
-Sources and caches stay local, except what the learner sends to NotebookLM.
+ADR-0009: Checks run only inside the agent's sandbox, and the core never runs a program that
+repository configuration names (see Checkpoints). The core treats agent input as untrusted:
+Topic files are accessed through Go's `os.Root` (Go 1.24+), IDs are validated, and child
+processes never inherit the MCP server's stdin. `.git/config` lives inside the Topic and the
+agent can edit it, so the guarantee is that the core executes nothing it names, not that the
+configuration is trusted. Sources and caches stay local, except what the learner sends to
+NotebookLM.
 
 ## Checkpoints
 
-Each Checkpoint is a git commit made by the core. It skips empty commits, refuses to commit
-during a merge, a rebase or on a detached HEAD, retries when an editor holds git's lock
-(`GIT_OPTIONAL_LOCKS=0`), and warns before committing large files. The default `.gitignore`
-covers data and model artefacts (Parquet, DuckDB, GGUF, safetensors, PyTorch checkpoints).
+Each Checkpoint is a git commit made by the core with low-level commands that cannot run
+programs named in the repository's configuration: `hash-object -w --no-filters`,
+`update-index --cacheinfo`, `write-tree`, `commit-tree --no-gpg-sign` and `update-ref`, run
+with `GIT_CONFIG_GLOBAL=/dev/null`, `GIT_CONFIG_NOSYSTEM=1`, `core.hooksPath=/dev/null` and
+`core.fsmonitor=false`. Diffs for the large-file warning use `--no-textconv --no-ext-diff`.
+This rules out hooks, clean and smudge filters, fsmonitor, textconv, external diff drivers
+and signing programs. The commit author is read from the learner's git configuration
+beforehand and passed explicitly. The cost is that Checkpoints store raw bytes, so
+line-ending conversion and Git LFS are not applied, which is acceptable for study Topics.
+
+A Checkpoint skips empty commits, refuses to commit during a merge, a rebase or on a
+detached HEAD, retries when an editor holds git's lock (`GIT_OPTIONAL_LOCKS=0`), and warns
+before committing large files. The default `.gitignore` covers data and model artefacts
+(Parquet, DuckDB, GGUF, safetensors, PyTorch checkpoints).
 
 ## Distribution and setup
 
@@ -340,29 +395,47 @@ web/                        dashboard, in a later point release
   and a temporary Study home.
 - Replay: the same History always yields the same state and Card schedule.
 - Crash injection: interrupt every write between the Event and the content update, and cut
-  an Event off mid-line, then check that replay and the next write repair it.
+  an Event off mid-line, then check that replay and the next write repair it. An Event that
+  was applied before a hand edit leaves the edit intact on reload.
 - Concurrency: the CLI and the MCP server writing to one Topic at once.
-- Sync: two machines' History files, merged by union in both directions, replay to the
-  same state, including interleaved Reviews of one Card and conflicting Revisions.
+- Sync: two machines' History files, merged by union in both directions, replay to the same
+  state with no learning record lost, including a Card created and reviewed on a machine
+  whose clock is ahead, both machines adding Cards to one Lesson, and conflicting Revisions.
+- Checkpoints: a Topic whose configuration routes files through a filter script, or sets
+  `commit.gpgsign` with a `gpg.program`, is checkpointed through MCP without running either.
+- Checks: passing and then changing the work or the criteria blocks completion; a completed
+  Lesson stays complete when later Lessons change shared code; the held-out journey from a
+  first failure through feedback to completion, and an `errored` run that leaves the counted
+  run unused.
 - The MCP server through the Go SDK's in-memory transport; the CLI by comparing `--json`
   output with saved expected files.
 - `study setup` against fake `claude` and `codex` executables.
-- One end-to-end test drives the real binary through a whole Lesson.
+- **The learner loop**, built right after the tracer bullet and the History engine: a
+  scripted agent drives the core over the in-memory MCP transport through teaching, an
+  Attempt that fails, feedback, a fix, completion, a Card Review, a crash during completion
+  and a resume, asserting on the History and the replayed state rather than on transcripts.
+  The same loop is run by hand with Claude Code and Codex before release.
 - The import against sanitised copies of the two v1 workspaces.
 
 ## Scope
 
 **v2.0**: the core (Topics, Syllabus with Forecasts, Triage and Revisions, Lessons with
-Break points and Next steps, Checks, Cards with drafts and Reviews, History with replay,
-Checkpoints, Assessment, Goal, Pace and Tasks, recording Level signals); the Library in Go;
-the CLI with terminal Reviews; the MCP server; the `lamplight` skill; the Claude Code plugin
-and `study setup` for Claude Code and Codex; Linux and macOS packages; `study import`.
+Break points and Next steps, Checks with Attempts and diagnostic held-out results, Cards
+with drafts and Reviews, History with replay, Checkpoints, Assessment, Goal, Pace and Tasks,
+recording Level signals); sync for one machine at a time; the Library in Go; the CLI with
+terminal Reviews; the MCP server; the `lamplight` skill; the Claude Code plugin and
+`study setup` for Claude Code and Codex; Linux and macOS packages; `study import`.
+
+**Order of work**: the tracer bullet, then the History engine (its file formats are settled
+before any real data is written), then a thin learner loop through every layer, then each
+module deepened.
 
 **Later**: the dashboard (Vue 3, TypeScript, shadcn-vue; home network with a login, or
 Tailscale; read-mostly first), Knowledge base plugins and the generic RAG plugin, Level
-suggestions, Windows packages, the Agent Plugins 1.0 manifest, setup for more agents, reading
-tables of contents from PDFs, retrieval from page images, the Journal, the FSRS optimizer,
-publishing to the MCP Registry.
+suggestions, held-out results that can block completion (with fresh, reviewed test sets for
+a retry), using one Topic on several machines at once, Windows packages, the Agent Plugins
+1.0 manifest, setup for more agents, reading tables of contents from PDFs, retrieval from
+page images, the Journal, the FSRS optimizer, publishing to the MCP Registry.
 
 ## Known risks
 
@@ -371,3 +444,5 @@ publishing to the MCP Registry.
 - Agents that read both `~/.agents/skills` and `~/.claude/skills` may list the skill twice.
 - The session-start `status` is automatic only where the agent supports hooks.
 - Comments in files the core rewrites are lost.
+- Sync assumes one machine at a time: concurrent edits are flagged, not merged.
+- Checkpoints store raw bytes, so line-ending conversion and Git LFS don't apply.
