@@ -3,6 +3,7 @@ package cli_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -236,4 +237,27 @@ func TestLibraryCommands(t *testing.T) {
 		})
 	}
 	golden(t, "library_search.txt", run(t, indexed(t), "library", "search", "quantum", "mechanics").stdout)
+}
+
+// failingWriter fails every write, like a closed pipe.
+type failingWriter struct{}
+
+func (failingWriter) Write([]byte) (int, error) { return 0, errors.New("broken pipe") }
+
+func TestLibraryOutputErrorsAreReported(t *testing.T) {
+	home := t.TempDir()
+	books := filepath.Join(home, "Books", "Programming")
+	if err := os.MkdirAll(books, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(books, "The_C_Programming_Language.pdf"), []byte("%PDF-1.4"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"library", "build", "Books"}, {"library", "search", "C"}} {
+		var stderr bytes.Buffer
+		code := cli.Run(context.Background(), args, strings.NewReader(""), failingWriter{}, &stderr, options(home, home))
+		if code == cli.ExitOK {
+			t.Errorf("study %s exited 0 although writing its output failed", strings.Join(args, " "))
+		}
+	}
 }

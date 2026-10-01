@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"io"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/mordor-forge/lamplight/v2/internal/core"
@@ -50,14 +51,16 @@ func writeProblems(w io.Writer, problems []core.TopicProblem) error {
 }
 
 func writeLibrarySummary(w io.Writer, s core.LibrarySummary) error {
-	fmt.Fprintf(w, "Indexed %d books from %s\n", s.Books, s.Root)
+	var b strings.Builder
+	fmt.Fprintf(&b, "Indexed %d books from %s\n", s.Books, s.Root)
 	if n := len(s.Skipped); n > 0 {
-		fmt.Fprintf(w, "Skipped %d entries that could not be read:\n", n)
+		fmt.Fprintf(&b, "Skipped %d entries that could not be read:\n", n)
 		for _, path := range s.Skipped {
-			fmt.Fprintf(w, "  %s\n", path)
+			fmt.Fprintf(&b, "  %s\n", path)
 		}
 	}
-	return nil
+	_, err := io.WriteString(w, b.String())
+	return err
 }
 
 func writeSearchResults(w io.Writer, results []library.Result) error {
@@ -65,8 +68,10 @@ func writeSearchResults(w io.Writer, results []library.Result) error {
 		_, err := fmt.Fprintln(w, "No books match.")
 		return err
 	}
+	var b strings.Builder
 	for _, r := range results {
-		fmt.Fprintf(w, "%s\n  %s · %s\n  %s\n", r.Title, r.Category, r.Format, r.Path)
+		fmt.Fprintf(&b, "%s\n  %s · %s\n  %s\n", r.Title, r.Category, r.Format, r.Path)
 	}
-	return nil
+	_, err := io.WriteString(w, b.String())
+	return err
 }
