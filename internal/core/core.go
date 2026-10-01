@@ -67,11 +67,12 @@ const (
 
 // Core is the Lamplight core for one Study home.
 type Core struct {
-	home  string
-	dir   string
-	now   func() time.Time
-	newID func() string
-	log   *slog.Logger
+	home   string
+	dir    string
+	getenv func(string) string
+	now    func() time.Time
+	newID  func() string
+	log    *slog.Logger
 	// gating reports whether an item approves or gates progress; see
 	// isGating.
 	gating func(item string) bool
@@ -101,7 +102,7 @@ func Open(opts Options) (*Core, error) {
 	if dir, err = filepath.Abs(dir); err != nil {
 		return nil, internalError("resolving the working directory", err)
 	}
-	c := &Core{home: home, dir: dir, now: opts.Now, newID: opts.NewID, log: opts.Logger, gating: isGating, crash: opts.Crash}
+	c := &Core{home: home, dir: dir, getenv: getenv, now: opts.Now, newID: opts.NewID, log: opts.Logger, gating: isGating, crash: opts.Crash}
 	if c.now == nil {
 		c.now = time.Now
 	}
@@ -116,6 +117,28 @@ func Open(opts Options) (*Core, error) {
 
 // Home returns the absolute path of the Study home.
 func (c *Core) Home() string { return c.home }
+
+// expandPath makes a path the learner or agent gave absolute: a leading ~
+// is the home folder, as in STUDY_HOME, and a relative path is relative to
+// the folder study started in.
+func (c *Core) expandPath(path string) string {
+	if path == "~" || strings.HasPrefix(path, "~/") {
+		home := ""
+		if c.getenv != nil {
+			home = c.getenv("HOME")
+		}
+		if home == "" {
+			home, _ = os.UserHomeDir()
+		}
+		if home != "" {
+			path = filepath.Join(home, strings.TrimPrefix(path, "~"))
+		}
+	}
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(c.dir, path)
+	}
+	return filepath.Clean(path)
+}
 
 // config is the global configuration file, config.toml.
 type config struct {

@@ -3,7 +3,9 @@ package cli
 import (
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/spf13/cobra"
 
@@ -26,7 +28,7 @@ func (a *app) sourceCommand() *cobra.Command {
 		Use:   "add <topic>",
 		Short: "Add a file or a web page as a Source of a Topic",
 		Long: "Add a file or a web page as a Source of a Topic. A file is hashed, never parsed, so it can be\n" +
-			"found again in the Library if it moves.",
+			"found again on any computer, inside the Topic or in the Library.",
 		Example: `  study source add c --file ~/Books/kernighan_ritchie.pdf
   study source add c --url https://go.dev/blog/context --title "Go Concurrency Patterns: Context"`,
 		Args: exactArgs(1),
@@ -56,7 +58,9 @@ func (a *app) sourceCommand() *cobra.Command {
 	var title, path, notebookID string
 	update := &cobra.Command{
 		Use:   "update <topic> <source>",
-		Short: "Change a Source's title or NotebookLM id, or record where its file is now",
+		Short: "Change a Source's title or NotebookLM id, or say where its file is on this computer",
+		Long: "Change a Source's title or NotebookLM id, which the History records, or say where its file is on\n" +
+			"this computer with --path, which is remembered here only.",
 		Example: `  study source update c kernighan-ritchie.k3f9a2 --notebooklm-id 7b1e
   study source update c kernighan-ritchie.k3f9a2 --path ~/Books/C/kr.pdf`,
 		Args: exactArgs(2),
@@ -85,13 +89,13 @@ func (a *app) sourceCommand() *cobra.Command {
 		},
 	}
 	update.Flags().StringVar(&title, "title", "", "the new title")
-	update.Flags().StringVar(&path, "path", "", "where the file is now; it must hold the same content")
+	update.Flags().StringVar(&path, "path", "", "where the file is on this computer; it must hold the same content")
 	update.Flags().StringVar(&notebookID, "notebooklm-id", "", "the Source's id in the NotebookLM notebook; empty removes it")
 	update.Flags().BoolVar(&changes.DryRun, "dry-run", false, "show the result without recording anything")
 
 	list := &cobra.Command{
 		Use:   "list <topic>",
-		Short: "List a Topic's Knowledge base and Sources, and check where each file is",
+		Short: "List a Topic's Knowledge base and Sources, and find each file on this computer",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := core.Open(a.opts)
@@ -150,7 +154,7 @@ func (a *app) evidenceCommand() *cobra.Command {
 			if a.json {
 				return a.writeJSON(envelope{OK: true, Data: res})
 			}
-			return writeEvidenceResult(a.out, res)
+			return writeEvidenceResult(a.out, res, "record")
 		},
 	}
 	record.Flags().StringVar(&spec.Lesson, "lesson", "", "the id of the Lesson that cites it (required)")
@@ -164,7 +168,32 @@ func (a *app) evidenceCommand() *cobra.Command {
 	}, cobra.ShellCompDirectiveNoFileComp))
 	record.Flags().BoolVar(&spec.DryRun, "dry-run", false, "show the Evidence that would be recorded without recording it")
 
-	var lesson string
+	var retractDryRun bool
+	retract := &cobra.Command{
+		Use:   "retract <topic> <evidence>",
+		Short: "Take back Evidence recorded by mistake",
+		Long: "Take back Evidence recorded by mistake. The retraction is recorded in the History, never\n" +
+			"deleted; study evidence list --all still shows the Evidence.",
+		Example: "  study evidence retract c k3f9a2b7qd",
+		Args:    exactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := core.Open(a.opts)
+			if err != nil {
+				return a.fail(err)
+			}
+			res, err := c.RetractEvidence(cmd.Context(), args[0], args[1], retractDryRun)
+			if err != nil {
+				return a.fail(err)
+			}
+			if a.json {
+				return a.writeJSON(envelope{OK: true, Data: res})
+			}
+			return writeEvidenceResult(a.out, res, "retract")
+		},
+	}
+	retract.Flags().BoolVar(&retractDryRun, "dry-run", false, "show the Evidence that would be retracted without recording anything")
+
+	var query core.EvidenceQuery
 	list := &cobra.Command{
 		Use:   "list <topic>",
 		Short: "List the Evidence recorded in a Topic",
@@ -174,7 +203,8 @@ func (a *app) evidenceCommand() *cobra.Command {
 			if err != nil {
 				return a.fail(err)
 			}
-			res, err := c.ListEvidence(cmd.Context(), args[0], lesson)
+			query.Topic = args[0]
+			res, err := c.ListEvidence(cmd.Context(), query)
 			if err != nil {
 				return a.fail(err)
 			}
@@ -184,8 +214,9 @@ func (a *app) evidenceCommand() *cobra.Command {
 			return writeEvidenceList(a.out, res)
 		},
 	}
-	list.Flags().StringVar(&lesson, "lesson", "", "only the Evidence one Lesson cites")
-	group.AddCommand(record, list)
+	list.Flags().StringVar(&query.Lesson, "lesson", "", "only the Evidence one Lesson cites")
+	list.Flags().BoolVar(&query.All, "all", false, "include retracted Evidence")
+	group.AddCommand(record, retract, list)
 	return group
 }
 
@@ -194,48 +225,67 @@ func describeKnowledgeBase(kb *core.KnowledgeBase) string {
 	case kb == nil:
 		return "not chosen yet, so none"
 	case kb.Notebook != "":
-		return kb.Kind + " (notebook " + kb.Notebook + ")"
+		return kb.Kind + " (notebook " + printable(kb.Notebook) + ")"
 	default:
 		return kb.Kind
 	}
 }
 
+// printable quotes text that came from the file system, such as a path, if
+// it holds characters that a terminal would interpret.
+func printable(s string) string {
+	if strings.ContainsFunc(s, func(r rune) bool { return unicode.IsControl(r) || unicode.Is(unicode.Bidi_Control, r) }) {
+		return strconv.QuoteToASCII(s)
+	}
+	return s
+}
+
 func writeSourceResult(w io.Writer, r core.SourceResult, verb string) error {
 	s := r.Source
+	id := styleAccent.Render(s.ID)
 	switch {
 	case !r.Changed:
 		fmt.Fprintf(w, "Source %s already has those values: nothing changed\n", s.ID)
 	case verb == "add" && r.DryRun:
-		fmt.Fprintf(w, "Would add Source %s to %s: %s\n", styleAccent.Render(s.ID), r.Topic, s.Title)
+		fmt.Fprintf(w, "Would add Source %s to %s: %s\n", id, r.Topic, printable(s.Title))
 	case verb == "add":
-		fmt.Fprintf(w, "Added Source %s to %s: %s\n", styleAccent.Render(s.ID), r.Topic, s.Title)
+		fmt.Fprintf(w, "Added Source %s to %s: %s\n", id, r.Topic, printable(s.Title))
 	case r.DryRun:
-		fmt.Fprintf(w, "Would update Source %s in %s: %s\n", styleAccent.Render(s.ID), r.Topic, s.Title)
+		fmt.Fprintf(w, "Would update Source %s in %s: %s\n", id, r.Topic, printable(s.Title))
 	default:
-		fmt.Fprintf(w, "Updated Source %s in %s: %s\n", styleAccent.Render(s.ID), r.Topic, s.Title)
+		fmt.Fprintf(w, "Updated Source %s in %s: %s\n", id, r.Topic, printable(s.Title))
 	}
-	writeSourceDetails(w, core.SourceStatus{Source: s})
+	writeSourceDetails(w, core.SourceStatus{Source: s, Path: r.Path})
 	return nil
 }
 
 func writeSourceDetails(w io.Writer, s core.SourceStatus) {
-	switch s.Kind {
-	case core.SourceFile:
-		fmt.Fprintf(w, "  %s\n", styleDim.Render(s.Path))
-	case core.SourceURL:
-		fmt.Fprintf(w, "  %s\n", styleDim.Render(s.URL))
+	switch {
+	case s.Kind == core.SourceURL:
+		fmt.Fprintf(w, "  %s\n", styleDim.Render(printable(s.URL)))
+	case s.Path != "":
+		fmt.Fprintf(w, "  %s\n", styleDim.Render(printable(s.Path)))
+	case s.TopicPath != "":
+		fmt.Fprintf(w, "  %s\n", styleDim.Render(printable(s.TopicPath)+" in the Topic"))
+	case s.FileName != "":
+		fmt.Fprintf(w, "  %s\n", styleDim.Render(printable(s.FileName)))
 	}
 	switch s.State {
-	case core.SourceMoved:
-		fmt.Fprintf(w, "  %s the file moved to %s; record it with study source update --path\n",
-			styleWarn.Render("!"), s.FoundAt)
 	case core.SourceChanged:
-		fmt.Fprintf(w, "  %s the file at this path is no longer the one added\n", styleWarn.Render("!"))
+		fmt.Fprintf(w, "  %s the file here is no longer the one added\n", styleWarn.Render("!"))
 	case core.SourceMissing:
-		fmt.Fprintf(w, "  %s the file is gone, and the Library has no copy of it\n", styleWarn.Render("!"))
+		fmt.Fprintf(w, "  %s not found on this computer: say where it is with study source update --path,\n"+
+			"    or add its folder to the Library with study library build\n", styleWarn.Render("!"))
+	case core.SourceUntracked:
+		fmt.Fprintf(w, "  %s added to %s by hand, so not a Source yet: add it with study source add\n",
+			styleWarn.Render("!"), "sources.jsonl")
 	}
 	if s.NotebookLMID != "" {
-		fmt.Fprintf(w, "  NotebookLM: %s\n", s.NotebookLMID)
+		note := ""
+		if s.NotebookLMStale {
+			note = styleWarn.Render(" (from another notebook)")
+		}
+		fmt.Fprintf(w, "  NotebookLM: %s%s\n", printable(s.NotebookLMID), note)
 	}
 }
 
@@ -249,18 +299,24 @@ func writeSourceList(w io.Writer, l core.SourceList) error {
 	}
 	fmt.Fprintf(&b, "\n%s\n", styleLabel.Render("Sources:"))
 	for _, s := range l.Sources {
-		fmt.Fprintf(&b, "%s  %s\n", styleAccent.Render(s.ID), s.Title)
+		fmt.Fprintf(&b, "%s  %s\n", styleAccent.Render(s.ID), printable(s.Title))
 		writeSourceDetails(&b, s)
 	}
 	_, err := io.WriteString(w, b.String())
 	return err
 }
 
-func writeEvidenceResult(w io.Writer, r core.EvidenceResult) error {
+func writeEvidenceResult(w io.Writer, r core.EvidenceResult, verb string) error {
 	e := r.Evidence
 	switch {
+	case !r.Changed && verb == "retract":
+		fmt.Fprintf(w, "Evidence %s was already retracted: nothing changed\n", e.ID)
 	case !r.Changed:
 		fmt.Fprintf(w, "Evidence %s was already recorded: nothing changed\n", e.ID)
+	case verb == "retract" && r.DryRun:
+		fmt.Fprintf(w, "Would retract Evidence %s for Lesson %s\n", styleAccent.Render(e.ID), e.Lesson)
+	case verb == "retract":
+		fmt.Fprintf(w, "Retracted Evidence %s for Lesson %s\n", styleAccent.Render(e.ID), e.Lesson)
 	case r.DryRun:
 		fmt.Fprintf(w, "Would record Evidence for Lesson %s from Source %s\n", e.Lesson, e.Source)
 	default:
@@ -280,7 +336,11 @@ func writeEvidenceList(w io.Writer, l core.EvidenceList) error {
 		if i > 0 {
 			b.WriteString("\n")
 		}
-		fmt.Fprintf(&b, "%s  Lesson %s, Source %s\n", styleAccent.Render(e.ID), e.Lesson, e.Source)
+		retracted := ""
+		if e.Retracted {
+			retracted = styleWarn.Render(" (retracted)")
+		}
+		fmt.Fprintf(&b, "%s  Lesson %s, Source %s%s\n", styleAccent.Render(e.ID), e.Lesson, e.Source, retracted)
 		writeQuote(&b, e)
 	}
 	_, err := io.WriteString(w, b.String())

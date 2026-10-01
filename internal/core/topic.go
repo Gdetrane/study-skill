@@ -262,6 +262,8 @@ func (c *Core) UpdateTopic(ctx context.Context, id string, changes TopicChanges)
 	changed := false
 	// The settings as the write finds them: after recovery, in a dry run too.
 	var current topicSettings
+	// applied is what the first Event changed, for an error after it.
+	var applied topicUpdatedData
 	if settingsChange {
 		ev, err := c.writeTopic(ctx, id, func(_ *replayed, view *topicView) (*change, error) {
 			data, exists, err := view.read(topicFile)
@@ -284,6 +286,7 @@ func (c *Core) UpdateTopic(ctx context.Context, id string, changes TopicChanges)
 			if diff.Title == nil && diff.Goal == nil {
 				return nil, nil
 			}
+			applied = diff
 			return &change{Type: eventTopicUpdated, Data: diff, Items: []string{topicFile}}, nil
 		}, changes.DryRun)
 		if err != nil {
@@ -295,8 +298,15 @@ func (c *Core) UpdateTopic(ctx context.Context, id string, changes TopicChanges)
 		ev, err := c.writeTopic(ctx, id, planKnowledgeBase(id, *kb), changes.DryRun)
 		if err != nil {
 			if changed {
+				what := "title and goal of " + id + " were"
+				switch {
+				case applied.Goal == nil:
+					what = "title of " + id + " was"
+				case applied.Title == nil:
+					what = "goal of " + id + " was"
+				}
 				return TopicUpdate{}, &Error{Code: CodeOf(err), Err: err, Message: fmt.Sprintf(
-					"the title and goal of %s were changed, but not its Knowledge base: %v", id, err)}
+					"the %s changed, but not its Knowledge base: %v", what, err)}
 			}
 			return TopicUpdate{}, err
 		}
@@ -333,9 +343,9 @@ func applyTopicCreated(ev event, item string, _ []byte, _ bool) ([]byte, bool, e
 		data, err := encodeTopicSettings(topicSettings{Title: d.Title, Goal: d.Goal})
 		return data, err == nil, err
 	case gitattributes:
-		// Both files hold one record per line, so a union merge keeps both
+		// These files hold one record per line, so a union merge keeps both
 		// machines' lines; replay and status flag what conflicts.
-		return []byte(historyFile + " merge=union\n" + cardsFile + " merge=union\n"), true, nil
+		return []byte(historyFile + " merge=union\n" + cardsFile + " merge=union\n" + sourcesFile + " merge=union\n"), true, nil
 	}
 	return nil, false, corruptf("Event %s (%s) cannot edit %s", ev.ID, ev.Type, item)
 }
@@ -498,9 +508,12 @@ func validateTopicID(id string) error {
 	return nil
 }
 
-// cleanText trims s and rejects control characters, which an agent could use
-// to inject terminal escape sequences into human output.
+// cleanText trims s and rejects invalid UTF-8 and control characters, which
+// an agent could use to inject terminal escape sequences into human output.
 func cleanText(field, s string, maxRunes int) (string, error) {
+	if !utf8.ValidString(s) {
+		return "", invalidf("the %s is not valid UTF-8 text", field)
+	}
 	s = strings.TrimSpace(s)
 	for _, r := range s {
 		if unicode.IsControl(r) {

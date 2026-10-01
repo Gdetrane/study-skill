@@ -31,21 +31,21 @@ func runStdin(t *testing.T, home, stdin string, args ...string) result {
 	return result{code: code, stdout: norm(stdout.String()), stderr: norm(stderr.String())}
 }
 
-// sourceID reads the Source id from a source add --json result.
-func sourceID(t *testing.T, home string, args ...string) string {
+// dataID reads an id from a --json result: data.<field>.id.
+func dataID(t *testing.T, home, field string, args ...string) string {
 	t.Helper()
 	r := run(t, home, args...)
 	var out struct {
-		Data struct {
-			Source struct {
-				ID string `json:"id"`
-			} `json:"source"`
-		} `json:"data"`
+		Data map[string]json.RawMessage `json:"data"`
 	}
-	if r.code != cli.ExitOK || json.Unmarshal([]byte(r.stdout), &out) != nil || out.Data.Source.ID == "" {
+	var entity struct {
+		ID string `json:"id"`
+	}
+	if r.code != cli.ExitOK || json.Unmarshal([]byte(r.stdout), &out) != nil ||
+		json.Unmarshal(out.Data[field], &entity) != nil || entity.ID == "" {
 		t.Fatalf("%v: exit %d, stdout %s, stderr %s", args, r.code, r.stdout, r.stderr)
 	}
-	return out.Data.Source.ID
+	return entity.ID
 }
 
 func TestKnowledgeCommands(t *testing.T) {
@@ -66,14 +66,13 @@ func TestKnowledgeCommands(t *testing.T) {
 		golden(t, name, r.stdout)
 	}
 
-	check("knowledge_base_set.json", cli.ExitOK, "",
-		"topic", "update", "linear-algebra", "--knowledge-base", "notebooklm", "--notebook", "nb-42", "--json")
+	// --notebook alone means a NotebookLM notebook.
+	check("knowledge_base_set.json", cli.ExitOK, "", "topic", "update", "linear-algebra", "--notebook", "nb-42", "--json")
 	check("knowledge_base_no_notebook.json", cli.ExitUsage, "",
 		"topic", "update", "linear-algebra", "--knowledge-base", "notebooklm", "--json")
-	check("knowledge_base_set.txt", cli.ExitOK, "", "topic", "update", "linear-algebra", "--knowledge-base", "none")
 
 	// A relative path is resolved against the folder study started in.
-	strang := sourceID(t, home, "source", "add", "linear-algebra", "--file", "Books/strang_linear_algebra.pdf", "--json")
+	strang := dataID(t, home, "source", "source", "add", "linear-algebra", "--file", "Books/strang_linear_algebra.pdf", "--json")
 	if !strings.HasPrefix(strang, "strang-linear-algebra.") {
 		t.Errorf("Source id = %q", strang)
 	}
@@ -84,18 +83,43 @@ func TestKnowledgeCommands(t *testing.T) {
 		"--url", "https://example.com/notes", "--dry-run", "--json")
 	check("source_update.json", cli.ExitOK, "", "source", "update", "linear-algebra", strang, "--notebooklm-id", "nlm-7", "--json")
 	check("source_list.json", cli.ExitOK, "", "source", "list", "linear-algebra", "--json")
+
+	// Hand edits, and a file this computer no longer has.
+	lines, err := os.OpenFile(filepath.Join(home, "linear-algebra", "sources.jsonl"), os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := lines.WriteString(`{"id":"by-hand.abc123","kind":"url","title":"By hand","url":"https://example.com/hand"}` + "\n"); err != nil {
+		t.Fatal(err)
+	}
+	lines.Close()
+	if err := os.Rename(book, book+".away"); err != nil {
+		t.Fatal(err)
+	}
 	check("source_list.txt", cli.ExitOK, "", "source", "list", "linear-algebra")
+	if err := os.Rename(book+".away", book); err != nil {
+		t.Fatal(err)
+	}
+	check("knowledge_base_set.txt", cli.ExitOK, "", "topic", "update", "linear-algebra", "--knowledge-base", "none")
+	check("source_update_no_notebook.json", cli.ExitError, "", "source", "update", "linear-algebra", strang,
+		"--notebooklm-id", "nlm-8", "--json")
 
 	check("evidence_record.json", cli.ExitOK, "", "evidence", "record", "linear-algebra", "--lesson", "elimination",
 		"--source", strang, "--quote", "Elimination produces an upper triangular system.",
 		"--location", "p. 46", "--location-from", "source", "--json")
 	check("evidence_record_stdin.txt", cli.ExitOK, "The pivots are on the diagonal.\nThey must not be zero.\n",
 		"evidence", "record", "linear-algebra", "--lesson", "pivots", "--source", strang, "--quote", "-")
+	mistake := dataID(t, home, "evidence", "evidence", "record", "linear-algebra", "--lesson", "pivots",
+		"--source", strang, "--quote", "A misquote.", "--json")
+	check("evidence_retract.txt", cli.ExitOK, "", "evidence", "retract", "linear-algebra", mistake)
+	check("evidence_retract_again.json", cli.ExitOK, "", "evidence", "retract", "linear-algebra", mistake, "--json")
 	check("evidence_list.txt", cli.ExitOK, "", "evidence", "list", "linear-algebra")
+	check("evidence_list_all.txt", cli.ExitOK, "", "evidence", "list", "linear-algebra", "--all")
 	check("evidence_list_lesson.json", cli.ExitOK, "", "evidence", "list", "linear-algebra", "--lesson", "pivots", "--json")
 	check("evidence_unknown_source.json", cli.ExitError, "", "evidence", "record", "linear-algebra",
 		"--lesson", "pivots", "--source", "nothing.abc123", "--quote", "x", "--json")
 	check("evidence_location_without_origin.json", cli.ExitUsage, "", "evidence", "record", "linear-algebra",
 		"--lesson", "pivots", "--source", strang, "--quote", "x", "--location", "p. 1", "--json")
 	check("source_no_subcommand.json", cli.ExitUsage, "", "source", "--json")
+	check("status_knowledge_base.txt", cli.ExitOK, "", "status")
 }

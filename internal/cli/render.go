@@ -124,7 +124,11 @@ func writeStatus(w io.Writer, s core.Status) error {
 		if s.ActiveTopic != nil && t.ID == s.ActiveTopic.ID {
 			id = styleAccent.Render(id)
 		}
-		fmt.Fprintf(&b, "  %s%s\n", id, t.Title)
+		kb := ""
+		if t.KnowledgeBase != nil {
+			kb = styleDim.Render("  Knowledge base: " + describeKnowledgeBase(t.KnowledgeBase))
+		}
+		fmt.Fprintf(&b, "  %s%s%s\n", id, t.Title, kb)
 	}
 	writeFlags(&b, s.Topics)
 	writeProblems(&b, s.Problems)

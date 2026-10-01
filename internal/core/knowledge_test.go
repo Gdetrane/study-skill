@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -9,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 // writeBook writes a file standing in for a book and returns its path.
@@ -52,8 +55,39 @@ func (m *machine) sources(t *testing.T) SourceList {
 	return list
 }
 
+func (m *machine) evidence(t *testing.T, q EvidenceQuery) []Evidence {
+	t.Helper()
+	q.Topic = "c"
+	list, err := m.ListEvidence(context.Background(), q)
+	if err != nil {
+		t.Fatalf("ListEvidence(%+v): %v", q, err)
+	}
+	return list.Evidence
+}
+
+// appendLine appends text to the file at path.
+func appendLine(t *testing.T, path, text string) {
+	t.Helper()
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if _, err := f.WriteString(text); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func readSourcesFile(t *testing.T, m *machine) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(m.home, "c", sourcesFile))
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
 func TestKnowledgeWithoutAKnowledgeBase(t *testing.T) {
-	ctx := context.Background()
 	m := newTopic(t)
 	topic, err := m.readTopic("c")
 	if err != nil || topic.KnowledgeBase != nil {
@@ -71,15 +105,19 @@ func TestKnowledgeWithoutAKnowledgeBase(t *testing.T) {
 		t.Errorf("topic.toml = %+v", settings)
 	}
 
-	book := writeBook(t, filepath.Join(t.TempDir(), "operating_systems.pdf"), "%PDF-1.4 processes and threads")
+	content := "%PDF-1.4 processes and threads"
+	book := writeBook(t, filepath.Join(t.TempDir(), "operating_systems.pdf"), content)
 	file := m.addSource(t, SourceSpec{File: book})
-	if file.Kind != SourceFile || file.Title != "Operating Systems" || file.Path != book ||
-		file.Size != int64(len("%PDF-1.4 processes and threads")) || !strings.HasPrefix(file.Hash, "sha256:") ||
+	if file.Kind != SourceFile || file.Title != "Operating Systems" || file.FileName != "operating_systems.pdf" ||
+		file.TopicPath != "" || file.Size != int64(len(content)) || !strings.HasPrefix(file.Hash, "sha256:") ||
 		!sourceIDPattern.MatchString(file.ID) || !strings.HasPrefix(file.ID, "operating-systems.") {
 		t.Errorf("file Source = %+v", file)
 	}
+	if strings.Contains(readSourcesFile(t, m), filepath.Dir(book)) {
+		t.Errorf("sources.jsonl holds this computer's path:\n%s", readSourcesFile(t, m))
+	}
 	page := m.addSource(t, SourceSpec{URL: "HTTPS://Go.dev/blog/context", Title: "Go Concurrency Patterns: Context"})
-	if page.Kind != SourceURL || page.URL != "https://go.dev/blog/context" || page.Path != "" || page.Hash != "" {
+	if page.Kind != SourceURL || page.URL != "https://go.dev/blog/context" || page.FileName != "" || page.Hash != "" {
 		t.Errorf("URL Source = %+v", page)
 	}
 
@@ -96,18 +134,16 @@ func TestKnowledgeWithoutAKnowledgeBase(t *testing.T) {
 	}
 	m.recordEvidence(t, EvidenceSpec{Lesson: "lesson-02", Source: page.ID, Quote: "Context carries deadlines."})
 
-	all, err := m.ListEvidence(ctx, "c", "")
-	if err != nil || len(all.Evidence) != 2 {
-		t.Fatalf("ListEvidence = %+v, %v", all, err)
+	if all := m.evidence(t, EvidenceQuery{}); len(all) != 2 {
+		t.Fatalf("ListEvidence = %+v", all)
 	}
-	one, err := m.ListEvidence(ctx, "c", "lesson-02")
-	if err != nil || len(one.Evidence) != 1 || one.Evidence[0].Source != page.ID || one.Lesson != "lesson-02" {
-		t.Errorf("ListEvidence(lesson-02) = %+v, %v", one, err)
+	if one := m.evidence(t, EvidenceQuery{Lesson: "lesson-02"}); len(one) != 1 || one[0].Source != page.ID {
+		t.Errorf("ListEvidence(lesson-02) = %+v", one)
 	}
 
 	list := m.sources(t)
 	if list.KnowledgeBase == nil || list.KnowledgeBase.Kind != KnowledgeBaseNone || len(list.Sources) != 2 ||
-		list.Sources[0].State != SourceOK || list.Sources[1].State != "" {
+		list.Sources[0].State != SourceOK || list.Sources[0].Path != book || list.Sources[1].State != "" {
 		t.Errorf("ListSources = %+v", list)
 	}
 
@@ -124,19 +160,21 @@ func TestKnowledgeWithoutAKnowledgeBase(t *testing.T) {
 func TestNotebookLMKnowledgeBase(t *testing.T) {
 	ctx := context.Background()
 	m := newTopic(t)
-	res := m.update(t, TopicChanges{Goal: ptr("Write a small shell"),
-		KnowledgeBase: &KnowledgeBase{Kind: KnowledgeBaseNotebookLM, Notebook: "nb-123"}})
+	page := m.addSource(t, SourceSpec{URL: "https://example.com/before"})
+	if _, err := m.UpdateSource(ctx, "c", page.ID, SourceChanges{NotebookLMID: ptr("nlm-0")}); CodeOf(err) != CodeFailedPrecondition {
+		t.Errorf("a NotebookLM id without a notebooklm Knowledge base: err = %v, want failed_precondition", err)
+	}
+
+	// A notebook alone means a NotebookLM notebook.
+	res := m.update(t, TopicChanges{Goal: ptr("Write a small shell"), KnowledgeBase: &KnowledgeBase{Notebook: "nb-123"}})
 	want := KnowledgeBase{Kind: KnowledgeBaseNotebookLM, Notebook: "nb-123"}
 	if !res.Changed || res.Topic.Goal != "Write a small shell" || res.Topic.KnowledgeBase == nil || *res.Topic.KnowledgeBase != want {
 		t.Fatalf("goal and Knowledge base = %+v", res)
 	}
-	if n := len(historyLines(t, filepath.Join(m.home, "c"))); n != 3 {
-		t.Errorf("History has %d lines, want creation plus two Events", n)
-	}
 
 	book := writeBook(t, filepath.Join(t.TempDir(), "unix.pdf"), "%PDF-1.4 fork and exec")
 	src := m.addSource(t, SourceSpec{File: book, Title: "The UNIX Programming Environment", NotebookLMID: "nlm-src-1"})
-	if src.NotebookLMID != "nlm-src-1" || src.Title != "The UNIX Programming Environment" {
+	if src.NotebookLMID != "nlm-src-1" || src.NotebookLMNotebook != "nb-123" || src.Title != "The UNIX Programming Environment" {
 		t.Errorf("Source = %+v", src)
 	}
 	update := func(changes SourceChanges) SourceResult {
@@ -153,21 +191,31 @@ func TestNotebookLMKnowledgeBase(t *testing.T) {
 	if r := update(SourceChanges{NotebookLMID: ptr("nlm-src-2")}); r.Changed {
 		t.Error("the same NotebookLM id recorded a change")
 	}
-	if r := update(SourceChanges{NotebookLMID: ptr(""), Title: ptr("UNIX")}); !r.Changed || r.Source.NotebookLMID != "" || r.Source.Title != "UNIX" {
+
+	// Moving to another notebook makes the Source's id stale until updated.
+	m.update(t, TopicChanges{KnowledgeBase: &KnowledgeBase{Kind: KnowledgeBaseNotebookLM, Notebook: "nb-456"}})
+	if got := m.sources(t).Sources[1]; !got.NotebookLMStale || got.NotebookLMNotebook != "nb-123" {
+		t.Errorf("after moving to another notebook: %+v, want a stale NotebookLM id", got)
+	}
+	if r := update(SourceChanges{NotebookLMID: ptr("nlm-src-2")}); !r.Changed || r.Source.NotebookLMNotebook != "nb-456" {
+		t.Errorf("the same id in the new notebook = %+v", r)
+	}
+	if got := m.sources(t).Sources[1]; got.NotebookLMStale {
+		t.Errorf("the id was recorded for the new notebook, yet %+v", got)
+	}
+	if r := update(SourceChanges{NotebookLMID: ptr(""), Title: ptr("UNIX")}); !r.Changed || r.Source.NotebookLMID != "" ||
+		r.Source.NotebookLMNotebook != "" || r.Source.Title != "UNIX" {
 		t.Errorf("removing the NotebookLM id = %+v", r)
 	}
-	if got := m.sources(t).Sources[0]; got.NotebookLMID != "" || got.Title != "UNIX" || got.Hash != src.Hash {
-		t.Errorf("listed Source = %+v", got)
-	}
 	m.recordEvidence(t, EvidenceSpec{Lesson: "processes", Source: src.ID, Quote: "fork creates a process.",
-		Location: "Source 1, citation 3", LocationFrom: LocationFromKnowledgeBase})
+		Location: "citation 3", LocationFrom: LocationFromKnowledgeBase})
 
 	// Switching to none drops the notebook along with its kind.
 	res = m.update(t, TopicChanges{KnowledgeBase: &KnowledgeBase{Kind: KnowledgeBaseNone}})
 	if !res.Changed || *res.Topic.KnowledgeBase != (KnowledgeBase{Kind: KnowledgeBaseNone}) {
 		t.Errorf("switching to none = %+v", res)
 	}
-	if data, _ := os.ReadFile(filepath.Join(m.home, "c", topicFile)); strings.Contains(string(data), "nb-123") {
+	if data, _ := os.ReadFile(filepath.Join(m.home, "c", topicFile)); strings.Contains(string(data), "nb-456") {
 		t.Errorf("topic.toml still names the notebook:\n%s", data)
 	}
 	checkChain(t, filepath.Join(m.home, "c"))
@@ -177,10 +225,12 @@ func TestKnowledgeBaseValidation(t *testing.T) {
 	ctx := context.Background()
 	m := newTopic(t)
 	for _, kb := range []KnowledgeBase{
+		{},
 		{Kind: KnowledgeBaseNotebookLM},
 		{Kind: KnowledgeBaseNone, Notebook: "nb"},
 		{Kind: "rag"},
 		{Kind: KnowledgeBaseNotebookLM, Notebook: "two words"},
+		{Kind: KnowledgeBaseNotebookLM, Notebook: "nb\xff"},
 	} {
 		if _, err := m.UpdateTopic(ctx, "c", TopicChanges{KnowledgeBase: &kb}); CodeOf(err) != CodeInvalidArgument {
 			t.Errorf("%+v: err = %v, want invalid_argument", kb, err)
@@ -197,6 +247,30 @@ func TestKnowledgeBaseValidation(t *testing.T) {
 	}
 	if settings := readSettings(t, filepath.Join(m.home, "c")); settings.Title != "C" || knowledgeBaseOf(settings) != nil {
 		t.Errorf("a dry run changed topic.toml: %+v", settings)
+	}
+}
+
+// Keys of [knowledge_base] this version does not know stay while the kind
+// stays, and go with it when the kind changes.
+func TestKnowledgeBaseKeepsUnknownKeys(t *testing.T) {
+	m := newTopic(t)
+	m.update(t, TopicChanges{KnowledgeBase: &KnowledgeBase{Notebook: "nb1"}})
+	path := filepath.Join(m.home, "c", topicFile)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// [knowledge_base] is the last table, so the key lands inside it.
+	if err := os.WriteFile(path, append(data, "account = \"ada@example.com\"\n"...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m.update(t, TopicChanges{KnowledgeBase: &KnowledgeBase{Notebook: "nb2"}})
+	if data, _ := os.ReadFile(path); !strings.Contains(string(data), "ada@example.com") || !strings.Contains(string(data), "nb2") {
+		t.Errorf("same kind, new notebook:\n%s", data)
+	}
+	m.update(t, TopicChanges{KnowledgeBase: &KnowledgeBase{Kind: KnowledgeBaseNone}})
+	if data, _ := os.ReadFile(path); strings.Contains(string(data), "ada@example.com") {
+		t.Errorf("a new kind kept the old kind's settings:\n%s", data)
 	}
 }
 
@@ -221,11 +295,17 @@ func TestSourceValidation(t *testing.T) {
 		{"ftp", SourceSpec{Topic: "c", URL: "ftp://example.com/book.pdf"}, CodeInvalidArgument},
 		{"no scheme", SourceSpec{Topic: "c", URL: "example.com/page"}, CodeInvalidArgument},
 		{"space", SourceSpec{Topic: "c", URL: "https://example.com/a page"}, CodeInvalidArgument},
+		{"credentials", SourceSpec{Topic: "c", URL: "https://user:secret@example.com/x"}, CodeInvalidArgument},
+		{"invalid UTF-8 title", SourceSpec{Topic: "c", URL: "https://example.com/u", Title: "bad \xff"}, CodeInvalidArgument},
 		{"same content", SourceSpec{Topic: "c", File: copyOfBook}, CodeAlreadyExists},
-		{"same URL", SourceSpec{Topic: "c", URL: "https://EXAMPLE.com/page"}, CodeAlreadyExists},
+		{"same URL", SourceSpec{Topic: "c", URL: "https://EXAMPLE.com:443/page"}, CodeAlreadyExists},
 		{"unknown Topic", SourceSpec{Topic: "go", URL: "https://example.com/other"}, CodeNotFound},
 		{"bad NotebookLM id", SourceSpec{Topic: "c", URL: "https://example.com/other", NotebookLMID: "a b"}, CodeInvalidArgument},
+		{"inside .git", SourceSpec{Topic: "c", File: filepath.Join(m.home, "c", ".git", "HEAD")}, CodeInvalidArgument},
 	} {
+		if tc.name == "inside .git" {
+			writeBook(t, tc.spec.File, "ref: refs/heads/main\n")
+		}
 		_, err := m.AddSource(ctx, tc.spec)
 		if CodeOf(err) != tc.want {
 			t.Errorf("%s: err = %v, want %s", tc.name, err, tc.want)
@@ -252,9 +332,11 @@ func TestSourceValidation(t *testing.T) {
 	}{
 		{"bad id", "Not An Id", SourceChanges{Title: ptr("x")}, CodeInvalidArgument},
 		{"unknown", "nothing.abc123", SourceChanges{Title: ptr("x")}, CodeNotFound},
+		{"unknown, path only", "nothing.abc123", SourceChanges{Path: &book}, CodeNotFound},
 		{"nothing", src.ID, SourceChanges{}, CodeInvalidArgument},
 		{"empty title", src.ID, SourceChanges{Title: ptr(" ")}, CodeInvalidArgument},
 		{"path of a URL", page.ID, SourceChanges{Path: &book}, CodeInvalidArgument},
+		{"another file", src.ID, SourceChanges{Path: ptr(writeBook(t, filepath.Join(dir, "b.pdf"), "%PDF-1.4 B"))}, CodeInvalidArgument},
 	} {
 		if _, err := m.UpdateSource(ctx, "c", tc.id, tc.changes); CodeOf(err) != tc.want {
 			t.Errorf("update %s: err = %v, want %s", tc.name, err, tc.want)
@@ -262,7 +344,176 @@ func TestSourceValidation(t *testing.T) {
 	}
 }
 
-func TestAMovedSourceIsFoundAgainByItsContent(t *testing.T) {
+// Paths starting with ~/ are in the home folder, as in STUDY_HOME.
+func TestSourcePathsExpandTheHomeFolder(t *testing.T) {
+	m := newTopic(t) // its HOME is the Study home
+	book := writeBook(t, filepath.Join(m.home, "Books", "sicp.pdf"), "%PDF-1.4 SICP")
+	res, err := m.AddSource(context.Background(), SourceSpec{Topic: "c", File: "~/Books/sicp.pdf"})
+	if err != nil || res.Path != book {
+		t.Errorf("AddSource(~/Books/sicp.pdf) = %+v, %v; want %s", res, err, book)
+	}
+}
+
+// The History, not sources.jsonl, decides which Sources exist.
+func TestTheHistoryDecidesWhichSourcesExist(t *testing.T) {
+	ctx := context.Background()
+	m := newTopic(t)
+	m.addSource(t, SourceSpec{URL: "https://example.com/a"})
+	path := filepath.Join(m.home, "c", sourcesFile)
+	appendLine(t, path, `{"id":"hand.abc123","kind":"url","title":"Hand\u001b[2J","url":"https://example.com/hand"}`+"\n")
+
+	list := m.sources(t)
+	if len(list.Sources) != 2 || list.Sources[1].State != SourceUntracked || list.Sources[1].ID != "hand.abc123" ||
+		strings.ContainsFunc(list.Sources[1].Title, unicode.IsControl) {
+		t.Fatalf("ListSources = %+v, want the hand-added line untracked", list.Sources)
+	}
+	if _, err := m.UpdateSource(ctx, "c", "hand.abc123", SourceChanges{Title: ptr("Renamed")}); CodeOf(err) != CodeNotFound ||
+		!strings.Contains(err.Error(), "by hand") {
+		t.Errorf("updating an untracked line: err = %v, want not_found explaining it", err)
+	}
+	if _, err := m.RecordEvidence(ctx, EvidenceSpec{Topic: "c", Lesson: "l", Source: "hand.abc123", Quote: "q"}); CodeOf(err) != CodeNotFound {
+		t.Errorf("Evidence from an untracked line: err = %v, want not_found", err)
+	}
+	// Adding the same page records it as a Source of its own.
+	added := m.addSource(t, SourceSpec{URL: "https://example.com/hand"})
+	if list := m.sources(t); len(list.Sources) != 3 || list.Sources[1].ID != added.ID || list.Sources[1].State != "" {
+		t.Errorf("after adding it properly: %+v", list.Sources)
+	}
+}
+
+// Recovery finishes an Event that replay holds, such as an update whose
+// Source has not arrived yet: it has no recorded version to be superseded
+// by.
+func TestRecoveryFinishesAHeldEvent(t *testing.T) {
+	ctx := context.Background()
+	m := newTopic(t)
+	src := m.addSource(t, SourceSpec{URL: "https://example.com/a"})
+	m.crash = crashOnce(crashAfterEvent)
+	if _, err := m.UpdateSource(ctx, "c", src.ID, SourceChanges{Title: ptr("Renamed")}); !errors.Is(err, errCrash) {
+		t.Fatalf("err = %v", err)
+	}
+	m.crash = nil
+	// Without its source.added, replay holds the source.updated.
+	dir := filepath.Join(m.home, "c")
+	var kept []string
+	for _, line := range historyLines(t, dir) {
+		if !strings.Contains(line, `"`+eventSourceAdded+`"`) {
+			kept = append(kept, line)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dir, historyFile), []byte(strings.Join(kept, "")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if kinds := flagKinds(replayFolder(t, dir).flags); !slices.Equal(kinds, []string{FlagHeldEvent}) {
+		t.Fatalf("flags = %v, want the update held", kinds)
+	}
+	m.update(t, TopicChanges{Goal: ptr("G")}) // the next write finishes the interrupted one
+	if data := readSourcesFile(t, m); !strings.Contains(data, `"title":"Renamed"`) {
+		t.Errorf("recovery dropped the held update:\n%s\nlogs:\n%s", data, m.logs)
+	}
+}
+
+// A crash at any point of any Knowledge Event is finished by the next
+// write, and a dry run agrees with the real run in the meantime.
+func TestCrashesInKnowledgeWrites(t *testing.T) {
+	ctx := context.Background()
+	type op struct {
+		name  string
+		setup func(t *testing.T, m *machine) (state string)
+		run   func(m *machine, state string, dryRun bool) (changed bool, err error)
+		check func(t *testing.T, m *machine)
+	}
+	ops := []op{
+		{"knowledge_base.set", func(*testing.T, *machine) string { return "" },
+			func(m *machine, _ string, dry bool) (bool, error) {
+				res, err := m.UpdateTopic(ctx, "c", TopicChanges{KnowledgeBase: &KnowledgeBase{Notebook: "nb"}, DryRun: dry})
+				return res.Changed, err
+			},
+			func(t *testing.T, m *machine) {
+				if kb := knowledgeBaseOf(readSettings(t, filepath.Join(m.home, "c"))); kb == nil || kb.Notebook != "nb" {
+					t.Errorf("Knowledge base = %+v", kb)
+				}
+			}},
+		{"source.added", func(*testing.T, *machine) string { return "" },
+			func(m *machine, _ string, dry bool) (bool, error) {
+				res, err := m.AddSource(ctx, SourceSpec{Topic: "c", URL: "https://example.com/a", DryRun: dry})
+				return res.Changed, err
+			},
+			func(t *testing.T, m *machine) {
+				if n := strings.Count(readSourcesFile(t, m), "\n"); n != 1 || len(m.sources(t).Sources) != 1 {
+					t.Errorf("sources.jsonl has %d lines, the History %d Sources", n, len(m.sources(t).Sources))
+				}
+			}},
+		{"source.updated", func(t *testing.T, m *machine) string {
+			return m.addSource(t, SourceSpec{URL: "https://example.com/a"}).ID
+		},
+			func(m *machine, id string, dry bool) (bool, error) {
+				res, err := m.UpdateSource(ctx, "c", id, SourceChanges{Title: ptr("New"), DryRun: dry})
+				return res.Changed, err
+			},
+			func(t *testing.T, m *machine) {
+				if !strings.Contains(readSourcesFile(t, m), `"title":"New"`) || m.sources(t).Sources[0].Title != "New" {
+					t.Errorf("sources.jsonl = %s", readSourcesFile(t, m))
+				}
+			}},
+		{"evidence.recorded", func(t *testing.T, m *machine) string {
+			return m.addSource(t, SourceSpec{URL: "https://example.com/a"}).ID
+		},
+			func(m *machine, id string, dry bool) (bool, error) {
+				res, err := m.RecordEvidence(ctx, EvidenceSpec{Topic: "c", Lesson: "l", Source: id, Quote: "q", DryRun: dry})
+				return res.Changed, err
+			},
+			func(t *testing.T, m *machine) {
+				if got := m.evidence(t, EvidenceQuery{}); len(got) != 1 {
+					t.Errorf("Evidence = %+v", got)
+				}
+			}},
+		{"evidence.retracted", func(t *testing.T, m *machine) string {
+			id := m.addSource(t, SourceSpec{URL: "https://example.com/a"}).ID
+			return m.recordEvidence(t, EvidenceSpec{Lesson: "l", Source: id, Quote: "q"}).Evidence.ID
+		},
+			func(m *machine, id string, dry bool) (bool, error) {
+				res, err := m.RetractEvidence(ctx, "c", id, dry)
+				return res.Changed, err
+			},
+			func(t *testing.T, m *machine) {
+				if got := m.evidence(t, EvidenceQuery{}); len(got) != 0 {
+					t.Errorf("Evidence after retracting = %+v", got)
+				}
+			}},
+	}
+	for _, o := range ops {
+		for _, point := range []string{crashAfterIntent, crashAfterEvent, crashAfterItem, crashBeforeClear} {
+			t.Run(o.name+"/"+point, func(t *testing.T) {
+				m := newTopic(t)
+				state := o.setup(t, m)
+				m.crash = crashOnce(point)
+				_, err := o.run(m, state, false)
+				m.crash = nil
+				if err != nil && !errors.Is(err, errCrash) {
+					t.Fatalf("the write failed: %v", err)
+				}
+				dryChanged, dryErr := o.run(m, state, true)
+				realChanged, realErr := o.run(m, state, false)
+				if CodeOf(dryErr) != CodeOf(realErr) || (dryErr == nil) != (realErr == nil) || dryChanged != realChanged {
+					t.Errorf("dry run (%v, %v) disagrees with the real run (%v, %v)", dryChanged, dryErr, realChanged, realErr)
+				}
+				if hasIntentFile(t, m) {
+					t.Error("the intent marker survived the next write")
+				}
+				if s := replayFolder(t, filepath.Join(m.home, "c")); len(s.flags) != 0 {
+					t.Errorf("flags = %+v", s.flags)
+				}
+				o.check(t, m)
+			})
+		}
+	}
+}
+
+// A file Source is found on this computer, inside the Topic, where it was
+// last found, or in the Library by its content; finding it records nothing
+// in the History.
+func TestFileSourcesAreFoundOnThisComputer(t *testing.T) {
 	ctx := context.Background()
 	m := newTopic(t)
 	books := filepath.Join(t.TempDir(), "Books")
@@ -271,9 +522,10 @@ func TestAMovedSourceIsFoundAgainByItsContent(t *testing.T) {
 		t.Fatal(err)
 	}
 	src := m.addSource(t, SourceSpec{File: original})
-	if src.Title != "Modern Operating Systems" {
-		t.Errorf("title = %q, want the Library's", src.Title)
+	if src.Title != "Modern Operating Systems" || src.FileName != "modern_operating_systems.pdf" {
+		t.Errorf("Source = %+v, want the Library's title", src)
 	}
+	events := len(historyLines(t, filepath.Join(m.home, "c")))
 
 	moved := filepath.Join(books, "Systems", "tanenbaum.pdf")
 	if err := os.MkdirAll(filepath.Dir(moved), 0o755); err != nil {
@@ -282,77 +534,50 @@ func TestAMovedSourceIsFoundAgainByItsContent(t *testing.T) {
 	if err := os.Rename(original, moved); err != nil {
 		t.Fatal(err)
 	}
-	if got := m.sources(t).Sources[0]; got.State != SourceMissing {
+	if got := m.sources(t).Sources[0]; got.State != SourceMissing || got.Path != "" {
 		t.Errorf("before the Library is rebuilt: %+v, want missing", got)
 	}
 	if _, err := m.BuildLibrary(ctx, books); err != nil {
 		t.Fatal(err)
 	}
-	got := m.sources(t).Sources[0]
-	if got.State != SourceMoved || got.FoundAt != moved {
-		t.Fatalf("after the Library is rebuilt: %+v, want moved to %s", got, moved)
+	if got := m.sources(t).Sources[0]; got.State != SourceOK || got.Path != moved {
+		t.Fatalf("after the Library is rebuilt: %+v, want ok at %s", got, moved)
 	}
-
-	other := writeBook(t, filepath.Join(books, "other.pdf"), "%PDF-1.4 another book")
-	if _, err := m.UpdateSource(ctx, "c", src.ID, SourceChanges{Path: &other}); CodeOf(err) != CodeInvalidArgument {
-		t.Errorf("recording a different file: err = %v, want invalid_argument", err)
+	if n := len(historyLines(t, filepath.Join(m.home, "c"))); n != events {
+		t.Errorf("finding the file recorded %d Events", n-events)
 	}
-	res, err := m.UpdateSource(ctx, "c", src.ID, SourceChanges{Path: &got.FoundAt})
-	if err != nil || !res.Changed || res.Source.Path != moved {
-		t.Fatalf("recording the move = %+v, %v", res, err)
+	// The place found is remembered: the Library no longer needs to know it.
+	if err := os.Remove(filepath.Join(m.home, libraryIndex)); err != nil {
+		t.Fatal(err)
 	}
 	if got := m.sources(t).Sources[0]; got.State != SourceOK || got.Path != moved {
-		t.Errorf("after the move is recorded: %+v", got)
+		t.Errorf("without the Library: %+v, want ok where it was last found", got)
 	}
 
-	writeBook(t, moved, "%PDF-1.4 Tanenbaum, second edition")
-	if got := m.sources(t).Sources[0]; got.State != SourceChanged {
-		t.Errorf("after the file changed: %+v, want changed", got)
+	// A rewrite of the same size is noticed by its modification time.
+	writeBook(t, moved, "%PDF-1.4 Tanenbauz")
+	later := time.Now().Add(time.Hour)
+	if err := os.Chtimes(moved, later, later); err != nil {
+		t.Fatal(err)
 	}
-}
-
-func TestEvidenceValidation(t *testing.T) {
-	ctx := context.Background()
-	m := newTopic(t)
-	src := m.addSource(t, SourceSpec{URL: "https://example.com/page"})
-	ok := EvidenceSpec{Topic: "c", Lesson: "lesson-01", Source: src.ID, Quote: "A quote."}
-	with := func(edit func(*EvidenceSpec)) EvidenceSpec {
-		spec := ok
-		edit(&spec)
-		return spec
-	}
-	for _, tc := range []struct {
-		name string
-		spec EvidenceSpec
-		want ErrorCode
-	}{
-		{"no Lesson", with(func(s *EvidenceSpec) { s.Lesson = "" }), CodeInvalidArgument},
-		{"bad Lesson", with(func(s *EvidenceSpec) { s.Lesson = "Lesson 1" }), CodeInvalidArgument},
-		{"bad Source id", with(func(s *EvidenceSpec) { s.Source = "x" }), CodeInvalidArgument},
-		{"unknown Source", with(func(s *EvidenceSpec) { s.Source = "nothing.abc123" }), CodeNotFound},
-		{"no quote", with(func(s *EvidenceSpec) { s.Quote = "  \n " }), CodeInvalidArgument},
-		{"control character", with(func(s *EvidenceSpec) { s.Quote = "a\x1b[2Jb" }), CodeInvalidArgument},
-		{"long quote", with(func(s *EvidenceSpec) { s.Quote = strings.Repeat("a", maxQuoteRunes+1) }), CodeInvalidArgument},
-		{"location without its origin", with(func(s *EvidenceSpec) { s.Location = "p. 1" }), CodeInvalidArgument},
-		{"origin without a location", with(func(s *EvidenceSpec) { s.LocationFrom = LocationFromSource }), CodeInvalidArgument},
-		{"unknown origin", with(func(s *EvidenceSpec) { s.Location, s.LocationFrom = "p. 1", "memory" }), CodeInvalidArgument},
-		{"unknown Topic", with(func(s *EvidenceSpec) { s.Topic = "go" }), CodeNotFound},
-	} {
-		if _, err := m.RecordEvidence(ctx, tc.spec); CodeOf(err) != tc.want {
-			t.Errorf("%s: err = %v, want %s", tc.name, err, tc.want)
-		}
-	}
-	if _, err := m.ListEvidence(ctx, "c", "Lesson 1"); CodeOf(err) != CodeInvalidArgument {
-		t.Errorf("listing a bad Lesson id: err = %v", err)
+	if got := m.sources(t).Sources[0]; got.State != SourceChanged || got.Path != moved {
+		t.Errorf("after a same-size rewrite: %+v, want changed", got)
 	}
 
-	before := historyLines(t, filepath.Join(m.home, "c"))
-	dry, err := m.RecordEvidence(ctx, with(func(s *EvidenceSpec) { s.DryRun = true }))
-	if err != nil || !dry.Changed || !dry.DryRun || dry.Evidence.Quote != "A quote." {
-		t.Errorf("dry run = %+v, %v", dry, err)
+	// Saying where it is records it on this computer only.
+	elsewhere := writeBook(t, filepath.Join(t.TempDir(), "kept.pdf"), "%PDF-1.4 Tanenbaum")
+	res, err := m.UpdateSource(ctx, "c", src.ID, SourceChanges{Path: &elsewhere})
+	if err != nil || !res.Changed || res.Path != elsewhere {
+		t.Fatalf("recording the path = %+v, %v", res, err)
 	}
-	if after := historyLines(t, filepath.Join(m.home, "c")); !slices.Equal(before, after) {
-		t.Error("a dry run recorded Evidence")
+	if got := m.sources(t).Sources[0]; got.State != SourceOK || got.Path != elsewhere {
+		t.Errorf("after recording the path: %+v", got)
+	}
+	if n := len(historyLines(t, filepath.Join(m.home, "c"))); n != events {
+		t.Errorf("recording a path recorded %d Events", n-events)
+	}
+	if strings.Contains(readSourcesFile(t, m), elsewhere) {
+		t.Error("sources.jsonl holds this computer's path")
 	}
 }
 
@@ -398,23 +623,303 @@ func TestSourcesAndEvidenceFromTwoMachines(t *testing.T) {
 	}
 }
 
+// Sources travel between machines through git: the Topic's files and the
+// History merge, a Source inside the Topic is found in the clone, one
+// outside is found in the other machine's Library, and finding files
+// records no Events, so nothing conflicts.
+func TestSourcesSyncThroughGit(t *testing.T) {
+	gitIdentity(t)
+	ctx := context.Background()
+	a := newMachine(t, t.TempDir(), "a", t0)
+	if _, err := a.CreateTopic(ctx, TopicSpec{Title: "C", ID: "c"}); err != nil {
+		t.Fatal(err)
+	}
+	dirA := filepath.Join(a.home, "c")
+	paper := writeBook(t, filepath.Join(dirA, "notes", "paper.pdf"), "%PDF-1.4 paper")
+	inTopic := a.addSource(t, SourceSpec{File: paper})
+	if inTopic.TopicPath != "notes/paper.pdf" || inTopic.FileName != "" {
+		t.Fatalf("a Source inside the Topic = %+v", inTopic)
+	}
+	booksA := filepath.Join(t.TempDir(), "Books")
+	kr := writeBook(t, filepath.Join(booksA, "kr.pdf"), "%PDF-1.4 K&R")
+	if _, err := a.BuildLibrary(ctx, booksA); err != nil {
+		t.Fatal(err)
+	}
+	outside := a.addSource(t, SourceSpec{File: kr})
+	takeCheckpoint(t, a)
+
+	b := newMachine(t, t.TempDir(), "b", t0.Add(time.Minute))
+	git(t, b.home, "clone", "-q", dirA, "c")
+	dirB := filepath.Join(b.home, "c")
+	library := filepath.Join(t.TempDir(), "Library")
+	onB := writeBook(t, filepath.Join(library, "C", "the_c_book.pdf"), "%PDF-1.4 K&R")
+	if _, err := b.BuildLibrary(ctx, library); err != nil {
+		t.Fatal(err)
+	}
+	before := historyLines(t, dirB)
+	list := b.sources(t)
+	if got := list.Sources[0]; got.ID != inTopic.ID || got.State != SourceOK || got.Path != filepath.Join(dirB, "notes", "paper.pdf") {
+		t.Errorf("the Source inside the Topic on B: %+v", got)
+	}
+	if got := list.Sources[1]; got.ID != outside.ID || got.State != SourceOK || got.Path != onB {
+		t.Errorf("the Source in B's Library: %+v", got)
+	}
+	if after := historyLines(t, dirB); !slices.Equal(before, after) || strings.TrimSpace(git(t, dirB, "status", "--porcelain")) != "" {
+		t.Error("finding Sources on B changed the Topic")
+	}
+	a.sources(t) // A finds its files too, recording nothing
+
+	a.addSource(t, SourceSpec{URL: "https://example.com/from-a"})
+	takeCheckpoint(t, a)
+	b.addSource(t, SourceSpec{URL: "https://example.com/from-b"})
+	takeCheckpoint(t, b)
+	git(t, dirB, "pull", "-q", "--no-rebase", "--no-edit", dirA, "main")
+	if list := b.sources(t); len(list.Sources) != 4 {
+		t.Errorf("after the merge B has %d Sources: %+v", len(list.Sources), list.Sources)
+	}
+	if n := strings.Count(readSourcesFile(t, b), "\n"); n != 4 {
+		t.Errorf("the merged sources.jsonl has %d lines:\n%s", n, readSourcesFile(t, b))
+	}
+	if topic, err := b.readTopic("c"); err != nil || len(topic.Flags) != 0 {
+		t.Errorf("after the merge: %+v, %v", topic.Flags, err)
+	}
+}
+
+// A union merge of one Source edited on two machines leaves two lines for
+// it: the Topic stays usable, the lines are flagged, and the next change to
+// the Source leaves one line.
+func TestDuplicateSourceLinesAreFlagged(t *testing.T) {
+	m := newTopic(t)
+	src := m.addSource(t, SourceSpec{URL: "https://example.com/a"})
+	appendLine(t, filepath.Join(m.home, "c", sourcesFile), `{"id":"`+src.ID+`","kind":"url","title":"Edited elsewhere","url":"https://example.com/a"}`+"\n")
+	topic, err := m.readTopic("c")
+	if err != nil || len(topic.Flags) != 1 || topic.Flags[0].Kind != FlagConflict || topic.Flags[0].Item != sourceItem(src.ID) {
+		t.Fatalf("flags = %+v, %v; want a conflict on the Source", topic.Flags, err)
+	}
+	if got := m.sources(t).Sources; len(got) != 1 || got[0].Title != src.Title {
+		t.Errorf("ListSources = %+v, want the History's version", got)
+	}
+	if _, err := m.UpdateSource(context.Background(), "c", src.ID, SourceChanges{Title: ptr("Settled")}); err != nil {
+		t.Fatal(err)
+	}
+	if data := readSourcesFile(t, m); strings.Count(data, src.ID) != 1 || !strings.Contains(data, "Settled") {
+		t.Errorf("sources.jsonl after the next change:\n%s", data)
+	}
+	if topic, _ := m.readTopic("c"); len(topic.Flags) != 0 {
+		t.Errorf("flags after the next change: %+v", topic.Flags)
+	}
+}
+
+func TestEvidenceValidation(t *testing.T) {
+	ctx := context.Background()
+	m := newTopic(t)
+	src := m.addSource(t, SourceSpec{URL: "https://example.com/page"})
+	ok := EvidenceSpec{Topic: "c", Lesson: "lesson-01", Source: src.ID, Quote: "A quote."}
+	with := func(edit func(*EvidenceSpec)) EvidenceSpec {
+		spec := ok
+		edit(&spec)
+		return spec
+	}
+	for _, tc := range []struct {
+		name string
+		spec EvidenceSpec
+		want ErrorCode
+	}{
+		{"no Lesson", with(func(s *EvidenceSpec) { s.Lesson = "" }), CodeInvalidArgument},
+		{"bad Lesson", with(func(s *EvidenceSpec) { s.Lesson = "Lesson 1" }), CodeInvalidArgument},
+		{"bad Source id", with(func(s *EvidenceSpec) { s.Source = "x" }), CodeInvalidArgument},
+		{"unknown Source", with(func(s *EvidenceSpec) { s.Source = "nothing.abc123" }), CodeNotFound},
+		{"no quote", with(func(s *EvidenceSpec) { s.Quote = "  \n " }), CodeInvalidArgument},
+		{"control character", with(func(s *EvidenceSpec) { s.Quote = "a\x1b[2Jb" }), CodeInvalidArgument},
+		{"invalid UTF-8", with(func(s *EvidenceSpec) { s.Quote = "caf\xe9" }), CodeInvalidArgument},
+		{"long quote", with(func(s *EvidenceSpec) { s.Quote = strings.Repeat("a", maxQuoteRunes+1) }), CodeInvalidArgument},
+		{"location without its origin", with(func(s *EvidenceSpec) { s.Location = "p. 1" }), CodeInvalidArgument},
+		{"origin without a location", with(func(s *EvidenceSpec) { s.LocationFrom = LocationFromSource }), CodeInvalidArgument},
+		{"unknown origin", with(func(s *EvidenceSpec) { s.Location, s.LocationFrom = "p. 1", "memory" }), CodeInvalidArgument},
+		{"unknown Topic", with(func(s *EvidenceSpec) { s.Topic = "go" }), CodeNotFound},
+	} {
+		if _, err := m.RecordEvidence(ctx, tc.spec); CodeOf(err) != tc.want {
+			t.Errorf("%s: err = %v, want %s", tc.name, err, tc.want)
+		}
+	}
+	if _, err := m.ListEvidence(ctx, EvidenceQuery{Topic: "c", Lesson: "Lesson 1"}); CodeOf(err) != CodeInvalidArgument {
+		t.Errorf("listing a bad Lesson id: err = %v", err)
+	}
+
+	before := historyLines(t, filepath.Join(m.home, "c"))
+	dry, err := m.RecordEvidence(ctx, with(func(s *EvidenceSpec) { s.DryRun = true }))
+	if err != nil || !dry.Changed || !dry.DryRun || dry.Evidence.Quote != "A quote." {
+		t.Errorf("dry run = %+v, %v", dry, err)
+	}
+	if after := historyLines(t, filepath.Join(m.home, "c")); !slices.Equal(before, after) {
+		t.Error("a dry run recorded Evidence")
+	}
+}
+
+func TestEvidenceRetraction(t *testing.T) {
+	ctx := context.Background()
+	m := newTopic(t)
+	src := m.addSource(t, SourceSpec{URL: "https://example.com/page"})
+	wrong := m.recordEvidence(t, EvidenceSpec{Lesson: "lesson-01", Source: src.ID, Quote: "A misquote."}).Evidence
+	m.recordEvidence(t, EvidenceSpec{Lesson: "lesson-02", Source: src.ID, Quote: "A quote."})
+
+	before := historyLines(t, filepath.Join(m.home, "c"))
+	dry, err := m.RetractEvidence(ctx, "c", wrong.ID, true)
+	if err != nil || !dry.Changed || !dry.Evidence.Retracted || !slices.Equal(before, historyLines(t, filepath.Join(m.home, "c"))) {
+		t.Errorf("dry run = %+v, %v", dry, err)
+	}
+	res, err := m.RetractEvidence(ctx, "c", wrong.ID, false)
+	if err != nil || !res.Changed || !res.Evidence.Retracted || res.Evidence.Quote != "A misquote." {
+		t.Fatalf("RetractEvidence = %+v, %v", res, err)
+	}
+	if again, err := m.RetractEvidence(ctx, "c", wrong.ID, false); err != nil || again.Changed {
+		t.Errorf("retracting twice = %+v, %v", again, err)
+	}
+	if got := m.evidence(t, EvidenceQuery{}); len(got) != 1 || got[0].Lesson != "lesson-02" {
+		t.Errorf("listed Evidence = %+v", got)
+	}
+	if got := m.evidence(t, EvidenceQuery{All: true}); len(got) != 2 || !got[0].Retracted {
+		t.Errorf("all Evidence = %+v", got)
+	}
+	s := replayFolder(t, filepath.Join(m.home, "c"))
+	if got := s.lessonsWithoutEvidence([]string{"lesson-01", "lesson-02"}); !slices.Equal(got, []string{"lesson-01"}) {
+		t.Errorf("lessons without Evidence = %v", got)
+	}
+	// The same quote can be recorded again after its retraction.
+	if again := m.recordEvidence(t, EvidenceSpec{Lesson: "lesson-01", Source: src.ID, Quote: "A misquote."}); !again.Changed ||
+		again.Evidence.ID == wrong.ID {
+		t.Errorf("recording a retracted quote again = %+v", again)
+	}
+	for _, tc := range []struct {
+		id   string
+		want ErrorCode
+	}{{"Not An Id", CodeInvalidArgument}, {"nothing", CodeNotFound}} {
+		if _, err := m.RetractEvidence(ctx, "c", tc.id, false); CodeOf(err) != tc.want {
+			t.Errorf("retracting %q: err = %v, want %s", tc.id, err, tc.want)
+		}
+	}
+}
+
 // Fields of sources.jsonl that this version does not know survive an update.
 func TestUnknownSourceFieldsAreKept(t *testing.T) {
 	m := newTopic(t)
 	src := m.addSource(t, SourceSpec{URL: "https://example.com/page"})
 	path := filepath.Join(m.home, "c", sourcesFile)
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	line := strings.TrimSuffix(string(data), "}\n") + `,"pages":312}` + "\n"
+	line := strings.TrimSuffix(readSourcesFile(t, m), "}\n") + `,"pages":312}` + "\n"
 	if err := os.WriteFile(path, []byte(line), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := m.UpdateSource(context.Background(), "c", src.ID, SourceChanges{Title: ptr("Example")}); err != nil {
 		t.Fatal(err)
 	}
-	if data, _ := os.ReadFile(path); !strings.Contains(string(data), `"pages":312`) || !strings.Contains(string(data), `"title":"Example"`) {
+	if data := readSourcesFile(t, m); !strings.Contains(data, `"pages":312`) || !strings.Contains(data, `"title":"Example"`) {
 		t.Errorf("sources.jsonl = %s", data)
+	}
+}
+
+func TestURLsAreNormalised(t *testing.T) {
+	for raw, want := range map[string]string{
+		"HTTPS://Example.COM/A":                                   "https://example.com/A",
+		"https://example.com:443/page":                            "https://example.com/page",
+		"http://example.com:80/":                                  "http://example.com/",
+		"http://example.com:8080/x?y=1#part":                      "http://example.com:8080/x?y=1#part",
+		"https://[::1]:443/":                                      "https://[::1]/",
+		"http://例え.JP/パス":                                         "http://例え.jp/%E3%83%91%E3%82%B9",
+		"https://example.com/‮gnp.exe":                            "https://example.com/%E2%80%AEgnp.exe",
+		"https://user:secret@example.com/x":                       "",
+		"https://exa‮mple.com/":                                   "",
+		"javascript:alert(1)":                                     "",
+		"https:example.com":                                       "",
+		"file:///etc/passwd":                                      "",
+		"https://example.com/a\x00b":                              "",
+		"https://example.com/" + "\xff":                           "",
+		"https://example.com/" + strings.Repeat("a", maxURLRunes): "",
+	} {
+		got, err := cleanURL(raw)
+		if want == "" && CodeOf(err) != CodeInvalidArgument || want != "" && (err != nil || got != want) {
+			t.Errorf("cleanURL(%q) = %q, %v; want %q", raw, got, err, want)
+		}
+	}
+
+	// A title derived from a long URL fits the title limit, and can be set
+	// again as it is.
+	m := newTopic(t)
+	res, err := m.AddSource(context.Background(), SourceSpec{Topic: "c", URL: "https://example.com/" + strings.Repeat("a", 1900)})
+	if err != nil || utf8.RuneCountInString(res.Source.Title) > maxTitleRunes {
+		t.Fatalf("long URL Source = %+v, %v", res.Source, err)
+	}
+	if _, err := m.UpdateSource(context.Background(), "c", res.Source.ID, SourceChanges{Title: &res.Source.Title}); err != nil {
+		t.Errorf("setting the derived title again: %v", err)
+	}
+}
+
+// Titles and names Lamplight derives are safe to print.
+func TestDerivedTitlesAreSafe(t *testing.T) {
+	ctx := context.Background()
+	m := newTopic(t)
+	dir := t.TempDir()
+	odd := writeBook(t, filepath.Join(dir, "red\x1b[31m_book.pdf"), "%PDF-1.4 red")
+	if _, err := m.AddSource(ctx, SourceSpec{Topic: "c", File: odd}); CodeOf(err) != CodeInvalidArgument {
+		t.Errorf("a path with an escape sequence: err = %v, want invalid_argument", err)
+	}
+	// The Library titles the book from its name; reached through a plain
+	// link, that title is cleaned before it is stored.
+	if _, err := m.BuildLibrary(ctx, dir); err != nil {
+		t.Fatal(err)
+	}
+	plain := filepath.Join(t.TempDir(), "plain.pdf")
+	if err := os.Symlink(odd, plain); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	escape := m.addSource(t, SourceSpec{File: plain})
+	if strings.ContainsFunc(escape.Title, unicode.IsControl) || !strings.Contains(escape.Title, "Book") {
+		t.Errorf("derived %q from a Library title with an escape sequence", escape.Title)
+	}
+	if got := derivedText("a\x1b[2J‮b\xff", 10); got != "a [2J b" {
+		t.Errorf("derivedText = %q", got)
+	}
+	symbols := m.addSource(t, SourceSpec{File: writeBook(t, filepath.Join(dir, "___.pdf"), "%PDF-1.4 ___")})
+	if symbols.Title == "" || !sourceIDPattern.MatchString(symbols.ID) {
+		t.Errorf("a name that slugs to nothing gave %+v", symbols)
+	}
+}
+
+// Hashing stops when the request is cancelled.
+func TestHashingHonoursCancellation(t *testing.T) {
+	m := newTopic(t)
+	big := filepath.Join(t.TempDir(), "big.pdf")
+	f, err := os.Create(big)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Truncate(3 << 30); err != nil { // 3 GiB, sparse
+		t.Skipf("cannot make a sparse file: %v", err)
+	}
+	f.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	_, err = m.AddSource(ctx, SourceSpec{Topic: "c", File: big})
+	if !errors.Is(err, context.DeadlineExceeded) || time.Since(start) > time.Second {
+		t.Errorf("AddSource with a 20ms deadline: %v after %v", err, time.Since(start))
+	}
+}
+
+func TestUpdateTopicSaysWhatChangedBeforeAFailure(t *testing.T) {
+	m := newTopic(t)
+	var n int
+	m.crash = func(p string) error {
+		if p == crashAfterIntent {
+			if n++; n == 2 {
+				return errCrash
+			}
+		}
+		return nil
+	}
+	_, err := m.UpdateTopic(context.Background(), "c", TopicChanges{Title: ptr("New title"), Goal: ptr(""),
+		KnowledgeBase: &KnowledgeBase{Notebook: "nb"}})
+	m.crash = nil
+	if err == nil || !strings.Contains(err.Error(), "the title of c was changed, but not its Knowledge base") {
+		t.Errorf("err = %v, want it to say only the title changed", err)
 	}
 }

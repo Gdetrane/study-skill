@@ -3,22 +3,19 @@ package core
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"io/fs"
 	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
-	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"golang.org/x/text/unicode/norm"
 
 	"github.com/mordor-forge/lamplight/v2/internal/library"
 )
@@ -29,6 +26,11 @@ import (
 // searches the Knowledge base itself, such as a NotebookLM notebook through
 // the NotebookLM MCP server, or reads the Sources when there is none, and
 // records the exact quotes it relied on.
+//
+// The History is the single source of truth for which Sources exist and
+// what they are. sources.jsonl is the readable copy Lamplight writes, one
+// line per Source. Neither holds anything that differs between machines:
+// where a file is on this computer is local state (see sourcelocal.go).
 
 const (
 	sourcesFile = "sources.jsonl"
@@ -36,12 +38,10 @@ const (
 	eventKnowledgeBaseSet = "knowledge_base.set"
 	eventSourceAdded      = "source.added"
 	eventSourceUpdated    = "source.updated"
-	eventEvidenceRecorded = "evidence.recorded"
 
-	maxRefRunes   = 200  // notebook and NotebookLM Source ids
-	maxURLRunes   = 2000 // a Source's URL
-	maxQuoteRunes = 4000 // an Evidence quote
-	maxPlaceRunes = 200  // an Evidence location
+	maxRefRunes  = 200  // notebook and NotebookLM Source ids
+	maxURLRunes  = 2000 // a Source's URL
+	maxPathRunes = 4096 // a file path
 )
 
 // Knowledge base kinds.
@@ -60,32 +60,20 @@ const (
 	SourceURL  = "url"
 )
 
-// Where an Evidence location came from.
+// States of a Source in ListSources.
 const (
-	// LocationFromSource: read in the Source itself, such as a printed page
-	// number or a section heading.
-	LocationFromSource = "source"
-	// LocationFromKnowledgeBase: reported by the Knowledge base, such as a
-	// NotebookLM citation.
-	LocationFromKnowledgeBase = "knowledge_base"
-	// LocationFromLearner: given by the learner.
-	LocationFromLearner = "learner"
-	// LocationFromEstimate: the agent's estimate, which may be off.
-	LocationFromEstimate = "estimate"
-)
-
-// States of a file Source on this computer, in ListSources.
-const (
-	// SourceOK: a file of the recorded size is at the recorded path.
+	// SourceOK: the file is on this computer with the recorded content.
 	SourceOK = "ok"
-	// SourceMoved: the file is gone from its path, but a file with the same
-	// content is in the Library at FoundAt.
-	SourceMoved = "moved"
-	// SourceChanged: a file is at the path, but not the recorded one, and the
-	// recorded content is nowhere in the Library.
+	// SourceChanged: the file where the Source was last found has other
+	// content now, and the recorded content is nowhere in the Library.
 	SourceChanged = "changed"
-	// SourceMissing: the file is gone and not in the Library.
+	// SourceMissing: the file is not on this computer, as far as Lamplight
+	// can tell: record where it is with UpdateSource, or rebuild the Library.
 	SourceMissing = "missing"
+	// SourceUntracked: a line of sources.jsonl that the History does not
+	// know, such as one added by hand. It is not a Source until AddSource
+	// records it.
+	SourceUntracked = "untracked"
 )
 
 func init() {
@@ -93,7 +81,6 @@ func init() {
 	eventKinds[eventKnowledgeBaseSet] = eventKind{apply: applyKnowledgeBaseSet, replay: replayTopicUpdated}
 	eventKinds[eventSourceAdded] = eventKind{apply: applySourceAdded, replay: replaySourceAdded}
 	eventKinds[eventSourceUpdated] = eventKind{apply: applySourceUpdated, replay: replaySourceUpdated}
-	eventKinds[eventEvidenceRecorded] = eventKind{apply: applyNothing, replay: replayEvidenceRecorded}
 }
 
 // KnowledgeBase is where a Topic's Sources are held and searched for
@@ -105,13 +92,18 @@ type KnowledgeBase struct {
 	Notebook string `json:"notebook,omitempty"`
 }
 
-// checkKnowledgeBase validates a Knowledge base setting.
+// checkKnowledgeBase validates a Knowledge base setting. A notebook without
+// a kind means a NotebookLM notebook.
 func checkKnowledgeBase(kb KnowledgeBase) (KnowledgeBase, error) {
 	notebook, err := cleanRef("notebook id", kb.Notebook)
 	if err != nil {
 		return KnowledgeBase{}, err
 	}
-	switch kind := strings.TrimSpace(kb.Kind); kind {
+	kind := strings.TrimSpace(kb.Kind)
+	if kind == "" && notebook != "" {
+		kind = KnowledgeBaseNotebookLM
+	}
+	switch kind {
 	case KnowledgeBaseNotebookLM:
 		if notebook == "" {
 			return KnowledgeBase{}, invalidf("a notebooklm Knowledge base needs the notebook's id")
@@ -122,6 +114,8 @@ func checkKnowledgeBase(kb KnowledgeBase) (KnowledgeBase, error) {
 			return KnowledgeBase{}, invalidf("a Topic without a Knowledge base has no notebook: leave the notebook id out")
 		}
 		return KnowledgeBase{Kind: kind}, nil
+	case "":
+		return KnowledgeBase{}, invalidf("give the Knowledge base kind: %q or %q", KnowledgeBaseNotebookLM, KnowledgeBaseNone)
 	default:
 		return KnowledgeBase{}, invalidf("the Knowledge base kind must be %q or %q, not %q",
 			KnowledgeBaseNotebookLM, KnowledgeBaseNone, kb.Kind)
@@ -144,30 +138,40 @@ func knowledgeBaseOf(settings topicSettings) *KnowledgeBase {
 	return &KnowledgeBase{Kind: kind, Notebook: notebook}
 }
 
+// topicKnowledgeBase reads a Topic's Knowledge base through view.
+func topicKnowledgeBase(view *topicView, topicID string) (*KnowledgeBase, error) {
+	data, exists, err := view.read(topicFile)
+	if err != nil {
+		return nil, err
+	}
+	if !exists {
+		return nil, corruptf("%s of %s is missing", topicFile, topicID)
+	}
+	settings, err := parseTopicSettings(data, filepath.Join(topicID, topicFile))
+	if err != nil {
+		return nil, err
+	}
+	return knowledgeBaseOf(settings), nil
+}
+
 // planKnowledgeBase plans setting a Topic's Knowledge base; nothing when it
 // is already set so.
 func planKnowledgeBase(topicID string, kb KnowledgeBase) plan {
 	return func(_ *replayed, view *topicView) (*change, error) {
-		data, exists, err := view.read(topicFile)
+		current, err := topicKnowledgeBase(view, topicID)
 		if err != nil {
 			return nil, err
 		}
-		if !exists {
-			return nil, corruptf("%s of %s is missing", topicFile, topicID)
-		}
-		settings, err := parseTopicSettings(data, filepath.Join(topicID, topicFile))
-		if err != nil {
-			return nil, err
-		}
-		if current := knowledgeBaseOf(settings); current != nil && *current == kb {
+		if current != nil && *current == kb {
 			return nil, nil
 		}
 		return &change{Type: eventKnowledgeBaseSet, Data: kb, Items: []string{topicFile}}, nil
 	}
 }
 
-// applyKnowledgeBaseSet replaces the [knowledge_base] table of topic.toml.
-// The table belongs to its kind, so settings of a previous kind go with it.
+// applyKnowledgeBaseSet sets the [knowledge_base] table of topic.toml. Keys
+// this version does not know stay while the kind stays; a new kind starts a
+// new table, since its settings belong to the kind.
 func applyKnowledgeBaseSet(ev event, item string, current []byte, exists bool) ([]byte, bool, error) {
 	if item != topicFile {
 		return nil, false, corruptf("Event %s (%s) cannot edit %s", ev.ID, ev.Type, item)
@@ -186,7 +190,14 @@ func applyKnowledgeBaseSet(ev event, item string, current []byte, exists bool) (
 	if settings.extra == nil {
 		settings.extra = map[string]any{}
 	}
-	table := map[string]any{"kind": kb.Kind}
+	table := map[string]any{}
+	if old, ok := settings.extra["knowledge_base"].(map[string]any); ok && old["kind"] == kb.Kind {
+		for k, v := range old {
+			table[k] = v
+		}
+	}
+	table["kind"] = kb.Kind
+	delete(table, "notebook")
 	if kb.Notebook != "" {
 		table["notebook"] = kb.Notebook
 	}
@@ -195,9 +206,8 @@ func applyKnowledgeBaseSet(ev event, item string, current []byte, exists bool) (
 	return data, err == nil, err
 }
 
-// Source is a document or web page a Topic learns from. Sources are kept in
-// sources.jsonl, one per line, so each is its own item in the History and two
-// machines adding Sources never conflict.
+// Source is a document or web page a Topic learns from, as the History and
+// sources.jsonl record it: only what is the same on every machine.
 type Source struct {
 	// ID is a slug of the title plus a random suffix, such as
 	// "modern-operating-systems.k3f9a2", so it never collides across
@@ -205,21 +215,28 @@ type Source struct {
 	ID    string `json:"id"`
 	Kind  string `json:"kind"`
 	Title string `json:"title"`
-	// Path, Hash and Size describe a file Source: its absolute path when it
-	// was added or last found, and its content, by which it is found again
-	// in the Library after a move.
-	Path string `json:"path,omitempty"`
+	// TopicPath is a file Source inside the Topic's folder, relative to it,
+	// with forward slashes. It is found on every machine the Topic syncs to.
+	TopicPath string `json:"topic_path,omitempty"`
+	// FileName is the name a file Source outside the Topic had when it was
+	// added. Where it is on each computer is local state.
+	FileName string `json:"file_name,omitempty"`
+	// Hash and Size identify a file Source's content, by which it is found
+	// again in the Library on any machine.
 	Hash string `json:"hash,omitempty"`
 	Size int64  `json:"size_bytes,omitempty"`
 	// URL is a web page Source's address.
 	URL string `json:"url,omitempty"`
-	// NotebookLMID is the Source's id in the Topic's NotebookLM notebook.
-	NotebookLMID string `json:"notebooklm_id,omitempty"`
+	// NotebookLMID is the Source's id in the NotebookLM notebook named by
+	// NotebookLMNotebook.
+	NotebookLMID       string `json:"notebooklm_id,omitempty"`
+	NotebookLMNotebook string `json:"notebooklm_notebook,omitempty"`
 }
 
 // knownSourceFields are the fields of Source; others in a line, written by a
 // newer version, are kept as they are.
-var knownSourceFields = []string{"id", "kind", "title", "path", "hash", "size_bytes", "url", "notebooklm_id"}
+var knownSourceFields = []string{"id", "kind", "title", "topic_path", "file_name", "hash", "size_bytes", "url",
+	"notebooklm_id", "notebooklm_notebook"}
 
 var sourceIDPattern = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*\.[a-z0-9]{1,26}$`)
 
@@ -228,7 +245,8 @@ func sourceItem(id string) string { return sourcesFile + "#" + id }
 // SourceSpec describes a Source to add: a file or a URL.
 type SourceSpec struct {
 	Topic string
-	// File is the file's path, relative to the folder study started in.
+	// File is the file's path: absolute, starting with ~/, or relative to
+	// the folder study started in.
 	File string
 	URL  string
 	// Title defaults to the Library's title for the file, else one derived
@@ -243,11 +261,12 @@ type SourceSpec struct {
 // SourceChanges describes changes to a Source. Nil fields stay as they are.
 type SourceChanges struct {
 	Title *string
-	// Path records where a file Source is now. The file there must have the
-	// recorded content.
+	// Path records where a file Source is on this computer. The file there
+	// must have the recorded content. It is local state, not recorded in the
+	// History.
 	Path *string
-	// NotebookLMID sets the Source's id in the NotebookLM notebook; empty
-	// removes it.
+	// NotebookLMID sets the Source's id in the Topic's NotebookLM notebook;
+	// empty removes it.
 	NotebookLMID *string
 	DryRun       bool
 }
@@ -256,6 +275,8 @@ type SourceChanges struct {
 type SourceResult struct {
 	Topic  string `json:"topic"`
 	Source Source `json:"source"`
+	// Path is where a file Source is on this computer, when known.
+	Path string `json:"path,omitempty"`
 	// Changed is false when the Source already had the requested values.
 	Changed bool `json:"changed"`
 	DryRun  bool `json:"dry_run,omitempty"`
@@ -264,15 +285,15 @@ type SourceResult struct {
 // sourceUpdatedData is the payload of a source.updated Event: the fields that
 // changed, with their new values.
 type sourceUpdatedData struct {
-	ID           string  `json:"id"`
-	Title        *string `json:"title,omitempty"`
-	Path         *string `json:"path,omitempty"`
-	NotebookLMID *string `json:"notebooklm_id,omitempty"`
+	ID                 string  `json:"id"`
+	Title              *string `json:"title,omitempty"`
+	NotebookLMID       *string `json:"notebooklm_id,omitempty"`
+	NotebookLMNotebook *string `json:"notebooklm_notebook,omitempty"`
 }
 
 // AddSource registers a Source on a Topic. A file is hashed, never parsed, so
-// it can be found again in the Library after a move. Adding a file or URL the
-// Topic already has is an error that names the existing Source.
+// it can be found again on any machine. Adding a file or URL the Topic
+// already has is an error that names the existing Source.
 func (c *Core) AddSource(ctx context.Context, spec SourceSpec) (SourceResult, error) {
 	if err := checkTopicID(spec.Topic); err != nil {
 		return SourceResult{}, err
@@ -286,58 +307,92 @@ func (c *Core) AddSource(ctx context.Context, spec SourceSpec) (SourceResult, er
 		return SourceResult{}, err
 	}
 	var src Source
-	switch file, link := strings.TrimSpace(spec.File), strings.TrimSpace(spec.URL); {
-	case file != "" && link != "":
+	var file *foundFile
+	slugFrom := title
+	switch path, link := strings.TrimSpace(spec.File), strings.TrimSpace(spec.URL); {
+	case path != "" && link != "":
 		return SourceResult{}, invalidf("a Source is a file or a URL, not both")
-	case file != "":
-		path, hash, size, err := c.hashSourceFile(ctx, file)
+	case path != "":
+		f, err := c.findSourceFile(ctx, spec.Topic, path)
 		if err != nil {
 			return SourceResult{}, err
 		}
-		if title == "" {
-			title = c.libraryTitle(path)
+		file = &f
+		src = Source{Kind: SourceFile, TopicPath: f.topicPath, Hash: f.hash, Size: f.size}
+		if f.topicPath == "" {
+			src.FileName = derivedText(filepath.Base(f.path), maxTitleRunes)
 		}
-		src = Source{Kind: SourceFile, Title: title, Path: path, Hash: hash, Size: size}
+		if title == "" {
+			title = c.fileTitle(f.path)
+		}
 	case link != "":
 		u, err := cleanURL(link)
 		if err != nil {
 			return SourceResult{}, err
 		}
+		src = Source{Kind: SourceURL, URL: u}
 		if title == "" {
-			title = u
+			title = derivedText(u, maxTitleRunes)
+			slugFrom = strings.TrimPrefix(strings.TrimPrefix(strings.TrimPrefix(u, "https://"), "http://"), "www.")
 		}
-		src = Source{Kind: SourceURL, Title: title, URL: u}
 	default:
 		return SourceResult{}, invalidf("give the Source's file or URL")
 	}
-	src.NotebookLMID = notebookID
+	src.Title = title
+	if slugFrom == "" {
+		slugFrom = title
+	}
 
-	_, err = c.writeTopic(ctx, spec.Topic, func(_ *replayed, view *topicView) (*change, error) {
-		sources, err := readSources(view)
-		if err != nil {
-			return nil, err
-		}
-		for _, other := range sources {
+	_, err = c.writeTopic(ctx, spec.Topic, func(s *replayed, view *topicView) (*change, error) {
+		k := s.knowledge()
+		for _, id := range k.order {
+			other := k.sources[id]
 			if src.Kind == SourceFile && other.Hash == src.Hash || src.Kind == SourceURL && other.URL == src.URL {
 				return nil, &Error{Code: CodeAlreadyExists, Message: fmt.Sprintf(
 					"Topic %s already has this %s as Source %s", spec.Topic, src.Kind, other.ID)}
 			}
 		}
-		slugFrom := src.Title
-		if src.Kind == SourceURL && src.Title == src.URL {
-			slugFrom = strings.TrimPrefix(strings.TrimPrefix(strings.TrimPrefix(src.URL, "https://"), "http://"), "www.")
+		if notebookID != "" {
+			nb, err := notebookOf(view, spec.Topic)
+			if err != nil {
+				return nil, err
+			}
+			src.NotebookLMID, src.NotebookLMNotebook = notebookID, nb
 		}
-		src.ID = c.newSourceID(slugFrom, sources)
+		src.ID = c.newSourceID(slugFrom, k)
 		return &change{Type: eventSourceAdded, Data: src, Items: []string{sourceItem(src.ID)}}, nil
 	}, spec.DryRun)
 	if err != nil {
 		return SourceResult{}, err
 	}
-	return SourceResult{Topic: spec.Topic, Source: src, Changed: true, DryRun: spec.DryRun}, nil
+	res := SourceResult{Topic: spec.Topic, Source: src, Changed: true, DryRun: spec.DryRun}
+	if file != nil {
+		res.Path = file.path
+		if !spec.DryRun {
+			c.rememberLocation(spec.Topic, src.ID, *file)
+		}
+	}
+	return res, nil
 }
 
-// UpdateSource changes a Source's title or NotebookLM id, or records where a
-// moved file is now. Asking for the values it already has records nothing.
+// notebookOf returns the Topic's NotebookLM notebook, which a NotebookLM
+// Source id belongs to.
+func notebookOf(view *topicView, topicID string) (string, error) {
+	kb, err := topicKnowledgeBase(view, topicID)
+	if err != nil {
+		return "", err
+	}
+	if kb == nil || kb.Kind != KnowledgeBaseNotebookLM || kb.Notebook == "" {
+		return "", &Error{Code: CodeFailedPrecondition, Message: fmt.Sprintf(
+			"a NotebookLM id belongs to a notebook, but the Knowledge base of %s is not notebooklm: "+
+				"set it first with study topic update %s --notebook <id>", topicID, topicID)}
+	}
+	return kb.Notebook, nil
+}
+
+// UpdateSource changes a Source's title or NotebookLM id, recorded in the
+// History, or records where its file is on this computer, which is local
+// state only. Asking for the values it already has changes nothing.
 func (c *Core) UpdateSource(ctx context.Context, topicID, sourceID string, changes SourceChanges) (SourceResult, error) {
 	if err := checkTopicID(topicID); err != nil {
 		return SourceResult{}, err
@@ -363,69 +418,134 @@ func (c *Core) UpdateSource(ctx context.Context, topicID, sourceID string, chang
 		}
 		want.NotebookLMID = &id
 	}
-	var newHash string
+	var file *foundFile
 	if changes.Path != nil {
-		path, hash, _, err := c.hashSourceFile(ctx, *changes.Path)
+		f, err := c.findSourceFile(ctx, topicID, *changes.Path)
 		if err != nil {
 			return SourceResult{}, err
 		}
-		want.Path, newHash = &path, hash
+		file = &f
 	}
-	if want.Title == nil && want.Path == nil && want.NotebookLMID == nil {
+	if want.Title == nil && want.NotebookLMID == nil && file == nil {
 		return SourceResult{}, invalidf("nothing to change: give a new title, path or NotebookLM id")
 	}
 
 	var src Source
-	ev, err := c.writeTopic(ctx, topicID, func(_ *replayed, view *topicView) (*change, error) {
-		line, exists, err := view.read(sourceItem(sourceID))
+	res := SourceResult{Topic: topicID, DryRun: changes.DryRun}
+	if want.Title != nil || want.NotebookLMID != nil {
+		ev, err := c.writeTopic(ctx, topicID, func(s *replayed, view *topicView) (*change, error) {
+			known, ok := s.knowledge().sources[sourceID]
+			if !ok {
+				return nil, unknownSource(topicID, sourceID)
+			}
+			src = *known
+			if file != nil {
+				if err := checkRelocation(src, *file); err != nil {
+					return nil, err
+				}
+			}
+			diff := sourceUpdatedData{ID: sourceID}
+			if want.Title != nil && *want.Title != src.Title {
+				diff.Title, src.Title = want.Title, *want.Title
+			}
+			if want.NotebookLMID != nil {
+				notebook := ""
+				if *want.NotebookLMID != "" {
+					nb, err := notebookOf(view, topicID)
+					if err != nil {
+						return nil, err
+					}
+					notebook = nb
+				}
+				if *want.NotebookLMID != src.NotebookLMID || notebook != src.NotebookLMNotebook {
+					diff.NotebookLMID, diff.NotebookLMNotebook = want.NotebookLMID, &notebook
+					src.NotebookLMID, src.NotebookLMNotebook = *want.NotebookLMID, notebook
+				}
+			}
+			if diff.Title == nil && diff.NotebookLMID == nil {
+				return nil, nil
+			}
+			return &change{Type: eventSourceUpdated, Data: diff, Items: []string{sourceItem(sourceID)}}, nil
+		}, changes.DryRun)
 		if err != nil {
-			return nil, err
+			return SourceResult{}, err
 		}
-		if !exists {
-			return nil, &Error{Code: CodeNotFound, Message: fmt.Sprintf(
-				"Topic %s has no Source %s: study source list %s shows its Sources", topicID, sourceID, topicID)}
+		res.Changed = ev != nil
+	} else {
+		known, err := c.historySource(topicID, sourceID)
+		if err != nil {
+			return SourceResult{}, err
 		}
-		if src, _, err = decodeSourceLine(line); err != nil {
-			return nil, err
+		src = known
+		if err := checkRelocation(src, *file); err != nil {
+			return SourceResult{}, err
 		}
-		diff := sourceUpdatedData{ID: sourceID}
-		if want.Title != nil && *want.Title != src.Title {
-			diff.Title, src.Title = want.Title, *want.Title
-		}
-		if want.NotebookLMID != nil && *want.NotebookLMID != src.NotebookLMID {
-			diff.NotebookLMID, src.NotebookLMID = want.NotebookLMID, *want.NotebookLMID
-		}
-		if want.Path != nil {
-			if src.Kind != SourceFile {
-				return nil, invalidf("Source %s is a %s, and only a file Source has a path", sourceID, src.Kind)
-			}
-			if newHash != src.Hash {
-				return nil, invalidf("%s is not Source %s: its content differs, so add it as a new Source", *want.Path, sourceID)
-			}
-			if *want.Path != src.Path {
-				diff.Path, src.Path = want.Path, *want.Path
-			}
-		}
-		if diff.Title == nil && diff.Path == nil && diff.NotebookLMID == nil {
-			return nil, nil
-		}
-		return &change{Type: eventSourceUpdated, Data: diff, Items: []string{sourceItem(sourceID)}}, nil
-	}, changes.DryRun)
-	if err != nil {
-		return SourceResult{}, err
 	}
-	return SourceResult{Topic: topicID, Source: src, Changed: ev != nil, DryRun: changes.DryRun}, nil
+	res.Source = src
+	if file != nil {
+		res.Path = file.path
+		if c.knownLocation(topicID, sourceID) != file.path {
+			res.Changed = true
+		}
+		if !changes.DryRun {
+			c.rememberLocation(topicID, sourceID, *file)
+		}
+	}
+	return res, nil
+}
+
+// checkRelocation checks that f can be recorded as where src is: a file
+// outside the Topic, with the recorded content.
+func checkRelocation(src Source, f foundFile) error {
+	switch {
+	case src.Kind != SourceFile:
+		return invalidf("Source %s is a %s, and only a file Source has a path", src.ID, src.Kind)
+	case src.TopicPath != "":
+		return invalidf("Source %s is the file %s inside the Topic, found there on every machine: "+
+			"restore it there, or add the other file as a new Source", src.ID, src.TopicPath)
+	case f.hash != src.Hash:
+		return invalidf("%s is not Source %s: its content differs, so add it as a new Source", f.path, src.ID)
+	}
+	return nil
+}
+
+func unknownSource(topicID, sourceID string) error {
+	return &Error{Code: CodeNotFound, Message: fmt.Sprintf(
+		"the History of %s has no Source %s: study source list %s shows its Sources, and a line added to %s by hand "+
+			"is not a Source until study source add records it", topicID, sourceID, topicID, sourcesFile)}
+}
+
+// historySource reads one Source from the Topic's History.
+func (c *Core) historySource(topicID, sourceID string) (Source, error) {
+	home, topic, err := c.openTopicFolder(topicID)
+	if err != nil {
+		return Source{}, err
+	}
+	defer home.Close()
+	defer topic.Close()
+	h, err := readHistory(topic, topicID)
+	if err != nil {
+		return Source{}, err
+	}
+	src, ok := replayHistory(h).knowledge().sources[sourceID]
+	if !ok {
+		return Source{}, unknownSource(topicID, sourceID)
+	}
+	return *src, nil
 }
 
 // SourceStatus is a Source as ListSources finds it on this computer.
 type SourceStatus struct {
 	Source
-	// State is where a file Source is now: ok, moved, changed or missing.
-	// It is empty for URLs, which are never fetched.
+	// Path is where a file Source is on this computer, when found.
+	Path string `json:"path,omitempty"`
+	// State is ok, changed or missing for a file, empty for a URL, which is
+	// never fetched, and untracked for a line of sources.jsonl the History
+	// does not know.
 	State string `json:"state,omitempty"`
-	// FoundAt is where a moved file is now, found in the Library by its
-	// content. Record it with UpdateSource.
-	FoundAt string `json:"found_at,omitempty"`
+	// NotebookLMStale is set when the Source's NotebookLM id belongs to a
+	// notebook other than the Topic's.
+	NotebookLMStale bool `json:"notebooklm_stale,omitempty"`
 }
 
 // SourceList is a Topic's Knowledge base and Sources.
@@ -436,9 +556,10 @@ type SourceList struct {
 	Sources       []SourceStatus `json:"sources"`
 }
 
-// ListSources lists a Topic's Sources and checks where each file is. A file
-// whose size still matches counts as in place, without being hashed again; a
-// file that is gone is searched for in the Library by its content.
+// ListSources lists a Topic's Sources, as the History records them, and
+// finds each file on this computer: inside the Topic, where it was last
+// found, or in the Library by its content. Where a file is found is local
+// state, updated as needed; nothing is recorded in the History.
 func (c *Core) ListSources(ctx context.Context, topicID string) (SourceList, error) {
 	home, topic, err := c.openTopicFolder(topicID)
 	if err != nil {
@@ -446,88 +567,91 @@ func (c *Core) ListSources(ctx context.Context, topicID string) (SourceList, err
 	}
 	defer home.Close()
 	defer topic.Close()
-	list := SourceList{Topic: topicID, Sources: []SourceStatus{}}
-	data, exists, err := readItem(topic, topicFile)
+	kb, err := topicKnowledgeBase(&topicView{root: topic}, topicID)
 	if err != nil {
 		return SourceList{}, err
 	}
-	if !exists {
-		return SourceList{}, corruptf("%s of %s is missing", topicFile, topicID)
-	}
-	settings, err := parseTopicSettings(data, filepath.Join(c.home, topicID, topicFile))
+	h, err := readHistory(topic, topicID)
 	if err != nil {
 		return SourceList{}, err
 	}
-	list.KnowledgeBase = knowledgeBaseOf(settings)
-	sources, err := readSources(&topicView{root: topic})
-	if err != nil {
-		return SourceList{}, err
-	}
-	var ix *library.Index
-	loaded := false
-	lib := func() *library.Index {
-		if !loaded {
-			loaded = true
-			if index, err := library.Load(filepath.Join(c.home, libraryIndex)); err == nil {
-				ix = index
-			}
-		}
-		return ix
-	}
-	for _, src := range sources {
-		if err := ctx.Err(); err != nil {
-			return SourceList{}, err
-		}
+	k := replayHistory(h).knowledge()
+	list := SourceList{Topic: topicID, KnowledgeBase: kb, Sources: []SourceStatus{}}
+	l := c.newLocator(ctx, home, topicID)
+	for _, id := range k.order {
+		src := *k.sources[id]
 		st := SourceStatus{Source: src}
 		if src.Kind == SourceFile {
-			st.State, st.FoundAt = locateSource(src, lib)
+			if st.Path, st.State, err = l.locate(src); err != nil {
+				return SourceList{}, err
+			}
+		}
+		if src.NotebookLMID != "" && (kb == nil || kb.Kind != KnowledgeBaseNotebookLM || kb.Notebook != src.NotebookLMNotebook) {
+			st.NotebookLMStale = true
 		}
 		list.Sources = append(list.Sources, st)
+	}
+	l.save()
+	for _, src := range untrackedSources(topic, k) {
+		list.Sources = append(list.Sources, SourceStatus{Source: src, State: SourceUntracked})
 	}
 	return list, nil
 }
 
-// locateSource finds a file Source on this computer.
-func locateSource(src Source, lib func() *library.Index) (state, foundAt string) {
-	info, err := os.Stat(src.Path)
-	if err == nil && info.Mode().IsRegular() && info.Size() == src.Size {
-		return SourceOK, ""
+// untrackedSources returns the lines of sources.jsonl the History does not
+// know, best effort: lines that are not Sources are skipped.
+func untrackedSources(topic *os.Root, k *knowledgeState) []Source {
+	data, exists, err := readFile(topic, sourcesFile)
+	if err != nil || !exists {
+		return nil
 	}
-	if ix := lib(); ix != nil {
-		for _, book := range ix.Books {
-			if book.Size != src.Size || book.Path == src.Path {
-				continue
-			}
-			if hash, _, err := hashFile(book.Path); err == nil && hash == src.Hash {
-				return SourceMoved, book.Path
-			}
+	var out []Source
+	seen := map[string]bool{}
+	for _, line := range bytes.Split(data, []byte{'\n'}) {
+		var src Source
+		if json.Unmarshal(line, &src) != nil || src.ID == "" || seen[src.ID] {
+			continue
+		}
+		seen[src.ID] = true
+		if _, known := k.sources[src.ID]; !known {
+			src.Title = derivedText(src.Title, maxTitleRunes)
+			out = append(out, src)
 		}
 	}
-	if err == nil {
-		return SourceChanged, ""
-	}
-	return SourceMissing, ""
+	return out
 }
 
-// readSources reads every Source in sources.jsonl, in file order.
-func readSources(view *topicView) ([]Source, error) {
-	data, exists, err := view.read(sourcesFile)
+// sourcesFileFlags flags Sources that sources.jsonl holds more than once,
+// which a union merge leaves when one Source was edited on two machines.
+// The History's version is the Source; the next change to it leaves one
+// line.
+func sourcesFileFlags(topic *os.Root) []Flag {
+	data, exists, err := readFile(topic, sourcesFile)
 	if err != nil || !exists {
-		return nil, err
+		return nil
 	}
-	lines, _, err := jsonlEntries(data)
+	lines, ids, err := jsonlEntries(data)
 	if err != nil {
-		return nil, corruptf("%s is damaged: %v", sourcesFile, err)
+		return nil
 	}
-	sources := make([]Source, 0, len(lines))
-	for _, line := range lines {
-		src, _, err := decodeSourceLine(line)
-		if err != nil {
-			return nil, err
+	copies := map[string][]string{}
+	var order []string
+	for i, id := range ids {
+		if copies[id] == nil {
+			order = append(order, id)
 		}
-		sources = append(sources, src)
+		copies[id] = append(copies[id], string(lines[i]))
 	}
-	return sources, nil
+	var flags []Flag
+	for _, id := range order {
+		if len(copies[id]) < 2 {
+			continue
+		}
+		flags = append(flags, newFlag(FlagConflict, sourceItem(id), nil, strings.Join(copies[id], "\n"),
+			fmt.Sprintf("%s has %d lines for Source %s, probably edited on two machines; Lamplight uses the History's "+
+				"version, and the next change to the Source leaves one line", sourcesFile, len(copies[id]), id)))
+	}
+	return flags
 }
 
 // decodeSourceLine reads one line of sources.jsonl, and the fields this
@@ -590,6 +714,10 @@ func applySourceAdded(ev event, item string, _ []byte, _ bool) ([]byte, bool, er
 	return line, err == nil, err
 }
 
+// applySourceUpdated rewrites a Source's line, keeping fields this version
+// does not know. The payload holds only what changed, so a line deleted by
+// hand cannot be rebuilt from it: the write stops and says how to restore
+// the line.
 func applySourceUpdated(ev event, item string, current []byte, exists bool) ([]byte, bool, error) {
 	var d sourceUpdatedData
 	if err := json.Unmarshal(ev.Data, &d); err != nil || d.ID == "" {
@@ -599,28 +727,33 @@ func applySourceUpdated(ev event, item string, current []byte, exists bool) ([]b
 		return nil, false, corruptf("Event %s (%s) cannot edit %s", ev.ID, ev.Type, item)
 	}
 	if !exists {
-		return nil, false, corruptf("Source %s is missing from %s", d.ID, sourcesFile)
+		return nil, false, corruptf("Source %s is missing from %s: restore the line, for example from the last Checkpoint",
+			d.ID, sourcesFile)
 	}
 	src, extra, err := decodeSourceLine(current)
 	if err != nil {
 		return nil, false, err
 	}
-	if d.Title != nil {
-		src.Title = *d.Title
-	}
-	if d.Path != nil {
-		src.Path = *d.Path
-	}
-	if d.NotebookLMID != nil {
-		src.NotebookLMID = *d.NotebookLMID
-	}
+	d.applyTo(&src)
 	line, err := encodeSourceLine(src, extra)
 	return line, err == nil, err
 }
 
+func (d sourceUpdatedData) applyTo(src *Source) {
+	if d.Title != nil {
+		src.Title = *d.Title
+	}
+	if d.NotebookLMID != nil {
+		src.NotebookLMID = *d.NotebookLMID
+	}
+	if d.NotebookLMNotebook != nil {
+		src.NotebookLMNotebook = *d.NotebookLMNotebook
+	}
+}
+
 // newSourceID makes an id for a Source: a slug of its title (or address)
-// and a random suffix, different from every id in sources.
-func (c *Core) newSourceID(title string, sources []Source) string {
+// and a random suffix, different from every Source the History knows.
+func (c *Core) newSourceID(title string, k *knowledgeState) string {
 	slug := slugify(title)
 	if len(slug) > 40 {
 		slug = strings.TrimRight(slug[:40], "-")
@@ -639,76 +772,53 @@ func (c *Core) newSourceID(title string, sources []Source) string {
 			}
 		}
 		id := slug + "." + suffix.String()
-		taken := false
-		for _, s := range sources {
-			taken = taken || s.ID == id
-		}
-		if !taken && sourceIDPattern.MatchString(id) {
+		if _, taken := k.sources[id]; !taken && sourceIDPattern.MatchString(id) {
 			return id
 		}
 	}
 }
 
-// hashSourceFile resolves a file Source's path against the folder study
-// started in and hashes the file. Only its bytes are read: the core never
-// parses a document.
-func (c *Core) hashSourceFile(ctx context.Context, file string) (path, hash string, size int64, err error) {
-	path = strings.TrimSpace(file)
-	if path == "" {
-		return "", "", 0, invalidf("give the Source's file")
-	}
-	if !filepath.IsAbs(path) {
-		path = filepath.Join(c.dir, path)
-	}
-	path = filepath.Clean(path)
-	info, err := os.Stat(path)
-	if errors.Is(err, fs.ErrNotExist) {
-		return "", "", 0, &Error{Code: CodeNotFound, Message: path + " does not exist"}
-	}
-	if err != nil {
-		return "", "", 0, internalError("reading "+path, err)
-	}
-	if !info.Mode().IsRegular() {
-		return "", "", 0, invalidf("%s is not a file", path)
-	}
-	if err := ctx.Err(); err != nil {
-		return "", "", 0, err
-	}
-	hash, size, err = hashFile(path)
-	if err != nil {
-		return "", "", 0, internalError("reading "+path, err)
-	}
-	return path, hash, size, nil
-}
-
-// hashFile returns a file's content hash, in the form the History uses, and
-// its size.
-func hashFile(path string) (string, int64, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return "", 0, err
-	}
-	defer f.Close()
-	h := sha256.New()
-	n, err := io.Copy(h, f)
-	if err != nil {
-		return "", 0, err
-	}
-	return "sha256:" + hex.EncodeToString(h.Sum(nil)), n, nil
-}
-
-// libraryTitle is the Library's title for the file at path, or one derived
-// from its name when the file is not in the Library.
-func (c *Core) libraryTitle(path string) string {
+// fileTitle is the Library's title for the file at path, or one derived from
+// its name when the file is not in the Library, made safe to print.
+func (c *Core) fileTitle(path string) string {
+	title := ""
 	if ix, err := library.Load(filepath.Join(c.home, libraryIndex)); err == nil {
 		want := resolvedPath(path)
 		for _, book := range ix.Books {
 			if book.Path == path || resolvedPath(book.Path) == want {
-				return book.Title
+				title = book.Title
+				break
 			}
 		}
 	}
-	return library.TitleOf(path)
+	if title == "" {
+		title = library.TitleOf(path)
+	}
+	if title = derivedText(title, maxTitleRunes); title != "" {
+		return title
+	}
+	if name := derivedText(filepath.Base(path), maxTitleRunes); name != "" {
+		return name
+	}
+	return "Untitled Source"
+}
+
+// derivedText makes text Lamplight derived, from a file name, a URL or the
+// Library, safe to store and print: invalid UTF-8, control and bidi control
+// characters go, spaces collapse, and it is cut to maxRunes.
+func derivedText(s string, maxRunes int) string {
+	s = strings.ToValidUTF8(s, "")
+	s = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) || unicode.Is(unicode.Bidi_Control, r) {
+			return ' '
+		}
+		return r
+	}, s)
+	s = strings.Join(strings.Fields(s), " ")
+	if utf8.RuneCountInString(s) > maxRunes {
+		s = strings.TrimSpace(string([]rune(s)[:maxRunes-1])) + "…"
+	}
+	return s
 }
 
 func resolvedPath(path string) string {
@@ -718,22 +828,49 @@ func resolvedPath(path string) string {
 	return path
 }
 
-// cleanURL checks a web page Source's address: an absolute http or https URL.
+// cleanURL checks a web page Source's address and normalises it: an absolute
+// http or https URL without credentials. The scheme and host are lowercased,
+// a default port is dropped, and an international host stays readable, in
+// Unicode (NFC), rather than percent-encoded.
 func cleanURL(raw string) (string, error) {
 	raw, err := cleanText("URL", raw, maxURLRunes)
 	if err != nil {
 		return "", err
 	}
+	notWeb := invalidf("%q is not a web address: give an absolute http or https URL", raw)
 	u, err := url.Parse(raw)
-	if err != nil || u.Host == "" || strings.ContainsAny(raw, " \t") {
-		return "", invalidf("%q is not a web address: give an absolute http or https URL", raw)
+	if err != nil || u.Host == "" || u.Opaque != "" || strings.ContainsAny(raw, " \t") {
+		return "", notWeb
 	}
-	u.Scheme = strings.ToLower(u.Scheme)
-	if u.Scheme != "http" && u.Scheme != "https" {
-		return "", invalidf("%q is not a web address: give an absolute http or https URL", raw)
+	scheme := strings.ToLower(u.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return "", notWeb
 	}
-	u.Host = strings.ToLower(u.Host)
-	return u.String(), nil
+	if u.User != nil {
+		return "", invalidf("%q carries a user name or password: give the address without them", raw)
+	}
+	host := norm.NFC.String(strings.ToLower(u.Hostname()))
+	for _, r := range host {
+		if unicode.IsControl(r) || unicode.IsSpace(r) || unicode.Is(unicode.Bidi_Control, r) || r == '%' {
+			return "", notWeb
+		}
+	}
+	if strings.Contains(host, ":") {
+		host = "[" + host + "]"
+	}
+	switch port := u.Port(); {
+	case port == "", scheme == "http" && port == "80", scheme == "https" && port == "443":
+	default:
+		host += ":" + port
+	}
+	out := scheme + "://" + host + u.EscapedPath()
+	if u.RawQuery != "" {
+		out += "?" + u.RawQuery
+	}
+	if u.Fragment != "" {
+		out += "#" + u.EscapedFragment()
+	}
+	return out, nil
 }
 
 // cleanRef checks an id from another service, such as a NotebookLM notebook
@@ -749,235 +886,21 @@ func cleanRef(field, s string) (string, error) {
 	return s, nil
 }
 
-// Evidence is an exact quote from a Source, with its location when known,
-// cited by a Lesson.
-type Evidence struct {
-	ID     string `json:"id"`
-	Lesson string `json:"lesson"`
-	Source string `json:"source"`
-	Quote  string `json:"quote"`
-	// Location is where the quote is in the Source, such as "p. 42" or
-	// "§3.2", when known; LocationFrom says how it is known.
-	Location     string `json:"location,omitempty"`
-	LocationFrom string `json:"location_from,omitempty"`
-	// Recorded is when the Evidence was recorded, by the recording
-	// computer's clock.
-	Recorded time.Time `json:"recorded"`
-}
-
-// evidenceData is the payload of an evidence.recorded Event.
-type evidenceData struct {
-	ID           string `json:"id"`
-	Lesson       string `json:"lesson"`
-	Source       string `json:"source"`
-	Quote        string `json:"quote"`
-	Location     string `json:"location,omitempty"`
-	LocationFrom string `json:"location_from,omitempty"`
-}
-
-// EvidenceSpec describes Evidence to record.
-type EvidenceSpec struct {
-	Topic string
-	// Lesson is the id of the Lesson that cites the Evidence.
-	Lesson string
-	// Source is the id of the Source the quote comes from.
-	Source string
-	// Quote is the exact text, as the Source has it.
-	Quote        string
-	Location     string
-	LocationFrom string
-	DryRun       bool
-}
-
-// EvidenceResult is the result of RecordEvidence.
-type EvidenceResult struct {
-	Topic    string   `json:"topic"`
-	Evidence Evidence `json:"evidence"`
-	// Changed is false when the same Evidence was already recorded.
-	Changed bool `json:"changed"`
-	DryRun  bool `json:"dry_run,omitempty"`
-}
-
-// EvidenceList is the Evidence recorded in a Topic.
-type EvidenceList struct {
-	Topic string `json:"topic"`
-	// Lesson is set when the list was asked for one Lesson.
-	Lesson   string     `json:"lesson,omitempty"`
-	Evidence []Evidence `json:"evidence"`
-}
-
-// RecordEvidence records an exact quote from one of the Topic's Sources that
-// a Lesson cites. The core does not check the quote against the Source: it
-// never parses documents. Recording the same Evidence twice records nothing.
-func (c *Core) RecordEvidence(ctx context.Context, spec EvidenceSpec) (EvidenceResult, error) {
-	if err := checkTopicID(spec.Topic); err != nil {
-		return EvidenceResult{}, err
-	}
-	if err := checkLessonID(spec.Lesson); err != nil {
-		return EvidenceResult{}, err
-	}
-	if !sourceIDPattern.MatchString(spec.Source) {
-		return EvidenceResult{}, invalidf("%q is not a Source id: study source list shows them", spec.Source)
-	}
-	quote, err := cleanQuote(spec.Quote)
-	if err != nil {
-		return EvidenceResult{}, err
-	}
-	location, err := cleanText("location", spec.Location, maxPlaceRunes)
-	if err != nil {
-		return EvidenceResult{}, err
-	}
-	from := strings.TrimSpace(spec.LocationFrom)
-	switch {
-	case location == "" && from != "":
-		return EvidenceResult{}, invalidf("location_from says where a location came from: give the location too")
-	case location != "" && !validLocationFrom(from):
-		return EvidenceResult{}, invalidf("say where the location came from: %s, %s, %s or %s",
-			LocationFromSource, LocationFromKnowledgeBase, LocationFromLearner, LocationFromEstimate)
-	}
-	want := evidenceData{Lesson: spec.Lesson, Source: spec.Source, Quote: quote, Location: location, LocationFrom: from}
-
-	var existing *Evidence
-	ev, err := c.writeTopic(ctx, spec.Topic, func(s *replayed, _ *topicView) (*change, error) {
-		k := s.knowledge()
-		if !k.sources[spec.Source] {
-			return nil, &Error{Code: CodeNotFound, Message: fmt.Sprintf(
-				"Topic %s has no Source %s: add it with study source add first", spec.Topic, spec.Source)}
-		}
-		for i, e := range k.evidence {
-			if e.Lesson == want.Lesson && e.Source == want.Source && e.Quote == want.Quote &&
-				e.Location == want.Location && e.LocationFrom == want.LocationFrom {
-				existing = &k.evidence[i]
-				return nil, nil
-			}
-		}
-		want.ID = c.newEvidenceID()
-		return &change{Type: eventEvidenceRecorded, Data: want}, nil
-	}, spec.DryRun)
-	if err != nil {
-		return EvidenceResult{}, err
-	}
-	result := EvidenceResult{Topic: spec.Topic, DryRun: spec.DryRun}
-	switch {
-	case existing != nil:
-		result.Evidence = *existing
-	case ev != nil:
-		result.Evidence = evidenceOf(want, ev.Wall)
-		result.Changed = true
-	}
-	return result, nil
-}
-
-// ListEvidence lists the Evidence recorded in a Topic, in the order it was
-// recorded; for one Lesson when lesson is not empty.
-func (c *Core) ListEvidence(ctx context.Context, topicID, lesson string) (EvidenceList, error) {
-	if lesson != "" {
-		if err := checkLessonID(lesson); err != nil {
-			return EvidenceList{}, err
-		}
-	}
-	home, topic, err := c.openTopicFolder(topicID)
-	if err != nil {
-		return EvidenceList{}, err
-	}
-	defer home.Close()
-	defer topic.Close()
-	if err := ctx.Err(); err != nil {
-		return EvidenceList{}, err
-	}
-	h, err := readHistory(topic, topicID)
-	if err != nil {
-		return EvidenceList{}, err
-	}
-	list := EvidenceList{Topic: topicID, Lesson: lesson, Evidence: []Evidence{}}
-	for _, e := range replayHistory(h).knowledge().evidence {
-		if lesson == "" || e.Lesson == lesson {
-			list.Evidence = append(list.Evidence, e)
-		}
-	}
-	return list, nil
-}
-
-func evidenceOf(d evidenceData, recorded time.Time) Evidence {
-	return Evidence{ID: d.ID, Lesson: d.Lesson, Source: d.Source, Quote: d.Quote,
-		Location: d.Location, LocationFrom: d.LocationFrom, Recorded: recorded.UTC()}
-}
-
-// newEvidenceID makes a short random id for Evidence.
-func (c *Core) newEvidenceID() string {
-	id := strings.ToLower(c.newID())
-	if len(id) > 10 {
-		id = id[:10]
-	}
-	return id
-}
-
-func validLocationFrom(from string) bool {
-	switch from {
-	case LocationFromSource, LocationFromKnowledgeBase, LocationFromLearner, LocationFromEstimate:
-		return true
-	}
-	return false
-}
-
-// checkLessonID checks a Lesson id. Lessons belong to the Syllabus (#25); the
-// Knowledge seam only stores the id, so it checks its form.
-func checkLessonID(id string) error {
-	if strings.TrimSpace(id) == "" {
-		return invalidf("name the Lesson that cites the Evidence")
-	}
-	if len(id) > 64 || !topicIDPattern.MatchString(id) {
-		return invalidf("%q is not a valid Lesson id: use lowercase letters, digits and single hyphens, up to 64 characters", id)
-	}
-	return nil
-}
-
-// cleanQuote checks an exact quote. It may span lines, so newlines and tabs
-// are kept; other control characters are refused.
-func cleanQuote(s string) (string, error) {
-	s = strings.TrimSpace(strings.ReplaceAll(s, "\r\n", "\n"))
-	if s == "" {
-		return "", invalidf("give the exact quote, as the Source has it")
-	}
-	for _, r := range s {
-		if unicode.IsControl(r) && r != '\n' && r != '\t' {
-			return "", invalidf("the quote contains a control character")
-		}
-	}
-	if utf8.RuneCountInString(s) > maxQuoteRunes {
-		return "", invalidf("the quote is longer than %d characters: quote the passage that matters", maxQuoteRunes)
-	}
-	return s, nil
-}
-
 // knowledgeState is what replay knows about a Topic's Sources and Evidence.
 type knowledgeState struct {
-	sources  map[string]bool
+	// sources are the Sources the History records, by id, in the order
+	// they were added.
+	sources  map[string]*Source
+	order    []string
 	evidence []Evidence
+	byID     map[string]int // Evidence id → index in evidence
 }
 
 func (s *replayed) knowledge() *knowledgeState {
 	if s.know == nil {
-		s.know = &knowledgeState{sources: map[string]bool{}}
+		s.know = &knowledgeState{sources: map[string]*Source{}, byID: map[string]int{}}
 	}
 	return s.know
-}
-
-// lessonsWithoutEvidence returns the lessons, of those given, that cite no
-// Evidence. Lessons without Evidence are marked in status, never blocked;
-// the Syllabus (#25) supplies the Lessons.
-func (s *replayed) lessonsWithoutEvidence(lessons []string) []string {
-	cited := map[string]bool{}
-	for _, e := range s.knowledge().evidence {
-		cited[e.Lesson] = true
-	}
-	var out []string
-	for _, l := range lessons {
-		if !cited[l] {
-			out = append(out, l)
-		}
-	}
-	return out
 }
 
 func replaySourceAdded(s *replayed, ev event) error {
@@ -988,7 +911,11 @@ func replaySourceAdded(s *replayed, ev event) error {
 	if err := json.Unmarshal(ev.Data, &src); err != nil || !sourceIDPattern.MatchString(src.ID) {
 		return errors.New("its payload is not a Source")
 	}
-	s.knowledge().sources[src.ID] = true
+	k := s.knowledge()
+	if _, ok := k.sources[src.ID]; !ok {
+		k.order = append(k.order, src.ID)
+	}
+	k.sources[src.ID] = &src
 	return nil
 }
 
@@ -997,21 +924,10 @@ func replaySourceUpdated(s *replayed, ev event) error {
 	if err := json.Unmarshal(ev.Data, &d); err != nil || d.ID == "" {
 		return errors.New("its payload names no Source")
 	}
-	if !s.knowledge().sources[d.ID] {
+	src, ok := s.knowledge().sources[d.ID]
+	if !ok {
 		return fmt.Errorf("%w: Source %s", errUnknownItem, d.ID)
 	}
-	return nil
-}
-
-func replayEvidenceRecorded(s *replayed, ev event) error {
-	var d evidenceData
-	if err := json.Unmarshal(ev.Data, &d); err != nil || d.ID == "" || d.Lesson == "" || d.Source == "" || d.Quote == "" {
-		return errors.New("its payload is not Evidence")
-	}
-	k := s.knowledge()
-	if !k.sources[d.Source] {
-		return fmt.Errorf("%w: Source %s", errUnknownItem, d.Source)
-	}
-	k.evidence = append(k.evidence, evidenceOf(d, ev.Wall))
+	d.applyTo(src)
 	return nil
 }

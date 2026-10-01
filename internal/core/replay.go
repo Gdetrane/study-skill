@@ -281,6 +281,7 @@ func isGating(item string) bool {
 func (c *Core) topicFlags(topic *os.Root, s *replayed) []Flag {
 	all := append(append([]Flag{}, s.flags...), c.gatingFlags(topic, s)...)
 	all = append(all, repeatedCardFlags(topic)...)
+	all = append(all, sourcesFileFlags(topic)...)
 	if ahead := s.latest.Sub(c.now()); ahead > clockAheadLimit {
 		// The flag is named after the earliest Event dated ahead, which
 		// later Events, the dismissal included, never change.

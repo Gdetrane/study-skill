@@ -60,8 +60,8 @@ func TestServerSendsInstructionsAndTools(t *testing.T) {
 			t.Error("status should be marked read-only")
 		}
 	}
-	if strings.Join(names, ",") != "check_results,checkpoint,due_cards,evidence,evidence_record,flag_dismiss,lesson_complete,"+
-		"library_search,phase_set,review_record,revision_apply,revision_propose,session_close,session_open,"+
+	if strings.Join(names, ",") != "check_results,checkpoint,due_cards,evidence,evidence_record,evidence_retract,flag_dismiss,"+
+		"lesson_complete,library_search,phase_set,review_record,revision_apply,revision_propose,session_close,session_open,"+
 		"source_add,source_update,sources,status,syllabus,topic_create,topic_update" {
 		t.Errorf("tools = %v", names)
 	}

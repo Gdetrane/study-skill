@@ -276,7 +276,8 @@ func (c *Core) recoverTopic(home, topic *os.Root, topicID string) error {
 //
 //   - matching the hash after the Event: that part of the write finished;
 //   - matching the hash before, and the Event is still the latest to change
-//     the item: the write never reached it, so apply it;
+//     the item, or replay holds it so no Event recorded a version: the
+//     write never reached it, so apply it;
 //   - matching the hash before, but a later Event (synced from another
 //     machine) changed the item since: the Event is superseded, so leave it;
 //   - missing or unreadable: stop with an error and keep the Event and the
@@ -313,7 +314,9 @@ func (c *Core) recoverySteps(log *slog.Logger, home, topic *os.Root, topicID str
 		case hash == it.After:
 			continue
 		case hash == it.Before:
-			if latest := s.versions[it.Item]; latest.event != ev.ID {
+			// A held Event never recorded a version, so there is no latest
+			// version to compare with: it is not superseded.
+			if latest := s.versions[it.Item]; latest.event != "" && latest.event != ev.ID {
 				log.Info("left an interrupted write that a later Event superseded",
 					"topic", topicID, "event", ev.ID, "item", it.Item, "later", latest.event)
 				continue

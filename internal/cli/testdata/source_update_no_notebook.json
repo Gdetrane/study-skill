@@ -1,0 +1,7 @@
+{
+  "ok": false,
+  "error": {
+    "code": "failed_precondition",
+    "message": "a NotebookLM id belongs to a notebook, but the Knowledge base of linear-algebra is not notebooklm: set it first with study topic update linear-algebra --notebook <id>"
+  }
+}

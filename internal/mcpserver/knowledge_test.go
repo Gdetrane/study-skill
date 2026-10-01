@@ -68,12 +68,45 @@ func TestKnowledgeSeam(t *testing.T) {
 		t.Errorf("source_update = %+v", renamed)
 	}
 
-	bad, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "evidence_record", Arguments: map[string]any{
-		"topic": "c", "lesson": "pointers", "source": "nothing.abc123", "quote": "x"}})
-	if err != nil {
+	var retracted core.EvidenceResult
+	decode(t, call(t, session, "evidence_retract", map[string]any{"topic": "c", "evidence": recorded.Evidence.ID}), &retracted)
+	if !retracted.Changed || !retracted.Evidence.Retracted {
+		t.Errorf("evidence_retract = %+v", retracted)
+	}
+	decode(t, call(t, session, "evidence", map[string]any{"topic": "c"}), &evidence)
+	if len(evidence.Evidence) != 0 {
+		t.Errorf("evidence after retracting = %+v", evidence)
+	}
+	decode(t, call(t, session, "evidence", map[string]any{"topic": "c", "all": true}), &evidence)
+	if len(evidence.Evidence) != 1 || !evidence.Evidence[0].Retracted {
+		t.Errorf("all evidence = %+v", evidence)
+	}
+
+	for _, tc := range []struct {
+		tool string
+		args map[string]any
+		code string
+	}{
+		{"evidence_record", map[string]any{"topic": "c", "lesson": "pointers", "source": "nothing.abc123", "quote": "x"}, "not_found"},
+		// The server's folder is not the agent's: relative paths are refused.
+		{"source_add", map[string]any{"topic": "c", "file": "Books/k_and_r.pdf"}, "invalid_argument"},
+		{"source_update", map[string]any{"topic": "c", "source": added.Source.ID, "path": "k_and_r.pdf"}, "invalid_argument"},
+	} {
+		res, err := session.CallTool(ctx, &mcp.CallToolParams{Name: tc.tool, Arguments: tc.args})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !res.IsError || !strings.HasPrefix(text(res), tc.code) {
+			t.Errorf("%s %v: IsError=%v, content %q, want %s", tc.tool, tc.args, res.IsError, text(res), tc.code)
+		}
+	}
+	// ~/ is the home folder.
+	if err := os.WriteFile(filepath.Join(home, "notes.pdf"), []byte("%PDF-1.4 notes"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if !bad.IsError || !strings.Contains(text(bad), "not_found") {
-		t.Errorf("Evidence from an unknown Source: IsError=%v, content %q", bad.IsError, text(bad))
+	var tilde core.SourceResult
+	decode(t, call(t, session, "source_add", map[string]any{"topic": "c", "file": "~/notes.pdf"}), &tilde)
+	if tilde.Path != filepath.Join(home, "notes.pdf") {
+		t.Errorf("source_add ~/notes.pdf = %+v", tilde)
 	}
 }
