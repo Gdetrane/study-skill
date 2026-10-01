@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -19,12 +20,12 @@ import (
 func connect(t *testing.T, home string) *mcp.ClientSession {
 	t.Helper()
 	ctx := context.Background()
-	n := 0
+	var n atomic.Int64
 	c, err := core.Open(core.Options{
 		Getenv: func(key string) string { return map[string]string{"STUDY_HOME": home, "HOME": home}[key] },
 		Dir:    home,
 		Now:    func() time.Time { return time.Date(2026, 10, 1, 9, 30, 0, 0, time.UTC) },
-		NewID:  func() string { n++; return fmt.Sprintf("id%03d", n) },
+		NewID:  func() string { return fmt.Sprintf("id%03d", n.Add(1)) },
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -119,4 +120,13 @@ func text(res *mcp.CallToolResult) string {
 		}
 	}
 	return strings.Join(parts, "\n")
+}
+
+func TestStatusOnAnEmptyStudyHome(t *testing.T) {
+	session := connect(t, t.TempDir())
+	var status core.Status
+	decode(t, call(t, session, "status", map[string]any{}), &status)
+	if status.ActiveTopic != nil || len(status.Topics) != 0 || len(status.Problems) != 0 {
+		t.Errorf("status = %+v", status)
+	}
 }

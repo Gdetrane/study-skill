@@ -26,11 +26,12 @@ const (
 )
 
 // Status is where the learner is: the Study home, the Active topic and why it
-// was chosen, and every Topic.
+// was chosen, every Topic, and any Topic that could not be read.
 type Status struct {
-	StudyHome   string       `json:"study_home"`
-	ActiveTopic *ActiveTopic `json:"active_topic"`
-	Topics      []Topic      `json:"topics"`
+	StudyHome   string         `json:"study_home"`
+	ActiveTopic *ActiveTopic   `json:"active_topic"`
+	Topics      []Topic        `json:"topics"`
+	Problems    []TopicProblem `json:"problems"`
 }
 
 // ActiveTopic is the Topic the agent is working on, with the reason it was
@@ -42,6 +43,14 @@ type ActiveTopic struct {
 	Reason   string `json:"reason"`
 }
 
+// TopicProblem is a Topic that could not be read, so the learner can fix it
+// while every other Topic keeps working.
+type TopicProblem struct {
+	ID      string    `json:"id"`
+	Code    ErrorCode `json:"code"`
+	Message string    `json:"message"`
+}
+
 // localState is the machine-local state in the Study home's .lamplight
 // folder. It is never synced.
 type localState struct {
@@ -51,7 +60,7 @@ type localState struct {
 
 // Status reports where the learner is.
 func (c *Core) Status(ctx context.Context) (Status, error) {
-	status := Status{StudyHome: c.home, Topics: []Topic{}}
+	status := Status{StudyHome: c.home, Topics: []Topic{}, Problems: []TopicProblem{}}
 	home, err := os.OpenRoot(c.home)
 	if errors.Is(err, fs.ErrNotExist) {
 		return status, nil
@@ -78,7 +87,8 @@ func (c *Core) Status(ctx context.Context) (Status, error) {
 		}
 		topic, err := loadTopic(home, c.home, name)
 		if err != nil {
-			return status, err
+			status.Problems = append(status.Problems, TopicProblem{ID: name, Code: CodeOf(err), Message: err.Error()})
+			continue
 		}
 		status.Topics = append(status.Topics, topic)
 	}
@@ -103,8 +113,7 @@ func (c *Core) activeTopic(topics []Topic, recent string) *ActiveTopic {
 		}
 		return nil
 	}
-	if rel, err := filepath.Rel(c.home, c.dir); err == nil && rel != "." && !strings.HasPrefix(rel, "..") {
-		first := strings.Split(rel, string(filepath.Separator))[0]
+	if first, ok := firstFolderBelow(c.home, c.dir); ok {
 		if t := find(first); t != nil {
 			return &ActiveTopic{ID: t.ID, Title: t.Title, ChosenBy: ChosenByFolder,
 				Reason: "you started inside its folder"}
@@ -119,6 +128,28 @@ func (c *Core) activeTopic(topics []Topic, recent string) *ActiveTopic {
 		return &ActiveTopic{ID: t.ID, Title: t.Title, ChosenBy: ChosenByOnly, Reason: "it is your only Topic"}
 	}
 	return nil
+}
+
+// firstFolderBelow returns the first path element of dir below home. It
+// compares both the paths as given and with symbolic links resolved, so a
+// Study home reached through a symlink still matches.
+func firstFolderBelow(home, dir string) (string, bool) {
+	try := func(home, dir string) (string, bool) {
+		rel, err := filepath.Rel(home, dir)
+		if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return "", false
+		}
+		return strings.Split(rel, string(filepath.Separator))[0], true
+	}
+	if first, ok := try(home, dir); ok {
+		return first, true
+	}
+	realHome, err1 := filepath.EvalSymlinks(home)
+	realDir, err2 := filepath.EvalSymlinks(dir)
+	if err1 != nil || err2 != nil {
+		return "", false
+	}
+	return try(realHome, realDir)
 }
 
 // openHome opens the Study home, creating it if needed.

@@ -74,7 +74,7 @@ func readEvents(topic *os.Root, topicID string) ([]event, error) {
 		}
 		var ev event
 		if err := json.Unmarshal(line, &ev); err != nil {
-			return nil, invalidf("line %d of the History of %s is not valid JSON: %v", n+1, topicID, err)
+			return nil, corruptf("line %d of the History of %s is not valid JSON: %v", n+1, topicID, err)
 		}
 		if ev.Format > FormatVersion {
 			return nil, newerFormat(fmt.Sprintf("the History of %s", topicID), ev.Format)

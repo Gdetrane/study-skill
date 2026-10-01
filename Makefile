@@ -33,6 +33,7 @@ typecheck: ## Run static type checks
 	cd scripts/catalog && uv run pyright src
 
 coverage: ## Run tests with coverage thresholds
+	go test -coverprofile=coverage-core.out -covermode=atomic ./...
 	cd scripts/catalog && uv run pytest --cov=src/catalog --cov-report=term-missing --cov-report=xml
 	cd scripts/fsrs && go test -coverprofile=coverage.out -covermode=atomic ./...
 
@@ -46,5 +47,5 @@ clean: ## Remove generated local artifacts
 	rm -rf scripts/catalog/.pytest_cache scripts/catalog/.ruff_cache scripts/catalog/.coverage
 	rm -f scripts/catalog/coverage.xml
 	rm -f scripts/fsrs/fsrs
-	rm -f scripts/fsrs/coverage.out
+	rm -f scripts/fsrs/coverage.out coverage-core.out study
 	find scripts -type d -name __pycache__ -prune -exec rm -rf {} +

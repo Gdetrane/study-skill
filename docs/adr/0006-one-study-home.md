@@ -16,8 +16,8 @@ root. Spaced repetition also needs a view across all topics ("what is due today"
 
 All Topics live in one Study home, `~/study` by default and overridable with `STUDY_HOME`.
 The learner can start the agent in the Study home or inside any Topic. The core works out
-the Active topic from the starting folder, falling back to the most recent Topic, and says
-which one it chose and why. The Active topic is only a default for reading: every write
+the Active topic from the starting folder, falling back to the most recent Topic and then
+to the only Topic, and says which one it chose and why. The Active topic is only a default for reading: every write
 names its Topic explicitly, so two agent sessions on different Topics cannot redirect each
 other.
 

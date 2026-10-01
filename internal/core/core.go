@@ -6,11 +6,13 @@
 package core
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/base32"
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -28,7 +30,8 @@ type Options struct {
 	// and HOME. Defaults to os.Getenv.
 	Getenv func(string) string
 	// Dir is the folder the learner or agent started in. It decides the
-	// Active topic. Defaults to the process working directory.
+	// Active topic and anchors relative paths. Defaults to the process
+	// working directory.
 	Dir string
 	// Now returns the current time. Defaults to time.Now.
 	Now func() time.Time
@@ -83,44 +86,64 @@ type config struct {
 	StudyHome string `toml:"study_home"`
 }
 
-// resolveHome picks the Study home: STUDY_HOME, then config.toml, then ~/study.
+// resolveHome picks the Study home: STUDY_HOME, then study_home in
+// config.toml, then ~/study. The result must be absolute (after expanding a
+// leading ~), so the same Study home is found from every folder.
 func resolveHome(getenv func(string) string) (string, error) {
-	userHome := getenv("HOME")
-	if userHome == "" {
-		var err error
-		if userHome, err = os.UserHomeDir(); err != nil {
-			return "", internalError("finding your home folder", err)
+	userHome := func() (string, error) {
+		if h := getenv("HOME"); h != "" {
+			return h, nil
 		}
+		h, err := os.UserHomeDir()
+		if err != nil {
+			return "", &Error{Code: CodeInvalidArgument,
+				Message: "cannot find your home folder: set STUDY_HOME to the absolute path of your Study home", Err: err}
+		}
+		return h, nil
 	}
-	home := getenv("STUDY_HOME")
+
+	home, source := getenv("STUDY_HOME"), "STUDY_HOME"
 	if home == "" {
-		cfg, err := loadConfig(configPath(getenv, userHome))
+		path, err := configPath(getenv, userHome)
 		if err != nil {
 			return "", err
 		}
-		home = cfg.StudyHome
+		cfg, err := loadConfig(path)
+		if err != nil {
+			return "", err
+		}
+		home, source = cfg.StudyHome, "study_home in "+path
 	}
 	if home == "" {
-		home = filepath.Join(userHome, "study")
+		h, err := userHome()
+		if err != nil {
+			return "", err
+		}
+		return filepath.Join(h, "study"), nil
 	}
-	if home == "~" {
-		home = userHome
-	} else if rest, ok := strings.CutPrefix(home, "~/"); ok {
-		home = filepath.Join(userHome, rest)
+	if home == "~" || strings.HasPrefix(home, "~/") {
+		h, err := userHome()
+		if err != nil {
+			return "", err
+		}
+		home = filepath.Join(h, strings.TrimPrefix(home, "~"))
 	}
-	abs, err := filepath.Abs(home)
-	if err != nil {
-		return "", internalError("resolving the Study home", err)
+	if !filepath.IsAbs(home) {
+		return "", invalidf("%s must be an absolute path or start with ~/, not %q", source, home)
 	}
-	return abs, nil
+	return filepath.Clean(home), nil
 }
 
-func configPath(getenv func(string) string, userHome string) string {
+func configPath(getenv func(string) string, userHome func() (string, error)) (string, error) {
 	base := getenv("XDG_CONFIG_HOME")
 	if base == "" {
-		base = filepath.Join(userHome, ".config")
+		h, err := userHome()
+		if err != nil {
+			return "", err
+		}
+		base = filepath.Join(h, ".config")
 	}
-	return filepath.Join(base, "lamplight", "config.toml")
+	return filepath.Join(base, "lamplight", "config.toml"), nil
 }
 
 func loadConfig(path string) (config, error) {
@@ -133,12 +156,29 @@ func loadConfig(path string) (config, error) {
 		return cfg, internalError("reading "+path, err)
 	}
 	if _, err := toml.Decode(string(data), &cfg); err != nil {
-		return cfg, invalidf("%s is not valid TOML: %v", path, err)
+		return cfg, corruptf("%s is not valid TOML: %v", path, err)
 	}
 	if cfg.Format > FormatVersion {
 		return cfg, newerFormat(path, cfg.Format)
 	}
 	return cfg, nil
+}
+
+// gitCommand returns a git command that runs in dir with a clean environment:
+// the caller's GIT_* variables are dropped, because GIT_DIR, GIT_WORK_TREE and
+// their friends would point git at another repository, and the system
+// configuration is not read. stdin is /dev/null.
+func gitCommand(ctx context.Context, dir string, args ...string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Dir = dir
+	env := make([]string, 0, len(os.Environ())+1)
+	for _, kv := range os.Environ() {
+		if !strings.HasPrefix(kv, "GIT_") {
+			env = append(env, kv)
+		}
+	}
+	cmd.Env = append(env, "GIT_CONFIG_NOSYSTEM=1")
+	return cmd
 }
 
 var idEncoding = base32.StdEncoding.WithPadding(base32.NoPadding)
@@ -152,12 +192,13 @@ func randomID() string {
 // ErrorCode classifies errors so the adapters can report them consistently.
 type ErrorCode string
 
-// Error codes reported by the CLI and the MCP server.
+// Error codes reported by the CLI and the MCP server. See docs/cli.md.
 const (
 	CodeInvalidArgument ErrorCode = "invalid_argument"
 	CodeAlreadyExists   ErrorCode = "already_exists"
 	CodeNotFound        ErrorCode = "not_found"
 	CodeNewerFormat     ErrorCode = "newer_format"
+	CodeCorrupt         ErrorCode = "corrupt"
 	CodeInternal        ErrorCode = "internal"
 )
 
@@ -185,6 +226,10 @@ func CodeOf(err error) ErrorCode {
 
 func invalidf(format string, args ...any) error {
 	return &Error{Code: CodeInvalidArgument, Message: fmt.Sprintf(format, args...)}
+}
+
+func corruptf(format string, args ...any) error {
+	return &Error{Code: CodeCorrupt, Message: fmt.Sprintf(format, args...)}
 }
 
 func internalError(doing string, err error) error {

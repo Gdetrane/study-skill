@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -22,12 +24,12 @@ func testCore(t *testing.T, home, dir string) *core.Core {
 	if dir == "" {
 		dir = home
 	}
-	n := 0
+	var n atomic.Int64
 	c, err := core.Open(core.Options{
 		Getenv: envOf(map[string]string{"STUDY_HOME": home, "HOME": t.TempDir()}),
 		Dir:    dir,
 		Now:    func() time.Time { return fixedNow },
-		NewID:  func() string { n++; return fmt.Sprintf("id%03d", n) },
+		NewID:  func() string { return fmt.Sprintf("id%03d", n.Add(1)) },
 	})
 	if err != nil {
 		t.Fatalf("Open: %v", err)
@@ -209,19 +211,143 @@ func TestStatusReadsCreationTimeFromHistory(t *testing.T) {
 	}
 }
 
-func TestNewerFormatsAreRefused(t *testing.T) {
+func TestStatusReportsUnreadableTopics(t *testing.T) {
 	ctx := context.Background()
 	home := t.TempDir()
-	if _, err := testCore(t, home, "").CreateTopic(ctx, core.TopicSpec{Title: "C"}); err != nil {
+	c := testCore(t, home, "")
+	for _, title := range []string{"C", "Go", "Physics"} {
+		if _, err := c.CreateTopic(ctx, core.TopicSpec{Title: title}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(home, "c", "topic.toml"), []byte("format = 99\ntitle = \"C\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(home, "c", "topic.toml")
-	if err := os.WriteFile(path, []byte("format = 99\ntitle = \"C\"\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(home, "go", "topic.toml"), []byte("title = [broken\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	_, err := testCore(t, home, "").Status(ctx)
-	if core.CodeOf(err) != core.CodeNewerFormat {
-		t.Fatalf("err = %v, want newer_format", err)
+
+	status, err := testCore(t, home, "").Status(ctx)
+	if err != nil {
+		t.Fatalf("one broken Topic must not break status: %v", err)
+	}
+	if len(status.Topics) != 1 || status.Topics[0].ID != "physics" {
+		t.Errorf("topics = %+v", status.Topics)
+	}
+	codes := map[string]core.ErrorCode{}
+	for _, p := range status.Problems {
+		codes[p.ID] = p.Code
+	}
+	if codes["c"] != core.CodeNewerFormat || codes["go"] != core.CodeCorrupt || len(codes) != 2 {
+		t.Errorf("problems = %+v", status.Problems)
+	}
+}
+
+func TestCreateTopicIgnoresTheCallersGitEnvironment(t *testing.T) {
+	stray := filepath.Join(t.TempDir(), "stray.git")
+	t.Setenv("GIT_DIR", stray)
+	t.Setenv("GIT_WORK_TREE", t.TempDir())
+	home := t.TempDir()
+	topic, err := testCore(t, home, "").CreateTopic(context.Background(), core.TopicSpec{Title: "Biology"})
+	if err != nil {
+		t.Fatalf("CreateTopic with GIT_DIR set: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(topic.Path, ".git", "HEAD")); err != nil {
+		t.Errorf("the Topic is not a git repository: %v", err)
+	}
+	if _, err := os.Stat(stray); !os.IsNotExist(err) {
+		t.Errorf("git touched the repository named by GIT_DIR (err = %v)", err)
+	}
+}
+
+func TestStatusFollowsASymlinkedStudyHome(t *testing.T) {
+	ctx := context.Background()
+	base := t.TempDir()
+	real := filepath.Join(base, "real")
+	link := filepath.Join(base, "link")
+	if err := os.Mkdir(real, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	c := testCore(t, link, "")
+	for _, title := range []string{"Physics", "C"} {
+		if _, err := c.CreateTopic(ctx, core.TopicSpec{Title: title}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, dir := range []string{filepath.Join(real, "physics"), filepath.Join(link, "physics")} {
+		status, err := testCore(t, link, dir).Status(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := status.ActiveTopic; got == nil || got.ID != "physics" || got.ChosenBy != core.ChosenByFolder {
+			t.Errorf("from %s: active topic = %+v, want physics chosen by folder", dir, got)
+		}
+	}
+}
+
+func TestConcurrentTopicCreation(t *testing.T) {
+	ctx := context.Background()
+	home := t.TempDir()
+	c := testCore(t, home, "")
+
+	var wg sync.WaitGroup
+	errs := make(chan error, 40)
+	for i := range 20 {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			_, err := c.CreateTopic(ctx, core.TopicSpec{Title: fmt.Sprintf("Topic %d", i)})
+			errs <- err
+		}()
+		go func() {
+			defer wg.Done()
+			_, err := c.CreateTopic(ctx, core.TopicSpec{Title: "Shared"})
+			if core.CodeOf(err) == core.CodeAlreadyExists {
+				err = nil
+			}
+			errs <- err
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Errorf("concurrent creation: %v", err)
+		}
+	}
+	status, err := c.Status(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(status.Topics) != 21 || len(status.Problems) != 0 {
+		t.Errorf("got %d Topics and problems %+v, want 21 Topics", len(status.Topics), status.Problems)
+	}
+	leftovers, _ := os.ReadDir(filepath.Join(home, ".lamplight", "tmp"))
+	if len(leftovers) != 0 {
+		t.Errorf("%d staging folders were left behind", len(leftovers))
+	}
+}
+
+func TestTopicTextAndFolderNames(t *testing.T) {
+	ctx := context.Background()
+	c := testCore(t, t.TempDir(), "")
+	topic, err := c.CreateTopic(ctx, core.TopicSpec{Title: "Lineare Algebra für Anfänger", DryRun: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if topic.ID != "lineare-algebra-fur-anfanger" {
+		t.Errorf("id = %q", topic.ID)
+	}
+	for _, spec := range []core.TopicSpec{
+		{Title: "Evil\x1b[2J"},
+		{Title: "C", Goal: "bell\a"},
+	} {
+		if _, err := c.CreateTopic(ctx, spec); core.CodeOf(err) != core.CodeInvalidArgument {
+			t.Errorf("%+v: err = %v, want invalid_argument", spec, err)
+		}
 	}
 }
 
@@ -245,6 +371,7 @@ func TestStudyHomeResolution(t *testing.T) {
 			filepath.Join(userHome, "notes", "study")},
 		{"STUDY_HOME wins", map[string]string{"HOME": userHome, "XDG_CONFIG_HOME": configHome, "STUDY_HOME": "~/elsewhere"},
 			filepath.Join(userHome, "elsewhere")},
+		{"absolute STUDY_HOME needs no HOME", map[string]string{"STUDY_HOME": "/srv/study"}, "/srv/study"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c, err := core.Open(core.Options{Getenv: envOf(tc.env), Dir: userHome})
@@ -276,5 +403,12 @@ func appendTo(t *testing.T, path, text string) {
 	defer f.Close()
 	if _, err := f.WriteString(text); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestRelativeStudyHomeIsRefused(t *testing.T) {
+	_, err := core.Open(core.Options{Getenv: envOf(map[string]string{"STUDY_HOME": "study", "HOME": t.TempDir()})})
+	if core.CodeOf(err) != core.CodeInvalidArgument {
+		t.Fatalf("err = %v, want invalid_argument for a relative STUDY_HOME", err)
 	}
 }

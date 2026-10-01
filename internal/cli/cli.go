@@ -32,9 +32,9 @@ const (
 )
 
 // Run executes the study command line with args (without the program name)
-// and returns the process exit code.
-func Run(ctx context.Context, args []string, stdout, stderr io.Writer, opts core.Options) int {
-	a := &app{opts: opts, stdout: stdout, stderr: stderr}
+// and returns the process exit code. stdin is only read by study mcp.
+func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer, opts core.Options) int {
+	a := &app{opts: opts, stdin: stdin, stdout: stdout, stderr: stderr}
 	root := a.rootCommand()
 	// Decide the output mode before parsing, so errors in earlier flags are
 	// still reported as JSON when --json appears later on the command line.
@@ -62,6 +62,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer, opts core
 
 type app struct {
 	opts   core.Options
+	stdin  io.Reader
 	stdout io.Writer
 	stderr io.Writer
 	json   bool
@@ -77,6 +78,15 @@ func (a *app) rootCommand() *cobra.Command {
 		RunE: a.runStatus,
 	}
 	root.PersistentFlags().BoolVar(&a.json, "json", false, "print a JSON envelope on stdout (see docs/cli.md)")
+	// Once parsing succeeds, the parsed flag decides the output mode: the
+	// up-front scan in Run could mistake a flag value such as --title --json
+	// for the flag.
+	root.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
+		if f := cmd.Flags().Lookup("json"); f == nil || !f.Changed {
+			a.json = false
+		}
+		return nil
+	}
 	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error { return usageError{err} })
 
 	status := &cobra.Command{
@@ -90,6 +100,7 @@ func (a *app) rootCommand() *cobra.Command {
 		Use:   "topic",
 		Short: "Create and inspect Topics",
 		Args:  noArgs,
+		RunE:  showHelp,
 	}
 	var spec core.TopicSpec
 	create := &cobra.Command{
@@ -131,9 +142,9 @@ func (a *app) rootCommand() *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			c, err := core.Open(a.opts)
 			if err != nil {
-				return err
+				return a.fail(err)
 			}
-			return mcpserver.Serve(cmd.Context(), c, version())
+			return mcpserver.Serve(cmd.Context(), c, version(), a.stdin, a.stdout)
 		},
 	}
 
@@ -227,6 +238,10 @@ func isUsage(err error) bool {
 	return errors.As(err, &u)
 }
 
+// showHelp prints help for command groups such as study topic. Unknown
+// subcommands arrive as arguments and are rejected by noArgs first.
+func showHelp(cmd *cobra.Command, _ []string) error { return cmd.Help() }
+
 func noArgs(cmd *cobra.Command, args []string) error {
 	if len(args) > 0 {
 		return usageError{fmt.Errorf("unexpected argument %q for %q", args[0], cmd.CommandPath())}
@@ -246,17 +261,24 @@ func wantsJSON(args []string) bool {
 	return false
 }
 
-var releaseVersion = regexp.MustCompile(`^v\d+\.\d+\.\d+$`)
+var (
+	releaseVersion = regexp.MustCompile(`^v\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$`)
+	pseudoVersion  = regexp.MustCompile(`\d{14}-[0-9a-f]{12}$`)
+)
 
 // version returns the release version set at build time, or the module
-// version for a tagged go install, and "dev" for anything else. Pseudo-versions
-// are not shown: they derive from the v1 skill's tags and would mislead.
+// version for a tagged go install (release candidates included), and "dev"
+// for anything else. Pseudo-versions are not shown: they derive from the v1
+// skill's tags and would mislead.
 func version() string {
 	if Version != "" {
 		return Version
 	}
-	if info, ok := debug.ReadBuildInfo(); ok && releaseVersion.MatchString(info.Main.Version) {
-		return info.Main.Version
+	if info, ok := debug.ReadBuildInfo(); ok {
+		v := info.Main.Version
+		if releaseVersion.MatchString(v) && !pseudoVersion.MatchString(v) {
+			return v
+		}
 	}
 	return "dev"
 }

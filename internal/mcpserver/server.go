@@ -7,6 +7,7 @@ package mcpserver
 import (
 	"context"
 	"fmt"
+	"io"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -20,6 +21,9 @@ const Instructions = `Lamplight keeps the learner's study state. Follow these ru
 2. Every tool that writes names its Topic explicitly. The Active topic is only a default for reading.
 3. Never edit Lamplight's state files yourself (topic.toml, syllabus.toml, history.jsonl, cards.jsonl). Write lesson text, notes and exercise files directly.
 4. Never show counts of overdue or late work. Show where the learner is and one next action.`
+
+// More rules join Instructions as their features land: recording a Next step
+// when a Session stops (#28) and running Checks through the CLI (#30).
 
 // New returns an MCP server whose tools call c.
 func New(c *core.Core, version string) *mcp.Server {
@@ -61,10 +65,15 @@ func New(c *core.Core, version string) *mcp.Server {
 	return server
 }
 
-// Serve runs the server over stdin and stdout until the client disconnects.
-func Serve(ctx context.Context, c *core.Core, version string) error {
-	return New(c, version).Run(ctx, &mcp.StdioTransport{})
+// Serve runs the server over in and out (stdin and stdout for study mcp)
+// until the client disconnects.
+func Serve(ctx context.Context, c *core.Core, version string, in io.Reader, out io.Writer) error {
+	return New(c, version).Run(ctx, &mcp.IOTransport{Reader: io.NopCloser(in), Writer: nopWriteCloser{out}})
 }
+
+type nopWriteCloser struct{ io.Writer }
+
+func (nopWriteCloser) Close() error { return nil }
 
 type topicCreateInput struct {
 	Title string `json:"title" jsonschema:"what the learner is studying, for example Linear algebra"`
