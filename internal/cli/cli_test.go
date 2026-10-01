@@ -30,8 +30,12 @@ type result struct {
 	stdout, stderr string
 }
 
+// eventIDs numbers Events across the whole test process: like real random
+// IDs, they never repeat between runs against one Study home.
+var eventIDs atomic.Int64
+
 func options(home, dir string) core.Options {
-	var n atomic.Int64
+	n := &eventIDs
 	return core.Options{
 		Getenv: func(key string) string {
 			return map[string]string{"STUDY_HOME": home, "HOME": home}[key]
@@ -95,6 +99,11 @@ func TestJSONOutput(t *testing.T) {
 		{"unknown_flag", emptyHome, []string{"status", "--bogus", "--json"}, cli.ExitUsage},
 		{"unexpected_argument", emptyHome, []string{"--json", "status", "extra"}, cli.ExitUsage},
 		{"unknown_subcommand", emptyHome, []string{"topic", "crate", "--json"}, cli.ExitUsage},
+		{"topic_update", withTopic, []string{"topic", "update", "linear-algebra", "--title", "Linear algebra II", "--goal", "", "--json"}, cli.ExitOK},
+		{"topic_update_unchanged", withTopic, []string{"topic", "update", "linear-algebra", "--title", "Linear algebra", "--json"}, cli.ExitOK},
+		{"topic_update_nothing", withTopic, []string{"topic", "update", "linear-algebra", "--json"}, cli.ExitUsage},
+		{"topic_update_unknown", withTopic, []string{"topic", "update", "biology", "--title", "Biology", "--json"}, cli.ExitError},
+		{"status_with_flags", withFlaggedTopic, []string{"status", "--json"}, cli.ExitOK},
 	} {
 		t.Run(tc.golden, func(t *testing.T) {
 			home := tc.home(t)
@@ -135,6 +144,29 @@ func TestHumanOutput(t *testing.T) {
 	if duplicate.code != cli.ExitError || duplicate.stdout != "" || !strings.Contains(duplicate.stderr, "already exists") {
 		t.Errorf("duplicate: exit %d, stdout %q, stderr %q", duplicate.code, duplicate.stdout, duplicate.stderr)
 	}
+
+	updated := run(t, home, "topic", "update", "linear-algebra", "--goal", "Pass the June exam")
+	if updated.code != cli.ExitOK {
+		t.Fatalf("topic update: exit %d, stderr %s", updated.code, updated.stderr)
+	}
+	golden(t, "topic_update.txt", updated.stdout)
+	golden(t, "status_with_flags.txt", run(t, withFlaggedTopic(t), "status").stdout)
+}
+
+// withFlaggedTopic returns a Study home whose one Topic has an Event this
+// version of study doesn't know, as a newer version could have written.
+func withFlaggedTopic(t *testing.T) string {
+	t.Helper()
+	home := withTopic(t)
+	f, err := os.OpenFile(filepath.Join(home, "linear-algebra", "history.jsonl"), os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if _, err := f.WriteString(`{"format":1,"id":"zz1","time":"2026-10-01T10:00:00Z","type":"card.reviewed"}` + "\n"); err != nil {
+		t.Fatal(err)
+	}
+	return home
 }
 
 func TestFlagValuesAreNotMistakenForFlags(t *testing.T) {

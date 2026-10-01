@@ -18,6 +18,10 @@ import (
 
 var fixedNow = time.Date(2026, 10, 1, 9, 30, 0, 0, time.UTC)
 
+// eventIDs numbers Events across the whole test process: like real random
+// IDs, they never repeat between Cores over one Study home.
+var eventIDs atomic.Int64
+
 // testCore returns a Core over a fresh Study home, started in dir (the Study
 // home itself when dir is empty), with a fixed clock and predictable IDs.
 func testCore(t *testing.T, home, dir string) *core.Core {
@@ -25,7 +29,7 @@ func testCore(t *testing.T, home, dir string) *core.Core {
 	if dir == "" {
 		dir = home
 	}
-	var n atomic.Int64
+	n := &eventIDs
 	c, err := core.Open(core.Options{
 		Getenv: envOf(map[string]string{"STUDY_HOME": home, "HOME": t.TempDir()}),
 		Dir:    dir,
@@ -83,7 +87,7 @@ func TestCreateTopicWritesItsFolder(t *testing.T) {
 	if err := json.Unmarshal([]byte(lines[0]), &ev); err != nil {
 		t.Fatalf("history line is not JSON: %v", err)
 	}
-	if ev["type"] != "topic.created" || ev["id"] != "id001" || ev["format"] != float64(1) {
+	if ev["type"] != "topic.created" || !strings.HasPrefix(fmt.Sprint(ev["id"]), "id") || ev["format"] != float64(1) {
 		t.Errorf("unexpected Event: %v", ev)
 	}
 }

@@ -36,7 +36,40 @@ func writeStatus(w io.Writer, s core.Status) error {
 	if err := tw.Flush(); err != nil {
 		return err
 	}
+	writeFlags(w, s.Topics)
 	return writeProblems(w, s.Problems)
+}
+
+// writeFlags lists what replaying each Topic's History found that needs the
+// learner's attention.
+func writeFlags(w io.Writer, topics []core.Topic) {
+	header := false
+	for _, t := range topics {
+		for _, f := range t.Flags {
+			if !header {
+				fmt.Fprintln(w, "\nNeeds attention:")
+				header = true
+			}
+			fmt.Fprintf(w, "  %s: %s\n", t.ID, f.Message)
+		}
+	}
+}
+
+func writeTopicUpdate(w io.Writer, u core.TopicUpdate, dryRun bool) error {
+	t := u.Topic
+	switch {
+	case !u.Changed:
+		fmt.Fprintf(w, "Topic %s already has that title and goal: nothing changed\n", t.ID)
+	case dryRun:
+		fmt.Fprintf(w, "Would update Topic %s (%s)\n", t.ID, t.Title)
+	default:
+		fmt.Fprintf(w, "Updated Topic %s (%s)\n", t.ID, t.Title)
+	}
+	if t.Goal != "" {
+		fmt.Fprintf(w, "  Goal: %s\n", t.Goal)
+	}
+	writeFlags(w, []core.Topic{t})
+	return nil
 }
 
 func writeProblems(w io.Writer, problems []core.TopicProblem) error {

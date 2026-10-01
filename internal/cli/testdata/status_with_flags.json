@@ -1,0 +1,31 @@
+{
+  "ok": true,
+  "data": {
+    "study_home": "$STUDY_HOME",
+    "active_topic": {
+      "id": "linear-algebra",
+      "title": "Linear algebra",
+      "chosen_by": "recent",
+      "reason": "it is the Topic you worked on most recently"
+    },
+    "topics": [
+      {
+        "id": "linear-algebra",
+        "title": "Linear algebra",
+        "goal": "Solve systems by hand",
+        "path": "$STUDY_HOME/linear-algebra",
+        "created": "2026-10-01T09:30:00Z",
+        "flags": [
+          {
+            "kind": "held_event",
+            "message": "Event zz1 (card.reviewed) was not applied: this version of study doesn't know this type of Event; upgrade study",
+            "events": [
+              "zz1"
+            ]
+          }
+        ]
+      }
+    ],
+    "problems": []
+  }
+}

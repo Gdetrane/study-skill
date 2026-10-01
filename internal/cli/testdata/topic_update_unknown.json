@@ -1,0 +1,7 @@
+{
+  "ok": false,
+  "error": {
+    "code": "not_found",
+    "message": "there is no Topic named biology: run study status to list your Topics"
+  }
+}

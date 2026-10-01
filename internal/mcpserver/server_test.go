@@ -60,8 +60,37 @@ func TestServerSendsInstructionsAndTools(t *testing.T) {
 			t.Error("status should be marked read-only")
 		}
 	}
-	if strings.Join(names, ",") != "checkpoint,library_search,status,topic_create" {
+	if strings.Join(names, ",") != "checkpoint,library_search,status,topic_create,topic_update" {
 		t.Errorf("tools = %v", names)
+	}
+}
+
+func TestUpdateTopic(t *testing.T) {
+	ctx := context.Background()
+	session := connect(t, t.TempDir())
+	call(t, session, "topic_create", map[string]any{"title": "C", "goal": "Write a shell"})
+
+	var updated core.TopicUpdate
+	decode(t, call(t, session, "topic_update", map[string]any{"topic": "c", "title": "Systems programming in C"}), &updated)
+	if !updated.Changed || updated.Topic.Title != "Systems programming in C" || updated.Topic.Goal != "Write a shell" {
+		t.Fatalf("updated = %+v: fields left out must stay as they are", updated)
+	}
+	var cleared, unchanged core.TopicUpdate
+	decode(t, call(t, session, "topic_update", map[string]any{"topic": "c", "goal": ""}), &cleared)
+	if !cleared.Changed || cleared.Topic.Goal != "" {
+		t.Errorf("an empty goal must remove it: %+v", cleared)
+	}
+	decode(t, call(t, session, "topic_update", map[string]any{"topic": "c", "title": "Systems programming in C"}), &unchanged)
+	if unchanged.Changed {
+		t.Error("an update to the current values reported a change")
+	}
+
+	unknown, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "topic_update", Arguments: map[string]any{"topic": "biology", "title": "B"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !unknown.IsError || !strings.Contains(text(unknown), "not_found") {
+		t.Errorf("unknown Topic: IsError=%v, content %q", unknown.IsError, text(unknown))
 	}
 }
 
