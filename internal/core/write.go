@@ -6,14 +6,16 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 )
 
 // A change is one write to a Topic: an Event of type Type with payload Data
-// that edits Items, the content files named relative to the Topic.
+// that edits Items (see items.go).
 type change struct {
 	Type  string
 	Data  any
@@ -21,9 +23,23 @@ type change struct {
 }
 
 // A plan decides the change to make, given the Topic's replayed History and
-// its folder. It returns nil when there is nothing to do, which keeps
-// operations idempotent: completing a Lesson twice changes nothing.
-type plan func(s *replayed, topic *os.Root) (*change, error)
+// a view of its content. It returns nil when there is nothing to do, which
+// keeps operations idempotent: completing a Lesson twice changes nothing.
+type plan func(s *replayed, view *topicView) (*change, error)
+
+// topicView reads a Topic's items: as they are on disk or, in a dry run, as
+// they would be once recovery had finished an interrupted write.
+type topicView struct {
+	root    *os.Root
+	pending map[string]itemContent
+}
+
+func (v *topicView) read(item string) ([]byte, bool, error) {
+	if c, ok := v.pending[item]; ok {
+		return c.data, c.exists, nil
+	}
+	return readItem(v.root, item)
+}
 
 // Points where a test can interrupt a write, as a crash would. See Core.crash.
 const (
@@ -31,6 +47,9 @@ const (
 	crashAfterEvent  = "after-event"  // the Event is written, no content is
 	crashAfterItem   = "after-item"   // after each item is replaced
 	crashBeforeClear = "before-clear" // all content is replaced, the marker remains
+
+	crashRecoveryAfterItem   = "recovery-after-item"   // recovery replaced an item
+	crashRecoveryBeforeClear = "recovery-before-clear" // recovery is done, the marker remains
 )
 
 // writeTopic records one change in a Topic, so that a crash at any point
@@ -40,24 +59,25 @@ const (
 //  2. finish any interrupted write, then replay the History and plan;
 //  3. leave an intent marker naming the Event;
 //  4. append the Event, with each item's hash before and after;
-//  5. replace each content file atomically;
+//  5. replace each item atomically;
 //  6. clear the marker.
 //
-// It returns the Event written, or nil when the plan had nothing to do.
-func (c *Core) writeTopic(ctx context.Context, topicID string, p plan) (*event, error) {
-	if err := validateTopicID(topicID); err != nil {
-		return nil, err
-	}
-	home, err := c.openHome()
+// It returns the Event written, or nil when the plan had nothing to do. A
+// dry run returns the Event that would be written, planned against the
+// Topic as it would be after recovery, and writes nothing at all.
+func (c *Core) writeTopic(ctx context.Context, topicID string, p plan, dryRun bool) (*event, error) {
+	home, topic, err := c.openTopicFolder(topicID)
 	if err != nil {
 		return nil, err
 	}
 	defer home.Close()
-	topic, err := openTopic(home, topicID)
-	if err != nil {
+	defer topic.Close()
+	if dryRun {
+		return c.planDryRun(home, topic, topicID, p)
+	}
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	defer topic.Close()
 	unlock, err := lockTopic(ctx, home, topicID)
 	if err != nil {
 		return nil, err
@@ -67,17 +87,24 @@ func (c *Core) writeTopic(ctx context.Context, topicID string, p plan) (*event, 
 	if err := c.recoverTopic(home, topic, topicID); err != nil {
 		return nil, err
 	}
-	events, err := readEvents(topic, topicID)
+	h, err := readHistory(topic, topicID)
 	if err != nil {
 		return nil, err
 	}
-	s := replay(events)
-	ch, err := p(s, topic)
+	s := replayHistory(h)
+	if err := refuseNewer(topicID, s); err != nil {
+		return nil, err
+	}
+	ch, err := p(s, &topicView{root: topic})
 	if err != nil || ch == nil {
 		return nil, err
 	}
-	ev, contents, err := c.prepareEvent(topic, *ch, nextEventTime(c.now(), s.latest))
+	wall := c.now()
+	ev, contents, err := c.prepareEvent(&topicView{root: topic}, *ch, nextEventTime(wall, s.latest), wall)
 	if err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 
@@ -95,7 +122,7 @@ func (c *Core) writeTopic(ctx context.Context, topicID string, p plan) (*event, 
 	}
 	for i, it := range ev.Items {
 		if err := writeItem(topic, it.Item, contents[i]); err != nil {
-			return nil, err
+			return nil, recordedButUnfinished(topicID, err)
 		}
 		if err := c.crashAt(crashAfterItem); err != nil {
 			return nil, err
@@ -105,12 +132,63 @@ func (c *Core) writeTopic(ctx context.Context, topicID string, p plan) (*event, 
 		return nil, err
 	}
 	if err := clearIntent(home, topicID); err != nil {
-		return nil, err
+		return nil, recordedButUnfinished(topicID, err)
 	}
 	// The most recent Topic is local convenience state: failing to record
 	// it must not turn a successful write into an error.
 	_ = c.setRecentTopic(home, topicID)
 	return &ev, nil
+}
+
+// planDryRun plans a write without writing anything, not even the lock:
+// against the Topic as recovery would leave it.
+func (c *Core) planDryRun(home, topic *os.Root, topicID string, p plan) (*event, error) {
+	h, err := readHistory(topic, topicID)
+	if err != nil {
+		return nil, err
+	}
+	s := replayHistory(h)
+	if err := refuseNewer(topicID, s); err != nil {
+		return nil, err
+	}
+	view := &topicView{root: topic, pending: map[string]itemContent{}}
+	// A dry run decides nothing, so it logs nothing.
+	steps, err := c.recoverySteps(slog.New(slog.DiscardHandler), home, topic, topicID, h, s)
+	if err != nil {
+		return nil, err
+	}
+	for _, st := range steps {
+		view.pending[st.item] = st.content
+	}
+	ch, err := p(s, view)
+	if err != nil || ch == nil {
+		return nil, err
+	}
+	wall := c.now()
+	ev, _, err := c.prepareEvent(view, *ch, nextEventTime(wall, s.latest), wall)
+	if err != nil {
+		return nil, err
+	}
+	return &ev, nil
+}
+
+// refuseNewer refuses to write a Topic whose History holds Events written by
+// a newer version of study, which this one cannot replay correctly.
+func refuseNewer(topicID string, s *replayed) error {
+	if s.newer == 0 {
+		return nil
+	}
+	return &Error{Code: CodeNewerFormat,
+		Message: fmt.Sprintf("the History of %s holds Events written by a newer version of study, "+
+			"so this version can read the Topic but not change it: upgrade study", topicID)}
+}
+
+// recordedButUnfinished explains a write that failed after its Event was
+// recorded: the change is not lost, and the next write finishes it.
+func recordedButUnfinished(topicID string, err error) error {
+	return &Error{Code: CodeOf(err), Err: err,
+		Message: fmt.Sprintf("the change is recorded in the History of %s, but it could not be finished (%v); "+
+			"the next change to %s finishes it once that is fixed", topicID, err, topicID)}
 }
 
 // itemContent is an item's content after an Event, or its absence.
@@ -119,9 +197,10 @@ type itemContent struct {
 	exists bool
 }
 
-// prepareEvent builds the Event for ch at time at: it runs the Event's
-// applier on each item's current content and records both versions.
-func (c *Core) prepareEvent(topic *os.Root, ch change, at time.Time) (event, []itemContent, error) {
+// prepareEvent builds the Event for ch at time at, written when the wall
+// clock read wall: it runs the Event's applier on each item's current
+// content and records both versions.
+func (c *Core) prepareEvent(view *topicView, ch change, at, wall time.Time) (event, []itemContent, error) {
 	kind, ok := eventKinds[ch.Type]
 	if !ok {
 		return event{}, nil, internalError("recording an Event", fmt.Errorf("unknown Event type %q", ch.Type))
@@ -130,10 +209,10 @@ func (c *Core) prepareEvent(topic *os.Root, ch change, at time.Time) (event, []i
 	if err != nil {
 		return event{}, nil, internalError("encoding an Event", err)
 	}
-	ev := event{Format: FormatVersion, ID: c.newID(), Time: at, Type: ch.Type, Data: data}
+	ev := event{Format: FormatVersion, ID: c.newID(), Time: at, Wall: wall.UTC().Truncate(clockTick), Type: ch.Type, Data: data}
 	contents := make([]itemContent, 0, len(ch.Items))
 	for _, item := range ch.Items {
-		current, exists, err := readItem(topic, item)
+		current, exists, err := view.read(item)
 		if err != nil {
 			return event{}, nil, err
 		}
@@ -147,73 +226,159 @@ func (c *Core) prepareEvent(topic *os.Root, ch change, at time.Time) (event, []i
 	return ev, contents, nil
 }
 
-// recoverTopic finishes a write that was interrupted, if the Topic's intent
-// marker says there is one. Because of the lock, at most one Event can be
-// unapplied, and only that Event is inspected. For each item it edits:
-//
-//   - matching the hash after the Event: that part of the write finished;
-//   - matching the hash before: the write never reached it, so apply it;
-//   - missing or unreadable: stop with an error and keep the Event and the
-//     marker, so nothing is lost;
-//   - anything else: the learner edited it since, so keep the edit and log it.
+// recoveryStep is one item recovery rewrites.
+type recoveryStep struct {
+	item    string
+	content itemContent
+}
+
+// recoverTopic finishes a write that was interrupted. It first repairs a
+// History whose last line lacks its newline, then, if the Topic's intent
+// marker names an Event, finishes that Event (see recoverySteps) and clears
+// the marker. The caller holds the Topic lock.
 func (c *Core) recoverTopic(home, topic *os.Root, topicID string) error {
+	if err := c.repairHistoryTail(topic, topicID); err != nil {
+		return err
+	}
 	m, ok, err := readIntent(home, topicID)
 	if err != nil || !ok {
 		return err
 	}
-	events, err := readEvents(topic, topicID)
+	h, err := readHistory(topic, topicID)
 	if err != nil {
 		return err
 	}
-	var ev *event
-	for i := range events {
-		if events[i].ID == m.Event {
-			ev = &events[i]
-			break
+	steps, err := c.recoverySteps(c.log, home, topic, topicID, h, replayHistory(h))
+	if err != nil {
+		return err
+	}
+	for _, st := range steps {
+		if err := writeItem(topic, st.item, st.content); err != nil {
+			return err
+		}
+		c.log.Info("finished an interrupted write", "topic", topicID, "event", m.Event, "item", st.item)
+		if err := c.crashAt(crashRecoveryAfterItem); err != nil {
+			return err
 		}
 	}
+	if ev := findEvent(h, m.Event); ev != nil {
+		removeTempFiles(topic, ev.Items)
+	}
+	if err := c.crashAt(crashRecoveryBeforeClear); err != nil {
+		return err
+	}
+	return clearIntent(home, topicID)
+}
+
+// recoverySteps decides how to finish the write the intent marker names, if
+// any. Because of the lock, at most one Event can be unapplied after a
+// crash, and only that Event is inspected. For each item it edits:
+//
+//   - matching the hash after the Event: that part of the write finished;
+//   - matching the hash before, and the Event is still the latest to change
+//     the item: the write never reached it, so apply it;
+//   - matching the hash before, but a later Event (synced from another
+//     machine) changed the item since: the Event is superseded, so leave it;
+//   - missing or unreadable: stop with an error and keep the Event and the
+//     marker, so nothing is lost;
+//   - anything else: the learner edited it since, so keep the edit and log it.
+//
+// It writes nothing, so dry runs can use it too; log receives its decisions.
+func (c *Core) recoverySteps(log *slog.Logger, home, topic *os.Root, topicID string, h historyLog, s *replayed) ([]recoveryStep, error) {
+	m, ok, err := readIntent(home, topicID)
+	if err != nil || !ok {
+		return nil, err
+	}
+	ev := findEvent(h, m.Event)
 	if ev == nil {
-		c.log.Info("an interrupted write never reached the History, so there is nothing to finish",
+		log.Info("an interrupted write never reached the History, so there is nothing to finish",
 			"topic", topicID, "event", m.Event, "type", m.Type)
-		return clearIntent(home, topicID)
+		return nil, nil
 	}
 	kind, ok := eventKinds[ev.Type]
 	if !ok {
-		return corruptf("Topic %s has an interrupted %s write that this version of study cannot finish: upgrade study", topicID, ev.Type)
+		return nil, corruptf("Topic %s has an interrupted %s write that this version of study cannot finish: upgrade study", topicID, ev.Type)
 	}
+	var steps []recoveryStep
 	for _, it := range ev.Items {
 		current, exists, err := readItem(topic, it.Item)
+		if CodeOf(err) == CodeCorrupt {
+			return nil, corruptf("%s in Topic %s cannot be read (%v), so an interrupted write (Event %s) cannot be finished: "+
+				"fix or restore it and try again", it.Item, topicID, err, ev.ID)
+		}
 		if err != nil {
-			return err
+			return nil, err
 		}
 		switch hash := contentHash(current, exists); {
 		case hash == it.After:
 			continue
 		case hash == it.Before:
+			if latest := s.versions[it.Item]; latest.event != ev.ID {
+				log.Info("left an interrupted write that a later Event superseded",
+					"topic", topicID, "event", ev.ID, "item", it.Item, "later", latest.event)
+				continue
+			}
 			next, keep, err := kind.apply(*ev, it.Item, current, exists)
 			if err != nil {
-				return err
+				return nil, err
 			}
 			if contentHash(next, keep) != it.After {
-				return corruptf("Event %s in the History of %s does not produce the version of %s it recorded, "+
-					"so the interrupted write cannot be finished", ev.ID, topicID, it.Item)
+				// This binary writes the item differently from the one that
+				// recorded the Event, after an upgrade say. Nobody edited the
+				// item, so the Event's change still applies.
+				log.Warn("finished an interrupted write whose content this version of study writes differently",
+					"topic", topicID, "event", ev.ID, "item", it.Item)
 			}
-			if err := writeItem(topic, it.Item, itemContent{data: next, exists: keep}); err != nil {
-				return err
-			}
-			c.log.Info("finished an interrupted write", "topic", topicID, "event", ev.ID, "item", it.Item)
+			steps = append(steps, recoveryStep{item: it.Item, content: itemContent{data: next, exists: keep}})
 		case !exists:
-			return corruptf("%s in Topic %s is missing, so an interrupted write (Event %s) cannot be finished: "+
+			return nil, corruptf("%s in Topic %s is missing, so an interrupted write (Event %s) cannot be finished: "+
 				"restore it, for example from the last Checkpoint, and try again", it.Item, topicID, ev.ID)
 		default:
 			if err := validateItem(it.Item, current); err != nil {
-				return corruptf("%s in Topic %s cannot be read (%v), so an interrupted write (Event %s) cannot be finished: "+
+				return nil, corruptf("%s in Topic %s cannot be read (%v), so an interrupted write (Event %s) cannot be finished: "+
 					"fix or restore it and try again", it.Item, topicID, err, ev.ID)
 			}
-			c.log.Warn("kept a hand edit made after an interrupted write", "topic", topicID, "event", ev.ID, "item", it.Item)
+			log.Warn("kept a hand edit made after an interrupted write", "topic", topicID, "event", ev.ID, "item", it.Item)
 		}
 	}
-	return clearIntent(home, topicID)
+	return steps, nil
+}
+
+func findEvent(h historyLog, id string) *event {
+	for i := range h.events {
+		if h.events[i].ID == id {
+			return &h.events[i]
+		}
+	}
+	return nil
+}
+
+// removeTempFiles removes temporary files an interrupted write left next to
+// the files of items.
+func removeTempFiles(topic *os.Root, items []itemChange) {
+	done := map[string]bool{}
+	for _, it := range items {
+		file, _, err := parseItem(it.Item)
+		if err != nil {
+			continue
+		}
+		name := filepath.FromSlash(file)
+		dir, prefix := filepath.Dir(name), tempPrefix(filepath.Base(name))
+		key := dir + "\x00" + prefix
+		if done[key] {
+			continue
+		}
+		done[key] = true
+		entries, err := fs.ReadDir(topic.FS(), filepath.ToSlash(dir))
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if strings.HasPrefix(e.Name(), prefix) {
+				_ = topic.Remove(filepath.Join(dir, e.Name()))
+			}
+		}
+	}
 }
 
 func (c *Core) crashAt(point string) error {
@@ -238,69 +403,63 @@ func isTopic(home *os.Root, name string) bool {
 	return false
 }
 
+// checkTopicID checks an ID that names an existing Topic.
+func checkTopicID(topicID string) error {
+	if strings.TrimSpace(topicID) == "" {
+		return invalidf("name the Topic: run study status to see their ids")
+	}
+	return validateTopicID(topicID)
+}
+
 func noSuchTopic(topicID string) error {
-	return &Error{Code: CodeNotFound, Message: "there is no Topic named " + topicID + ": run study status to list your Topics"}
+	return &Error{Code: CodeNotFound, Message: "there is no Topic named " + topicID + ": run study status to see your Topics"}
 }
 
-// openTopic opens an existing Topic's folder.
-func openTopic(home *os.Root, topicID string) (*os.Root, error) {
-	if !isTopic(home, topicID) {
-		return nil, noSuchTopic(topicID)
-	}
-	topic, err := home.OpenRoot(topicID)
-	if err != nil {
-		return nil, internalError("opening Topic "+topicID, err)
-	}
-	return topic, nil
-}
-
-// readItem returns an item's content and whether it exists. Items are
-// regular files inside the Topic: a symbolic link is refused, so an agent
-// cannot point Lamplight at a file elsewhere.
-func readItem(topic *os.Root, item string) ([]byte, bool, error) {
-	info, err := topic.Lstat(item)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil, false, nil
-	}
-	if err != nil {
-		return nil, false, internalError("reading "+item, err)
-	}
-	if !info.Mode().IsRegular() {
-		return nil, false, corruptf("%s is not a regular file: Lamplight does not follow links inside a Topic", item)
-	}
-	data, err := topic.ReadFile(item)
-	if err != nil {
-		return nil, false, internalError("reading "+item, err)
-	}
-	return data, true, nil
-}
-
-// writeItem replaces an item atomically, or removes it.
-func writeItem(topic *os.Root, item string, content itemContent) error {
-	if !content.exists {
-		if err := topic.Remove(item); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return internalError("removing "+item, err)
-		}
-		syncDir(topic, filepath.Dir(item))
-		return nil
-	}
-	if dir := filepath.Dir(item); dir != "." {
-		if err := topic.MkdirAll(dir, 0o755); err != nil {
-			return internalError("creating "+dir, err)
-		}
-	}
-	return writeFileAtomic(topic, item, content.data)
-}
-
-// validateItem checks that an item's content can be read, so recovery can
-// tell a hand edit from a damaged file.
-func validateItem(item string, data []byte) error {
-	switch item {
-	case topicFile:
-		_, err := parseTopicSettings(data, item)
+// checkTopicFolder checks that topicID names a real Topic folder in the
+// Study home: a folder, not a symbolic link, since locks and intent markers
+// are kept by name and a second name for one Topic would bypass them.
+func checkTopicFolder(home *os.Root, topicID string) error {
+	if err := checkTopicID(topicID); err != nil {
 		return err
 	}
+	info, err := home.Lstat(topicID)
+	if errors.Is(err, fs.ErrNotExist) {
+		return noSuchTopic(topicID)
+	}
+	if err != nil {
+		return internalError("reading Topic "+topicID, err)
+	}
+	if !info.IsDir() {
+		return corruptf("%s in the Study home is not a folder: Topics are folders, never links", topicID)
+	}
+	if !isTopic(home, topicID) {
+		return noSuchTopic(topicID)
+	}
 	return nil
+}
+
+// openTopicFolder opens the Study home and an existing Topic's folder.
+func (c *Core) openTopicFolder(topicID string) (home, topic *os.Root, err error) {
+	if err := checkTopicID(topicID); err != nil {
+		return nil, nil, err
+	}
+	home, err = os.OpenRoot(c.home)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil, noSuchTopic(topicID)
+	}
+	if err != nil {
+		return nil, nil, internalError("opening the Study home "+c.home, err)
+	}
+	if err := checkTopicFolder(home, topicID); err != nil {
+		home.Close()
+		return nil, nil, err
+	}
+	topic, err = home.OpenRoot(topicID)
+	if err != nil {
+		home.Close()
+		return nil, nil, internalError("opening Topic "+topicID, err)
+	}
+	return home, topic, nil
 }
 
 // intent is the marker a write leaves in the Study home's .lamplight/intents
@@ -337,7 +496,7 @@ func readIntent(home *os.Root, topicID string) (intent, bool, error) {
 		return intent{}, false, internalError("reading "+path, err)
 	}
 	var m intent
-	if err := json.Unmarshal(data, &m); err != nil || m.Event == "" {
+	if err := json.Unmarshal(data, &m); err != nil || m.Event == "" || m.Format < 1 {
 		return intent{}, false, corruptf("the intent marker %s is damaged, so an interrupted write to Topic %s cannot be checked: "+
 			"look at the end of the Topic's History, then delete the marker", path, topicID)
 	}

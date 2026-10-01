@@ -16,11 +16,11 @@ const lockWait = 30 * time.Second
 // an advisory lock on .lamplight/locks/<topic>.lock in the Study home, local
 // and never synced, which the operating system releases if the process dies.
 func lockTopic(ctx context.Context, home *os.Root, topicID string) (unlock func(), err error) {
-	dir := filepath.Join(localDir, "locks")
+	dir := filepath.Dir(lockPath(topicID))
 	if err := home.MkdirAll(dir, 0o755); err != nil {
 		return nil, internalError("creating "+dir, err)
 	}
-	f, err := home.OpenFile(filepath.Join(dir, topicID+".lock"), os.O_RDWR|os.O_CREATE, 0o644)
+	f, err := home.OpenFile(lockPath(topicID), os.O_RDWR|os.O_CREATE, 0o644)
 	if err != nil {
 		return nil, internalError("opening the lock of Topic "+topicID, err)
 	}
@@ -51,4 +51,26 @@ func lockTopic(ctx context.Context, home *os.Root, topicID string) (unlock func(
 		}
 		wait = min(2*wait, 50*time.Millisecond)
 	}
+}
+
+func lockPath(topicID string) string { return filepath.Join(localDir, "locks", topicID+".lock") }
+
+// lockHeld reports whether a writer holds the Topic's lock right now, so
+// status can tell a write in progress from an interrupted one. It never
+// creates the lock file and never waits.
+func lockHeld(home *os.Root, topicID string) bool {
+	f, err := home.OpenFile(lockPath(topicID), os.O_RDWR, 0)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	locked, err := tryLock(f)
+	if err != nil {
+		return false
+	}
+	if locked {
+		_ = unlockFile(f)
+		return false
+	}
+	return true
 }

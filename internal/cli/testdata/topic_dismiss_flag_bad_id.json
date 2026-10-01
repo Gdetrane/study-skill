@@ -1,0 +1,7 @@
+{
+  "ok": false,
+  "error": {
+    "code": "invalid_argument",
+    "message": "\"nope\" is not a flag id: study status lists each flag with its id"
+  }
+}

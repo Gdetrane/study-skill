@@ -50,9 +50,22 @@ func writeFlags(w io.Writer, topics []core.Topic) {
 				fmt.Fprintln(w, "\nNeeds attention:")
 				header = true
 			}
-			fmt.Fprintf(w, "  %s: %s\n", t.ID, f.Message)
+			fmt.Fprintf(w, "  %s: %s (flag %s)\n", t.ID, f.Message, f.ID)
 		}
 	}
+}
+
+func writeFlagDismissal(w io.Writer, d core.FlagDismissal) error {
+	var err error
+	switch {
+	case !d.Changed:
+		_, err = fmt.Fprintf(w, "Flag %s in %s was already dismissed\n", d.Flag.ID, d.Topic)
+	case d.DryRun:
+		_, err = fmt.Fprintf(w, "Would dismiss flag %s in %s: %s\n", d.Flag.ID, d.Topic, d.Flag.Message)
+	default:
+		_, err = fmt.Fprintf(w, "Dismissed flag %s in %s: %s\n", d.Flag.ID, d.Topic, d.Flag.Message)
+	}
+	return err
 }
 
 func writeTopicUpdate(w io.Writer, u core.TopicUpdate, dryRun bool) error {

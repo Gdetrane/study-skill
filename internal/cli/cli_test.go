@@ -104,6 +104,10 @@ func TestJSONOutput(t *testing.T) {
 		{"topic_update_nothing", withTopic, []string{"topic", "update", "linear-algebra", "--json"}, cli.ExitUsage},
 		{"topic_update_unknown", withTopic, []string{"topic", "update", "biology", "--title", "Biology", "--json"}, cli.ExitError},
 		{"status_with_flags", withFlaggedTopic, []string{"status", "--json"}, cli.ExitOK},
+		{"topic_dismiss_flag", withFlaggedTopic, []string{"topic", "dismiss-flag", "linear-algebra", heldFlag, "--json"}, cli.ExitOK},
+		{"topic_dismiss_flag_dry_run", withFlaggedTopic, []string{"topic", "dismiss-flag", "linear-algebra", heldFlag, "--dry-run", "--json"}, cli.ExitOK},
+		{"topic_dismiss_flag_unknown", withFlaggedTopic, []string{"topic", "dismiss-flag", "linear-algebra", "0123456789", "--json"}, cli.ExitError},
+		{"topic_dismiss_flag_bad_id", withFlaggedTopic, []string{"topic", "dismiss-flag", "linear-algebra", "nope", "--json"}, cli.ExitUsage},
 	} {
 		t.Run(tc.golden, func(t *testing.T) {
 			home := tc.home(t)
@@ -151,7 +155,15 @@ func TestHumanOutput(t *testing.T) {
 	}
 	golden(t, "topic_update.txt", updated.stdout)
 	golden(t, "status_with_flags.txt", run(t, withFlaggedTopic(t), "status").stdout)
+
+	flagged := withFlaggedTopic(t)
+	golden(t, "topic_dismiss_flag.txt", run(t, flagged, "topic", "dismiss-flag", "linear-algebra", heldFlag).stdout)
+	golden(t, "topic_dismiss_flag_again.txt", run(t, flagged, "topic", "dismiss-flag", "linear-algebra", heldFlag).stdout)
 }
+
+// heldFlag is the ID of the flag withFlaggedTopic's held Event raises. Flag
+// IDs are stable, so it is the same on every run and machine.
+const heldFlag = "e9bd1dc27f"
 
 // withFlaggedTopic returns a Study home whose one Topic has an Event this
 // version of study doesn't know, as a newer version could have written.
@@ -163,7 +175,7 @@ func withFlaggedTopic(t *testing.T) string {
 		t.Fatal(err)
 	}
 	defer f.Close()
-	if _, err := f.WriteString(`{"format":1,"id":"zz1","time":"2026-10-01T10:00:00Z","type":"card.reviewed"}` + "\n"); err != nil {
+	if _, err := f.WriteString(`{"format":1,"id":"zz1","time":"2026-10-01T10:00:00Z","wall":"2026-10-01T10:00:00Z","type":"card.reviewed"}` + "\n"); err != nil {
 		t.Fatal(err)
 	}
 	return home

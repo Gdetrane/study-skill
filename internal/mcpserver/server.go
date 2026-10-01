@@ -53,6 +53,21 @@ func New(c *core.Core, version string) *mcp.Server {
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
+		Name:  "flag_dismiss",
+		Title: "Dismiss a flag",
+		Description: "Dismiss one of a Topic's flags, by the id status gives it. Only call this after the learner has " +
+			"seen the flag and accepted it; never dismiss a flag on your own. Dismissing records the decision and never " +
+			"changes content.",
+		Annotations: &mcp.ToolAnnotations{DestructiveHint: &notDestructive, IdempotentHint: true, OpenWorldHint: &closedWorld},
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in flagDismissInput) (*mcp.CallToolResult, core.FlagDismissal, error) {
+		res, err := c.DismissFlag(ctx, in.Topic, in.Flag, false)
+		if err != nil {
+			return nil, core.FlagDismissal{}, toolError(err)
+		}
+		return nil, res, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
 		Name:  "topic_create",
 		Title: "Create a Topic",
 		Description: "Create a Topic: a folder in the Study home with its settings, History and git repository. " +
@@ -174,6 +189,11 @@ func Serve(ctx context.Context, c *core.Core, version string, in io.Reader, out 
 type nopWriteCloser struct{ io.Writer }
 
 func (nopWriteCloser) Close() error { return nil }
+
+type flagDismissInput struct {
+	Topic string `json:"topic" jsonschema:"the id of the Topic the flag belongs to"`
+	Flag  string `json:"flag" jsonschema:"the flag's id, from status"`
+}
 
 type topicUpdateInput struct {
 	Topic string  `json:"topic" jsonschema:"the id of the Topic to change"`

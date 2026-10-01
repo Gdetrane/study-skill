@@ -17,6 +17,7 @@
         "created": "2026-10-01T09:30:00Z",
         "flags": [
           {
+            "id": "e9bd1dc27f",
             "kind": "held_event",
             "message": "Event zz1 (card.reviewed) was not applied: this version of study doesn't know this type of Event; upgrade study",
             "events": [

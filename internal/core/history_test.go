@@ -107,11 +107,11 @@ func replayFolder(t *testing.T, dir string) *replayed {
 		t.Fatal(err)
 	}
 	defer root.Close()
-	events, err := readEvents(root, filepath.Base(dir))
+	h, err := readHistory(root, filepath.Base(dir))
 	if err != nil {
 		t.Fatal(err)
 	}
-	return replay(events)
+	return replayHistory(h)
 }
 
 // checkChain asserts that the Events editing topic.toml form one unbroken
@@ -636,7 +636,7 @@ func TestReplayIsDeterministic(t *testing.T) {
 	// A repeated line, an Event this version doesn't know, and an Event
 	// that refers to nothing known.
 	lines = append(lines, lines[2],
-		`{"format":1,"id":"zz1","time":"2026-10-01T09:31:00Z","type":"card.reviewed","data":{"card":"c1.x"}}`+"\n")
+		`{"format":1,"id":"zz1","time":"2026-10-01T09:31:00Z","wall":"2026-10-01T09:31:00Z","type":"card.reviewed","data":{"card":"c1.x"}}`+"\n")
 
 	want := summarize(replayLines(t, lines))
 	if len(want.Applied) != 6 || !slices.Equal(flagKinds(want.Flags), []string{FlagHeldEvent}) {
@@ -653,10 +653,10 @@ func TestReplayIsDeterministic(t *testing.T) {
 }
 
 func TestReplayHoldsEventsUntilWhatTheyReferToIsKnown(t *testing.T) {
-	created := `{"format":1,"id":"e1","time":"2026-10-01T09:30:00Z","type":"topic.created","data":{"title":"C"}}` + "\n"
+	created := `{"format":1,"id":"e1","time":"2026-10-01T09:30:00Z","wall":"2026-10-01T09:30:00Z","type":"topic.created","data":{"title":"C"}}` + "\n"
 	// Sorts before the creation, as a skewed clock without the hybrid
 	// logical clock could make it.
-	early := `{"format":1,"id":"e0","time":"2026-10-01T09:00:00Z","type":"topic.updated","data":{"goal":"G"}}` + "\n"
+	early := `{"format":1,"id":"e0","time":"2026-10-01T09:00:00Z","wall":"2026-10-01T09:00:00Z","type":"topic.updated","data":{"goal":"G"}}` + "\n"
 
 	resolved := summarize(replayLines(t, []string{early, created}))
 	if !slices.Equal(resolved.Applied, []string{"e1", "e0"}) || len(resolved.Flags) != 0 {

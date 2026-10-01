@@ -5,4 +5,4 @@ Topics:
   linear-algebra  Linear algebra
 
 Needs attention:
-  linear-algebra: Event zz1 (card.reviewed) was not applied: this version of study doesn't know this type of Event; upgrade study
+  linear-algebra: Event zz1 (card.reviewed) was not applied: this version of study doesn't know this type of Event; upgrade study (flag e9bd1dc27f)

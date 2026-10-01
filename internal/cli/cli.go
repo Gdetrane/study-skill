@@ -166,7 +166,31 @@ func (a *app) rootCommand() *cobra.Command {
 	update.Flags().StringVar(&newTitle, "title", "", "the new title")
 	update.Flags().StringVar(&newGoal, "goal", "", "the new goal; an empty goal removes it")
 	update.Flags().BoolVar(&changes.DryRun, "dry-run", false, "show the result without writing anything")
-	topic.AddCommand(create, update)
+	var dismissDryRun bool
+	dismiss := &cobra.Command{
+		Use:   "dismiss-flag <topic> <flag-id>",
+		Short: "Dismiss a flag in a Topic once you have looked at it",
+		Long: "Dismiss a flag that study status shows, once you have looked at it and accepted it.\n" +
+			"Dismissing records your decision in the History; it never changes any content.",
+		Example: "  study topic dismiss-flag linear-algebra 3f9c2a71b0",
+		Args:    exactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := core.Open(a.opts)
+			if err != nil {
+				return a.fail(err)
+			}
+			res, err := c.DismissFlag(cmd.Context(), args[0], args[1], dismissDryRun)
+			if err != nil {
+				return a.fail(err)
+			}
+			if a.json {
+				return a.writeJSON(envelope{OK: true, Data: res})
+			}
+			return writeFlagDismissal(a.stdout, res)
+		},
+	}
+	dismiss.Flags().BoolVar(&dismissDryRun, "dry-run", false, "show the flag that would be dismissed without recording anything")
+	topic.AddCommand(create, update, dismiss)
 
 	serve := &cobra.Command{
 		Use:   "mcp",

@@ -86,6 +86,11 @@ type topicSettings struct {
 	Format int    `toml:"format"`
 	Title  string `toml:"title"`
 	Goal   string `toml:"goal,omitempty"`
+
+	// extra holds settings this version of study does not know, such as
+	// ones a newer version added within the same format, or the learner's
+	// own. They are written back unchanged.
+	extra map[string]any
 }
 
 // topicCreatedData is the payload of a topic.created Event.
@@ -130,8 +135,9 @@ func (c *Core) CreateTopic(ctx context.Context, spec TopicSpec) (Topic, error) {
 	if err := validateTopicID(id); err != nil {
 		return Topic{}, err
 	}
+	wall := c.now()
 	topic := Topic{ID: id, Title: title, Goal: goal, Path: filepath.Join(c.home, id),
-		Created: nextEventTime(c.now(), time.Time{})}
+		Created: nextEventTime(wall, time.Time{})}
 	if _, err := os.Lstat(topic.Path); err == nil {
 		return Topic{}, alreadyExists(id)
 	} else if !errors.Is(err, fs.ErrNotExist) {
@@ -154,7 +160,7 @@ func (c *Core) CreateTopic(ctx context.Context, spec TopicSpec) (Topic, error) {
 	if err := home.Mkdir(staging, 0o755); err != nil {
 		return Topic{}, internalError("creating "+staging, err)
 	}
-	if err := c.initTopic(ctx, home, staging, topic); err != nil {
+	if err := c.initTopic(ctx, home, staging, topic, wall); err != nil {
 		_ = home.RemoveAll(staging)
 		return Topic{}, err
 	}
@@ -173,18 +179,18 @@ func (c *Core) CreateTopic(ctx context.Context, spec TopicSpec) (Topic, error) {
 
 // initTopic writes a new Topic into dir: the topic.created Event, then the
 // content it creates, then the git repository.
-func (c *Core) initTopic(ctx context.Context, home *os.Root, dir string, topic Topic) error {
+func (c *Core) initTopic(ctx context.Context, home *os.Root, dir string, topic Topic, wall time.Time) error {
 	root, err := home.OpenRoot(dir)
 	if err != nil {
 		return internalError("opening "+dir, err)
 	}
 	defer root.Close()
 
-	ev, contents, err := c.prepareEvent(root, change{
+	ev, contents, err := c.prepareEvent(&topicView{root: root}, change{
 		Type:  eventTopicCreated,
 		Data:  topicCreatedData{Title: topic.Title, Goal: topic.Goal},
 		Items: []string{topicFile, gitattributes},
-	}, topic.Created)
+	}, topic.Created, wall)
 	if err != nil {
 		return err
 	}
@@ -228,35 +234,17 @@ func (c *Core) UpdateTopic(ctx context.Context, id string, changes TopicChanges)
 	if want.Title == nil && want.Goal == nil {
 		return TopicUpdate{}, invalidf("nothing to change: give a new title or goal")
 	}
-	if err := validateTopicID(id); err != nil {
-		return TopicUpdate{}, err
-	}
-
-	if changes.DryRun {
-		topic, err := c.readTopic(id)
-		if err != nil {
-			return TopicUpdate{}, err
-		}
-		update := TopicUpdate{Topic: topic}
-		if want.Title != nil && *want.Title != topic.Title {
-			update.Topic.Title, update.Changed = *want.Title, true
-		}
-		if want.Goal != nil && *want.Goal != topic.Goal {
-			update.Topic.Goal, update.Changed = *want.Goal, true
-		}
-		return update, nil
-	}
-
-	ev, err := c.writeTopic(ctx, id, func(_ *replayed, topic *os.Root) (*change, error) {
-		data, exists, err := readItem(topic, topicFile)
+	// The settings as the write finds them: after recovery, in a dry run too.
+	var current topicSettings
+	ev, err := c.writeTopic(ctx, id, func(_ *replayed, view *topicView) (*change, error) {
+		data, exists, err := view.read(topicFile)
 		if err != nil {
 			return nil, err
 		}
 		if !exists {
 			return nil, corruptf("%s of %s is missing", topicFile, id)
 		}
-		current, err := parseTopicSettings(data, filepath.Join(id, topicFile))
-		if err != nil {
+		if current, err = parseTopicSettings(data, filepath.Join(id, topicFile)); err != nil {
 			return nil, err
 		}
 		var diff topicUpdatedData
@@ -270,13 +258,22 @@ func (c *Core) UpdateTopic(ctx context.Context, id string, changes TopicChanges)
 			return nil, nil
 		}
 		return &change{Type: eventTopicUpdated, Data: diff, Items: []string{topicFile}}, nil
-	})
+	}, changes.DryRun)
 	if err != nil {
 		return TopicUpdate{}, err
 	}
 	topic, err := c.readTopic(id)
 	if err != nil {
 		return TopicUpdate{}, err
+	}
+	if changes.DryRun {
+		topic.Title, topic.Goal = current.Title, current.Goal
+		if want.Title != nil {
+			topic.Title = *want.Title
+		}
+		if want.Goal != nil {
+			topic.Goal = *want.Goal
+		}
 	}
 	return TopicUpdate{Topic: topic, Changed: ev != nil}, nil
 }
@@ -338,22 +335,43 @@ func replayTopicUpdated(s *replayed, _ event) error {
 // parseTopicSettings reads topic.toml; where names it in errors.
 func parseTopicSettings(data []byte, where string) (topicSettings, error) {
 	var settings topicSettings
-	if _, err := toml.Decode(string(data), &settings); err != nil {
+	md, err := toml.Decode(string(data), &settings)
+	if err != nil {
 		return settings, corruptf("%s is not valid TOML: %v", where, err)
 	}
 	if settings.Format > FormatVersion {
 		return settings, newerFormat(where, settings.Format)
 	}
+	if settings.Format < 1 {
+		return settings, corruptf("%s has no format number: add format = %d", where, FormatVersion)
+	}
+	if len(md.Undecoded()) > 0 {
+		if _, err := toml.Decode(string(data), &settings.extra); err != nil {
+			return settings, corruptf("%s is not valid TOML: %v", where, err)
+		}
+		for _, known := range []string{"format", "title", "goal"} {
+			delete(settings.extra, known)
+		}
+	}
 	return settings, nil
 }
 
-// encodeTopicSettings writes topic.toml in the current format.
+// encodeTopicSettings writes topic.toml in the current format: the settings
+// Lamplight knows, then any others, sorted, so the same settings always
+// give the same bytes.
 func encodeTopicSettings(settings topicSettings) ([]byte, error) {
 	settings.Format = FormatVersion
 	var buf bytes.Buffer
 	buf.WriteString("# Topic settings. Lamplight rewrites this file; comments are not kept.\n")
 	if err := toml.NewEncoder(&buf).Encode(settings); err != nil {
 		return nil, internalError("encoding "+topicFile, err)
+	}
+	if len(settings.extra) > 0 {
+		// The known settings are plain keys, so the others, tables
+		// included, can follow them.
+		if err := toml.NewEncoder(&buf).Encode(settings.extra); err != nil {
+			return nil, internalError("encoding "+topicFile, err)
+		}
 	}
 	return buf.Bytes(), nil
 }
@@ -375,23 +393,19 @@ func gitInit(ctx context.Context, dir string) error {
 
 // readTopic reads one Topic from the Study home.
 func (c *Core) readTopic(id string) (Topic, error) {
-	home, err := os.OpenRoot(c.home)
-	if errors.Is(err, fs.ErrNotExist) {
-		return Topic{}, noSuchTopic(id)
-	}
+	home, topic, err := c.openTopicFolder(id)
 	if err != nil {
-		return Topic{}, internalError("opening the Study home "+c.home, err)
+		return Topic{}, err
 	}
+	topic.Close()
 	defer home.Close()
-	if !isTopic(home, id) {
-		return Topic{}, noSuchTopic(id)
-	}
 	return c.loadTopic(home, id)
 }
 
 // loadTopic reads one Topic from the Study home and replays its History.
 // Content is authoritative for text, so the title and goal come from
-// topic.toml; the History gives the creation time and the flags.
+// topic.toml; the History gives the creation time and the flags. It writes
+// nothing: an interrupted write is flagged, and the next write finishes it.
 func (c *Core) loadTopic(home *os.Root, id string) (Topic, error) {
 	root, err := home.OpenRoot(id)
 	if err != nil {
@@ -410,16 +424,18 @@ func (c *Core) loadTopic(home *os.Root, id string) (Topic, error) {
 		return Topic{}, err
 	}
 	topic := Topic{ID: id, Title: settings.Title, Goal: settings.Goal, Path: filepath.Join(c.home, id)}
-	events, err := readEvents(root, id)
+	h, err := readHistory(root, id)
 	if err != nil {
 		return Topic{}, err
 	}
-	s := replay(events)
+	s := replayHistory(h)
 	topic.Created = s.created
-	topic.Flags = append(s.flags, c.gatingFlags(root, s)...)
-	if hasIntent(home, id) {
-		topic.Flags = append(topic.Flags, Flag{Kind: FlagInterruptedWrite,
-			Message: "a write to this Topic was interrupted; the next change to it finishes the write"})
+	topic.Flags = c.topicFlags(root, s)
+	// A marker while the lock is held is a write in progress, not an
+	// interrupted one.
+	if hasIntent(home, id) && !lockHeld(home, id) {
+		topic.Flags = append(topic.Flags, newFlag(FlagInterruptedWrite, "", nil, "",
+			"a write to this Topic was interrupted; the next change to it finishes the write"))
 	}
 	return topic, nil
 }
@@ -474,16 +490,18 @@ func slugify(title string) string {
 // writeFileAtomic replaces name inside root without exposing a half-written
 // file: it writes a uniquely named temporary file, syncs it, renames it over
 // name, and syncs the folder so the rename survives a power cut. Concurrent
-// writers never share a temporary file.
+// writers never share a temporary file. Temporary files are hidden and
+// named so that the Topic's .gitignore keeps a crash's leftovers out of
+// Checkpoints, and recovery removes them.
 func writeFileAtomic(root *os.Root, name string, data []byte) error {
-	tmp := name + ".tmp-" + randomID()
+	tmp := filepath.Join(filepath.Dir(name), tempPrefix(filepath.Base(name))+randomID())
 	f, err := root.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	if err != nil {
 		return internalError("writing "+name, err)
 	}
 	_, werr := f.Write(data)
 	if werr == nil {
-		werr = f.Sync()
+		werr = syncFile(f)
 	}
 	if cerr := f.Close(); werr == nil {
 		werr = cerr
@@ -499,6 +517,10 @@ func writeFileAtomic(root *os.Root, name string, data []byte) error {
 	syncDir(root, filepath.Dir(name))
 	return nil
 }
+
+// tempPrefix is how temporary files for base begin: ".<base>.lamplight-tmp-".
+// checkpoint.DefaultGitignore ignores the pattern.
+func tempPrefix(base string) string { return "." + base + ".lamplight-tmp-" }
 
 // syncDir flushes a folder's entries to disk. It is best effort: some file
 // systems cannot sync a folder, and the data itself is already synced.

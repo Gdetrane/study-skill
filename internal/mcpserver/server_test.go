@@ -60,7 +60,7 @@ func TestServerSendsInstructionsAndTools(t *testing.T) {
 			t.Error("status should be marked read-only")
 		}
 	}
-	if strings.Join(names, ",") != "checkpoint,library_search,status,topic_create,topic_update" {
+	if strings.Join(names, ",") != "checkpoint,flag_dismiss,library_search,status,topic_create,topic_update" {
 		t.Errorf("tools = %v", names)
 	}
 }
@@ -91,6 +91,47 @@ func TestUpdateTopic(t *testing.T) {
 	}
 	if !unknown.IsError || !strings.Contains(text(unknown), "not_found") {
 		t.Errorf("unknown Topic: IsError=%v, content %q", unknown.IsError, text(unknown))
+	}
+}
+
+func TestDismissAFlag(t *testing.T) {
+	ctx := context.Background()
+	home := t.TempDir()
+	session := connect(t, home)
+	call(t, session, "topic_create", map[string]any{"title": "C"})
+	held := `{"format":1,"id":"zz1","time":"2026-10-01T10:00:00Z","wall":"2026-10-01T10:00:00Z","type":"card.reviewed","data":{}}` + "\n"
+	f, err := os.OpenFile(filepath.Join(home, "c", "history.jsonl"), os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString(held); err != nil {
+		t.Fatal(err)
+	}
+	_ = f.Close()
+
+	var status core.Status
+	decode(t, call(t, session, "status", map[string]any{}), &status)
+	if len(status.Topics) != 1 || len(status.Topics[0].Flags) != 1 {
+		t.Fatalf("status = %+v", status)
+	}
+	flag := status.Topics[0].Flags[0]
+	var res core.FlagDismissal
+	decode(t, call(t, session, "flag_dismiss", map[string]any{"topic": "c", "flag": flag.ID}), &res)
+	if !res.Changed || res.Flag.ID != flag.ID {
+		t.Errorf("flag_dismiss = %+v", res)
+	}
+	var after core.Status
+	decode(t, call(t, session, "status", map[string]any{}), &after)
+	if len(after.Topics[0].Flags) != 0 {
+		t.Errorf("flags after dismissing: %+v", after.Topics[0].Flags)
+	}
+
+	unknown, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "flag_dismiss", Arguments: map[string]any{"topic": "c", "flag": "0123456789"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !unknown.IsError || !strings.Contains(text(unknown), "not_found") {
+		t.Errorf("unknown flag: IsError=%v, content %q", unknown.IsError, text(unknown))
 	}
 }
 
