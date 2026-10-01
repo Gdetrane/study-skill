@@ -119,6 +119,23 @@ the maintainer's answers to the questions they raised.
    "type":"topic.updated","data":{"title":"C"},
    "items":[{"item":"topic.toml","before":"sha256:…","after":"sha256:…"}]}
   ```
+- **Learning files.** `syllabus.toml` is rewritten only from approved Revisions; `cards.jsonl`
+  holds one Card per line, `{"format":1,"id":"<lesson-id>.<suffix>","lesson":"…","prompt":"…",
+  "answer":"…"}`, content only; a Lesson's Check is the YAML header of `lessons/<id>.md`,
+  which the agent writes, and is the item `lessons/<id>.md#check`, versioned by its
+  canonical JSON so editing the Lesson's text never changes it. Sessions, Phases, Attempts,
+  Next steps, draft status and Card schedules have no files: they are Events, replayed.
+
+  | Event | Payload | Items |
+  |---|---|---|
+  | `revision.proposed` | summary, base Syllabus version, the whole new Syllabus | none |
+  | `revision.applied` | Revision, approval (how, and the learner's words), the whole Syllabus | `syllabus.toml` |
+  | `session.opened` | Energy, Focus | none |
+  | `session.closed` | Session, Next step, context | none |
+  | `phase.set` | Lesson, Phase, optional Next step, the Check version when practicing starts | none |
+  | `attempt.recorded` | Lesson, Check version, snapshot, outcome, per-criterion outcomes | none |
+  | `lesson.completed` | Lesson, the Attempt, Check version and snapshot relied on, draft Cards in full | `cards.jsonl#<id>` each |
+  | `review.recorded` | Card, rating, and for a draft keep, edit (new content) or drop | `cards.jsonl#<id>` on edit or drop |
 - **Sync**: v2.0 supports using a Topic on one machine at a time, synced through git between
   sessions. History files merge by union, which can leave lines in any order; because
   replay sorts Events, a merge in either direction gives the same state. Conflicting changes
@@ -204,10 +221,14 @@ hours before any learning happens is exactly what v1 produced.
    With nothing due at fumes, the offer is "write tomorrow's first step".
 3. The Learner profile and the Topic's additions are read at the start of every Session.
 4. A Lesson moves through its Phases: teaching → practicing → feedback. The Check's criteria
-   are shown before practicing starts. A Checkpoint is taken at every turn switch, with
-   `[agent]` or `[learner]` authorship.
+   are shown before practicing starts, and the Check version shown is recorded. A Checkpoint
+   is taken at every turn switch, with `[agent]` or `[learner]` authorship: practicing is
+   the learner's turn, teaching and feedback the agent's, so `phase_set` takes the
+   Checkpoint of whoever's turn just ended.
 5. Reaching a Break point, or ending a Session, records a Next step (starting with a verb)
-   and free-text context. If the learner simply closes the terminal, the next Session sees
+   and free-text context. Going back to practicing after a failed Attempt can record one
+   too, naming the fix. The Resume point is the first Lesson not done, its Phase and the
+   latest Next step; a Lesson's completion clears a Next step that belonged to it. If the learner simply closes the terminal, the next Session sees
    the unclosed Session, shows what changed since the last Checkpoint, and asks for the
    missing note.
 6. Completing a Lesson is one idempotent operation: mark it done, save its draft Cards,
@@ -227,7 +248,9 @@ hours before any learning happens is exactly what v1 produced.
     completion, and its scores feed the Level signals.
 - Checks run only through `study check <lesson>` in the agent's own shell (ADR-0009).
   Commands are argument lists, not shell strings. The core passes `STUDY_LESSON` and
-  `STUDY_HELDOUT_DIR`, and reads per-criterion scores from a JSON results file.
+  `STUDY_HELDOUT_DIR`, and reads per-criterion scores from a JSON results file. The thin
+  learner loop implements run criteria only, passing on exit status 0; rubric and held-out
+  criteria and results files come with the Checks module.
 - Each run is an **Attempt**, recorded with the Lesson, a hash of the Check's criteria (its
   version), a snapshot hash of `practice/<lesson-id>/` computed with the same filter-free git
   commands as Checkpoints, per-criterion scores, and an outcome: `passed`, `failed` (a valid

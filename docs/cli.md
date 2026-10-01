@@ -16,6 +16,7 @@ that scripts and agents can rely on. Terms follow [CONTEXT.md](../CONTEXT.md).
 | `study library build <folder>` | Indexes the books in a folder (relative to where you run it) and replaces the Library index in the Study home. |
 | `study library search <query> [--limit N]` | Ranks the books in the Library against the query. `--limit` defaults to 10 and is capped at 100; no matches is a success with an empty list. |
 | `study checkpoint --topic ID --role agent\|learner [-m MESSAGE] [--dry-run]` | Saves the Topic's work as a git commit at a turn switch. Skips when nothing changed, refuses during a merge or rebase, and lists large files it saved. Never runs programs named in the Topic's git configuration. It waits for a write in progress and finishes an interrupted one first; `--dry-run` refuses (`failed_precondition`) while one is pending. |
+| `study check <lesson> [--topic ID] [--timeout D]` | Runs a Lesson's Check on the current work and records the Attempt (see "Checks" below). Without `--topic`, it uses the Topic whose folder it runs in. |
 | `study doctor` | Diagnoses the setup and says how to fix what it finds. It works even when nothing else does. Exits 1 when a Finding failed. |
 | `study completion install [--shell S] [--dir D] [--yes] [--force] [--dry-run]` | Installs completions for bash, zsh or fish (default: from `$SHELL`) for your user. |
 | `study completion uninstall [--shell S] [--dry-run]` | Removes what `install` added, for every shell or only `--shell`. |
@@ -105,6 +106,58 @@ that need the learner's attention. Flags are reported, never resolved automatica
 `id` is stable across runs and machines, so a dismissal recorded on one machine applies on
 every other. `item` and `events` are present when the flag concerns a particular item or
 Events.
+
+## Where the learner stopped
+
+Once a Topic has a Syllabus or a Session, it carries `resume` in `study status --json`, and
+human output shows it under the Active topic:
+
+```json
+{
+  "lesson": "pointers", "lesson_title": "Pointers", "phase": "practicing",
+  "next_step": { "step": "Fix the off-by-one in parse.c", "context": "...", "lesson": "pointers", "at": "..." },
+  "open_session": { "id": "...", "opened": "..." }
+}
+```
+
+`lesson` is the first Lesson in Syllabus order that is not done; `syllabus_done` is `true`
+instead once every Lesson is. `next_step` is the latest Next step recorded, word for word.
+`open_session` is a Session not closed yet: in progress, or ended without a Next step.
+
+## Checks
+
+A Lesson's Check is written in the YAML header of `lessons/<lesson-id>.md`:
+
+```yaml
+---
+check:
+  - id: tests
+    describe: The tests pass
+    run: [go, test, ./...]
+---
+```
+
+`study check <lesson>` runs each criterion's command, an argument list rather than a shell
+string, in `practice/<lesson-id>/`, with `STUDY_TOPIC`, `STUDY_LESSON` and
+`STUDY_HELDOUT_DIR` set and no standard input. A criterion passes when its command exits
+with 0, fails when it exits with another status, and errors when it cannot start, is
+stopped by a signal or runs longer than `--timeout` (default 30 minutes). The work is
+snapshotted before and after the run; if it changed meanwhile, the Attempt is errored. The
+Attempt is recorded in the History, with each criterion's outcome but never its output:
+
+```json
+{
+  "id": "...", "lesson": "pointers", "check_version": "sha256:...", "snapshot": "<tree hash>",
+  "outcome": "failed", "at": "...",
+  "criteria": [{ "id": "tests", "outcome": "failed", "exit_code": 1, "output": "the end of what it printed" }]
+}
+```
+
+The exit code is 0 whenever the Attempt was recorded, whatever its outcome. Checks run
+only through the command line, from the agent's own shell, so the agent's sandbox applies
+(ADR-0009); the MCP server reads Attempts (`check_results`) but never runs a Check. Rubric
+and held-out criteria, and per-criterion results files, arrive in a later version; until
+then a Check with one is reported as `corrupt`.
 
 ## Writes
 
