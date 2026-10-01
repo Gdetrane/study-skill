@@ -210,7 +210,8 @@ func (c *Core) workChanges(ctx context.Context, topicID string) *WorkChanges {
 	}
 	out.Since = ch.Since
 	for _, f := range ch.Files {
-		if stateFiles[f.Path] {
+		// Held-out data is kept out of the learner's sight, names included.
+		if stateFiles[f.Path] || strings.HasPrefix(f.Path, ".heldout/") {
 			continue
 		}
 		if len(out.Files) == maxChangesShown {

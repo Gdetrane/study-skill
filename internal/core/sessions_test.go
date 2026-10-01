@@ -275,6 +275,7 @@ func TestAnUnclosedSessionShowsWhatChangedSinceTheLastCheckpoint(t *testing.T) {
 	}
 	writeFile(t, m, "practice/answer/answer.txt", "42\n")
 	writeFile(t, m, "practice/answer/notes.md", "tried 41 first\n")
+	writeFile(t, m, ".heldout/answer/expected.txt", "42\n") // kept out of the learner's sight
 	if err := os.Remove(filepath.Join(m.home, "c", "practice", "answer", "check.sh")); err != nil {
 		t.Fatal(err)
 	}
