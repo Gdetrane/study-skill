@@ -1,0 +1,16 @@
+{
+  "ok": true,
+  "data": {
+    "topic": "linear-algebra",
+    "source": {
+      "id": "strang-linear-algebra.<id>",
+      "kind": "file",
+      "title": "Strang Linear Algebra",
+      "path": "$STUDY_HOME/Books/strang_linear_algebra.pdf",
+      "hash": "sha256:b820e2ce0d3d348fe743d81648b97c81744cb93eaed7827ca937f9d1293388ff",
+      "size_bytes": 15,
+      "notebooklm_id": "nlm-7"
+    },
+    "changed": true
+  }
+}

@@ -64,7 +64,7 @@ func writeTopicUpdate(w io.Writer, u core.TopicUpdate, dryRun bool) error {
 	t := u.Topic
 	switch {
 	case !u.Changed:
-		fmt.Fprintf(&b, "Topic %s already has that title and goal: nothing changed\n", t.ID)
+		fmt.Fprintf(&b, "Topic %s already has those settings: nothing changed\n", t.ID)
 	case dryRun:
 		fmt.Fprintf(&b, "Would update Topic %s (%s)\n", styleAccent.Render(t.ID), t.Title)
 	default:
@@ -72,6 +72,9 @@ func writeTopicUpdate(w io.Writer, u core.TopicUpdate, dryRun bool) error {
 	}
 	if t.Goal != "" {
 		fmt.Fprintf(&b, "  Goal: %s\n", t.Goal)
+	}
+	if t.KnowledgeBase != nil {
+		fmt.Fprintf(&b, "  Knowledge base: %s\n", describeKnowledgeBase(t.KnowledgeBase))
 	}
 	writeFlags(&b, []core.Topic{t})
 	_, err := io.WriteString(w, b.String())

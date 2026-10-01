@@ -1,0 +1,8 @@
+Knowledge base: none
+
+Sources:
+strang-linear-algebra.<id>  Strang Linear Algebra
+  $STUDY_HOME/Books/strang_linear_algebra.pdf
+  NotebookLM: nlm-7
+strang-s-course-page.<id>  Strang's course page
+  https://math.mit.edu/~gs/linearalgebra/

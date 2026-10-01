@@ -137,6 +137,8 @@ type replayed struct {
 	dismissed map[string]string
 	// study is the learning state: Syllabus, Lessons, Sessions and Cards.
 	study studyState
+	// know is the Topic's Sources and Evidence; see knowledge().
+	know *knowledgeState
 
 	seen  map[string][]byte            // Event ID → its line, to apply each ID once
 	bases map[string]map[string]string // item → version changed from → Event ID

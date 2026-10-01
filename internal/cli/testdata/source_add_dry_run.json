@@ -1,0 +1,14 @@
+{
+  "ok": true,
+  "data": {
+    "topic": "linear-algebra",
+    "source": {
+      "id": "example-com-notes.<id>",
+      "kind": "url",
+      "title": "https://example.com/notes",
+      "url": "https://example.com/notes"
+    },
+    "changed": true,
+    "dry_run": true
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "ok": true,
+  "data": {
+    "topic": "linear-algebra",
+    "evidence": {
+      "id": "<id>",
+      "lesson": "elimination",
+      "source": "strang-linear-algebra.<id>",
+      "quote": "Elimination produces an upper triangular system.",
+      "location": "p. 46",
+      "location_from": "source",
+      "recorded": "2026-10-01T09:30:00Z"
+    },
+    "changed": true
+  }
+}

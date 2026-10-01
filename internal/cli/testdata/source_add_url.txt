@@ -1,0 +1,2 @@
+Added Source strang-s-course-page.<id> to linear-algebra: Strang's course page
+  https://math.mit.edu/~gs/linearalgebra/
