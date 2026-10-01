@@ -1,5 +1,8 @@
 # study
 
+> **Lamplight v2 is in development** on the [`v2`](https://github.com/mordor-forge/study-skill/tree/v2) branch. See the [design doc](docs/design/lamplight-v2.md) and the [tracking issue](https://github.com/mordor-forge/study-skill/issues/37).
+> `main` stays v1 until v2.0 ships. v1 is also preserved at the [`v1.0.0`](https://github.com/mordor-forge/study-skill/tree/v1.0.0) tag.
+
 An Agent Skills-compatible study tutor for structured, interactive learning with spaced repetition.
 
 The active agent teaches concepts through notes and guides you through exercises you implement yourself, with FSRS-based review scheduling, optional research integrations, PDF source material support, and restart-safe session state.
