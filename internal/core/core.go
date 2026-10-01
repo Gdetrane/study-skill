@@ -118,6 +118,10 @@ func Open(opts Options) (*Core, error) {
 // Home returns the absolute path of the Study home.
 func (c *Core) Home() string { return c.home }
 
+// Now returns the current time by the Core's clock, so adapters describe
+// times such as a Card's due date the way the core decided them.
+func (c *Core) Now() time.Time { return c.now() }
+
 // expandPath makes a path the learner or agent gave absolute: a leading ~
 // is the home folder, as in STUDY_HOME, and a relative path is relative to
 // the folder study started in.

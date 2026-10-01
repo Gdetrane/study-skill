@@ -38,7 +38,7 @@ type fileCodec struct {
 // fileCodecs maps file patterns (path.Match syntax, slash-separated) to the
 // codec of their entities.
 var fileCodecs = []codecEntry{
-	{pattern: cardsFile, codec: jsonlCodec},
+	{pattern: cardsFile, codec: jsonlSortedCodec},
 	{pattern: "lessons/*.md", codec: lessonCodec},
 }
 
@@ -189,6 +189,12 @@ func validateItem(item string, data []byte) error {
 // the entity leaves a single line. Status flags the repeat.
 var jsonlCodec = fileCodec{get: jsonlGet, put: jsonlPut}
 
+// jsonlSortedCodec is jsonlCodec for a file kept sorted by id, such as
+// cards.jsonl: a new entity is inserted before the first line with a greater
+// id rather than appended, so the file's order never depends on the order
+// entities were written in. Other lines are still kept byte for byte.
+var jsonlSortedCodec = fileCodec{get: jsonlGet, put: jsonlPutSorted}
+
 // jsonlEntries splits a JSONL file into lines and their ids. An id can
 // repeat: a union merge of two machines' edits of one entry keeps both
 // lines. Status flags the repeat (see jsonlRepeats).
@@ -256,6 +262,16 @@ func jsonlGet(file []byte, key string) ([]byte, bool, error) {
 }
 
 func jsonlPut(file []byte, key string, content []byte, exists bool) ([]byte, error) {
+	return jsonlWrite(file, key, content, exists, false)
+}
+
+func jsonlPutSorted(file []byte, key string, content []byte, exists bool) ([]byte, error) {
+	return jsonlWrite(file, key, content, exists, true)
+}
+
+// jsonlWrite replaces, adds or removes one entity. A new entity is appended,
+// or, with sorted, inserted before the first line whose id is greater.
+func jsonlWrite(file []byte, key string, content []byte, exists, sorted bool) ([]byte, error) {
 	lines, ids, err := jsonlEntries(file)
 	if err != nil {
 		return nil, err
@@ -291,6 +307,39 @@ func jsonlPut(file []byte, key string, content []byte, exists bool) ([]byte, err
 		out.WriteByte('\n')
 	}
 	if exists && !found {
+		if sorted {
+			return insertSorted(out.Bytes(), content, key)
+		}
+		out.Write(content)
+		out.WriteByte('\n')
+	}
+	return out.Bytes(), nil
+}
+
+// insertSorted inserts the line content for key before the first line of
+// file whose id is greater than key, or at the end.
+func insertSorted(file, content []byte, key string) ([]byte, error) {
+	lines, ids, err := jsonlEntries(file)
+	if err != nil {
+		return nil, err
+	}
+	at := len(lines)
+	for i, id := range ids {
+		if id > key {
+			at = i
+			break
+		}
+	}
+	var out bytes.Buffer
+	for i, line := range lines {
+		if i == at {
+			out.Write(content)
+			out.WriteByte('\n')
+		}
+		out.Write(line)
+		out.WriteByte('\n')
+	}
+	if at == len(lines) {
 		out.Write(content)
 		out.WriteByte('\n')
 	}

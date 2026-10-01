@@ -144,7 +144,7 @@ func TestEditingADraftKeepsCardFieldsLamplightDoesNotKnow(t *testing.T) {
 		t.Fatalf("flags = %+v, %v; want the repeated Card flagged", topic.Flags, err)
 	}
 	m.setClock(t0.AddDate(0, 6, 0))
-	due, err := m.DueCardsOf(ctx, "c", 0)
+	due, err := m.DueCardsOf(ctx, "c", DueQuery{})
 	if err != nil || len(due.Cards) != 1 || due.Cards[0].Prompt != "Q2" {
 		t.Errorf("due Cards = %+v, %v; want the first line's Card", due, err)
 	}

@@ -557,7 +557,7 @@ func assertTwoMachinesMerge(t *testing.T, a *agent) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		due, err := c.DueCardsOf(ctx, "c", 0)
+		due, err := c.DueCardsOf(ctx, "c", core.DueQuery{})
 		if err != nil {
 			t.Fatal(err)
 		}

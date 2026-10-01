@@ -40,6 +40,12 @@ var eventKinds = map[string]eventKind{
 	eventAttemptRecorded:  {apply: applyNothing, replay: replayAttemptRecorded},
 	eventLessonCompleted:  {apply: applyLessonCompleted, replay: replayLessonCompleted},
 	eventReviewRecorded:   {apply: applyReviewRecorded, replay: replayReviewRecorded},
+	eventCardAdded:        {apply: applyCardAdded, replay: replayCardAdded},
+	eventCardEdited:       {apply: applyCardEdited, replay: replayCardEdited},
+	eventCardSuspended:    {apply: applyNothing, replay: replayCardSuspension(true)},
+	eventCardUnsuspended:  {apply: applyNothing, replay: replayCardSuspension(false)},
+	eventCardDeleted:      {apply: applyCardDeleted, replay: replayCardDeleted},
+	eventCardFlagged:      {apply: applyNothing, replay: replayCardFlagged},
 	eventCheckpointTaken:  {apply: applyNothing, replay: replayCheckpointTaken},
 }
 
@@ -71,6 +77,9 @@ const (
 	// FlagInterruptedWrite: a write to the Topic was interrupted; the next
 	// write finishes it.
 	FlagInterruptedWrite = "interrupted_write"
+	// FlagCardFlagged: the learner flagged a Card during a Review as wrong
+	// or unclear. Editing or deleting the Card settles it.
+	FlagCardFlagged = "card_flagged"
 )
 
 // dismissible reports whether the learner can dismiss a kind of flag. The
@@ -78,7 +87,7 @@ const (
 // finishes the interrupted write.
 func dismissible(kind string) bool {
 	switch kind {
-	case FlagHeldEvent, FlagConflict, FlagDamagedLine, FlagClockAhead:
+	case FlagHeldEvent, FlagConflict, FlagDamagedLine, FlagClockAhead, FlagCardFlagged:
 		return true
 	}
 	return false
@@ -312,6 +321,7 @@ func isGating(item string) bool {
 // History dated ahead of this computer's clock.
 func (c *Core) topicFlags(topic *os.Root, s *replayed) []Flag {
 	all := append(append([]Flag{}, s.flags...), c.gatingFlags(topic, s)...)
+	all = append(all, s.study.cardFlags()...)
 	all = append(all, repeatedCardFlags(topic)...)
 	all = append(all, sourcesFileFlags(topic)...)
 	if ahead := s.latest.Sub(c.now()); ahead > clockAheadLimit {
