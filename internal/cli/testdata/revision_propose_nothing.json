@@ -1,0 +1,7 @@
+{
+  "ok": false,
+  "error": {
+    "code": "usage",
+    "message": "give the proposed Syllabus with --syllabus <file>, or adopt syllabus.toml with --from-file"
+  }
+}

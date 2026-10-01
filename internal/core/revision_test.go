@@ -517,3 +517,31 @@ func TestRevisionConflictsBetweenMachines(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// TestAdoptingAnEditLamplightWouldWriteClearsTheFlag: a careful hand edit
+// can be exactly what Lamplight writes, so adopting it leaves the file as it
+// is. The Event still records that version, so the flag clears.
+func TestAdoptingAnEditLamplightWouldWriteClearsTheFlag(t *testing.T) {
+	ctx := context.Background()
+	m := newTopic(t)
+	revise(t, m, twoMilestones)
+	writeFile(t, m, syllabusFile, strings.Replace(readSyllabusFile(t, m), `title = "Loops"`, `title = "Loops and ranges"`, 1))
+	p, err := m.ProposeRevision(ctx, "c", RevisionSpec{Summary: "Keep my edit", FromFile: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.ApplyRevision(ctx, "c", p.Revision, Approval{Via: ViaChat, LearnerSaid: "yes"}, false); err != nil {
+		t.Fatal(err)
+	}
+	topic, err := m.readTopic("c")
+	if err != nil || hasFlag(topic.Flags, FlagEditedOutside, syllabusFile) {
+		t.Errorf("after adopting an edit Lamplight would write: %+v, %v", topic.Flags, err)
+	}
+	if lessonNumbers(t, m)["loops"] != "2.1 not_started" {
+		t.Errorf("the adopted Syllabus: %v", lessonNumbers(t, m))
+	}
+	v, err := m.SyllabusOf(ctx, "c")
+	if err != nil || v.Milestones[1].Lessons[0].Title != "Loops and ranges" {
+		t.Errorf("the adopted title: %+v, %v", v.Milestones[1].Lessons, err)
+	}
+}

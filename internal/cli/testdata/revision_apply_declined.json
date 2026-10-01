@@ -1,0 +1,7 @@
+{
+  "ok": false,
+  "error": {
+    "code": "failed_precondition",
+    "message": "the learner declined Revision <id> of linear-algebra; if they changed their mind, propose it again"
+  }
+}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"os"
 	"slices"
 	"time"
 
@@ -355,4 +356,45 @@ func keepExtras(next Syllabus, current *Syllabus) Syllabus {
 		out.Milestones[i] = m
 	}
 	return out
+}
+
+// ReadSyllabusFile reads a Syllabus from a file the learner or agent named;
+// a relative path is relative to the folder study started in.
+func (c *Core) ReadSyllabusFile(path string) (Syllabus, error) {
+	full := c.expandPath(path)
+	data, err := os.ReadFile(full)
+	if err != nil {
+		return Syllabus{}, &Error{Code: CodeNotFound, Message: "cannot read " + full + ": " + err.Error(), Err: err}
+	}
+	return ParseSyllabus(data, path)
+}
+
+// ParseSyllabus reads a Syllabus written in a file, as TOML like
+// syllabus.toml or as JSON like the MCP tools take; name names it in errors.
+// A format number is optional, and a newer one is refused.
+func ParseSyllabus(data []byte, name string) (Syllabus, error) {
+	var doc map[string]any
+	if trimmed := bytes.TrimSpace(data); len(trimmed) > 0 && trimmed[0] == '{' {
+		dec := json.NewDecoder(bytes.NewReader(data))
+		dec.UseNumber()
+		if err := dec.Decode(&doc); err != nil {
+			return Syllabus{}, invalidf("%s is not valid JSON: %v", name, err)
+		}
+	} else if _, err := toml.Decode(string(data), &doc); err != nil {
+		return Syllabus{}, invalidf("%s is not valid TOML: %v", name, err)
+	}
+	if v, ok := doc["format"]; ok {
+		format, err := number(doc, "format", name)
+		if err != nil || format < 1 || format != float64(int(format)) {
+			return Syllabus{}, invalidf("%s has format %v: leave it out, or write format = %d", name, v, FormatVersion)
+		}
+		if int(format) > FormatVersion {
+			return Syllabus{}, newerFormat(name, int(format))
+		}
+	}
+	s, err := syllabusFromMap(doc)
+	if err != nil {
+		return Syllabus{}, invalidf("%s: %v", name, err)
+	}
+	return s, nil
 }

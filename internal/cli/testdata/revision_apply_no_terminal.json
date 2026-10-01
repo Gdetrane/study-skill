@@ -1,0 +1,7 @@
+{
+  "ok": false,
+  "error": {
+    "code": "usage",
+    "message": "run the command in a terminal so study can ask the learner, or pass their own words with --learner-said"
+  }
+}

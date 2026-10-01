@@ -1,0 +1,46 @@
+{
+  "ok": true,
+  "data": {
+    "topic": "linear-algebra",
+    "revision": "<id>",
+    "syllabus": {
+      "milestones": [
+        {
+          "id": "systems",
+          "title": "Systems of equations",
+          "outcome": "Solve a 3x3 system by hand",
+          "priority": "must",
+          "target": "2026-12-01",
+          "lessons": [
+            {
+              "id": "elimination",
+              "title": "Gaussian elimination",
+              "hours": 2
+            },
+            {
+              "id": "matrices",
+              "title": "Matrices",
+              "hours": 1.5
+            }
+          ]
+        },
+        {
+          "id": "spaces",
+          "title": "Vector spaces",
+          "priority": "if_time",
+          "lessons": [
+            {
+              "id": "subspaces",
+              "title": "Subspaces"
+            }
+          ]
+        }
+      ]
+    },
+    "approval": {
+      "via": "chat",
+      "learner_said": "Yes, that's the plan"
+    },
+    "changed": true
+  }
+}

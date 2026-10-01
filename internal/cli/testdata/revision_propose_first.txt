@@ -1,0 +1,8 @@
+Would propose Revision <id> for linear-algebra: A first Syllabus
+
+Sets the first Syllabus: 2 Milestones and 3 Lessons
+Milestone 1 "Systems of equations" (must, by 2026-12-01, outcome: Solve a 3x3 system by hand)
+  Lesson 1.1 "Gaussian elimination", 2 h
+  Lesson 1.2 "Matrices", 1.5 h
+Milestone 2 "Vector spaces" (if time allows)
+  Lesson 2.1 "Subspaces"

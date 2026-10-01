@@ -224,6 +224,10 @@ func (s *replayed) apply(ev event) error {
 	s.applied = append(s.applied, ev)
 	for _, it := range ev.Items {
 		if it.Before == it.After {
+			// The Event left the item as it was, but it is still the
+			// version this Event recorded: adopting a hand edit that
+			// Lamplight would write byte for byte must clear the flag.
+			s.versions[it.Item] = version{hash: it.After, event: ev.ID}
 			continue
 		}
 		if s.bases[it.Item] == nil {
