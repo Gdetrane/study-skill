@@ -4,13 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"time"
 )
 
 // Cards live in cards.jsonl, one JSON object per line, each an item of its
-// own ("cards.jsonl#<card-id>"), kept sorted by ID:
+// own ("cards.jsonl#<card-id>"), in the order they were written:
 //
 //	{"format":1,"id":"pointers.k3x9a2bq","lesson":"pointers","prompt":"…","answer":"…"}
 //
@@ -348,7 +349,7 @@ func (c *Core) RecordReview(ctx context.Context, topicID string, spec ReviewSpec
 // readCard reads a Card's content from cards.jsonl, which is authoritative
 // for text: a hand edit wins. Its state comes from replay.
 func readCard(view *topicView, s *replayed, cs *cardState) (Card, error) {
-	data, exists, err := view.read(cardItem(cs.id))
+	data, exists, err := cardContent(view, s, cs.id)
 	if err != nil {
 		return Card{}, err
 	}
@@ -363,6 +364,46 @@ func readCard(view *topicView, s *replayed, cs *cardState) (Card, error) {
 	}
 	card.Prompt, card.Answer = line.Prompt, line.Answer
 	return card, nil
+}
+
+// cardContent returns a Card's line. A union merge can leave two lines for
+// one Card, one of them stale, when one machine edited it next to where the
+// other added Cards: the line the History recorded last wins, and otherwise
+// the codec's choice, which is the same on every machine.
+func cardContent(view *topicView, s *replayed, id string) ([]byte, bool, error) {
+	item := cardItem(id)
+	if _, pending := view.pending[item]; !pending {
+		if v, ok := s.versions[item]; ok {
+			if data, exists, err := readFile(view.root, cardsFile); err == nil && exists {
+				if line, ok := jsonlMatching(data, id, v.hash); ok {
+					return line, true, nil
+				}
+			}
+		}
+	}
+	return view.read(item)
+}
+
+// repeatedCards are the Cards that appear on more than one line of
+// cards.jsonl with different content, none of which is the version the
+// History recorded last: a real conflict for the learner to settle. A
+// stale copy beside the recorded version is merge debris, read past and
+// removed by the Card's next write.
+func repeatedCards(topic *os.Root, s *replayed) []string {
+	data, exists, err := readFile(topic, cardsFile)
+	if err != nil || !exists {
+		return nil
+	}
+	var out []string
+	for _, id := range jsonlRepeats(data) {
+		if v, ok := s.versions[cardItem(id)]; ok {
+			if _, ok := jsonlMatching(data, id, v.hash); ok {
+				continue
+			}
+		}
+		out = append(out, id)
+	}
+	return out
 }
 
 // cardNumber is a Card's display number: its position among the Cards not

@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -151,17 +150,46 @@ func TestCardsCanBeAddedEditedSuspendedAndDeleted(t *testing.T) {
 	}
 }
 
-func TestCardsFileStaysSortedByID(t *testing.T) {
+// A union merge can leave a stale copy of a Card's line beside the version
+// the History recorded; that copy is read past, while two lines that are
+// both unknown to the History are a conflict.
+func TestAStaleCardLineIsReadPast(t *testing.T) {
+	ctx := context.Background()
 	m := newTopic(t)
-	for i := range 12 {
-		m.addCard(t, CardSpec{Prompt: fmt.Sprintf("Prompt %d", i), Answer: "A"})
+	card := m.addCard(t, CardSpec{Prompt: "Old prompt", Answer: "A"})
+	stale := strings.TrimSpace(readCardsFile(t, m))
+	if _, err := m.EditCard(ctx, "c", CardEdit{Card: card.ID, Prompt: "New prompt"}); err != nil {
+		t.Fatal(err)
 	}
-	var got []string
-	for _, line := range strings.Split(strings.TrimSpace(readCardsFile(t, m)), "\n") {
-		got = append(got, line[strings.Index(line, `"id":"`)+6:][:16])
+	path := filepath.Join(m.home, "c", cardsFile)
+	write := func(content string) {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if !sort.StringsAreSorted(got) || len(got) != 12 {
-		t.Errorf("%s ids in file order: %v", cardsFile, got)
+	// The stale line comes first, as a merge can leave it.
+	write(stale + "\n" + readCardsFile(t, m))
+	topic, err := m.readTopic("c")
+	if err != nil || len(topic.Flags) != 0 {
+		t.Errorf("with a stale copy: flags %+v, %v", topic.Flags, err)
+	}
+	if list, _ := m.ListCards(ctx, "c", CardQuery{}); len(list.Cards) != 1 || list.Cards[0].Prompt != "New prompt" {
+		t.Errorf("with a stale copy: %+v, want the edited Card", list.Cards)
+	}
+	if _, err := m.EditCard(ctx, "c", CardEdit{Card: card.ID, Answer: "B"}); err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(readCardsFile(t, m), "\n"); n != 1 {
+		t.Errorf("the next write left %d lines:\n%s", n, readCardsFile(t, m))
+	}
+
+	// Two lines the History knows neither of are flagged.
+	write(strings.Replace(readCardsFile(t, m), `"answer":"B"`, `"answer":"hand 1"`, 1) +
+		strings.Replace(readCardsFile(t, m), `"answer":"B"`, `"answer":"hand 2"`, 1))
+	topic, err = m.readTopic("c")
+	if err != nil || len(topic.Flags) != 1 || topic.Flags[0].Kind != FlagConflict {
+		t.Errorf("two unknown lines: flags %+v, %v; want one conflict", topic.Flags, err)
 	}
 }
 
@@ -453,23 +481,42 @@ func TestCardsSyncThroughGit(t *testing.T) {
 	git(t, dirB, "pull", "-q", "--no-rebase", "--no-edit", dirA, "main")
 	git(t, dirA, "pull", "-q", "--no-rebase", "--no-edit", dirB, "main")
 
-	for _, m := range []*machine{a, b} {
-		list, err := m.ListCards(ctx, "c", CardQuery{})
-		if err != nil || len(list.Cards) != 7 {
-			t.Errorf("after the merge, %s has %+v, %v; want 7 Cards", m.home, list.Cards, err)
-		}
-		if topic, err := m.readTopic("c"); err != nil || len(topic.Flags) != 0 {
-			t.Errorf("after the merge: flags %+v, %v", topic.Flags, err)
-		}
-		if n := strings.Count(readCardsFile(t, m), "\n"); n != 7 {
-			t.Errorf("the merged %s has %d lines:\n%s", cardsFile, n, readCardsFile(t, m))
+	settled := func(want int) {
+		t.Helper()
+		for _, m := range []*machine{a, b} {
+			list, err := m.ListCards(ctx, "c", CardQuery{})
+			if err != nil || len(list.Cards) != want {
+				t.Errorf("after the merge, %s has %+v, %v; want %d Cards", m.home, list.Cards, err, want)
+			}
+			if topic, err := m.readTopic("c"); err != nil || len(topic.Flags) != 0 {
+				t.Errorf("after the merge: flags %+v, %v", topic.Flags, err)
+			}
 		}
 	}
+	settled(7)
 	// Both machines replay the same schedule.
 	sa := replayFolder(t, dirA).study.cards[shared.ID].due()
 	sb := replayFolder(t, dirB).study.cards[shared.ID].due()
 	if sa.IsZero() || !sa.Equal(sb) {
 		t.Errorf("the shared Card is due %v on A and %v on B", sa, sb)
+	}
+
+	// One machine edits a Card while the other adds Cards next to it: the
+	// merge can keep a stale copy of the edited line, which is read past.
+	if _, err := a.EditCard(ctx, "c", CardEdit{Card: shared.ID, Prompt: "Shared, edited on A"}); err != nil {
+		t.Fatal(err)
+	}
+	b.addCard(t, CardSpec{Prompt: "From B 3", Answer: "B"})
+	takeCheckpoint(t, a)
+	takeCheckpoint(t, b)
+	git(t, dirB, "pull", "-q", "--no-rebase", "--no-edit", dirA, "main")
+	git(t, dirA, "pull", "-q", "--no-rebase", "--no-edit", dirB, "main")
+	settled(8)
+	for _, m := range []*machine{a, b} {
+		list, _ := m.ListCards(ctx, "c", CardQuery{})
+		if len(list.Cards) == 0 || list.Cards[0].Prompt != "Shared, edited on A" {
+			t.Errorf("%s reads the shared Card as %+v", m.home, list.Cards)
+		}
 	}
 
 	// Editing one Card on both machines from the same version is flagged.

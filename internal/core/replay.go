@@ -322,7 +322,7 @@ func isGating(item string) bool {
 func (c *Core) topicFlags(topic *os.Root, s *replayed) []Flag {
 	all := append(append([]Flag{}, s.flags...), c.gatingFlags(topic, s)...)
 	all = append(all, s.study.cardFlags()...)
-	all = append(all, repeatedCardFlags(topic)...)
+	all = append(all, repeatedCardFlags(topic, s)...)
 	all = append(all, sourcesFileFlags(topic)...)
 	if ahead := s.latest.Sub(c.now()); ahead > clockAheadLimit {
 		// The flag is named after the earliest Event dated ahead, which
@@ -387,16 +387,13 @@ func applyNothing(ev event, item string, _ []byte, _ bool) ([]byte, bool, error)
 }
 
 // repeatedCardFlags flags Cards that appear twice in cards.jsonl with
-// different content, as a union merge leaves two machines' edits of one
-// Card. Until the learner settles it, every machine reads the same one of
-// the lines (see jsonlCodec).
-func repeatedCardFlags(topic *os.Root) []Flag {
-	data, exists, err := readFile(topic, cardsFile)
-	if err != nil || !exists {
-		return nil
-	}
+// different content, none of them the version the History recorded, as a
+// union merge leaves two machines' edits of one Card. Until the learner
+// settles it, every machine reads the same one of the lines (see
+// jsonlCodec).
+func repeatedCardFlags(topic *os.Root, s *replayed) []Flag {
 	var flags []Flag
-	for _, id := range jsonlRepeats(data) {
+	for _, id := range repeatedCards(topic, s) {
 		flags = append(flags, newFlag(FlagConflict, cardItem(id), nil, "",
 			fmt.Sprintf("Card %s appears twice in %s with different content, probably edited on two machines: "+
 				"keep the right line by hand", id, cardsFile)))

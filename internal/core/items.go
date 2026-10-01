@@ -38,7 +38,7 @@ type fileCodec struct {
 // fileCodecs maps file patterns (path.Match syntax, slash-separated) to the
 // codec of their entities.
 var fileCodecs = []codecEntry{
-	{pattern: cardsFile, codec: jsonlSortedCodec},
+	{pattern: cardsFile, codec: jsonlCodec},
 	{pattern: "lessons/*.md", codec: lessonCodec},
 }
 
@@ -187,13 +187,11 @@ func validateItem(item string, data []byte) error {
 // with the smallest canonical form is read, so every machine reads the same
 // entity whatever order the merge left the lines in, and the next write of
 // the entity leaves a single line. Status flags the repeat.
+//
+// New entities are appended rather than inserted in order: a union merge
+// keeps both machines' changes apart only when they touch different parts of
+// the file, and two machines appending touch only its end.
 var jsonlCodec = fileCodec{get: jsonlGet, put: jsonlPut}
-
-// jsonlSortedCodec is jsonlCodec for a file kept sorted by id, such as
-// cards.jsonl: a new entity is inserted before the first line with a greater
-// id rather than appended, so the file's order never depends on the order
-// entities were written in. Other lines are still kept byte for byte.
-var jsonlSortedCodec = fileCodec{get: jsonlGet, put: jsonlPutSorted}
 
 // jsonlEntries splits a JSONL file into lines and their ids. An id can
 // repeat: a union merge of two machines' edits of one entry keeps both
@@ -261,17 +259,26 @@ func jsonlGet(file []byte, key string) ([]byte, bool, error) {
 	return entry, found, nil
 }
 
+// jsonlMatching returns the line for key whose canonical form has the
+// version hash, when a union merge left several lines for it.
+func jsonlMatching(file []byte, key, hash string) ([]byte, bool) {
+	lines, ids, err := jsonlEntries(file)
+	if err != nil {
+		return nil, false
+	}
+	for i, id := range ids {
+		if id != key {
+			continue
+		}
+		var canonical bytes.Buffer
+		if json.Compact(&canonical, lines[i]) == nil && contentHash(canonical.Bytes(), true) == hash {
+			return canonical.Bytes(), true
+		}
+	}
+	return nil, false
+}
+
 func jsonlPut(file []byte, key string, content []byte, exists bool) ([]byte, error) {
-	return jsonlWrite(file, key, content, exists, false)
-}
-
-func jsonlPutSorted(file []byte, key string, content []byte, exists bool) ([]byte, error) {
-	return jsonlWrite(file, key, content, exists, true)
-}
-
-// jsonlWrite replaces, adds or removes one entity. A new entity is appended,
-// or, with sorted, inserted before the first line whose id is greater.
-func jsonlWrite(file []byte, key string, content []byte, exists, sorted bool) ([]byte, error) {
 	lines, ids, err := jsonlEntries(file)
 	if err != nil {
 		return nil, err
@@ -307,39 +314,6 @@ func jsonlWrite(file []byte, key string, content []byte, exists, sorted bool) ([
 		out.WriteByte('\n')
 	}
 	if exists && !found {
-		if sorted {
-			return insertSorted(out.Bytes(), content, key)
-		}
-		out.Write(content)
-		out.WriteByte('\n')
-	}
-	return out.Bytes(), nil
-}
-
-// insertSorted inserts the line content for key before the first line of
-// file whose id is greater than key, or at the end.
-func insertSorted(file, content []byte, key string) ([]byte, error) {
-	lines, ids, err := jsonlEntries(file)
-	if err != nil {
-		return nil, err
-	}
-	at := len(lines)
-	for i, id := range ids {
-		if id > key {
-			at = i
-			break
-		}
-	}
-	var out bytes.Buffer
-	for i, line := range lines {
-		if i == at {
-			out.Write(content)
-			out.WriteByte('\n')
-		}
-		out.Write(line)
-		out.WriteByte('\n')
-	}
-	if at == len(lines) {
 		out.Write(content)
 		out.WriteByte('\n')
 	}
