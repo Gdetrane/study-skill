@@ -24,7 +24,7 @@ that scripts and agents can rely on. Terms follow [CONTEXT.md](../CONTEXT.md).
 | `study syllabus [topic]` | Shows a Topic's Syllabus (the Active topic's when none is named): Milestones and Lessons with their display numbers and status, the Revisions waiting for the learner with their change, and a hand edit of `syllabus.toml` (see [The Syllabus](#the-syllabus)). |
 | `study revision propose <topic> --summary S (--syllabus FILE \| --from-file) [--dry-run]` | Proposes a change to the Syllabus, the first one included. `--syllabus` names a file holding the whole Syllabus as it would be afterwards, as TOML like `syllabus.toml` or as JSON; `--from-file` proposes `syllabus.toml` as edited by hand. Nothing changes until the learner approves. |
 | `study revision apply <topic> <revision> [--learner-said S] [--dry-run]` | Applies a proposed Revision once the learner approves. On a terminal, study shows the change and asks the learner directly; an agent relaying their answer from the conversation passes their words with `--learner-said`. Answering no records a decline. |
-| `study revision decline <topic> <revision> [--learner-said S] [--dry-run]` | Records that the learner said no. The Syllabus is unchanged, and the Revision can no longer be applied. |
+| `study revision decline <topic> <revision> [--learner-said S] [--dry-run]` | Records that the learner said no. The Syllabus is unchanged, and the Revision can no longer be applied. The result is `{"topic", "revision", "decision", "changed"}`; `apply` returns `{"topic", "revision", "syllabus", "approval", "changed"}`. Answering again changes nothing and reports the answer recorded the first time, on a terminal too. |
 | `study checkpoint --topic ID --role agent\|learner [-m MESSAGE] [--dry-run]` | Saves the Topic's work as a git commit at a turn switch. Skips when nothing changed, refuses during a merge or rebase, and lists large files it saved. Never runs programs named in the Topic's git configuration. It waits for a write in progress and finishes an interrupted one first; `--dry-run` refuses (`failed_precondition`) while one is pending. |
 | `study check <lesson> [--topic ID] [--timeout D]` | Runs a Lesson's Check on the current work and records the Attempt (see "Checks" below). Without `--topic`, it uses the Topic whose folder it runs in. |
 | `study doctor` | Diagnoses the setup and says how to fix what it finds. It works even when nothing else does. Exits 1 when a Finding failed. |
@@ -161,28 +161,45 @@ know at every level.
 ```
 
 A Lesson's `status` is `not_started`, `in_progress`, `done` or `skipped`. A proposal's
-`changes` names Lessons by title: each change with its `kind` (`lesson_added`,
-`lesson_removed`, `lesson_renamed`, `lesson_moved`, `lesson_hours`, `lesson_skipped`,
-`lesson_unskipped`, `milestone_added`, `milestone_removed`, `milestone_changed` or
-`first_syllabus`), `renumbered` (`{lesson, title, from, to}`), `skipped_in_progress` (offer
-Cards for what was already covered) and `text`, the whole change in plain words. A `stale`
-proposal was based on a Syllabus that has changed since; propose it again.
+`changes` names Lessons by title: each change with its `kind`, `renumbered`
+(`{lesson, title, from, to}`), `skipped_in_progress` (Lessons skipped while in progress: go
+over what was already covered with the learner) and `text`, the whole change in plain
+words. A `stale` proposal was based on a Syllabus that has changed since; propose it again.
+
+| Change `kind` | Meaning |
+|---|---|
+| `first_syllabus` | The Topic's first Syllabus, followed by each Milestone and Lesson it adds. |
+| `file_adopted` | The Revision adopts `syllabus.toml` as edited by hand (`--from-file`). |
+| `milestone_added`, `milestone_removed` | A Milestone added or removed. |
+| `milestone_changed` | A Milestone's title, outcome, priority, target date or position changed. |
+| `lesson_added`, `lesson_removed` | A Lesson added or removed. |
+| `lesson_renamed`, `lesson_moved`, `lesson_hours` | A Lesson's title, Milestone or hour estimate changed. |
+| `lesson_skipped`, `lesson_unskipped` | A Lesson skipped, or its skip taken back. |
+| `settings_changed` | Only settings Lamplight does not know changed. |
 
 Rules a Revision follows:
 
 - Done and skipped Lessons keep their title, hours and Milestone, and are never removed; a
   done Lesson cannot be skipped. A Revision can take a skip back. Skipped Lessons keep
   their number, are left out of the Resume point, and cannot be studied.
+- A Revision must change something; adopting the file as it is (`--from-file`) is the
+  only Revision that may change nothing.
 - A Revision is based on the Syllabus version the History recorded. While `syllabus.toml`
   differs from it (flagged `edited_outside`, with what keeps the edit from being adopted),
-  the only Revision allowed adopts the file as it is: `--from-file`.
+  the only Revision allowed adopts the file as it is: `--from-file`. A write interrupted
+  before it rewrote `syllabus.toml` is no edit: the next write finishes it.
+- Before asking the learner directly, study checks that the Revision can be applied as it
+  stands, so an answer is never asked for and then thrown away.
 - Approval records how the learner answered (`via`): `terminal` or `elicitation` when
   Lamplight asked them directly, with the question it showed (`shown`); `chat` when an agent
-  relays their words (`learner_said`, required). Approvals are tamper-evident, not
-  tamper-proof.
-- A declined Revision is never applied, and a Revision both applied and declined on two
-  machines is flagged, as is one that removes, skips or rewrites a Lesson completed on the
-  other machine.
+  relays their words (`learner_said`, required). What the learner adds when asked directly
+  is kept on one line, without control characters, cut at 500 characters; it never makes
+  their answer fail. Approvals are tamper-evident, not tamper-proof.
+- A declined Revision is never applied. Changes made on two machines without syncing are
+  flagged, never resolved: two Revisions (or a Revision and an adopted hand edit) approved
+  from one Syllabus version, a Revision applied on one and declined on the other, and a
+  Lesson completed on one and removed, skipped or rewritten on the other, in either order.
+  One Revision approved on both machines is not a conflict.
 
 ## Checks
 

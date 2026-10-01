@@ -224,8 +224,11 @@ hours before any learning happens is exactly what v1 produced.
   result (SEP-2322) with a signed request state that ties the answer to that exact question;
   under older protocols the server sends an elicitation request. Without either, the agent
   relays the learner's words (`chat`). A no is recorded too (`revision.declined`), and a
-  declined Revision is never applied. `status` flags Syllabus edits made outside Lamplight,
-  naming precisely what keeps one from being adopted.
+  declined Revision is never applied. The learner is asked only about a Revision that can
+  be applied as it stands. `status` flags Syllabus edits made outside Lamplight, naming
+  precisely what keeps one from being adopted. Two machines that change the Syllabus from
+  one version are flagged, whether by Revisions or by an adopted hand edit, as is a Lesson
+  completed on one machine and removed or skipped on the other.
 - An **Assessment** at the end of a Milestone never blocks progress; weak results lead to a
   proposed Revision (for example a review Lesson).
 
