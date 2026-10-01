@@ -128,14 +128,23 @@ the maintainer's answers to the questions they raised.
 
   | Event | Payload | Items |
   |---|---|---|
-  | `revision.proposed` | summary, base Syllabus version, the whole new Syllabus | none |
+  | `revision.proposed` | summary, the Syllabus version the History recorded, the whole new Syllabus; for a hand edit adopted, `from_file` and the file's version | none |
   | `revision.applied` | Revision, approval (how, and the learner's words), the whole Syllabus | `syllabus.toml` |
   | `session.opened` | Energy, Focus | none |
   | `session.closed` | Session, Next step, context | none |
-  | `phase.set` | Lesson, Phase, optional Next step, the Check version when practicing starts | none |
-  | `attempt.recorded` | Lesson, Check version, snapshot, outcome, per-criterion outcomes | none |
-  | `lesson.completed` | Lesson, the Attempt, Check version and snapshot relied on, draft Cards in full | `cards.jsonl#<id>` each |
+  | `phase.set` | Lesson, Phase, optional Next step, the Check version shown when practicing starts, the turn it ended | none |
+  | `attempt.recorded` | Lesson, Check version, snapshot, outcome, per-criterion outcomes (never output) | none |
+  | `lesson.completed` | Lesson, the Attempt, its Check version and the one shown, snapshot, the turn it ended, draft Cards in full | `cards.jsonl#<id>` each |
   | `review.recorded` | Card, rating, and for a draft keep, edit (new content) or drop | `cards.jsonl#<id>` on edit or drop |
+  | `checkpoint.taken` | the Event whose Checkpoint it settles, role, commit | none |
+
+  `syllabus.toml` keeps settings Lamplight does not know at every level, as `topic.toml`
+  does, and refuses a newer format. A Revision is based on the version the History
+  recorded; while the file differs from it, Revisions are refused except one that adopts
+  the hand edit (`from_file`), so a learner's edit is approved rather than overwritten.
+  `cards.jsonl` merges by union like the History: a Card repeated with different content,
+  a Lesson completed on two machines (whose Cards are all kept), a Review of a dropped
+  Card and a Revision removing a done Lesson are flagged.
 - **Sync**: v2.0 supports using a Topic on one machine at a time, synced through git between
   sessions. History files merge by union, which can leave lines in any order; because
   replay sorts Events, a merge in either direction gives the same state. Conflicting changes
@@ -223,8 +232,10 @@ hours before any learning happens is exactly what v1 produced.
 4. A Lesson moves through its Phases: teaching → practicing → feedback. The Check's criteria
    are shown before practicing starts, and the Check version shown is recorded. A Checkpoint
    is taken at every turn switch, with `[agent]` or `[learner]` authorship: practicing is
-   the learner's turn, teaching and feedback the agent's, so `phase_set` takes the
-   Checkpoint of whoever's turn just ended.
+   the learner's turn, teaching and feedback the agent's, whatever the Lesson, so
+   `phase_set` takes the Checkpoint of whoever's turn just ended. The History records that
+   it is owed, and a `checkpoint.taken` Event that it was taken; one that failed or was cut
+   off by a crash is taken by the next `phase_set`, `lesson_complete` or `checkpoint`.
 5. Reaching a Break point, or ending a Session, records a Next step (starting with a verb)
    and free-text context. Going back to practicing after a failed Attempt can record one
    too, naming the fix. The Resume point is the first Lesson not done, its Phase and the
@@ -232,7 +243,8 @@ hours before any learning happens is exactly what v1 produced.
    the unclosed Session, shows what changed since the last Checkpoint, and asks for the
    missing note.
 6. Completing a Lesson is one idempotent operation: mark it done, save its draft Cards,
-   record the Event, take a Checkpoint. It is allowed only when the completion rule under
+   record the Event, take a Checkpoint in the role of the turn it ends (the learner's when
+   completing straight from practicing). It is allowed only when the completion rule under
    Checks holds, and its Event records the Attempt and Check version it relied on, so later
    changes to shared code or to the Lesson never reopen it.
 7. After a long gap: a short recap of where the Topic stands and a two-minute warm-up, never
@@ -250,14 +262,22 @@ hours before any learning happens is exactly what v1 produced.
   Commands are argument lists, not shell strings. The core passes `STUDY_LESSON` and
   `STUDY_HELDOUT_DIR`, and reads per-criterion scores from a JSON results file. The thin
   learner loop implements run criteria only, passing on exit status 0; rubric and held-out
-  criteria and results files come with the Checks module.
+  criteria and results files come with the Checks module. Each command runs in its own
+  process group, which is stopped as a whole on a timeout or SIGTERM; a command that leaves
+  programs running is errored.
 - Each run is an **Attempt**, recorded with the Lesson, a hash of the Check's criteria (its
   version), a snapshot hash of `practice/<lesson-id>/` computed with the same filter-free git
   commands as Checkpoints, per-criterion scores, and an outcome: `passed`, `failed` (a valid
-  results file) or `errored` (no or invalid results, or the command crashed).
-- **Completion rule**: a Lesson can be completed when, for the current Check version, every
-  run criterion passed on an Attempt whose snapshot matches the current work, and every
-  rubric item has a grade. Changing the work or the criteria after a pass means running the
+  results file) or `errored` (no or invalid results, or the command crashed). The snapshot
+  writes nothing to `.git`, covers the ignore rules that apply as well as the files, and
+  refuses work with a blind spot (files the index hides, a nested repository, a link
+  leading outside the folder, a folder whose files are all ignored) with an `errored`
+  Attempt.
+- **Completion rule**: a Lesson can be completed when, for the Check version shown to the
+  learner when practicing last started, which must still be the current one, every run
+  criterion passed on an Attempt whose snapshot matches the current work, and every rubric
+  item has a grade. Only showing a Check moves its recorded version, so a Check edited
+  afterwards stays flagged until it is shown again. Changing the work or the criteria after a pass means running the
   Check again.
 - **Held-out runs**: the first run that produces results is the counted measurement; later
   runs are recorded as "not counted". The count is kept per Lesson and criterion, so editing

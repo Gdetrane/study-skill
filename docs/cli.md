@@ -73,6 +73,7 @@ Error codes:
 | `newer_format` | A file was written by a newer version of `study`; upgrade to read it. |
 | `corrupt` | A file Lamplight reads is damaged or missing, for example invalid TOML after a hand edit, or a Topic's git repository is missing, was replaced during a Checkpoint, or leads outside the Topic. Fix or restore it; the message names it. |
 | `failed_precondition` | The request is valid but the Topic is not ready for it, for example a git merge is in progress or git has no identity. The message says what to do. |
+| `canceled` | The command was stopped, by SIGTERM or Ctrl-C, before it finished; what it would have recorded was not recorded. `study check` stops every program the Check started. |
 | `busy` | Another program is using the Topic: another `study` process writing to it for too long, an editor using its git repository, or files that kept changing while they were being saved. Try again shortly; the message says what to do if it persists. |
 | `unhealthy` | `study doctor` only: a Finding failed. `data` still holds the full diagnosis. |
 | `internal` | Anything else, such as a file that cannot be read. |
@@ -82,7 +83,7 @@ Error codes:
 | Code | Meaning |
 |---|---|
 | 0 | Success, including empty results, and `study doctor` with warnings only. |
-| 1 | The command failed (`already_exists`, `not_found`, `newer_format`, `corrupt`, `failed_precondition`, `busy`, `unhealthy`, `internal`). |
+| 1 | The command failed (`already_exists`, `not_found`, `newer_format`, `corrupt`, `failed_precondition`, `busy`, `canceled`, `unhealthy`, `internal`). |
 | 2 | Usage error (`usage`, `invalid_argument`). |
 
 ## Flags in status
@@ -139,15 +140,32 @@ check:
 
 `study check <lesson>` runs each criterion's command, an argument list rather than a shell
 string, in `practice/<lesson-id>/`, with `STUDY_TOPIC`, `STUDY_LESSON` and
-`STUDY_HELDOUT_DIR` set and no standard input. A criterion passes when its command exits
-with 0, fails when it exits with another status, and errors when it cannot start, is
-stopped by a signal or runs longer than `--timeout` (default 30 minutes). The work is
-snapshotted before and after the run; if it changed meanwhile, the Attempt is errored. The
-Attempt is recorded in the History, with each criterion's outcome but never its output:
+`STUDY_HELDOUT_DIR` set and no standard input.
+
+- **Outcomes.** A criterion passes when its command exits with 0, fails when it exits with
+  another status, and errors when it cannot start, is stopped by a signal, runs longer
+  than `--timeout` (default 30 minutes), or leaves programs running in the background.
+- **Processes.** Each command runs in a process group of its own. On a timeout, or when
+  `study` receives SIGTERM or Ctrl-C, the whole group gets SIGTERM, then SIGKILL after
+  two seconds; whatever a command leaves running when it exits is killed too. A Check
+  stopped by SIGTERM records nothing and reports `canceled`.
+- **The work.** The practice folder is snapshotted before and after the run, writing
+  nothing to `.git`. The snapshot covers every file that is not ignored and every ignore
+  rule that applies inside the folder (each `.gitignore` on the way and inside it,
+  `.git/info/exclude`, the global excludes file), so build outputs can be ignored, but
+  ignoring a file after a pass changes the snapshot. If the work changed during the run,
+  the Attempt is errored and the changed files are named; list files a Check writes in the
+  folder's `.gitignore`. The Attempt is also errored, without running anything, when the
+  snapshot would have a blind spot: files the index marks skip-worktree or
+  assume-unchanged, another git repository in the folder, a symbolic link leading outside
+  it, or a folder whose files are all ignored.
+
+`study check --json` prints the Attempt with the end of each criterion's output. The
+History records the Attempt without any output, which could reveal test data:
 
 ```json
 {
-  "id": "...", "lesson": "pointers", "check_version": "sha256:...", "snapshot": "<tree hash>",
+  "id": "...", "lesson": "pointers", "check_version": "sha256:...", "snapshot": "sha256:...",
   "outcome": "failed", "at": "...",
   "criteria": [{ "id": "tests", "outcome": "failed", "exit_code": 1, "output": "the end of what it printed" }]
 }
@@ -155,9 +173,14 @@ Attempt is recorded in the History, with each criterion's outcome but never its 
 
 The exit code is 0 whenever the Attempt was recorded, whatever its outcome. Checks run
 only through the command line, from the agent's own shell, so the agent's sandbox applies
-(ADR-0009); the MCP server reads Attempts (`check_results`) but never runs a Check. Rubric
-and held-out criteria, and per-criterion results files, arrive in a later version; until
-then a Check with one is reported as `corrupt`.
+(ADR-0009); the MCP server reads Attempts (`check_results`) but never runs a Check.
+
+A Lesson can be completed only on an Attempt that passed with the Check shown to the
+learner when practicing last started (through `phase_set`) and with the work as it is now.
+A Check edited afterwards is flagged in `status` and must be shown again.
+
+Rubric and held-out criteria, and per-criterion results files, arrive in a later version;
+until then a Check with one is reported as `corrupt`.
 
 ## Writes
 
