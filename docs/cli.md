@@ -15,10 +15,10 @@ that scripts and agents can rely on. Terms follow [CONTEXT.md](../CONTEXT.md).
 | `study session break-point <topic> <lesson> <break-point> --next-step S [--context C] [--dry-run]` | Records a Break point the Lesson's header declares, with a Next step. The Session stays open. Reaching the same Break point with the same Next step again changes nothing. |
 | `study topic create --title T [--id ID] [--goal G] [--dry-run]` | Creates a Topic folder with its settings, History and git repository. `--dry-run` validates and shows the result without writing. |
 | `study topic update <topic> [--title T] [--goal G] [--knowledge-base K [--notebook ID]] [--deadline D] [--pace H[@FROM] ... \| --clear-pace] [--new-cards-per-day N] [--state S] [--dry-run]` | Changes a Topic's title, goal, Knowledge base (`notebooklm` with the notebook's id, or `none`; see [Sources and Evidence](#sources-and-evidence)), the Goal's deadline, the Pace, the daily cap on new Cards, or its state (`active`, `paused` or `finished`); see [Goal, Pace and Forecasts](#goal-pace-and-forecasts). Flags left out stay as they are; `--goal ""` and `--deadline ""` remove them. `--pace` replaces the Pace: `--pace 10` is 10 hours a week from now on, and a further `--pace 3@2026-11-16` starts a period of 3 hours a week that day. Settings in `topic.toml` that this version does not know are kept. The result is `{"topic": ..., "changed": bool}`: asking for the values the Topic already has changes nothing and records nothing. Each kind of change is its own Event; if a later one fails, the error says which were recorded. A dry run shows the Topic as it would be, Forecast included. |
-| `study task add <topic> <title...> [--by D] [--after M] [--dry-run]` | Adds a Task, a step toward the Goal that is not study. `--by` is a date the learner wants it done by, shown as is; `--after` names a Milestone, and the Task is shown once that Milestone is done. Adding a Task with the title of one already there returns that Task. The result lists the Tasks with their ids in `added_tasks`. |
+| `study task add <topic> <title...> [--by D] [--after M] [--dry-run]` | Adds a Task, a step toward the Goal that is not study, to `tasks.jsonl`. `--by` is a date the learner wants it done by, shown as is; `--after` names a Milestone of the Syllabus, and the Task is shown once that Milestone is done. Adding a Task with the title of one already there returns that Task, done or not. The result lists the Tasks with their ids in `added_tasks`; a dry run gives a new Task no id yet. |
 | `study task done <topic> <task> [--undo] [--dry-run]` | Marks a Task done, or not done with `--undo`; marking it as it already is changes nothing. |
-| `study task remove <topic> <task>... [--dry-run]` | Removes Tasks that no longer matter. |
-| `study task list <topic> [--all]` | Lists the open Tasks, or all with `--all`. |
+| `study task remove <topic> <task>... [--dry-run]` | Removes Tasks that no longer matter. A Task removed already changes nothing; one that never existed is `not_found`. |
+| `study task list <topic> [--all]` | Lists the open Tasks, or all with `--all`, and the lines of `tasks.jsonl` that are not Tasks (`problems`). |
 | `study topic dismiss-flag <topic> <flag-id> [--dry-run]` | Dismisses one of the Topic's flags, by the id `status` shows, once the learner has looked at it. It records the decision in the History and never changes content. The result is `{"topic": ..., "flag": {...}, "changed": bool}`; dismissing a flag twice changes nothing. Only `held_event`, `conflict`, `damaged_line`, `clock_ahead` and `card_flagged` flags can be dismissed (see below). |
 | `study library build <folder>` | Indexes the books in a folder (relative to where you run it) and replaces the Library index in the Study home. |
 | `study library search <query> [--limit N]` | Ranks the books in the Library against the query. `--limit` defaults to 10 and is capped at 100; no matches is a success with an empty list. |
@@ -262,53 +262,88 @@ hours_per_week = 10.0        # the first period may leave out from: from now on
 [[pace]]
 from = "2026-11-16"
 hours_per_week = 3.0
-
-[[tasks]]
-id = "book-the-exam.k3f9a2"
-title = "Book the exam"
-by = "2026-11-01"            # optional, shown as is
-after = "core"               # optional: shown once Milestone core is done
 ```
 
+Tasks live in `tasks.jsonl`, one per line, so two machines adding Tasks merge without a
+conflict (the file merges by union, like the History):
+
+```json
+{"format":1,"id":"book-the-exam.k3f9a2","title":"Book the exam","by":"2026-11-01","after":"core"}
+```
+
+`by` is a date shown as is, never counted as late; `after` names a Milestone, and the Task is
+shown once that Milestone is done, or with a note if a Revision removed it. The learner may
+add lines by hand with any id short of 100 bytes without `#` or control characters; such a
+Task can be marked done and removed like the others. A line that is not a Task is named in
+`settings_problems` and kept as it is; the other Tasks still work.
+
 Whether a Topic is `active`, `paused` or `finished`, and which Tasks are done, come from its
-History, never from a file. A paused Topic offers no Cards and has no Forecasts; a finished
-one has no Forecasts and keeps offering its Cards. A setting that cannot be read, such as a
-hand-edited Pace with negative hours, is left out and named in `settings_problems`; the rest
-of the Topic stands.
+History, never from a file. A paused Topic offers no Cards and has no Forecasts, and stays
+paused until the learner resumes it (`--state active`); opening a Session on it works and says
+`"paused": true`. A finished Topic has no Forecasts and keeps offering its Cards. A Topic made
+paused on one machine and finished on another, from the same state, is flagged as a
+`conflict`; marking a Task done on one machine and not done on another is not: the last mark
+wins.
+
+A setting that cannot be read, such as a hand-edited Pace with negative hours or without
+`hours_per_week`, is left out and named in `settings_problems`; the rest of the Topic stands,
+and setting it again, or removing it (`--deadline ""`, `--clear-pace`), fixes it. A
+`topic.toml` that still holds git's conflict markers after a merge is `corrupt`, with the
+fix: keep one side of each block and delete the marker lines.
 
 The **Forecast** says when each Milestone ends at the Pace, never how far behind anything
 is. It is in `status` (`forecast`) and in `study syllabus` and `syllabus`:
+
+On 1 Oct 2026, with 20 hours left in Core, of which "Structs" is 6, and a target of 10 Oct:
 
 ```json
 {
   "pace": "10 h/week, then 3 h/week from 16 Nov 2026",
   "milestones": [
-    { "milestone": "core", "title": "Core", "priority": "must", "deadline": "2026-10-16",
-      "remaining_hours": 12, "ends": "2026-10-23",
-      "after_deadline": true, "text": "At your Pace, Core ends 23 Oct 2026; its target is 16 Oct 2026." }
+    { "milestone": "core", "title": "Core", "priority": "must",
+      "deadline": "2026-10-10", "deadline_from": "target",
+      "remaining_hours": 20, "ends": "2026-10-14", "after_deadline": true,
+      "text": "At 10 h/week, Core ends 14 Oct 2026; its target is 10 Oct 2026." }
   ],
-  "triage": { "milestone": "core", "deadline": "2026-10-16", "ends": "2026-10-23",
-    "trim_hours": 2.9, "raise_pace_to": 14, "move_lessons": ["structs"],
-    "text": "To finish Core by 16 Oct 2026: raise the Pace to about 14 h/week until then, move \"Structs\" past the deadline, or trim about 2.9 h of Stretch goals." }
+  "triage": { "milestone": "core", "deadline": "2026-10-10", "deadline_from": "target",
+    "ends": "2026-10-14", "raise_pace_to": 14, "move_lessons": ["structs"], "trim_hours": 5.8,
+    "suggest_deadline": "2026-10-14",
+    "text": "To finish Core by 10 Oct 2026: raise the Pace to about 14 h/week until then, move \"Structs\" past the deadline, or trim about 5.8 h of Stretch goals." }
 }
 ```
 
+(At 10 h/week, 20 h take 14 days, so Core ends 14 Oct. The ten days to 10 Oct fit about 14.3
+of the 20 hours, so about 5.8 h do not; 20 h in ten days is 14 h/week.)
+
 - Work is the hour estimates of the Lessons neither done nor skipped, a Lesson in progress
-  in full, taken through the Syllabus in order. A Milestone with a Lesson that has no
-  estimate is not given a date, and nor are the ones after it: `unestimated` names the
-  Lessons that need one. Without a Pace, `needs_pace` is `true` and no dates are given.
-- Days are calendar days on this computer's clock, starting today. Each day adds its Pace
-  period's hours a week divided by seven; the count is exact, in minutes.
-- A Milestone's `deadline` is its target date, or the Goal's deadline for a `must`
-  Milestone without one. `after_deadline` is set when it is forecast to end later.
+  in full, taken through the Syllabus in order. Any estimate counts as at least a minute. A
+  Milestone with a Lesson that has no estimate is not given a date, and nor are the ones
+  after it: `unestimated` names the Lessons that need one. Without a Pace, `needs_pace` is
+  `true` and no dates are given. `remaining_hours` is rounded to a tenth of an hour.
+- Days are calendar days on this computer's clock, starting today, counted as dates so a
+  daylight saving change never adds or loses one. Each day adds its Pace period's hours a
+  week divided by seven; the count is exact, in minutes. A period of 0 h is shown as a break.
+  A Forecast looks ten years ahead at most.
+- A Milestone's `deadline` is its target date (`deadline_from: target`), or the Goal's
+  deadline for a `must` Milestone without one (`deadline_from: goal`). `after_deadline` is
+  set when it is forecast to end later.
 - A **Triage** is offered for the first `must` Milestone forecast to end after its
-  deadline: the Pace that finishes it in time (`raise_pace_to`, hours a week from today to
-  the deadline, rounded up to a half hour), Lessons not started that fit it in time if
-  moved past the deadline (optional Milestones' Lessons before it first, then its own from
-  the last; left out when moving them all would not be enough), or hours of Stretch goals to
-  trim (`trim_hours`). Nothing changes until the learner chooses: a Revision for the first
-  two, a new Pace for the last. Once the deadline has passed, `deadline_passed` asks for a
-  new date first.
+  deadline. It is something to consider, never the one next action, and it offers only what
+  can still finish the Milestone in time:
+  - the Pace that does (`raise_pace_to`: hours a week from today to the deadline, rounded up
+    to a half hour; "set" rather than "raise" when it is not above today's Pace), left out
+    above 168 h a week; or, when the deadline is today, the hours to work today
+    (`hours_today`, up to 24);
+  - the fewest Lessons not started that fit it in time if moved past the deadline
+    (`move_lessons`: optional Milestones' Lessons before it first, then its own from the
+    last), left out when that is not enough or would move all its own work;
+  - the hours of Stretch goals to trim (`trim_hours`), left out when that is more than half
+    the Milestone's own work, since Stretch goals are optional extras.
+
+  When none of them can, the text says so and `suggest_deadline` offers the date it is
+  forecast to end. Once the deadline has passed, `deadline_passed` asks for a new date first.
+  Nothing changes until the learner chooses: a Revision to move Lessons, trim Stretch goals
+  or change a target date, or `study topic update` for the Pace or the Goal's deadline.
 
 ## The Syllabus
 

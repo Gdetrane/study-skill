@@ -56,8 +56,9 @@ the maintainer's answers to the questions they raised.
                                     Library index, where Source files are, caches
   .templates/<name>/                optional learner-provided Workbench starters
   llm-data-engineering/             a Topic: its own git repository
-    topic.toml                      Goal, Pace periods, Level, Approach, Workbench,
-                                    Knowledge base, Tasks
+    topic.toml                      Goal and deadline, Pace periods, Level, Approach,
+                                    Workbench, Knowledge base, daily cap on new Cards
+    tasks.jsonl                     Tasks: steps toward the Goal that are not study
     syllabus.toml                   Milestones (priority, target date) and Lessons
                                     (id, title, hour estimate), in order
     lessons/<lesson-id>.md          Lesson text; YAML header holds the Check and Break points
@@ -148,8 +149,8 @@ the maintainer's answers to the questions they raised.
   | `deadline.set` | the Goal's deadline, empty to remove it | `topic.toml` |
   | `pace.set` | the Pace periods (`from`, `hours_per_week`), replacing the old ones | `topic.toml` |
   | `new_cards_per_day.set` | the daily cap on new Cards | `topic.toml` |
-  | `task.added`, `task.removed` | the Tasks in full, or their ids | `topic.toml` |
-  | `topic_state.set` | `active`, `paused` or `finished` | none |
+  | `task.added`, `task.removed` | the Tasks in full, or their ids | `tasks.jsonl#<id>` each |
+  | `topic_state.set` | `active`, `paused` or `finished`, and the state the writer saw | none |
   | `task.done`, `task.reopened` | Task id | none |
 
   `syllabus.toml` keeps settings Lamplight does not know at every level, as `topic.toml`
@@ -221,18 +222,23 @@ hours before any learning happens is exactly what v1 produced.
   Revision: trim Stretch goals, move Lessons past the deadline, or raise the Pace. A
   Pace change produces a new Forecast.
   - The core computes both, exactly and deterministically: work is the hour estimates of
-    the Lessons neither done nor skipped (one in progress in full), taken through the
-    Syllabus in order and counted in minutes; the Pace is minutes per week, and each
-    calendar day on the learner's clock, from today, adds its period's share. A Lesson
+    the Lessons neither done nor skipped (one in progress in full, any estimate at least a
+    minute), taken through the Syllabus in order and counted in minutes; the Pace is minutes
+    per week, and each calendar day on the learner's clock, from today, adds its period's
+    share. Days are civil dates, so daylight saving changes never add or lose one. A Lesson
     without an estimate stops the Forecast at its Milestone and names it, rather than
     guessing. A Milestone's deadline is its target date, or the Goal's deadline for a
     must-Milestone without one.
-  - The Triage for the first must-Milestone forecast to end after its deadline gives the
-    Pace that finishes it in time (hours a week from today to the deadline, rounded up to a
-    half hour), the Lessons not started that fit it in time if moved past the deadline
-    (optional Milestones' Lessons before it first, then its own from the last), and the
-    hours of Stretch goals to trim instead. The core never changes the Syllabus or the Pace
-    itself: the learner chooses, and the agent proposes the Revision or the Pace change.
+  - The Triage for the first must-Milestone forecast to end after its deadline offers only
+    what can still finish it in time: the Pace that does (hours a week from today to the
+    deadline, rounded up to a half hour, never above 168; hours today when the deadline is
+    today), the fewest Lessons not started that fit it in time if moved past the deadline
+    (optional Milestones' Lessons before it first, then its own from the last; never all its
+    own work), and the hours of Stretch goals to trim (never more than half its own work,
+    since Stretch goals are optional extras). When none can, it says so and suggests the
+    date the Milestone is forecast to end. A Triage is something to consider, never the one
+    recommended action. The core never changes the Syllabus or the Pace itself: the learner
+    chooses, and the agent proposes the Revision or the Pace change.
   - Forecasts appear in `status` and `syllabus`; a paused or finished Topic has none.
 - **Revisions**: the learner asks in plain words; the agent proposes a before/after change
   that names Lessons by title and shows any renumbering; the core applies it after approval.
@@ -412,17 +418,25 @@ hours before any learning happens is exactly what v1 produced.
 - Tasks are non-study steps toward the Goal. They appear in `status` when relevant and are
   marked done through the core.
   - The Goal's optional deadline, the Pace as dated periods (`[[pace]]`, each with `from` and
-    `hours_per_week`; the first may start "from now on"), the daily cap on new Cards and the
-    Tasks (`[[tasks]]`: id, title, optional `by` date and `after` Milestone) live in
-    `topic.toml`, set through `topic_update` and kept with any keys Lamplight does not know.
-    A setting a hand edit broke is reported in `status` and left out; the rest stands.
-  - A Task is relevant while it is open and, if it names a Milestone with `after`, once that
-    Milestone is done. Its `by` date is shown as written, never counted as late. Whether it
-    is done comes from the History (`task.done`, `task.reopened`), so a Task the learner wrote
-    into `topic.toml` by hand can be marked done too.
-  - A Topic's state (`active`, `paused`, `finished`) is recorded by `topic_state.set` and
-    replayed, never stored in a file. Paused hides its Cards and Forecasts; finished hides
-    its Forecasts and keeps its Cards coming back at growing intervals.
+    `hours_per_week`; the first may start "from now on") and the daily cap on new Cards live
+    in `topic.toml`, set through `topic_update` and kept with any keys Lamplight does not
+    know. A setting a hand edit broke is reported in `status` and left out; the rest stands,
+    and setting or removing it fixes it. A `topic.toml` left with git conflict markers is
+    reported with how to resolve it.
+  - Tasks live in `tasks.jsonl`, one per line (`id`, `title`, optional `by` date and
+    `after` Milestone), merged by union like `cards.jsonl`, so two machines adding Tasks
+    never conflict, and changing Tasks never puts `topic.toml`, and with it the Topic, at
+    risk of a git conflict. A line that is not a Task is reported and kept; the others work.
+    A Task is relevant while it is open and, if it names a Milestone with `after`, once that
+    Milestone is done, or with a note once a Revision removed it. Its `by` date is shown as
+    written, never counted as late. Whether it is done comes from the History (`task.done`,
+    `task.reopened`; the last mark wins), so a Task the learner wrote by hand, with any id,
+    can be marked done too.
+  - A Topic's state (`active`, `paused`, `finished`) is recorded by `topic_state.set`, with
+    the state the writer saw, and replayed, never stored in a file; two machines changing it
+    from one state to different ones are flagged. Paused hides its Cards and Forecasts and
+    lasts until the learner resumes the Topic: a Session can still open on it, saying it is
+    paused. Finished hides its Forecasts and keeps its Cards coming back at growing intervals.
 
 ## Knowledge
 
