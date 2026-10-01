@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"time"
 
 	"github.com/BurntSushi/toml"
 )
@@ -15,12 +16,16 @@ import (
 // never appear in Lamplight's own JSON; inside Event payloads they travel
 // with the Syllabus (see syllabusData). Keys are written sorted, so the same
 // Syllabus always gives the same bytes.
+//
+// Dates are written as text ("2026-12-01"): TOML's local dates would go
+// through Go's time.Time, whose time zone can shift them by a day. A native
+// TOML date written by hand is read, and written back as text.
 
 // Known keys at each level.
 var (
 	syllabusKeys  = []string{"format", "milestones"}
-	milestoneKeys = []string{"id", "title", "outcome", "priority", "lessons"}
-	lessonKeys    = []string{"id", "title", "hours"}
+	milestoneKeys = []string{"id", "title", "outcome", "priority", "target", "lessons"}
+	lessonKeys    = []string{"id", "title", "hours", "skipped"}
 )
 
 // extras returns the keys of m that are not known.
@@ -40,10 +45,47 @@ func extras(m map[string]any, known []string) map[string]any {
 func withExtras(m, extra map[string]any) map[string]any {
 	for k, v := range extra {
 		if _, known := m[k]; !known {
-			m[k] = v
+			m[k] = plainValue(v)
 		}
 	}
 	return m
+}
+
+// plainValue turns TOML dates and times among settings this version does
+// not know into their text, which survives a trip through JSON unchanged
+// and is the same on every machine.
+func plainValue(v any) any {
+	switch t := v.(type) {
+	case time.Time:
+		switch t.Location().String() {
+		case "date-local":
+			return t.Format(dateLayout)
+		case "datetime-local":
+			return t.Format("2006-01-02T15:04:05.999999999")
+		case "time-local":
+			return t.Format("15:04:05.999999999")
+		}
+		return t.Format(time.RFC3339Nano)
+	case map[string]any:
+		out := make(map[string]any, len(t))
+		for k, e := range t {
+			out[k] = plainValue(e)
+		}
+		return out
+	case []map[string]any:
+		out := make([]map[string]any, len(t))
+		for i, e := range t {
+			out[i] = plainValue(e).(map[string]any)
+		}
+		return out
+	case []any:
+		out := make([]any, len(t))
+		for i, e := range t {
+			out[i] = plainValue(e)
+		}
+		return out
+	}
+	return v
 }
 
 func (s Syllabus) toMap() map[string]any {
@@ -55,11 +97,17 @@ func (s Syllabus) toMap() map[string]any {
 			if l.Hours != 0 {
 				lm["hours"] = l.Hours
 			}
+			if l.Skipped {
+				lm["skipped"] = true
+			}
 			lessons = append(lessons, withExtras(lm, l.Extra))
 		}
 		mm := map[string]any{"id": m.ID, "title": m.Title, "priority": m.Priority, "lessons": lessons}
 		if m.Outcome != "" {
 			mm["outcome"] = m.Outcome
+		}
+		if m.Target != "" {
+			mm["target"] = m.Target
 		}
 		milestones = append(milestones, withExtras(mm, m.Extra))
 	}
@@ -75,7 +123,7 @@ func syllabusFromMap(doc map[string]any) (Syllabus, error) {
 	}
 	for i, mm := range milestones {
 		m := Milestone{Extra: extras(mm, milestoneKeys)}
-		where := fmt.Sprintf("milestone %d", i+1)
+		where := fmt.Sprintf("Milestone %d", i+1)
 		if m.ID, err = str(mm, "id", where); err != nil {
 			return s, err
 		}
@@ -88,13 +136,16 @@ func syllabusFromMap(doc map[string]any) (Syllabus, error) {
 		if m.Priority, err = str(mm, "priority", where); err != nil {
 			return s, err
 		}
+		if m.Target, err = date(mm, "target", where); err != nil {
+			return s, err
+		}
 		lessons, err := tables(mm["lessons"], where+" lessons")
 		if err != nil {
 			return s, err
 		}
 		for j, lm := range lessons {
 			l := SyllabusLesson{Extra: extras(lm, lessonKeys)}
-			where := fmt.Sprintf("lesson %d of milestone %d", j+1, i+1)
+			where := fmt.Sprintf("Lesson %d.%d", i+1, j+1)
 			if l.ID, err = str(lm, "id", where); err != nil {
 				return s, err
 			}
@@ -102,6 +153,9 @@ func syllabusFromMap(doc map[string]any) (Syllabus, error) {
 				return s, err
 			}
 			if l.Hours, err = number(lm, "hours", where); err != nil {
+				return s, err
+			}
+			if l.Skipped, err = boolean(lm, "skipped", where); err != nil {
 				return s, err
 			}
 			m.Lessons = append(m.Lessons, l)
@@ -140,6 +194,32 @@ func str(m map[string]any, key, where string) (string, error) {
 		return v, nil
 	}
 	return "", fmt.Errorf("%s of %s is not text", key, where)
+}
+
+// date reads a date written as text or as a native TOML date.
+func date(m map[string]any, key, where string) (string, error) {
+	switch v := m[key].(type) {
+	case nil:
+		return "", nil
+	case string:
+		return v, nil
+	case time.Time:
+		if v.Location().String() == "date-local" {
+			return v.Format(dateLayout), nil
+		}
+		return "", fmt.Errorf("%s of %s must be a date such as 2026-12-01, without a time", key, where)
+	}
+	return "", fmt.Errorf("%s of %s is not a date", key, where)
+}
+
+func boolean(m map[string]any, key, where string) (bool, error) {
+	switch v := m[key].(type) {
+	case nil:
+		return false, nil
+	case bool:
+		return v, nil
+	}
+	return false, fmt.Errorf("%s of %s must be true or false", key, where)
 }
 
 func number(m map[string]any, key, where string) (float64, error) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 )
 
 const syllabusFile = "syllabus.toml"
@@ -12,6 +13,7 @@ const syllabusFile = "syllabus.toml"
 const (
 	eventRevisionProposed = "revision.proposed"
 	eventRevisionApplied  = "revision.applied"
+	eventRevisionDeclined = "revision.declined"
 )
 
 // Milestone priorities.
@@ -25,12 +27,14 @@ const (
 	maxSummaryRunes = 500
 	maxOutcomeRunes = 300
 	maxLessonHours  = 100
+	// dateLayout is how a Milestone's target date is written.
+	dateLayout = "2006-01-02"
 )
 
 // Syllabus is the ordered program of a Topic: Milestones, each with its
-// Lessons in order. Display numbers come from position; IDs never change.
-//
-// TODO(#25): target dates, Evidence per Lesson, Forecasts and Triage.
+// Lessons in order. Display numbers ("Lesson 2.3") come from position; IDs
+// never change. Forecasts and Triage, which read the target dates and hour
+// estimates, belong to the Goal and the Pace (#29).
 type Syllabus struct {
 	Milestones []Milestone `json:"milestones"`
 	// Extra holds settings this version of study does not know, kept as
@@ -44,6 +48,7 @@ type Milestone struct {
 	Title    string           `json:"title"`
 	Outcome  string           `json:"outcome,omitempty"`
 	Priority string           `json:"priority,omitempty" jsonschema:"must, if_time or after_deadline; must when left out"`
+	Target   string           `json:"target,omitempty" jsonschema:"the date the learner wants this Milestone finished, as YYYY-MM-DD; optional"`
 	Lessons  []SyllabusLesson `json:"lessons"`
 	Extra    map[string]any   `json:"-"`
 }
@@ -51,10 +56,13 @@ type Milestone struct {
 // SyllabusLesson is one Lesson as the Syllabus lists it. Its text and Check
 // live in lessons/<id>.md.
 type SyllabusLesson struct {
-	ID    string         `json:"id"`
-	Title string         `json:"title"`
-	Hours float64        `json:"hours,omitempty"`
-	Extra map[string]any `json:"-"`
+	ID    string  `json:"id"`
+	Title string  `json:"title"`
+	Hours float64 `json:"hours,omitempty"`
+	// Skipped marks a Lesson the learner chose to skip. It keeps its place
+	// and number, and is never rewritten; a later Revision can take it back.
+	Skipped bool           `json:"skipped,omitempty" jsonschema:"true for a Lesson the learner chose to skip; it keeps its place and number"`
+	Extra   map[string]any `json:"-"`
 }
 
 // lessons lists the Syllabus's Lessons in order.
@@ -67,70 +75,109 @@ func (s *Syllabus) lessons() []SyllabusLesson {
 }
 
 func (s *Syllabus) lesson(id string) (SyllabusLesson, bool) {
-	for _, l := range s.lessons() {
-		if l.ID == id {
-			return l, true
-		}
-	}
-	return SyllabusLesson{}, false
+	l, _, ok := s.find(id)
+	return l, ok
 }
 
-// validate checks a Syllabus an agent proposed and returns it cleaned up.
+// find returns a Lesson, the Milestone that holds it, and whether it was
+// found.
+func (s *Syllabus) find(id string) (SyllabusLesson, Milestone, bool) {
+	for _, m := range s.Milestones {
+		for _, l := range m.Lessons {
+			if l.ID == id {
+				return l, m, true
+			}
+		}
+	}
+	return SyllabusLesson{}, Milestone{}, false
+}
+
+// validate checks a Syllabus, whether an agent proposed it or the learner
+// edited syllabus.toml, and returns it cleaned up. Errors name the Milestone
+// or Lesson by number and id, so a hand edit can be fixed.
 func (s Syllabus) validate() (Syllabus, error) {
 	if len(s.Milestones) == 0 {
 		return s, invalidf("a Syllabus needs at least one Milestone")
 	}
 	seen := map[string]string{}
-	use := func(kind, id string) error {
+	use := func(where, kind, id string) error {
 		if err := validateEntityID(kind, id); err != nil {
-			return err
+			return at(where, err)
 		}
 		if other, ok := seen[id]; ok {
-			return invalidf("the id %q is used by two %ss", id, other)
+			return invalidf("%s: the id %q is already used by %s", where, id, other)
 		}
-		seen[id] = kind
+		seen[id] = where
 		return nil
 	}
 	out := Syllabus{Milestones: make([]Milestone, 0, len(s.Milestones)), Extra: s.Extra}
-	for _, m := range s.Milestones {
-		if err := use("Milestone", m.ID); err != nil {
+	for i, m := range s.Milestones {
+		where := milestoneName(i, m.ID)
+		if err := use(where, "Milestone", m.ID); err != nil {
 			return s, err
 		}
-		title, err := requiredText("Milestone title", m.Title, maxTitleRunes)
+		title, err := requiredText("title", m.Title, maxTitleRunes)
 		if err != nil {
-			return s, err
+			return s, at(where, err)
 		}
-		outcome, err := cleanText("Milestone outcome", m.Outcome, maxOutcomeRunes)
+		outcome, err := cleanText("outcome", m.Outcome, maxOutcomeRunes)
 		if err != nil {
-			return s, err
+			return s, at(where, err)
 		}
 		switch m.Priority {
 		case PriorityMust, PriorityIfTime, PriorityAfterDeadline:
 		case "":
 			m.Priority = PriorityMust
 		default:
-			return s, invalidf("the priority of Milestone %s must be must, if_time or after_deadline, not %q", m.ID, m.Priority)
+			return s, invalidf("%s: the priority must be must, if_time or after_deadline, not %q", where, m.Priority)
+		}
+		if m.Target != "" {
+			if _, err := time.Parse(dateLayout, m.Target); err != nil {
+				return s, invalidf("%s: the target date must be written YYYY-MM-DD, such as 2026-12-01, not %q", where, m.Target)
+			}
 		}
 		if len(m.Lessons) == 0 {
-			return s, invalidf("Milestone %s has no Lessons", m.ID)
+			return s, invalidf("%s has no Lessons", where)
 		}
-		clean := Milestone{ID: m.ID, Title: title, Outcome: outcome, Priority: m.Priority, Extra: m.Extra}
-		for _, l := range m.Lessons {
-			if err := use("Lesson", l.ID); err != nil {
+		clean := Milestone{ID: m.ID, Title: title, Outcome: outcome, Priority: m.Priority, Target: m.Target, Extra: m.Extra}
+		for j, l := range m.Lessons {
+			where := lessonName(i, j, l.ID)
+			if err := use(where, "Lesson", l.ID); err != nil {
 				return s, err
 			}
-			lt, err := requiredText("Lesson title", l.Title, maxTitleRunes)
+			lt, err := requiredText("title", l.Title, maxTitleRunes)
 			if err != nil {
-				return s, err
+				return s, at(where, err)
 			}
 			if l.Hours < 0 || l.Hours > maxLessonHours {
-				return s, invalidf("Lesson %s has %v hours: give an estimate between 0 and %d", l.ID, l.Hours, maxLessonHours)
+				return s, invalidf("%s has %v hours: give an estimate between 0 and %d", where, l.Hours, maxLessonHours)
 			}
-			clean.Lessons = append(clean.Lessons, SyllabusLesson{ID: l.ID, Title: lt, Hours: l.Hours, Extra: l.Extra})
+			clean.Lessons = append(clean.Lessons, SyllabusLesson{ID: l.ID, Title: lt, Hours: l.Hours, Skipped: l.Skipped, Extra: l.Extra})
 		}
 		out.Milestones = append(out.Milestones, clean)
 	}
 	return out, nil
+}
+
+// milestoneName and lessonName name a Milestone or a Lesson by display
+// number and id, for messages.
+func milestoneName(i int, id string) string {
+	if id == "" {
+		return fmt.Sprintf("Milestone %d", i+1)
+	}
+	return fmt.Sprintf("Milestone %d (%s)", i+1, id)
+}
+
+func lessonName(i, j int, id string) string {
+	if id == "" {
+		return fmt.Sprintf("Lesson %d.%d", i+1, j+1)
+	}
+	return fmt.Sprintf("Lesson %d.%d (%s)", i+1, j+1, id)
+}
+
+// at prefixes an error's message with where it was found, keeping its code.
+func at(where string, err error) error {
+	return &Error{Code: CodeOf(err), Message: where + ": " + err.Error(), Err: err}
 }
 
 // revisionProposedData is the payload of a revision.proposed Event. The
@@ -156,17 +203,62 @@ type revisionAppliedData struct {
 	Syllabus syllabusData `json:"syllabus"`
 }
 
-// Approval records how the learner approved a Revision. Approvals are
-// tamper-evident, not tamper-proof: the agent relays them.
-//
-// TODO(#25): ask the learner directly through MCP elicitation or on a
-// terminal, and record that instead.
+// revisionDeclinedData is the payload of a revision.declined Event: the
+// learner said no. The Revision can no longer be applied.
+type revisionDeclinedData struct {
+	Revision string   `json:"revision"`
+	Decision Approval `json:"decision"`
+}
+
+// How the learner approved or declined a Revision.
+const (
+	// ViaChat: the learner answered in the conversation, and the agent
+	// relays their words.
+	ViaChat = "chat"
+	// ViaElicitation: Lamplight asked the learner directly, through the
+	// MCP client's elicitation.
+	ViaElicitation = "elicitation"
+	// ViaTerminal: Lamplight asked the learner directly, on a terminal.
+	ViaTerminal = "terminal"
+)
+
+// Approval records how the learner approved or declined a Revision.
+// Approvals are tamper-evident, not tamper-proof: an agent relays a chat
+// approval, and one with a shell could fake a terminal.
 type Approval struct {
-	// Via is how the approval was given: "chat" when the learner approved
-	// in the conversation and the agent relays it.
+	// Via is how the learner answered: chat, elicitation or terminal.
 	Via string `json:"via"`
-	// LearnerSaid quotes the learner's approval.
-	LearnerSaid string `json:"learner_said"`
+	// LearnerSaid quotes the learner's words. Required in chat; when
+	// Lamplight asked directly, it is whatever the learner added.
+	LearnerSaid string `json:"learner_said,omitempty"`
+	// Shown is the question Lamplight showed the learner when it asked
+	// directly.
+	Shown string `json:"shown,omitempty"`
+}
+
+// check validates an Approval, or a decline when declining.
+func (a Approval) check(declining bool) (Approval, error) {
+	what := "approval"
+	if declining {
+		what = "answer"
+	}
+	var err error
+	switch a.Via {
+	case ViaChat:
+		if a.LearnerSaid, err = requiredText("learner's "+what, a.LearnerSaid, maxSummaryRunes); err != nil {
+			return a, err
+		}
+	case ViaElicitation, ViaTerminal:
+		if a.LearnerSaid, err = cleanText("learner's "+what, a.LearnerSaid, maxSummaryRunes); err != nil {
+			return a, err
+		}
+		if a.Shown == "" {
+			return a, invalidf("an %s %s must record what the learner was shown", a.Via, what)
+		}
+	default:
+		return a, invalidf("say how the learner answered: via must be chat, elicitation or terminal, not %q", a.Via)
+	}
+	return a, nil
 }
 
 // RevisionSpec describes a Revision to propose.
@@ -187,22 +279,33 @@ type RevisionProposal struct {
 	Revision string   `json:"revision"`
 	Summary  string   `json:"summary"`
 	Syllabus Syllabus `json:"syllabus"`
-	DryRun   bool     `json:"dry_run,omitempty"`
+	// Changes is the change against the current Syllabus, naming Lessons
+	// by title, with any renumbering: show it to the learner.
+	Changes RevisionChanges `json:"changes"`
+	// Stale is true when the Syllabus changed since the Revision was
+	// proposed, so it can no longer be applied: propose it again.
+	Stale  bool `json:"stale,omitempty"`
+	DryRun bool `json:"dry_run,omitempty"`
 }
 
-// RevisionApplied is the result of ApplyRevision.
+// RevisionApplied is the result of ApplyRevision and DeclineRevision.
 type RevisionApplied struct {
 	Topic    string   `json:"topic"`
 	Revision string   `json:"revision"`
 	Syllabus Syllabus `json:"syllabus"`
-	// Changed is false when the Revision was already applied.
+	// Approval is how the learner answered.
+	Approval Approval `json:"approval"`
+	// Declined is true when the learner said no: nothing changed, and the
+	// Revision can no longer be applied.
+	Declined bool `json:"declined,omitempty"`
+	// Changed is false when the answer was already recorded.
 	Changed bool `json:"changed"`
 	DryRun  bool `json:"dry_run,omitempty"`
 }
 
 // ProposeRevision records a proposed change to the Syllabus, the first
 // Syllabus included. Nothing changes until the learner approves it with
-// ApplyRevision. Lessons already done must keep their place and title.
+// ApplyRevision. Done and skipped Lessons are never rewritten.
 //
 // While syllabus.toml differs from the version the History recorded, it was
 // edited outside Lamplight: only a Revision that adopts the edit, with
@@ -218,6 +321,7 @@ func (c *Core) ProposeRevision(ctx context.Context, topicID string, spec Revisio
 			return RevisionProposal{}, err
 		}
 	}
+	var changes RevisionChanges
 	ev, err := c.writeTopic(ctx, topicID, func(s *replayed, view *topicView) (*change, error) {
 		current, exists, err := view.read(syllabusFile)
 		if err != nil {
@@ -244,16 +348,18 @@ func (c *Core) ProposeRevision(ctx context.Context, topicID string, spec Revisio
 		default:
 			syllabus = keepExtras(syllabus, s.study.syllabus)
 		}
-		if err := keepsDoneLessons(s, syllabus); err != nil {
+		if err := keepsSettledLessons(s, syllabus); err != nil {
 			return nil, err
 		}
+		changes = revisionChanges(s, syllabus)
 		d.Syllabus = syllabusData{syllabus}
 		return &change{Type: eventRevisionProposed, Data: d}, nil
 	}, spec.DryRun)
 	if err != nil {
 		return RevisionProposal{}, err
 	}
-	return RevisionProposal{Topic: topicID, Revision: ev.ID, Summary: summary, Syllabus: syllabus, DryRun: spec.DryRun}, nil
+	return RevisionProposal{Topic: topicID, Revision: ev.ID, Summary: summary, Syllabus: syllabus, Changes: changes,
+		DryRun: spec.DryRun}, nil
 }
 
 // editedOutside explains why a Syllabus edited by hand blocks Revisions.
@@ -264,19 +370,62 @@ func editedOutside(topicID string) error {
 			"Topic's last Checkpoint", syllabusFile, topicID, syllabusFile)}
 }
 
+// Revision returns a proposed Revision with its change against the current
+// Syllabus, so an adapter can ask the learner about it. It fails when the
+// Revision can no longer be applied: already applied or declined, or based
+// on a Syllabus that has changed since.
+func (c *Core) Revision(ctx context.Context, topicID, revision string) (RevisionProposal, error) {
+	s, _, err := c.replayTopic(ctx, topicID)
+	if err != nil {
+		return RevisionProposal{}, err
+	}
+	p, err := pendingRevision(s, topicID, revision)
+	if err != nil {
+		return RevisionProposal{}, err
+	}
+	return RevisionProposal{Topic: topicID, Revision: revision, Summary: p.Summary, Syllabus: p.Syllabus.Syllabus,
+		Changes: revisionChanges(s, p.Syllabus.Syllabus)}, nil
+}
+
+// pendingRevision returns a proposed Revision that can still be answered.
+func pendingRevision(s *replayed, topicID, revision string) (revisionProposedData, error) {
+	p, ok := s.study.proposals[revision]
+	switch {
+	case !ok:
+		return p, &Error{Code: CodeNotFound, Message: fmt.Sprintf("Topic %s has no proposed Revision %s", topicID, revision)}
+	case s.study.applied[revision]:
+		return p, &Error{Code: CodeFailedPrecondition, Message: fmt.Sprintf("Revision %s of %s is already applied", revision, topicID)}
+	case s.study.declined[revision]:
+		return p, declinedRevision(topicID, revision)
+	case p.Base != s.versions[syllabusFile].hash:
+		return p, staleRevision(topicID, revision)
+	}
+	return p, nil
+}
+
+func declinedRevision(topicID, revision string) error {
+	return &Error{Code: CodeFailedPrecondition, Message: fmt.Sprintf(
+		"the learner declined Revision %s of %s; if they changed their mind, propose it again", revision, topicID)}
+}
+
+func staleRevision(topicID, revision string) error {
+	return &Error{Code: CodeFailedPrecondition, Message: fmt.Sprintf(
+		"the Syllabus of %s changed since Revision %s was proposed: propose it again from the current Syllabus",
+		topicID, revision)}
+}
+
 // ApplyRevision applies a proposed Revision once the learner has approved
 // it. It refuses when another Revision was applied since this one was
-// proposed, or when syllabus.toml was edited by hand, unless the Revision
-// adopts exactly that edit. Applying a Revision twice changes nothing.
+// proposed, when the learner declined it, or when syllabus.toml was edited
+// by hand, unless the Revision adopts exactly that edit. Applying a
+// Revision twice changes nothing. A dry run needs no approval.
 func (c *Core) ApplyRevision(ctx context.Context, topicID, revision string, approval Approval, dryRun bool) (RevisionApplied, error) {
-	if approval.Via != "chat" {
-		return RevisionApplied{}, invalidf("say how the learner approved the Revision: via must be \"chat\", not %q", approval.Via)
+	if !dryRun {
+		var err error
+		if approval, err = approval.check(false); err != nil {
+			return RevisionApplied{}, err
+		}
 	}
-	said, err := requiredText("learner's approval", approval.LearnerSaid, maxSummaryRunes)
-	if err != nil {
-		return RevisionApplied{}, err
-	}
-	approval.LearnerSaid = said
 	var syllabus Syllabus
 	ev, err := c.writeTopic(ctx, topicID, func(s *replayed, view *topicView) (*change, error) {
 		p, ok := s.study.proposals[revision]
@@ -287,11 +436,12 @@ func (c *Core) ApplyRevision(ctx context.Context, topicID, revision string, appr
 		if s.study.applied[revision] {
 			return nil, nil
 		}
+		if s.study.declined[revision] {
+			return nil, declinedRevision(topicID, revision)
+		}
 		recorded := s.versions[syllabusFile].hash
 		if p.Base != recorded {
-			return nil, &Error{Code: CodeFailedPrecondition, Message: fmt.Sprintf(
-				"the Syllabus of %s changed since Revision %s was proposed: propose it again from the current Syllabus",
-				topicID, revision)}
+			return nil, staleRevision(topicID, revision)
 		}
 		current, exists, err := view.read(syllabusFile)
 		if err != nil {
@@ -300,7 +450,7 @@ func (c *Core) ApplyRevision(ctx context.Context, topicID, revision string, appr
 		if onDisk := contentHash(current, exists); onDisk != recorded && !(p.FromFile && onDisk == p.FileVersion) {
 			return nil, editedOutside(topicID)
 		}
-		if err := keepsDoneLessons(s, syllabus); err != nil {
+		if err := keepsSettledLessons(s, syllabus); err != nil {
 			return nil, err
 		}
 		return &change{Type: eventRevisionApplied, Items: []string{syllabusFile},
@@ -309,25 +459,91 @@ func (c *Core) ApplyRevision(ctx context.Context, topicID, revision string, appr
 	if err != nil {
 		return RevisionApplied{}, err
 	}
-	return RevisionApplied{Topic: topicID, Revision: revision, Syllabus: syllabus, Changed: ev != nil, DryRun: dryRun}, nil
+	return RevisionApplied{Topic: topicID, Revision: revision, Syllabus: syllabus, Approval: approval,
+		Changed: ev != nil, DryRun: dryRun}, nil
 }
 
-// keepsDoneLessons refuses a Syllabus that drops or renames a Lesson already
-// done: done Lessons are never rewritten.
-func keepsDoneLessons(s *replayed, next Syllabus) error {
-	for id, l := range s.study.lessons {
-		if l.completed == nil {
-			continue
+// DeclineRevision records that the learner said no to a proposed Revision.
+// Nothing in the Syllabus changes, and the Revision can no longer be
+// applied. Declining twice changes nothing.
+func (c *Core) DeclineRevision(ctx context.Context, topicID, revision string, decision Approval, dryRun bool) (RevisionApplied, error) {
+	if !dryRun {
+		var err error
+		if decision, err = decision.check(true); err != nil {
+			return RevisionApplied{}, err
 		}
-		nl, ok := next.lesson(id)
+	}
+	var syllabus Syllabus
+	ev, err := c.writeTopic(ctx, topicID, func(s *replayed, _ *topicView) (*change, error) {
+		p, ok := s.study.proposals[revision]
 		if !ok {
-			return &Error{Code: CodeFailedPrecondition, Message: fmt.Sprintf("Lesson %s is done, so a Revision cannot remove it", id)}
+			return nil, &Error{Code: CodeNotFound, Message: fmt.Sprintf("Topic %s has no proposed Revision %s", topicID, revision)}
 		}
-		if s.study.syllabus != nil {
-			if old, ok := s.study.syllabus.lesson(id); ok && old.Title != nl.Title {
-				return &Error{Code: CodeFailedPrecondition, Message: fmt.Sprintf("Lesson %s is done, so a Revision cannot rename it", id)}
+		syllabus = p.Syllabus.Syllabus
+		switch {
+		case s.study.declined[revision]:
+			return nil, nil
+		case s.study.applied[revision]:
+			return nil, &Error{Code: CodeFailedPrecondition, Message: fmt.Sprintf(
+				"Revision %s of %s is already applied; to undo it, propose a new Revision", revision, topicID)}
+		}
+		return &change{Type: eventRevisionDeclined, Data: revisionDeclinedData{Revision: revision, Decision: decision}}, nil
+	}, dryRun)
+	if err != nil {
+		return RevisionApplied{}, err
+	}
+	return RevisionApplied{Topic: topicID, Revision: revision, Syllabus: syllabus, Approval: decision, Declined: true,
+		Changed: ev != nil, DryRun: dryRun}, nil
+}
+
+// keepsSettledLessons refuses a Syllabus that rewrites a Lesson already done
+// or skipped: such a Lesson keeps its id, title, hours and Milestone, and a
+// done Lesson cannot be skipped. A skipped Lesson can be taken back.
+func keepsSettledLessons(s *replayed, next Syllabus) error {
+	for id, l := range s.study.lessons {
+		if l.completed != nil {
+			if err := keepsLesson(s.study.syllabus, next, id, "done"); err != nil {
+				return err
+			}
+			if nl, ok := next.lesson(id); ok && nl.Skipped {
+				return &Error{Code: CodeFailedPrecondition, Message: fmt.Sprintf("Lesson %s is done, so it cannot be skipped", id)}
 			}
 		}
+	}
+	if s.study.syllabus != nil {
+		for _, l := range s.study.syllabus.lessons() {
+			if l.Skipped {
+				if err := keepsLesson(s.study.syllabus, next, l.ID, "skipped"); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// keepsLesson checks that next keeps a settled Lesson as current has it.
+func keepsLesson(current *Syllabus, next Syllabus, id, settled string) error {
+	refuse := func(what string) error {
+		return &Error{Code: CodeFailedPrecondition, Message: fmt.Sprintf("Lesson %s is %s, so a Revision cannot %s it", id, settled, what)}
+	}
+	nl, nm, ok := next.find(id)
+	if !ok {
+		return refuse("remove")
+	}
+	if current == nil {
+		return nil
+	}
+	ol, om, ok := current.find(id)
+	switch {
+	case !ok:
+		return nil
+	case ol.Title != nl.Title:
+		return refuse("rename")
+	case ol.Hours != nl.Hours:
+		return refuse("change the hour estimate of")
+	case om.ID != nm.ID:
+		return refuse("move")
 	}
 	return nil
 }
@@ -362,20 +578,57 @@ func replayRevisionApplied(s *replayed, ev event) error {
 		return fmt.Errorf("%w: Revision %s", errUnknownItem, d.Revision)
 	}
 	syllabus := d.Syllabus.Syllabus
-	// A Revision never removes a done Lesson; one that does was proposed on
-	// another machine before the Lesson was completed here.
+	if s.study.declined[d.Revision] {
+		s.flag(newFlag(FlagConflict, syllabusFile, []string{s.study.declinedBy[d.Revision], ev.ID}, d.Revision,
+			fmt.Sprintf("Revision %s was both declined and applied, probably on two machines: it stays applied; "+
+				"check the Syllabus with the learner", d.Revision)))
+	}
+	// A Revision never rewrites a done Lesson; one that does was proposed
+	// on another machine before the Lesson was completed here.
 	for id, l := range s.study.lessons {
 		if l.completed == nil {
 			continue
 		}
-		if _, ok := syllabus.lesson(id); !ok {
+		problem := ""
+		switch nl, nm, ok := syllabus.find(id); {
+		case !ok:
+			problem = "removed"
+		case nl.Skipped:
+			problem = "skipped"
+		case s.study.syllabus != nil:
+			if ol, om, ok := s.study.syllabus.find(id); ok && (ol.Title != nl.Title || ol.Hours != nl.Hours || om.ID != nm.ID) {
+				problem = "rewrote"
+			}
+		}
+		if problem != "" {
 			s.flag(newFlag(FlagConflict, syllabusFile, []string{l.completedBy, ev.ID}, id,
-				fmt.Sprintf("Revision %s removed Lesson %s, which Event %s had completed, probably on two machines: "+
-					"check the Syllabus with the learner", d.Revision, id, l.completedBy)))
+				fmt.Sprintf("Revision %s %s Lesson %s, which Event %s had completed, probably on two machines: "+
+					"check the Syllabus with the learner", d.Revision, problem, id, l.completedBy)))
 		}
 	}
 	s.study.syllabus = &syllabus
 	s.study.applied[d.Revision] = true
+	return nil
+}
+
+func replayRevisionDeclined(s *replayed, ev event) error {
+	var d revisionDeclinedData
+	if err := json.Unmarshal(ev.Data, &d); err != nil {
+		return fmt.Errorf("its payload is unreadable: %v", err)
+	}
+	if _, ok := s.study.proposals[d.Revision]; !ok {
+		return fmt.Errorf("%w: Revision %s", errUnknownItem, d.Revision)
+	}
+	if s.study.declined[d.Revision] {
+		return nil
+	}
+	if s.study.applied[d.Revision] {
+		s.flag(newFlag(FlagConflict, syllabusFile, []string{ev.ID}, d.Revision,
+			fmt.Sprintf("Revision %s was both applied and declined, probably on two machines: it stays applied; "+
+				"check the Syllabus with the learner", d.Revision)))
+	}
+	s.study.declined[d.Revision] = true
+	s.study.declinedBy[d.Revision] = ev.ID
 	return nil
 }
 
@@ -385,71 +638,134 @@ type SyllabusView struct {
 	Topic      string             `json:"topic"`
 	Milestones []MilestoneView    `json:"milestones"`
 	Proposals  []RevisionProposal `json:"proposals"`
+	// EditedOutside is true when syllabus.toml differs from the version
+	// the History recorded; FileError says what is wrong with it, if it
+	// cannot be adopted as it is.
+	EditedOutside bool   `json:"edited_outside,omitempty"`
+	FileError     string `json:"file_error,omitempty"`
 }
 
 // MilestoneView is a Milestone with its Lessons' progress.
 type MilestoneView struct {
+	Number   int          `json:"number"`
 	ID       string       `json:"id"`
 	Title    string       `json:"title"`
 	Outcome  string       `json:"outcome,omitempty"`
 	Priority string       `json:"priority"`
+	Target   string       `json:"target,omitempty"`
 	Lessons  []LessonView `json:"lessons"`
 }
 
-// Lesson statuses, computed from the History.
+// Lesson statuses, computed from the History and the Syllabus.
 const (
 	LessonNotStarted = "not_started"
 	LessonInProgress = "in_progress"
 	LessonDone       = "done"
+	LessonSkipped    = "skipped"
 )
 
 // LessonView is one Lesson with its progress.
 type LessonView struct {
+	// Number is the Lesson's display number, such as "2.3".
+	Number string  `json:"number"`
 	ID     string  `json:"id"`
 	Title  string  `json:"title"`
 	Hours  float64 `json:"hours,omitempty"`
 	Status string  `json:"status"`
 	Phase  string  `json:"phase,omitempty"`
+	// Evidence is how many pieces of Evidence the Lesson cites.
+	Evidence int `json:"evidence"`
 }
 
 // SyllabusOf returns a Topic's Syllabus with its progress. A Topic without a
 // Syllabus yet has no Milestones.
 func (c *Core) SyllabusOf(ctx context.Context, topicID string) (SyllabusView, error) {
-	s, _, err := c.replayTopic(ctx, topicID)
+	if err := ctx.Err(); err != nil {
+		return SyllabusView{}, err
+	}
+	home, topic, err := c.openTopicFolder(topicID)
 	if err != nil {
 		return SyllabusView{}, err
 	}
+	defer home.Close()
+	defer topic.Close()
+	h, err := readHistory(topic, topicID)
+	if err != nil {
+		return SyllabusView{}, err
+	}
+	s := replayHistory(h)
 	view := SyllabusView{Topic: topicID, Milestones: []MilestoneView{}, Proposals: []RevisionProposal{}}
 	if s.study.syllabus != nil {
-		for _, m := range s.study.syllabus.Milestones {
-			mv := MilestoneView{ID: m.ID, Title: m.Title, Outcome: m.Outcome, Priority: m.Priority, Lessons: []LessonView{}}
-			for _, l := range m.Lessons {
-				mv.Lessons = append(mv.Lessons, s.study.lessonView(l))
+		cited := s.citations()
+		for i, m := range s.study.syllabus.Milestones {
+			mv := MilestoneView{Number: i + 1, ID: m.ID, Title: m.Title, Outcome: m.Outcome, Priority: m.Priority,
+				Target: m.Target, Lessons: []LessonView{}}
+			for j, l := range m.Lessons {
+				lv := s.study.lessonView(l)
+				lv.Number, lv.Evidence = fmt.Sprintf("%d.%d", i+1, j+1), cited[l.ID]
+				mv.Lessons = append(mv.Lessons, lv)
 			}
 			view.Milestones = append(view.Milestones, mv)
 		}
 	}
+	recorded := s.versions[syllabusFile].hash
 	for _, ev := range s.applied {
-		if ev.Type != eventRevisionProposed || s.study.applied[ev.ID] {
+		if ev.Type != eventRevisionProposed || s.study.applied[ev.ID] || s.study.declined[ev.ID] {
 			continue
 		}
 		p := s.study.proposals[ev.ID]
 		view.Proposals = append(view.Proposals, RevisionProposal{Topic: topicID, Revision: ev.ID, Summary: p.Summary,
-			Syllabus: p.Syllabus.Syllabus})
+			Syllabus: p.Syllabus.Syllabus, Changes: revisionChanges(s, p.Syllabus.Syllabus), Stale: p.Base != recorded})
+	}
+	if data, exists, err := readItem(topic, syllabusFile); err == nil && contentHash(data, exists) != recorded {
+		view.EditedOutside = true
+		if err := syllabusFileProblem(data, exists, syllabusFile+" of "+topicID); err != nil {
+			view.FileError = err.Error()
+		}
 	}
 	return view, nil
 }
 
+// syllabusFileProblem says what keeps syllabus.toml, as found on disk, from
+// being adopted as it is, or returns nil when it could be.
+func syllabusFileProblem(data []byte, exists bool, where string) error {
+	if !exists {
+		return &Error{Code: CodeNotFound, Message: where + " is missing"}
+	}
+	s, err := parseSyllabusFile(data, where)
+	if err != nil {
+		return err
+	}
+	if _, err := s.validate(); err != nil {
+		return at(where, err)
+	}
+	return nil
+}
+
+// citations counts the Evidence each Lesson cites, retracted Evidence aside.
+func (s *replayed) citations() map[string]int {
+	out := map[string]int{}
+	for _, e := range s.knowledge().evidence {
+		if !e.Retracted {
+			out[e.Lesson]++
+		}
+	}
+	return out
+}
+
 func (st *studyState) lessonView(l SyllabusLesson) LessonView {
 	v := LessonView{ID: l.ID, Title: l.Title, Hours: l.Hours, Status: LessonNotStarted}
-	if ls := st.lessons[l.ID]; ls != nil {
+	ls := st.lessons[l.ID]
+	if ls != nil {
 		v.Phase = ls.phase
-		switch {
-		case ls.completed != nil:
-			v.Status = LessonDone
-		case ls.phase != "" || len(ls.attempts) > 0:
-			v.Status = LessonInProgress
-		}
+	}
+	switch {
+	case ls != nil && ls.completed != nil:
+		v.Status = LessonDone
+	case l.Skipped:
+		v.Status = LessonSkipped
+	case ls != nil && (ls.phase != "" || len(ls.attempts) > 0):
+		v.Status = LessonInProgress
 	}
 	return v
 }

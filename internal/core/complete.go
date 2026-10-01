@@ -82,6 +82,11 @@ func (c *Core) CompleteLesson(ctx context.Context, topicID string, spec Complete
 	if _, err := requireLesson(s, topicID, spec.Lesson); err != nil {
 		return LessonCompletion{}, err
 	}
+	if ls := s.study.lessons[spec.Lesson]; ls == nil || ls.completed == nil {
+		if _, err := requireStudiedLesson(s, topicID, spec.Lesson); err != nil {
+			return LessonCompletion{}, err
+		}
+	}
 	// The work and the Check as they are now, unless the Lesson is done.
 	// They are read before the write takes the lock, because snapshotting
 	// the work runs git.
@@ -203,6 +208,13 @@ func replayLessonCompleted(s *replayed, ev event) error {
 				"the first completion counts and the Cards of both are kept; check them with the learner",
 				d.Lesson, l.completedBy, ev.ID)))
 		return nil
+	}
+	if s.study.syllabus != nil {
+		if sl, ok := s.study.syllabus.lesson(d.Lesson); ok && sl.Skipped {
+			s.flag(newFlag(FlagConflict, syllabusFile, []string{ev.ID}, d.Lesson,
+				fmt.Sprintf("Lesson %s was completed although a Revision skipped it, probably on two machines: "+
+					"it counts as done; check the Syllabus with the learner", d.Lesson)))
+		}
 	}
 	l.completed, l.completedBy = &d, ev.ID
 	turnEnded := d.TurnEnded

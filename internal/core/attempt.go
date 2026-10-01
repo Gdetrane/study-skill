@@ -98,7 +98,7 @@ func (c *Core) RunCheck(ctx context.Context, topicID, lessonID string, opts Chec
 	if err != nil {
 		return Attempt{}, err
 	}
-	if _, err := requireLesson(s, topicID, lessonID); err != nil {
+	if _, err := requireStudiedLesson(s, topicID, lessonID); err != nil {
 		return Attempt{}, err
 	}
 	home, topic, err := c.openTopicFolder(topicID)

@@ -18,7 +18,11 @@ type studyState struct {
 	// applied.
 	proposals map[string]revisionProposedData
 	applied   map[string]bool
-	lessons   map[string]*lessonState
+	// declined holds the Revisions the learner declined, and declinedBy
+	// the Event that declined each.
+	declined   map[string]bool
+	declinedBy map[string]string
+	lessons    map[string]*lessonState
 	// sessions are the Sessions opened, in order.
 	sessions []*sessionState
 	// nextStep is the latest Next step recorded, cleared when its Lesson
@@ -54,10 +58,12 @@ func (st *studyState) currentTurn() string {
 
 func newStudyState() studyState {
 	return studyState{
-		proposals: map[string]revisionProposedData{},
-		applied:   map[string]bool{},
-		lessons:   map[string]*lessonState{},
-		cards:     map[string]*cardState{},
+		proposals:  map[string]revisionProposedData{},
+		applied:    map[string]bool{},
+		declined:   map[string]bool{},
+		declinedBy: map[string]string{},
+		lessons:    map[string]*lessonState{},
+		cards:      map[string]*cardState{},
 	}
 }
 
@@ -120,6 +126,17 @@ func requireLesson(s *replayed, topicID, lessonID string) (SyllabusLesson, error
 		return SyllabusLesson{}, &Error{Code: CodeNotFound, Message: "the Syllabus of " + topicID + " has no Lesson " + lessonID}
 	}
 	return l, nil
+}
+
+// requireStudiedLesson is requireLesson for studying a Lesson: one the
+// learner skipped is not studied until a Revision takes the skip back.
+func requireStudiedLesson(s *replayed, topicID, lessonID string) (SyllabusLesson, error) {
+	l, err := requireLesson(s, topicID, lessonID)
+	if err == nil && l.Skipped {
+		return l, &Error{Code: CodeFailedPrecondition, Message: "Lesson " + lessonID + " of " + topicID +
+			" was skipped through a Revision; to study it, propose a Revision that takes the skip back"}
+	}
+	return l, err
 }
 
 var entityIDPattern = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)

@@ -319,7 +319,7 @@ func (s *replayed) citingLessons(kb *KnowledgeBase) []string {
 	var lessons []string
 	for _, m := range syllabus.Milestones {
 		for _, l := range m.Lessons {
-			if st := s.study.lessons[l.ID]; st != nil && (st.phase != "" || st.completed != nil) {
+			if st := s.study.lessons[l.ID]; !l.Skipped && st != nil && (st.phase != "" || st.completed != nil) {
 				lessons = append(lessons, l.ID)
 			}
 		}

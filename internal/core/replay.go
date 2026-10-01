@@ -33,6 +33,7 @@ var eventKinds = map[string]eventKind{
 	eventFlagDismissed:    {apply: applyNothing, replay: replayFlagDismissed},
 	eventRevisionProposed: {apply: applyNothing, replay: replayRevisionProposed},
 	eventRevisionApplied:  {apply: applyRevisionApplied, replay: replayRevisionApplied},
+	eventRevisionDeclined: {apply: applyNothing, replay: replayRevisionDeclined},
 	eventSessionOpened:    {apply: applyNothing, replay: replaySessionOpened},
 	eventSessionClosed:    {apply: applyNothing, replay: replaySessionClosed},
 	eventPhaseSet:         {apply: applyNothing, replay: replayPhaseSet},
@@ -323,9 +324,18 @@ func (c *Core) gatingFlags(topic *os.Root, s *replayed) []Flag {
 		if err == nil && contentHash(data, exists) == recorded.hash {
 			continue
 		}
-		flags = append(flags, newFlag(FlagEditedOutside, item, []string{recorded.event}, "",
-			fmt.Sprintf("%s differs from the version Event %s recorded: "+
-				"it was changed outside Lamplight, so review the change with the learner", item, recorded.event)))
+		message := fmt.Sprintf("%s differs from the version Event %s recorded: "+
+			"it was changed outside Lamplight, so review the change with the learner", item, recorded.event)
+		if item == syllabusFile && err == nil {
+			// A hand edit of the Syllabus is adopted through a Revision, so
+			// say precisely what would stop that.
+			if problem := syllabusFileProblem(data, exists, syllabusFile); problem != nil {
+				message += "; it cannot be adopted as it is: " + problem.Error()
+			} else {
+				message += "; to keep the edit, propose it as a Revision from the file"
+			}
+		}
+		flags = append(flags, newFlag(FlagEditedOutside, item, []string{recorded.event}, "", message))
 	}
 	return flags
 }
