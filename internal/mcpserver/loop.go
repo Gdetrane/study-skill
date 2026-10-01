@@ -36,7 +36,8 @@ func addLearnerLoop(server *mcp.Server, c *core.Core) {
 			"would be afterwards, and a summary in plain words. Nothing changes until the learner approves it. Show the " +
 			"learner changes.text, which names Lessons by title and shows any renumbering. Skip a Lesson by setting " +
 			"skipped on it, never by removing it; for each Lesson in changes.skipped_in_progress, go over what was " +
-			"already covered with the learner. Done and skipped Lessons keep their title, hours and Milestone. A " +
+			"already covered with the learner and offer to keep it as Cards with card_add, which accepts a skipped " +
+			"Lesson. Done and skipped Lessons keep their title, hours and Milestone. A " +
 			"Revision must change something. Milestones can carry " +
 			"a target date (YYYY-MM-DD). If status flags syllabus.toml as edited outside Lamplight, set from_file " +
 			"instead to propose the learner's edit as it is.",

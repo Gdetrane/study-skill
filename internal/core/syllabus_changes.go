@@ -179,8 +179,8 @@ func revisionChanges(s *replayed, next Syllabus, fromFile bool) RevisionChanges 
 		case n.lesson.Skipped && !o.lesson.Skipped:
 			text := fmt.Sprintf("Skips Lesson %s %q", n.number, n.lesson.Title)
 			if ls := s.study.lessons[id]; ls != nil && ls.completed == nil && (ls.phase != "" || len(ls.attempts) > 0) {
-				// TODO(#26): Cards for what was already covered, through
-				// card_add, which accepts a skipped Lesson.
+				// What was already covered can still become Cards: card_add
+				// accepts a skipped Lesson.
 				out.SkippedInProgress = append(out.SkippedInProgress, id)
 				text += ", which was in progress"
 			}
