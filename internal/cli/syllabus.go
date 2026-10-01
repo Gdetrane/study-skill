@@ -118,7 +118,8 @@ func (a *app) revisionCommand() *cobra.Command {
 // answerCommand is study revision apply or study revision decline. On a
 // terminal, with no --learner-said, study asks the learner directly and
 // records that; with --learner-said, the agent relays the learner's words
-// from the conversation.
+// from the conversation. A Revision already applied, or already declined,
+// is reported as such on every path.
 func (a *app) answerCommand(declining bool) *cobra.Command {
 	var said string
 	var dryRun bool
@@ -142,11 +143,31 @@ func (a *app) answerCommand(declining bool) *cobra.Command {
 			if err != nil {
 				return a.fail(err)
 			}
-			topic, revision := args[0], args[1]
+			ctx, topic, revision := cmd.Context(), args[0], args[1]
 			answer := core.Approval{Via: core.ViaChat, LearnerSaid: said}
 			decline := declining
 			if said == "" && !dryRun {
-				p, err := c.Revision(cmd.Context(), topic, revision)
+				// Settled already: report the answer recorded, as with
+				// --learner-said, and ask nothing.
+				if declining {
+					if r, err := c.DeclineRevision(ctx, topic, revision, core.Approval{}, true); err != nil {
+						return a.fail(err)
+					} else if !r.Changed {
+						r.DryRun = false
+						return a.answered(r)
+					}
+				} else if r, err := c.ApplyRevision(ctx, topic, revision, core.Approval{}, true); err == nil && !r.Changed {
+					r.DryRun = false
+					return a.answered(r)
+				}
+				// Ask only about a Revision the answer can settle: one that
+				// can still be applied, or declined.
+				var p core.RevisionProposal
+				if declining {
+					p, err = c.ProposedRevision(ctx, topic, revision)
+				} else {
+					p, err = c.Revision(ctx, topic, revision)
+				}
 				if err != nil {
 					return a.fail(err)
 				}
@@ -159,24 +180,53 @@ func (a *app) answerCommand(declining bool) *cobra.Command {
 					return err
 				}
 			}
-			var res core.RevisionApplied
 			if decline {
-				res, err = c.DeclineRevision(cmd.Context(), topic, revision, answer, dryRun)
-			} else {
-				res, err = c.ApplyRevision(cmd.Context(), topic, revision, answer, dryRun)
+				r, err := c.DeclineRevision(ctx, topic, revision, answer, dryRun)
+				if err != nil {
+					return a.fail(err)
+				}
+				return a.answered(r)
 			}
+			r, err := c.ApplyRevision(ctx, topic, revision, answer, dryRun)
 			if err != nil {
 				return a.fail(err)
 			}
-			if a.json {
-				return a.writeJSON(envelope{OK: true, Data: res})
-			}
-			return writeAnswer(a.out, res)
+			return a.answered(r)
 		},
 	}
 	cmd.Flags().StringVar(&said, "learner-said", "", "the learner's answer in the conversation, in their own words")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "check the Revision could be answered without recording anything")
 	return cmd
+}
+
+// answered reports the result of applying or declining a Revision.
+func (a *app) answered(r any) error {
+	if a.json {
+		return a.writeJSON(envelope{OK: true, Data: r})
+	}
+	var msg string
+	switch r := r.(type) {
+	case core.RevisionDeclined:
+		switch {
+		case r.DryRun:
+			msg = "Would record that the learner declined Revision " + r.Revision
+		case !r.Changed:
+			msg = "The learner had already declined Revision " + r.Revision
+		default:
+			msg = "Recorded that the learner declined Revision " + r.Revision + "; the Syllabus is unchanged"
+		}
+	case core.RevisionApplied:
+		switch {
+		case r.DryRun:
+			msg = "Would apply Revision " + r.Revision
+		case !r.Changed:
+			msg = "Revision " + r.Revision + " was already applied"
+		default:
+			msg = "Applied Revision " + r.Revision + " to the Syllabus of " + r.Topic
+		}
+	}
+	_, err := fmt.Fprintln(a.out, msg+".")
+	return err
 }
 
 // askOnTerminal shows the learner the change and asks them, on the terminal
@@ -310,25 +360,5 @@ func writeProposal(w io.Writer, p core.RevisionProposal) error {
 		fmt.Fprintf(&b, "\n%s\n", styleDim.Render("Nothing changes until the learner approves it: study revision apply "+p.Topic+" "+p.Revision))
 	}
 	_, err := io.WriteString(w, b.String())
-	return err
-}
-
-func writeAnswer(w io.Writer, r core.RevisionApplied) error {
-	var msg string
-	switch {
-	case r.Declined && r.DryRun:
-		msg = "Would record that the learner declined Revision " + r.Revision
-	case r.Declined && !r.Changed:
-		msg = "The learner had already declined Revision " + r.Revision
-	case r.Declined:
-		msg = "Recorded that the learner declined Revision " + r.Revision + "; the Syllabus is unchanged"
-	case r.DryRun:
-		msg = "Would apply Revision " + r.Revision
-	case !r.Changed:
-		msg = "Revision " + r.Revision + " was already applied"
-	default:
-		msg = "Applied Revision " + r.Revision + " to the Syllabus of " + r.Topic
-	}
-	_, err := fmt.Fprintln(w, msg+".")
 	return err
 }

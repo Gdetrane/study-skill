@@ -3,6 +3,8 @@ package mcpserver_test
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -173,7 +175,7 @@ func theLearnerClosesOrDeclinesTheQuestion(t *testing.T, protocol *mcp.ClientSes
 
 func approvalFallsBackToTheConversation(t *testing.T, protocol *mcp.ClientSessionOptions) {
 	// A client that cannot ask: the agent relays the learner's words.
-	session := connect(t, t.TempDir())
+	session := connectWith(t, t.TempDir(), nil, protocol)
 	call(t, session, "topic_create", map[string]any{"title": "C", "id": "c"})
 	var first core.RevisionProposal
 	decode(t, call(t, session, "revision_propose", map[string]any{"topic": "c", "summary": "A first Syllabus", "syllabus": firstSyllabus}), &first)
@@ -186,10 +188,15 @@ func approvalFallsBackToTheConversation(t *testing.T, protocol *mcp.ClientSessio
 		t.Errorf("a chat approval = %+v", applied)
 	}
 	second := proposeSecond(t, session)
-	var declined core.RevisionApplied
+	var declined core.RevisionDeclined
 	decode(t, call(t, session, "revision_decline", map[string]any{"topic": "c", "revision": second.Revision, "learner_said": "no, keep the order"}), &declined)
-	if !declined.Declined || declined.Approval.LearnerSaid != "no, keep the order" {
+	if !declined.Changed || declined.Decision.Via != core.ViaChat || declined.Decision.LearnerSaid != "no, keep the order" {
 		t.Errorf("declined in chat = %+v", declined)
+	}
+	// Applying the first again reports the approval recorded, not this one.
+	decode(t, call(t, session, "revision_apply", map[string]any{"topic": "c", "revision": first.Revision, "learner_said": "yes again"}), &applied)
+	if applied.Changed || applied.Approval.LearnerSaid != "yes, that looks right" {
+		t.Errorf("applying again = %+v", applied)
 	}
 
 	// A client that says it can ask but fails falls back too, under the
@@ -217,7 +224,8 @@ func approvalFallsBackToTheConversation(t *testing.T, protocol *mcp.ClientSessio
 func TestAnAnswerCountsOnlyForTheQuestionAsked(t *testing.T) {
 	ctx := context.Background()
 	l := &learner{}
-	session := connectWith(t, t.TempDir(), &mcp.ClientOptions{ElicitationHandler: l.handle,
+	home := t.TempDir()
+	session := connectWith(t, home, &mcp.ClientOptions{ElicitationHandler: l.handle,
 		MultiRoundTrip: &mcp.MultiRoundTripOptions{Disabled: true}}, nil)
 	call(t, session, "topic_create", map[string]any{"title": "C", "id": "c"})
 	var first core.RevisionProposal
@@ -252,5 +260,53 @@ func TestAnAnswerCountsOnlyForTheQuestionAsked(t *testing.T) {
 	decode(t, done, &applied)
 	if !applied.Changed || applied.Approval.Via != core.ViaElicitation || applied.Approval.Shown != q.Message {
 		t.Errorf("applied = %+v", applied)
+	}
+
+	// The learner answers a question whose change has since changed: the
+	// Lesson the Revision skips went into progress, so the question now
+	// says so, and the old answer is asked again.
+	skip := map[string]any{"milestones": []any{map[string]any{"id": "basics", "title": "Basics", "target": "2026-12-01",
+		"lessons": []any{map[string]any{"id": "answer", "title": "The answer", "hours": 1, "skipped": true}}}}}
+	var second core.RevisionProposal
+	decode(t, call(t, session, "revision_propose", map[string]any{"topic": "c", "summary": "Skip the answer", "syllabus": skip}), &second)
+	args = map[string]any{"topic": "c", "revision": second.Revision}
+	before, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "revision_apply", Arguments: args})
+	if err != nil || !before.NeedsInput() {
+		t.Fatalf("asking about the skip: %+v, %v", before, err)
+	}
+	if err := os.MkdirAll(filepath.Join(home, "c", "lessons"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, "c", "lessons", "answer.md"), []byte("# The answer\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	call(t, session, "phase_set", map[string]any{"topic": "c", "lesson": "answer", "phase": "teaching"})
+	stale, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "revision_apply", Arguments: args, InputResponses: yes,
+		RequestState: before.RequestState})
+	if err != nil {
+		t.Fatal(err)
+	}
+	q2, ok := stale.InputRequests["approval"].(*mcp.ElicitParams)
+	if !stale.NeedsInput() || !ok || !strings.Contains(q2.Message, "which was in progress") {
+		t.Errorf("an answer to the question as it was before was taken: %+v", stale)
+	}
+}
+
+// TestADirectCommentNeverFailsTheApproval: the learner approves with a
+// comment over two lines; their yes counts, and the comment is kept on one.
+func TestADirectCommentNeverFailsTheApproval(t *testing.T) {
+	for name, p := range protocols {
+		t.Run(name, func(t *testing.T) {
+			l := &learner{answer: &mcp.ElicitResult{Action: "accept", Content: map[string]any{"decision": "approve", "comment": "Yes.\nBut keep maps."}}}
+			session := connectWith(t, t.TempDir(), &mcp.ClientOptions{ElicitationHandler: l.handle}, p)
+			call(t, session, "topic_create", map[string]any{"title": "C", "id": "c"})
+			var first core.RevisionProposal
+			decode(t, call(t, session, "revision_propose", map[string]any{"topic": "c", "summary": "A first Syllabus", "syllabus": firstSyllabus}), &first)
+			var applied core.RevisionApplied
+			decode(t, call(t, session, "revision_apply", map[string]any{"topic": "c", "revision": first.Revision}), &applied)
+			if !applied.Changed || applied.Approval.LearnerSaid != "Yes. But keep maps." {
+				t.Errorf("applied = %+v", applied)
+			}
+		})
 	}
 }

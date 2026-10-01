@@ -35,8 +35,9 @@ func addLearnerLoop(server *mcp.Server, c *core.Core) {
 		Description: "Propose a change to a Topic's Syllabus, the first Syllabus included: give the whole Syllabus as it " +
 			"would be afterwards, and a summary in plain words. Nothing changes until the learner approves it. Show the " +
 			"learner changes.text, which names Lessons by title and shows any renumbering. Skip a Lesson by setting " +
-			"skipped on it, never by removing it; for each Lesson in changes.skipped_in_progress, offer Cards for what " +
-			"was already covered. Done and skipped Lessons keep their title, hours and Milestone. Milestones can carry " +
+			"skipped on it, never by removing it; for each Lesson in changes.skipped_in_progress, go over what was " +
+			"already covered with the learner. Done and skipped Lessons keep their title, hours and Milestone. A " +
+			"Revision must change something. Milestones can carry " +
 			"a target date (YYYY-MM-DD). If status flags syllabus.toml as edited outside Lamplight, set from_file " +
 			"instead to propose the learner's edit as it is.",
 		Annotations: write,
@@ -69,7 +70,7 @@ func addLearnerLoop(server *mcp.Server, c *core.Core) {
 			"Nothing in the Syllabus changes, and the Revision can no longer be applied; propose a new one if they " +
 			"want something else.",
 		Annotations: idempotent,
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in revisionDeclineInput) (*mcp.CallToolResult, core.RevisionApplied, error) {
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in revisionDeclineInput) (*mcp.CallToolResult, core.RevisionDeclined, error) {
 		r, err := c.DeclineRevision(ctx, in.Topic, in.Revision, core.Approval{Via: core.ViaChat, LearnerSaid: in.LearnerSaid}, false)
 		return nil, r, toolErr(err)
 	})

@@ -1,6 +1,8 @@
 package cli_test
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -91,6 +93,17 @@ func TestSyllabusCommands(t *testing.T) {
 	// Without a terminal, the learner's words must come from the
 	// conversation.
 	check("revision_apply_no_terminal.json", cli.ExitUsage, "revision", "apply", "linear-algebra", first, "--json")
+	// stdin is a file, so study reaches the terminal check itself.
+	notTerminal, err := os.Open(writeHomeFile(t, home, "answers.txt", "y\n\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer notTerminal.Close()
+	var stdout, stderr bytes.Buffer
+	code := cli.Run(context.Background(), []string{"revision", "apply", "linear-algebra", first}, notTerminal, &stdout, &stderr, options(home, home))
+	if code != cli.ExitUsage || !strings.Contains(stderr.String(), "run the command in a terminal") {
+		t.Errorf("answers piped from a file: exit %d, stdout %q, stderr %q", code, stdout.String(), stderr.String())
+	}
 	check("revision_apply_chat.json", cli.ExitOK, "revision", "apply", "linear-algebra", first,
 		"--learner-said", "Yes, that's the plan", "--json")
 	check("syllabus.txt", cli.ExitOK, "syllabus", "linear-algebra")

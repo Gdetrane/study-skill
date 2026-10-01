@@ -6,7 +6,6 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
-	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -110,14 +109,15 @@ func applyRevision(ctx context.Context, c *core.Core, req *mcp.CallToolRequest, 
 	}
 	decision, _ := answer.Content["decision"].(string)
 	comment, _ := answer.Content["comment"].(string)
-	said := core.Approval{Via: core.ViaElicitation, LearnerSaid: strings.TrimSpace(comment), Shown: question}
+	said := core.Approval{Via: core.ViaElicitation, LearnerSaid: comment, Shown: question}
 	switch {
 	case answer.Action == "accept" && decision == "approve":
 		r, err := c.ApplyRevision(ctx, in.Topic, in.Revision, said, false)
 		return nil, r, err
 	case answer.Action == "decline" || (answer.Action == "accept" && decision == "decline"):
 		r, err := c.DeclineRevision(ctx, in.Topic, in.Revision, said, false)
-		return nil, r, err
+		return nil, core.RevisionApplied{Topic: r.Topic, Revision: r.Revision, Syllabus: p.Syllabus, Approval: r.Decision,
+			Declined: true, Changed: r.Changed}, err
 	}
 	return nil, core.RevisionApplied{}, &core.Error{Code: core.CodeFailedPrecondition, Message: "the learner closed the " +
 		"question without answering, so nothing changed; ask them again when they are ready"}

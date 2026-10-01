@@ -71,4 +71,34 @@ func TestTheLearnerAnswersOnTheTerminal(t *testing.T) {
 	if r.code != cli.ExitOK || !strings.Contains(last, `"type":"revision.declined"`) || !strings.Contains(last, `"via":"terminal"`) {
 		t.Errorf("study revision decline on a terminal: exit %d, stdout %q, last Event %s", r.code, r.stdout, last)
 	}
+
+	// Answering again asks nothing and reports the answer recorded, as
+	// with --learner-said.
+	r, _ = answer("y\n\n", "revision", "apply", "linear-algebra", first)
+	if r.code != cli.ExitOK || !strings.Contains(r.stdout, "was already applied") || r.stderr != "" {
+		t.Errorf("applying again: exit %d, stdout %q, stderr %q", r.code, r.stdout, r.stderr)
+	}
+	r, _ = answer("y\n\n", "revision", "decline", "linear-algebra", third)
+	if r.code != cli.ExitOK || !strings.Contains(r.stdout, "had already declined") || r.stderr != "" {
+		t.Errorf("declining again: exit %d, stdout %q, stderr %q", r.code, r.stdout, r.stderr)
+	}
+
+	// With --json, study never asks, even on a terminal.
+	fourth := proposed(t, home, "--summary", "Start with vectors once more", "--syllabus", "next.json")
+	r, _ = answer("y\n\n", "revision", "apply", "linear-algebra", fourth, "--json")
+	if r.code != cli.ExitUsage || !strings.Contains(r.stdout, `"code": "usage"`) || r.stderr != "" {
+		t.Errorf("--json on a terminal: exit %d, stdout %q, stderr %q", r.code, r.stdout, r.stderr)
+	}
+
+	// A Revision that cannot be applied is not asked about.
+	path := filepath.Join(home, "linear-algebra", "syllabus.toml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeHomeFile(t, home, "linear-algebra/syllabus.toml", strings.Replace(string(data), `title = "Matrices"`, `title = "Matrices!"`, 1))
+	r, _ = answer("y\n\n", "revision", "apply", "linear-algebra", fourth)
+	if r.code == cli.ExitOK || strings.Contains(r.stderr, "Lamplight asks") || !strings.Contains(r.stderr, "outside Lamplight") {
+		t.Errorf("asking about a Revision that cannot be applied: exit %d, stderr %q", r.code, r.stderr)
+	}
 }
