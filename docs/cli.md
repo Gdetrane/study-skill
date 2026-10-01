@@ -57,9 +57,9 @@ Error codes:
 | `already_exists` | The thing to create exists already. |
 | `not_found` | The thing named does not exist. |
 | `newer_format` | A file was written by a newer version of `study`; upgrade to read it. |
-| `corrupt` | A file Lamplight reads is damaged, for example invalid TOML after a hand edit. Fix or restore the file. |
+| `corrupt` | A file Lamplight reads is damaged, for example invalid TOML after a hand edit, or a Topic's git repository is missing, was replaced during a Checkpoint, or leads outside the Topic. Fix or restore it; the message names it. |
 | `failed_precondition` | The request is valid but the Topic is not ready for it, for example a git merge is in progress or git has no identity. The message says what to do. |
-| `busy` | Another program, such as an editor, is using the Topic's git repository. Try again shortly. |
+| `busy` | Another program, such as an editor, is using the Topic's git repository, or files kept changing while they were being saved. Try again shortly; the message says what to do if it persists. |
 | `internal` | Anything else, such as a file that cannot be read. |
 
 ## Exit codes

@@ -70,7 +70,7 @@ func (c *Core) Checkpoint(ctx context.Context, spec CheckpointSpec) (CheckpointR
 		Role: role, Message: message, Time: c.now(), DryRun: spec.DryRun,
 	})
 	if err != nil {
-		return CheckpointResult{}, checkpointError(spec.Topic, err)
+		return CheckpointResult{}, checkpointError(spec.Topic, path, err)
 	}
 	out := CheckpointResult{Topic: spec.Topic, Committed: res.Committed, Commit: res.Commit,
 		LargeFiles: []LargeFile{}, DryRun: spec.DryRun}
@@ -111,16 +111,29 @@ func (c *Core) topicPath(id string) (string, error) {
 }
 
 // checkpointError maps the checkpoint package's errors to core errors with
-// advice the learner or the agent can act on.
-func checkpointError(topic string, err error) error {
-	precondition := func(msg string) error {
-		return &Error{Code: CodeFailedPrecondition, Message: "cannot checkpoint " + topic + ": " + msg, Err: err}
+// advice the learner or the agent can act on. The cause is always kept.
+func checkpointError(topic, path string, err error) error {
+	fail := func(code ErrorCode, msg string) error {
+		return &Error{Code: code, Message: "cannot checkpoint " + topic + ": " + msg, Err: err}
 	}
 	switch {
-	case errors.Is(err, checkpoint.ErrIndexLocked), errors.Is(err, checkpoint.ErrHeadMoved):
-		return &Error{Code: CodeBusy, Message: "cannot checkpoint " + topic + ": another program is using its git repository; try again in a moment", Err: err}
+	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		return err
+	case errors.Is(err, checkpoint.ErrIndexLocked):
+		return fail(CodeBusy, "another program holds its git index. Try again in a moment; if no git program or "+
+			"editor is using "+path+", delete "+filepath.Join(path, ".git", "index.lock"))
+	case errors.Is(err, checkpoint.ErrRefLocked), errors.Is(err, checkpoint.ErrHeadMoved):
+		return fail(CodeBusy, "another program is updating its git branch; try again in a moment")
+	case errors.Is(err, checkpoint.ErrWorktreeChanged):
+		return fail(CodeBusy, "files kept changing while they were being saved, as when an editor is saving; try again in a moment")
+	case errors.Is(err, checkpoint.ErrRepositoryChanged):
+		return fail(CodeCorrupt, "its git repository was replaced while the Checkpoint was being taken, "+
+			"or leads outside the Topic ("+err.Error()+"). Nothing was committed; check "+filepath.Join(path, ".git"))
+	case errors.Is(err, checkpoint.ErrGitNotFound):
+		return fail(CodeFailedPrecondition, "git is not installed, or not on PATH: install git and try again")
 	case errors.Is(err, checkpoint.ErrNotRepository):
-		return corruptf("%s is not a git repository: Lamplight creates one with every Topic", topic)
+		return fail(CodeCorrupt, "it has no usable git repository ("+err.Error()+"). Lamplight creates one with "+
+			"every Topic; if .git is missing, run git -C "+path+" init --initial-branch=main")
 	case errors.Is(err, checkpoint.ErrDetachedHead),
 		errors.Is(err, checkpoint.ErrMergeInProgress),
 		errors.Is(err, checkpoint.ErrRebaseInProgress),
@@ -128,9 +141,7 @@ func checkpointError(topic string, err error) error {
 		errors.Is(err, checkpoint.ErrRevertInProgress),
 		errors.Is(err, checkpoint.ErrUnmergedPaths),
 		errors.Is(err, checkpoint.ErrNoIdentity):
-		return precondition(err.Error())
-	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
-		return err
+		return fail(CodeFailedPrecondition, err.Error())
 	}
 	return internalError("checkpointing "+topic, err)
 }

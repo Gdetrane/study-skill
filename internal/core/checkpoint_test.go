@@ -2,12 +2,14 @@ package core_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/mordor-forge/lamplight/v2/internal/checkpoint"
 	"github.com/mordor-forge/lamplight/v2/internal/core"
 )
 
@@ -116,5 +118,27 @@ func TestCheckpointErrors(t *testing.T) {
 	_, err = c.Checkpoint(ctx, core.CheckpointSpec{Topic: topic.ID, Role: "agent"})
 	if core.CodeOf(err) != core.CodeFailedPrecondition || !strings.Contains(err.Error(), "merge") {
 		t.Errorf("during a merge: err = %v, want failed_precondition mentioning the merge", err)
+	}
+	if err := os.Remove(filepath.Join(topic.Path, ".git", "MERGE_HEAD")); err != nil {
+		t.Fatal(err)
+	}
+
+	// Another git program updating the branch is worth retrying.
+	if err := os.WriteFile(filepath.Join(topic.Path, "notes.md"), []byte("new work\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	lock := filepath.Join(topic.Path, ".git", "refs", "heads", "main.lock")
+	if err := os.WriteFile(lock, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err = c.Checkpoint(ctx, core.CheckpointSpec{Topic: topic.ID, Role: "learner"})
+	if core.CodeOf(err) != core.CodeBusy || !errors.Is(err, checkpoint.ErrRefLocked) {
+		t.Errorf("while the branch is locked: err = %v, want busy caused by ErrRefLocked", err)
+	}
+	if err := os.Remove(lock); err != nil {
+		t.Fatal(err)
+	}
+	if res, err := c.Checkpoint(ctx, core.CheckpointSpec{Topic: topic.ID, Role: "learner"}); err != nil || !res.Committed {
+		t.Errorf("once the lock is gone: %+v, %v", res, err)
 	}
 }
