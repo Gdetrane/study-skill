@@ -57,11 +57,12 @@ the maintainer's answers to the questions they raised.
   .templates/<name>/                optional learner-provided Workbench starters
   llm-data-engineering/             a Topic: its own git repository
     topic.toml                      Goal, Pace periods, Level, Approach, Workbench,
-                                    Knowledge base, Sources, Tasks
+                                    Knowledge base, Tasks
     syllabus.toml                   Milestones (priority, target date) and Lessons
                                     (id, title, hour estimate), in order
     lessons/<lesson-id>.md          Lesson text; YAML header holds the Check and Break points
     cards.jsonl                     Card content, sorted by ID
+    sources.jsonl                   Sources: files (path, content hash) and URLs
     history.jsonl                   Events, append only
     learner.md                      optional per-Topic additions to the Learner profile
     notes/                          Session notes, Assessments, research briefs
@@ -319,6 +320,15 @@ hours before any learning happens is exactly what v1 produced.
   plus a location when known, with where the location came from. Sources are files (by path
   plus content hash) or URLs. The NotebookLM login is checked when a Session opens; Lessons
   without Evidence are marked, never blocked.
+  - The Knowledge base lives in `topic.toml`'s `[knowledge_base]` table and is set by a
+    `knowledge_base.set` Event. Sources live in `sources.jsonl`, one per line, each its own
+    item (`sources.jsonl#<id>`), added by `source.added` and changed by `source.updated`, so
+    two machines adding Sources never conflict. Evidence lives only in the History
+    (`evidence.recorded`), held until its Source is known.
+  - Location origins are `source` (read in the Source itself), `knowledge_base` (such as a
+    NotebookLM citation), `learner` and `estimate`.
+  - A moved file is found again through the Library index: a book of the same size whose
+    content hash matches. The core reads a file's bytes only to hash it.
 - **Later**: Knowledge base plugins are MCP servers implementing Lamplight's fixed contract
   (add a Source, search for Evidence, list Sources). The first is a generic local RAG
   plugin: layout-aware conversion (Docling), hybrid keyword and embedding search, reranking.
@@ -337,9 +347,10 @@ apply. Search results carry an absolute path. Conversion leaves the Library.
 Every write names its Topic. Tools are named after things that happen in the domain.
 
 - **Read**: `status`, `syllabus`, `lesson`, `due_cards`, `history`, `check_results`,
-  `library_search`.
+  `library_search`, `sources`, `evidence`.
 - **Topics**: `topic_create`, `topic_update` (Goal, Pace, Level, Approach, Knowledge base,
-  Tasks, pause, finish), `task_done`, `assessment_record`, `source_add`, `evidence_record`.
+  Tasks, pause, finish), `task_done`, `assessment_record`, `source_add`, `source_update`,
+  `evidence_record`.
 - **Syllabus**: `revision_propose`, `revision_apply`.
 - **Sessions**: `session_open`, `session_close`, `phase_set`, `break_point_reached`,
   `checkpoint`, `hint_record`, `rubric_record`, `lesson_complete`.

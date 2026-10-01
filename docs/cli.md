@@ -11,10 +11,15 @@ that scripts and agents can rely on. Terms follow [CONTEXT.md](../CONTEXT.md).
 | `study` | Same as `study status`. |
 | `study status` | Shows the Study home, the Active topic and why it was chosen, every Topic, and any Topic that could not be read (`problems`). A broken Topic never stops the others from being listed. |
 | `study topic create --title T [--id ID] [--goal G] [--dry-run]` | Creates a Topic folder with its settings, History and git repository. `--dry-run` validates and shows the result without writing. |
-| `study topic update <topic> [--title T] [--goal G] [--dry-run]` | Changes a Topic's title or goal; flags left out stay as they are, and `--goal ""` removes the goal. Settings in `topic.toml` that this version does not know are kept. The result is `{"topic": ..., "changed": bool}`: asking for the values the Topic already has changes nothing and records nothing. |
+| `study topic update <topic> [--title T] [--goal G] [--knowledge-base K [--notebook ID]] [--dry-run]` | Changes a Topic's title, goal or Knowledge base (`notebooklm` with the notebook's id, or `none`; see [Sources and Evidence](#sources-and-evidence)); flags left out stay as they are, and `--goal ""` removes the goal. Settings in `topic.toml` that this version does not know are kept. The result is `{"topic": ..., "changed": bool}`: asking for the values the Topic already has changes nothing and records nothing. |
 | `study topic dismiss-flag <topic> <flag-id> [--dry-run]` | Dismisses one of the Topic's flags, by the id `status` shows, once the learner has looked at it. It records the decision in the History and never changes content. The result is `{"topic": ..., "flag": {...}, "changed": bool}`; dismissing a flag twice changes nothing. Only `held_event`, `conflict`, `damaged_line` and `clock_ahead` flags can be dismissed (see below). |
 | `study library build <folder>` | Indexes the books in a folder (relative to where you run it) and replaces the Library index in the Study home. |
 | `study library search <query> [--limit N]` | Ranks the books in the Library against the query. `--limit` defaults to 10 and is capped at 100; no matches is a success with an empty list. |
+| `study source add <topic> (--file PATH \| --url URL) [--title T] [--notebooklm-id ID] [--dry-run]` | Adds a file or a web page as a Source of the Topic. A file is hashed, never parsed. Adding a file or URL the Topic already has is `already_exists`, naming the Source. |
+| `study source update <topic> <source> [--title T] [--path P] [--notebooklm-id ID] [--dry-run]` | Changes a Source's title or NotebookLM id (`""` removes it), or records where a moved file is now; the file at `--path` must hold the same content. |
+| `study source list <topic>` | Lists the Topic's Knowledge base and Sources, and where each file is on this computer. |
+| `study evidence record <topic> --lesson L --source S --quote Q [--location LOC --location-from F] [--dry-run]` | Records an exact quote from a Source that a Lesson cites. `--quote -` reads the quote from stdin. Recording the same Evidence twice changes nothing. |
+| `study evidence list <topic> [--lesson L]` | Lists the Evidence recorded in the Topic, or only what one Lesson cites. |
 | `study checkpoint --topic ID --role agent\|learner [-m MESSAGE] [--dry-run]` | Saves the Topic's work as a git commit at a turn switch. Skips when nothing changed, refuses during a merge or rebase, and lists large files it saved. Never runs programs named in the Topic's git configuration. It waits for a write in progress and finishes an interrupted one first; `--dry-run` refuses (`failed_precondition`) while one is pending. |
 | `study check <lesson> [--topic ID] [--timeout D]` | Runs a Lesson's Check on the current work and records the Attempt (see "Checks" below). Without `--topic`, it uses the Topic whose folder it runs in. |
 | `study doctor` | Diagnoses the setup and says how to fix what it finds. It works even when nothing else does. Exits 1 when a Finding failed. |
@@ -193,6 +198,39 @@ write interrupted by a crash is finished by the next write or Checkpoint. A dry 
 what the real run would do after finishing such a write, and writes nothing. Lock and
 intent-marker files live in the Study home's `.lamplight/` folder, are local to the
 machine, and are never synced.
+
+## Sources and Evidence
+
+The Knowledge seam ([ADR-0007](adr/0007-knowledge-bases-return-evidence.md)) records where
+a Topic's material comes from. `study` never parses a document and never calls a knowledge
+service: the agent searches the Knowledge base itself, such as a NotebookLM notebook through
+the NotebookLM MCP server, or reads the Sources when there is none, and records the quotes
+it relied on.
+
+- **Knowledge base**: `notebooklm`, with the notebook's id, or `none`. It is stored in the
+  `[knowledge_base]` table of `topic.toml` and shown on the Topic in `status`. A Topic
+  without one behaves as `none`.
+- **Sources** are kept in `sources.jsonl`, one per line, each a separate item in the
+  History, so Sources added on two machines never conflict. A Source's id is a slug of its
+  title plus a random suffix, such as `strang-linear-algebra.k3f9a2`. A file Source records
+  its absolute path, `hash` (`sha256:…`) and `size_bytes`; a URL Source its `url`. Either may
+  carry the Source's `notebooklm_id`.
+- **Where files are**: `source list` gives each file Source a `state`: `ok` (a file of the
+  recorded size is at its path), `moved` (gone from its path, but a file with the same
+  content is in the Library at `found_at`; record it with `source update --path`),
+  `changed` (the file at the path is no longer the one added), or `missing`. Moved files
+  are found through the Library index, so rebuild it with `study library build` after
+  reorganising your books.
+- **Evidence** is an exact quote, cited by a Lesson, with an optional `location` and
+  `location_from`: `source` (read in the Source itself, such as a printed page number),
+  `knowledge_base` (such as a NotebookLM citation), `learner`, or `estimate`. Evidence
+  lives in the History only. Lessons without Evidence are marked, never blocked.
+
+```json
+{ "id": "k3f9a2b7qd", "lesson": "elimination", "source": "strang-linear-algebra.k3f9a2",
+  "quote": "Elimination produces an upper triangular system.", "location": "p. 46",
+  "location_from": "source", "recorded": "2026-10-01T09:30:00Z" }
+```
 
 ## study doctor
 
