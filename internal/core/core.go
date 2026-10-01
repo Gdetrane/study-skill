@@ -11,6 +11,7 @@ import (
 	"encoding/base32"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -37,6 +38,9 @@ type Options struct {
 	Now func() time.Time
 	// NewID returns a new unique Event ID. Defaults to a random ID.
 	NewID func() string
+	// Logger receives diagnostics, such as a hand edit kept during recovery.
+	// Defaults to slog.Default().
+	Logger *slog.Logger
 }
 
 // Core is the Lamplight core for one Study home.
@@ -45,6 +49,14 @@ type Core struct {
 	dir   string
 	now   func() time.Time
 	newID func() string
+	log   *slog.Logger
+	// gating reports whether an item approves or gates progress; see
+	// isGating.
+	gating func(item string) bool
+	// crash, when set by a test, is called at each point of a write where
+	// a crash could happen; returning an error stops the write there
+	// without any cleanup, as a crash would.
+	crash func(point string) error
 }
 
 // Open resolves the Study home and returns a Core for it. The Study home is
@@ -67,12 +79,15 @@ func Open(opts Options) (*Core, error) {
 	if dir, err = filepath.Abs(dir); err != nil {
 		return nil, internalError("resolving the working directory", err)
 	}
-	c := &Core{home: home, dir: dir, now: opts.Now, newID: opts.NewID}
+	c := &Core{home: home, dir: dir, now: opts.Now, newID: opts.NewID, log: opts.Logger, gating: isGating}
 	if c.now == nil {
 		c.now = time.Now
 	}
 	if c.newID == nil {
 		c.newID = randomID
+	}
+	if c.log == nil {
+		c.log = slog.Default()
 	}
 	return c, nil
 }

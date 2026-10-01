@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -29,6 +30,12 @@ const (
 	maxGoalRunes  = 500
 )
 
+// Event types recorded in a Topic's History.
+const (
+	eventTopicCreated = "topic.created"
+	eventTopicUpdated = "topic.updated"
+)
+
 // Topic is one subject the learner is studying, with its own folder and git
 // repository inside the Study home.
 type Topic struct {
@@ -37,6 +44,9 @@ type Topic struct {
 	Goal    string    `json:"goal,omitempty"`
 	Path    string    `json:"path"`
 	Created time.Time `json:"created"`
+	// Flags are what replaying the History found that needs the learner's
+	// attention.
+	Flags []Flag `json:"flags,omitempty"`
 }
 
 // TopicSpec describes a Topic to create.
@@ -52,11 +62,43 @@ type TopicSpec struct {
 	DryRun bool
 }
 
+// TopicChanges describes changes to a Topic's settings. Nil fields stay as
+// they are.
+type TopicChanges struct {
+	Title *string
+	// Goal replaces the goal; an empty goal removes it.
+	Goal *string
+	// DryRun validates the request and returns the Topic as it would be,
+	// without writing anything.
+	DryRun bool
+}
+
+// TopicUpdate is the result of UpdateTopic.
+type TopicUpdate struct {
+	Topic Topic `json:"topic"`
+	// Changed is false when the Topic already had the requested values, so
+	// nothing was recorded.
+	Changed bool `json:"changed"`
+}
+
 // topicSettings is the content of topic.toml.
 type topicSettings struct {
 	Format int    `toml:"format"`
 	Title  string `toml:"title"`
 	Goal   string `toml:"goal,omitempty"`
+}
+
+// topicCreatedData is the payload of a topic.created Event.
+type topicCreatedData struct {
+	Title string `json:"title"`
+	Goal  string `json:"goal,omitempty"`
+}
+
+// topicUpdatedData is the payload of a topic.updated Event: the fields that
+// changed, with their new values.
+type topicUpdatedData struct {
+	Title *string `json:"title,omitempty"`
+	Goal  *string `json:"goal,omitempty"`
 }
 
 var topicIDPattern = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
@@ -66,7 +108,7 @@ var topicIDPattern = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 //
 // The folder is assembled under .lamplight/tmp and renamed into place only
 // once it is complete, so an interrupted creation never leaves a half-made
-// Topic behind.
+// Topic behind, and needs neither the Topic lock nor an intent marker.
 func (c *Core) CreateTopic(ctx context.Context, spec TopicSpec) (Topic, error) {
 	title, err := cleanText("title", spec.Title, maxTitleRunes)
 	if err != nil {
@@ -88,7 +130,8 @@ func (c *Core) CreateTopic(ctx context.Context, spec TopicSpec) (Topic, error) {
 	if err := validateTopicID(id); err != nil {
 		return Topic{}, err
 	}
-	topic := Topic{ID: id, Title: title, Goal: goal, Path: filepath.Join(c.home, id), Created: c.now().UTC()}
+	topic := Topic{ID: id, Title: title, Goal: goal, Path: filepath.Join(c.home, id),
+		Created: nextEventTime(c.now(), time.Time{})}
 	if _, err := os.Lstat(topic.Path); err == nil {
 		return Topic{}, alreadyExists(id)
 	} else if !errors.Is(err, fs.ErrNotExist) {
@@ -128,6 +171,8 @@ func (c *Core) CreateTopic(ctx context.Context, spec TopicSpec) (Topic, error) {
 	return topic, nil
 }
 
+// initTopic writes a new Topic into dir: the topic.created Event, then the
+// content it creates, then the git repository.
 func (c *Core) initTopic(ctx context.Context, home *os.Root, dir string, topic Topic) error {
 	root, err := home.OpenRoot(dir)
 	if err != nil {
@@ -135,32 +180,182 @@ func (c *Core) initTopic(ctx context.Context, home *os.Root, dir string, topic T
 	}
 	defer root.Close()
 
-	var settings bytes.Buffer
-	settings.WriteString("# Topic settings. Lamplight rewrites this file; comments are not kept.\n")
-	if err := toml.NewEncoder(&settings).Encode(topicSettings{
-		Format: FormatVersion, Title: topic.Title, Goal: topic.Goal,
-	}); err != nil {
-		return internalError("encoding "+topicFile, err)
-	}
-	if err := writeFileAtomic(root, topicFile, settings.Bytes()); err != nil {
+	ev, contents, err := c.prepareEvent(root, change{
+		Type:  eventTopicCreated,
+		Data:  topicCreatedData{Title: topic.Title, Goal: topic.Goal},
+		Items: []string{topicFile, gitattributes},
+	}, topic.Created)
+	if err != nil {
 		return err
 	}
-	if err := writeFileAtomic(root, gitattributes, []byte(historyFile+" merge=union\n")); err != nil {
+	if err := c.appendEvent(root, topic.ID, ev); err != nil {
 		return err
 	}
+	for i, it := range ev.Items {
+		if err := writeItem(root, it.Item, contents[i]); err != nil {
+			return err
+		}
+	}
+	// The .gitignore is the learner's to edit, so it is written once here
+	// rather than recorded as an item of the Event.
 	if err := writeFileAtomic(root, gitignore, []byte(checkpoint.DefaultGitignore())); err != nil {
 		return err
 	}
-	data, err := json.Marshal(map[string]string{"title": topic.Title})
-	if err != nil {
-		return internalError("encoding an Event", err)
-	}
-	if err := appendEvent(root, event{
-		Format: FormatVersion, ID: c.newID(), Time: topic.Created, Type: eventTopicCreated, Data: data,
-	}); err != nil {
-		return err
-	}
 	return gitInit(ctx, filepath.Join(c.home, dir))
+}
+
+// UpdateTopic changes a Topic's title or goal. Asking for the values it
+// already has changes nothing and records no Event.
+func (c *Core) UpdateTopic(ctx context.Context, id string, changes TopicChanges) (TopicUpdate, error) {
+	var want topicUpdatedData
+	if changes.Title != nil {
+		title, err := cleanText("title", *changes.Title, maxTitleRunes)
+		if err != nil {
+			return TopicUpdate{}, err
+		}
+		if title == "" {
+			return TopicUpdate{}, invalidf("a Topic needs a title")
+		}
+		want.Title = &title
+	}
+	if changes.Goal != nil {
+		goal, err := cleanText("goal", *changes.Goal, maxGoalRunes)
+		if err != nil {
+			return TopicUpdate{}, err
+		}
+		want.Goal = &goal
+	}
+	if want.Title == nil && want.Goal == nil {
+		return TopicUpdate{}, invalidf("nothing to change: give a new title or goal")
+	}
+	if err := validateTopicID(id); err != nil {
+		return TopicUpdate{}, err
+	}
+
+	if changes.DryRun {
+		topic, err := c.readTopic(id)
+		if err != nil {
+			return TopicUpdate{}, err
+		}
+		update := TopicUpdate{Topic: topic}
+		if want.Title != nil && *want.Title != topic.Title {
+			update.Topic.Title, update.Changed = *want.Title, true
+		}
+		if want.Goal != nil && *want.Goal != topic.Goal {
+			update.Topic.Goal, update.Changed = *want.Goal, true
+		}
+		return update, nil
+	}
+
+	ev, err := c.writeTopic(ctx, id, func(_ *replayed, topic *os.Root) (*change, error) {
+		data, exists, err := readItem(topic, topicFile)
+		if err != nil {
+			return nil, err
+		}
+		if !exists {
+			return nil, corruptf("%s of %s is missing", topicFile, id)
+		}
+		current, err := parseTopicSettings(data, filepath.Join(id, topicFile))
+		if err != nil {
+			return nil, err
+		}
+		var diff topicUpdatedData
+		if want.Title != nil && *want.Title != current.Title {
+			diff.Title = want.Title
+		}
+		if want.Goal != nil && *want.Goal != current.Goal {
+			diff.Goal = want.Goal
+		}
+		if diff.Title == nil && diff.Goal == nil {
+			return nil, nil
+		}
+		return &change{Type: eventTopicUpdated, Data: diff, Items: []string{topicFile}}, nil
+	})
+	if err != nil {
+		return TopicUpdate{}, err
+	}
+	topic, err := c.readTopic(id)
+	if err != nil {
+		return TopicUpdate{}, err
+	}
+	return TopicUpdate{Topic: topic, Changed: ev != nil}, nil
+}
+
+func applyTopicCreated(ev event, item string, _ []byte, _ bool) ([]byte, bool, error) {
+	var d topicCreatedData
+	if err := json.Unmarshal(ev.Data, &d); err != nil {
+		return nil, false, corruptf("Event %s has an unreadable payload: %v", ev.ID, err)
+	}
+	switch item {
+	case topicFile:
+		data, err := encodeTopicSettings(topicSettings{Title: d.Title, Goal: d.Goal})
+		return data, err == nil, err
+	case gitattributes:
+		return []byte(historyFile + " merge=union\n"), true, nil
+	}
+	return nil, false, corruptf("Event %s (%s) cannot edit %s", ev.ID, ev.Type, item)
+}
+
+func applyTopicUpdated(ev event, item string, current []byte, exists bool) ([]byte, bool, error) {
+	if item != topicFile {
+		return nil, false, corruptf("Event %s (%s) cannot edit %s", ev.ID, ev.Type, item)
+	}
+	if !exists {
+		return nil, false, corruptf("%s is missing", topicFile)
+	}
+	var d topicUpdatedData
+	if err := json.Unmarshal(ev.Data, &d); err != nil {
+		return nil, false, corruptf("Event %s has an unreadable payload: %v", ev.ID, err)
+	}
+	settings, err := parseTopicSettings(current, topicFile)
+	if err != nil {
+		return nil, false, err
+	}
+	if d.Title != nil {
+		settings.Title = *d.Title
+	}
+	if d.Goal != nil {
+		settings.Goal = *d.Goal
+	}
+	data, err := encodeTopicSettings(settings)
+	return data, err == nil, err
+}
+
+func replayTopicCreated(s *replayed, ev event) error {
+	if s.created.IsZero() {
+		s.created = ev.Time
+	}
+	return nil
+}
+
+func replayTopicUpdated(s *replayed, _ event) error {
+	if s.created.IsZero() {
+		return fmt.Errorf("%w: the Topic's creation", errUnknownItem)
+	}
+	return nil
+}
+
+// parseTopicSettings reads topic.toml; where names it in errors.
+func parseTopicSettings(data []byte, where string) (topicSettings, error) {
+	var settings topicSettings
+	if _, err := toml.Decode(string(data), &settings); err != nil {
+		return settings, corruptf("%s is not valid TOML: %v", where, err)
+	}
+	if settings.Format > FormatVersion {
+		return settings, newerFormat(where, settings.Format)
+	}
+	return settings, nil
+}
+
+// encodeTopicSettings writes topic.toml in the current format.
+func encodeTopicSettings(settings topicSettings) ([]byte, error) {
+	settings.Format = FormatVersion
+	var buf bytes.Buffer
+	buf.WriteString("# Topic settings. Lamplight rewrites this file; comments are not kept.\n")
+	if err := toml.NewEncoder(&buf).Encode(settings); err != nil {
+		return nil, internalError("encoding "+topicFile, err)
+	}
+	return buf.Bytes(), nil
 }
 
 // gitInit makes dir a git repository. Commits are made later by Checkpoints,
@@ -178,34 +373,53 @@ func gitInit(ctx context.Context, dir string) error {
 	return nil
 }
 
-// loadTopic reads one Topic from the Study home.
-func loadTopic(home *os.Root, homePath, id string) (Topic, error) {
+// readTopic reads one Topic from the Study home.
+func (c *Core) readTopic(id string) (Topic, error) {
+	home, err := os.OpenRoot(c.home)
+	if errors.Is(err, fs.ErrNotExist) {
+		return Topic{}, noSuchTopic(id)
+	}
+	if err != nil {
+		return Topic{}, internalError("opening the Study home "+c.home, err)
+	}
+	defer home.Close()
+	if !isTopic(home, id) {
+		return Topic{}, noSuchTopic(id)
+	}
+	return c.loadTopic(home, id)
+}
+
+// loadTopic reads one Topic from the Study home and replays its History.
+// Content is authoritative for text, so the title and goal come from
+// topic.toml; the History gives the creation time and the flags.
+func (c *Core) loadTopic(home *os.Root, id string) (Topic, error) {
 	root, err := home.OpenRoot(id)
 	if err != nil {
 		return Topic{}, internalError("opening Topic "+id, err)
 	}
 	defer root.Close()
-	data, err := root.ReadFile(topicFile)
+	data, exists, err := readItem(root, topicFile)
 	if err != nil {
-		return Topic{}, internalError("reading "+topicFile+" of "+id, err)
+		return Topic{}, err
 	}
-	var settings topicSettings
-	if _, err := toml.Decode(string(data), &settings); err != nil {
-		return Topic{}, corruptf("%s of %s is not valid TOML: %v", topicFile, id, err)
+	if !exists {
+		return Topic{}, corruptf("%s of %s is missing", topicFile, id)
 	}
-	if settings.Format > FormatVersion {
-		return Topic{}, newerFormat(filepath.Join(homePath, id, topicFile), settings.Format)
+	settings, err := parseTopicSettings(data, filepath.Join(c.home, id, topicFile))
+	if err != nil {
+		return Topic{}, err
 	}
-	topic := Topic{ID: id, Title: settings.Title, Goal: settings.Goal, Path: filepath.Join(homePath, id)}
+	topic := Topic{ID: id, Title: settings.Title, Goal: settings.Goal, Path: filepath.Join(c.home, id)}
 	events, err := readEvents(root, id)
 	if err != nil {
 		return Topic{}, err
 	}
-	for _, ev := range events {
-		if ev.Type == eventTopicCreated {
-			topic.Created = ev.Time
-			break
-		}
+	s := replay(events)
+	topic.Created = s.created
+	topic.Flags = append(s.flags, c.gatingFlags(root, s)...)
+	if hasIntent(home, id) {
+		topic.Flags = append(topic.Flags, Flag{Kind: FlagInterruptedWrite,
+			Message: "a write to this Topic was interrupted; the next change to it finishes the write"})
 	}
 	return topic, nil
 }
@@ -258,8 +472,9 @@ func slugify(title string) string {
 }
 
 // writeFileAtomic replaces name inside root without exposing a half-written
-// file: it writes a uniquely named temporary file, syncs it, and renames it
-// over name. Concurrent writers never share a temporary file.
+// file: it writes a uniquely named temporary file, syncs it, renames it over
+// name, and syncs the folder so the rename survives a power cut. Concurrent
+// writers never share a temporary file.
 func writeFileAtomic(root *os.Root, name string, data []byte) error {
 	tmp := name + ".tmp-" + randomID()
 	f, err := root.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
@@ -281,7 +496,19 @@ func writeFileAtomic(root *os.Root, name string, data []byte) error {
 		_ = root.Remove(tmp)
 		return internalError("replacing "+name, err)
 	}
+	syncDir(root, filepath.Dir(name))
 	return nil
+}
+
+// syncDir flushes a folder's entries to disk. It is best effort: some file
+// systems cannot sync a folder, and the data itself is already synced.
+func syncDir(root *os.Root, dir string) {
+	d, err := root.Open(dir)
+	if err != nil {
+		return
+	}
+	_ = d.Sync()
+	_ = d.Close()
 }
 
 func alreadyExists(id string) error {
