@@ -337,7 +337,8 @@ func applyNothing(ev event, item string, _ []byte, _ bool) ([]byte, bool, error)
 
 // repeatedCardFlags flags Cards that appear twice in cards.jsonl with
 // different content, as a union merge leaves two machines' edits of one
-// Card. The first line counts until the learner settles it.
+// Card. Until the learner settles it, every machine reads the same one of
+// the lines (see jsonlCodec).
 func repeatedCardFlags(topic *os.Root) []Flag {
 	data, exists, err := readFile(topic, cardsFile)
 	if err != nil || !exists {
@@ -347,7 +348,7 @@ func repeatedCardFlags(topic *os.Root) []Flag {
 	for _, id := range jsonlRepeats(data) {
 		flags = append(flags, newFlag(FlagConflict, cardItem(id), nil, "",
 			fmt.Sprintf("Card %s appears twice in %s with different content, probably edited on two machines: "+
-				"the first counts; keep one of the lines by hand", id, cardsFile)))
+				"keep the right line by hand", id, cardsFile)))
 	}
 	return flags
 }

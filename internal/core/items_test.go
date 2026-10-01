@@ -204,3 +204,34 @@ func TestItemNamesAreChecked(t *testing.T) {
 		}
 	}
 }
+
+// A union merge keeps each machine's own lines first, so the two machines
+// see a repeated entry's lines in opposite orders. Both must read the same
+// entry, and writing it must leave a single line.
+func TestARepeatedEntryReadsTheSameInEitherOrder(t *testing.T) {
+	a := `{"id":"c1","prompt":"from machine A"}`
+	b := `{"id":"c1","prompt":"from machine B"}`
+	other := `{"id":"c2","prompt":"untouched"}`
+	onA := []byte(a + "\n" + other + "\n" + b + "\n")
+	onB := []byte(b + "\n" + other + "\n" + a + "\n")
+
+	gotA, okA, errA := jsonlGet(onA, "c1")
+	gotB, okB, errB := jsonlGet(onB, "c1")
+	if errA != nil || errB != nil || !okA || !okB {
+		t.Fatalf("jsonlGet: %v %v %v %v", okA, errA, okB, errB)
+	}
+	if string(gotA) != string(gotB) {
+		t.Errorf("machine A reads %s but machine B reads %s", gotA, gotB)
+	}
+	if repeats := jsonlRepeats(onA); len(repeats) != 1 || repeats[0] != "c1" {
+		t.Errorf("repeats = %v, want [c1]", repeats)
+	}
+
+	written, err := jsonlPut(onB, "c1", []byte(`{"id":"c1","prompt":"settled"}`), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := `{"id":"c1","prompt":"settled"}` + "\n" + other + "\n"; string(written) != want {
+		t.Errorf("after writing the entry:\n%s\nwant:\n%s", written, want)
+	}
+}
