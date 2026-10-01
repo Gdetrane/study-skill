@@ -288,6 +288,12 @@ type RevisionProposal struct {
 	DryRun bool `json:"dry_run,omitempty"`
 }
 
+// Question is what Lamplight shows the learner when it asks them directly,
+// through MCP elicitation or on a terminal, whether to apply the Revision.
+func (p RevisionProposal) Question() string {
+	return fmt.Sprintf("Lamplight asks: apply this change to the Syllabus of %s?\n\n%s\n\n%s", p.Topic, p.Summary, p.Changes.Text)
+}
+
 // RevisionApplied is the result of ApplyRevision and DeclineRevision.
 type RevisionApplied struct {
 	Topic    string   `json:"topic"`
