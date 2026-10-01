@@ -257,16 +257,24 @@ func writeDiagnosis(w io.Writer, d core.Diagnosis) error {
 
 func writeInstallResult(w io.Writer, r installResult) error {
 	var b strings.Builder
+	if r.ProvidedBy != "" {
+		fmt.Fprintf(&b, "A package already provides %s completions at %s, so study installed nothing.\n",
+			styleAccent.Render(r.Shell), r.ProvidedBy)
+		fmt.Fprintf(&b, "%s\n", styleDim.Render("Pass --force to install your own."))
+		_, err := io.WriteString(w, b.String())
+		return err
+	}
 	install, add := "Installed", "Added"
 	if r.DryRun {
 		install, add = "Would install", "Would add"
 	}
 	fmt.Fprintf(&b, "%s %s completions in %s\n", install, styleAccent.Render(r.Shell), r.File)
-	if r.RCLine != "" {
+	if r.RCLine != "" && len(r.Manual) == 0 {
 		fmt.Fprintf(&b, "%s this line to %s:\n  %s\n", add, r.RCFile, styleDim.Render(r.RCLine))
 	}
+	writeManual(&b, r.Manual)
 	if !r.DryRun {
-		fmt.Fprintf(&b, "%s\n", styleDim.Render(strings.ToUpper(r.Note[:1])+r.Note[1:]+"."))
+		fmt.Fprintf(&b, "%s\n", styleDim.Render(sentence(r.Note)))
 	}
 	_, err := io.WriteString(w, b.String())
 	return err
@@ -274,8 +282,8 @@ func writeInstallResult(w io.Writer, r installResult) error {
 
 func writeUninstallResult(w io.Writer, r uninstallResult) error {
 	var b strings.Builder
-	if len(r.Removed) == 0 && r.RCLine == "" {
-		fmt.Fprintf(&b, "Nothing to remove: %s\n", r.Note)
+	if len(r.Shells) == 0 {
+		fmt.Fprintf(&b, "Nothing to remove: %s.\n", r.Note)
 	}
 	verb := "Removed"
 	if r.DryRun {
@@ -284,9 +292,40 @@ func writeUninstallResult(w io.Writer, r uninstallResult) error {
 	for _, path := range r.Removed {
 		fmt.Fprintf(&b, "%s %s\n", verb, path)
 	}
-	if r.RCLine != "" {
-		fmt.Fprintf(&b, "%s this line from %s:\n  %s\n", verb, r.RCFile, styleDim.Render(r.RCLine))
+	for _, path := range r.Kept {
+		fmt.Fprintf(&b, "Kept %s: it changed since study installed it\n", path)
 	}
+	for _, path := range r.AlreadyGone {
+		fmt.Fprintf(&b, "%s was already gone\n", path)
+	}
+	for _, rc := range r.RCLines {
+		switch rc.Status {
+		case rcRemoved:
+			fmt.Fprintf(&b, "%s this line from %s:\n  %s\n", verb, rc.File, styleDim.Render(rc.Line))
+		case rcAlreadyGone:
+			fmt.Fprintf(&b, "The line study added to %s was already gone\n", rc.File)
+		}
+	}
+	writeManual(&b, r.Manual)
 	_, err := io.WriteString(w, b.String())
 	return err
+}
+
+// writeManual lists what is left for the learner to do by hand.
+func writeManual(b *strings.Builder, steps []string) {
+	if len(steps) == 0 {
+		return
+	}
+	fmt.Fprintf(b, "%s\n", styleWarn.Render("Left for you to do:"))
+	for _, step := range steps {
+		fmt.Fprintf(b, "  - %s\n", strings.ReplaceAll(step, "\n", "\n    "))
+	}
+}
+
+// sentence capitalises the first letter of s and ends it with a full stop.
+func sentence(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:] + "."
 }

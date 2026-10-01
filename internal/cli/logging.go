@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -38,15 +39,16 @@ func newLogs(getenv func(string) string, stderr io.Writer, flagLevel string, fla
 	explicit := false
 	switch {
 	case flagSet:
-		if err := l.level.UnmarshalText([]byte(flagLevel)); err != nil {
+		level, ok := parseLevel(flagLevel)
+		if !ok {
 			return nil, usageError{fmt.Errorf("--log-level must be debug, info, warn or error, not %q", flagLevel)}
 		}
-		explicit = true
+		l.level, explicit = level, true
 	case getenv("STUDY_LOG") != "":
-		if err := l.level.UnmarshalText([]byte(getenv("STUDY_LOG"))); err != nil {
-			l.level, l.badEnv = slog.LevelInfo, getenv("STUDY_LOG")
+		if level, ok := parseLevel(getenv("STUDY_LOG")); ok {
+			l.level, explicit = level, true
 		} else {
-			explicit = true
+			l.badEnv = getenv("STUDY_LOG")
 		}
 	}
 	stderrLevel := slog.LevelWarn
@@ -79,12 +81,43 @@ func (l *logs) path() string {
 	return l.file.path
 }
 
-// probe opens the log file, so study doctor can report whether logging works.
+// probe reports whether the log file could be written, without creating it:
+// the file appears with the first record.
 func (l *logs) probe() error {
 	if l == nil || l.file == nil {
 		return errors.New("no state folder: set HOME or XDG_STATE_HOME")
 	}
-	return l.file.open()
+	path := l.file.path
+	switch info, err := os.Stat(path); {
+	case err == nil && !info.Mode().IsRegular():
+		return fmt.Errorf("%s is not a regular file", path)
+	case err == nil && !canWrite(path):
+		return fmt.Errorf("%s is read-only", path)
+	case err == nil:
+		return nil
+	case !errors.Is(err, fs.ErrNotExist):
+		return err
+	}
+	if !writableDir(filepath.Dir(path)) {
+		return fmt.Errorf("%s cannot be created", filepath.Dir(path))
+	}
+	return nil
+}
+
+// parseLevel reads a Log level name. Unlike slog's own parser, it rejects
+// offsets such as "error+8".
+func parseLevel(s string) (slog.Level, bool) {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "debug":
+		return slog.LevelDebug, true
+	case "info":
+		return slog.LevelInfo, true
+	case "warn":
+		return slog.LevelWarn, true
+	case "error":
+		return slog.LevelError, true
+	}
+	return 0, false
 }
 
 func (l *logs) close() {

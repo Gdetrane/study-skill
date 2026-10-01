@@ -12,8 +12,8 @@
       {
         "name": "study_home",
         "status": "fail",
-        "message": "$HOME/.config/lamplight/config.toml is not valid TOML: toml: line 1 (last key \"study_home\"): unexpected EOF; expected value",
-        "fix": "set STUDY_HOME, or study_home in config.toml, to the absolute path of your Study home"
+        "message": "unknown, because config.toml cannot be read",
+        "fix": "fix config.toml as the config Finding says, or set STUDY_HOME"
       },
       {
         "name": "git",

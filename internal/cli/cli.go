@@ -55,13 +55,25 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	root.SetArgs(args)
 	root.SetOut(stdout)
 	root.SetErr(stderr)
-	err := fang.Execute(ctx, root,
-		fang.WithVersion(version()),
-		fang.WithErrorHandler(a.handleError),
-	)
+	var err error
+	if a.json {
+		// fang styles help and errors for people, and to pick colours it
+		// queries the terminal on stdout, which would corrupt the JSON
+		// document. JSON runs use cobra directly.
+		root.SilenceUsage, root.SilenceErrors = true, true
+		root.Version = version()
+		if err = root.ExecuteContext(ctx); err != nil {
+			a.handleError(a.stderr, fang.Styles{}, err)
+		}
+	} else {
+		err = fang.Execute(ctx, root,
+			fang.WithVersion(version()),
+			fang.WithErrorHandler(a.handleError),
+		)
+	}
 	switch {
 	case err == nil:
-		return ExitOK
+		return a.exit
 	case isUsage(err):
 		return ExitUsage
 	default:
@@ -80,6 +92,9 @@ type app struct {
 	json     bool
 	logLevel string
 	logs     *logs
+	// exit is the exit code of a command that reported its own result, such
+	// as study doctor finding a failure, without returning an error.
+	exit int
 }
 
 func (a *app) rootCommand() *cobra.Command {
@@ -145,7 +160,7 @@ func (a *app) rootCommand() *cobra.Command {
 		Use:   "topic",
 		Short: "Create and inspect Topics",
 		Args:  noArgs,
-		RunE:  showHelp,
+		RunE:  a.groupHelp,
 	}
 	var spec core.TopicSpec
 	create := &cobra.Command{
@@ -277,25 +292,20 @@ func (a *app) checkpointCommand() *cobra.Command {
 	return cmd
 }
 
+// runDoctor reports the diagnosis itself, so an unhealthy setup sets the exit
+// code without returning an error: the report is the whole output.
 func (a *app) runDoctor(cmd *cobra.Command, _ []string) error {
 	d := core.Diagnose(cmd.Context(), a.opts)
 	d.Add(a.diagnoseLogs())
 	d.Add(a.diagnoseCompletion())
 	if !d.Healthy {
-		failed := d.Failed()
-		err := fmt.Errorf("%d %s failed: %s", len(failed), plural(len(failed), "finding", "findings"), strings.Join(failed, ", "))
+		a.exit = ExitError
 		if a.json {
-			if werr := a.writeJSON(envelope{Data: d, Error: &errorBody{Code: codeUnhealthy, Message: err.Error()}}); werr != nil {
-				return werr
-			}
-			return reported{err}
+			failed := d.Failed()
+			msg := fmt.Sprintf("%d %s failed: %s", len(failed), plural(len(failed), "finding", "findings"), strings.Join(failed, ", "))
+			return a.writeJSON(envelope{Data: d, Error: &errorBody{Code: codeUnhealthy, Message: msg}})
 		}
-		if werr := writeDiagnosis(a.out, d); werr != nil {
-			return werr
-		}
-		return reported{err}
-	}
-	if a.json {
+	} else if a.json {
 		return a.writeJSON(envelope{OK: true, Data: d})
 	}
 	return writeDiagnosis(a.out, d)
@@ -320,21 +330,6 @@ func (a *app) diagnoseLogs() core.Finding {
 	return f
 }
 
-func (a *app) diagnoseCompletion() core.Finding {
-	f := core.Finding{Name: "completion"}
-	shell, err := a.pickShell("")
-	if err != nil {
-		f.Status, f.Message = core.FindingOK, "skipped: $SHELL is not bash, zsh or fish"
-		return f
-	}
-	if path := a.installedCompletion(shell); path != "" {
-		f.Status, f.Message = core.FindingOK, shell+" completions are installed at "+path
-		return f
-	}
-	f.Status, f.Message, f.Fix = core.FindingWarn, shell+" completions are not installed", "study completion install"
-	return f
-}
-
 func plural(n int, one, many string) string {
 	if n == 1 {
 		return one
@@ -347,7 +342,7 @@ func (a *app) libraryCommand() *cobra.Command {
 		Use:   "library",
 		Short: "Index and search your Library of books",
 		Args:  noArgs,
-		RunE:  showHelp,
+		RunE:  a.groupHelp,
 	}
 	build := &cobra.Command{
 		Use:     "build <folder>",
@@ -449,8 +444,10 @@ func (a *app) fail(err error) error {
 	return reported{err}
 }
 
-// handleError prints errors that were not already reported as JSON.
-func (a *app) handleError(w io.Writer, styles fang.Styles, err error) {
+// handleError prints errors that were not already reported as JSON. Human
+// errors are printed as written: fang's own handler would re-case them
+// ("/Tmp/…", "--Log-Level").
+func (a *app) handleError(_ io.Writer, _ fang.Styles, err error) {
 	var r reported
 	if errors.As(err, &r) {
 		return
@@ -463,7 +460,11 @@ func (a *app) handleError(w io.Writer, styles fang.Styles, err error) {
 		_ = a.writeJSON(envelope{Error: &errorBody{Code: code, Message: err.Error()}})
 		return
 	}
-	fang.DefaultErrorHandler(w, styles, err)
+	w := colorprofile.NewWriter(a.stderr, environ(a.opts.Getenv))
+	fmt.Fprintf(w, "%s %s\n", styleFail.Render("Error:"), err.Error())
+	if isUsage(err) {
+		fmt.Fprintln(w, styleDim.Render("Run the command with --help for usage."))
+	}
 }
 
 // reported marks an error whose JSON envelope was already written.
@@ -483,9 +484,21 @@ func isUsage(err error) bool {
 	return errors.As(err, &u)
 }
 
-// showHelp prints help for command groups such as study topic. Unknown
-// subcommands arrive as arguments and are rejected by noArgs first.
-func showHelp(cmd *cobra.Command, _ []string) error { return cmd.Help() }
+// groupHelp prints help for command groups such as study topic. Unknown
+// subcommands arrive as arguments and are rejected by noArgs first. Help is
+// text, so with --json a group without a subcommand is a usage error.
+func (a *app) groupHelp(cmd *cobra.Command, _ []string) error {
+	if !a.json {
+		return cmd.Help()
+	}
+	var names []string
+	for _, sub := range cmd.Commands() {
+		if sub.IsAvailableCommand() {
+			names = append(names, sub.Name())
+		}
+	}
+	return a.fail(usageError{fmt.Errorf("%q needs a subcommand: %s", cmd.CommandPath(), strings.Join(names, ", "))})
+}
 
 func noArgs(cmd *cobra.Command, args []string) error {
 	if len(args) > 0 {

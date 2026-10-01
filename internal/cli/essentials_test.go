@@ -21,6 +21,13 @@ import (
 	"github.com/mordor-forge/lamplight/v2/internal/core"
 )
 
+// TestMain keeps results independent of the machine: completion scripts that
+// packages installed here must not show up in doctor or install results.
+func TestMain(m *testing.M) {
+	*cli.SystemCompletionRoots = []string{filepath.Join(os.TempDir(), "study-test-no-package-completions")}
+	os.Exit(m.Run())
+}
+
 // runEnv runs study with exactly the environment in env, started in dir, and
 // replaces $HOME in the output so golden files are stable.
 func runEnv(t *testing.T, env map[string]string, dir string, stdin io.Reader, args ...string) result {
@@ -288,7 +295,7 @@ func TestCompletionShellErrors(t *testing.T) {
 		args []string
 	}{
 		{map[string]string{"HOME": home, "SHELL": "/bin/tcsh"}, []string{"completion", "install", "--json"}},
-		{map[string]string{"HOME": home}, []string{"completion", "uninstall", "--json"}},
+		{map[string]string{"HOME": home}, []string{"completion", "uninstall", "--shell", "tcsh", "--json"}},
 		{map[string]string{"HOME": home}, []string{"completion", "install", "--shell", "powershell", "--json"}},
 		{map[string]string{"HOME": home}, []string{"completion", "install", "--shell", "fish", "--dir", home, "--json"}},
 	} {

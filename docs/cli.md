@@ -17,8 +17,8 @@ that scripts and agents can rely on. Terms follow [CONTEXT.md](../CONTEXT.md).
 | `study library search <query> [--limit N]` | Ranks the books in the Library against the query. `--limit` defaults to 10 and is capped at 100; no matches is a success with an empty list. |
 | `study checkpoint --topic ID --role agent\|learner [-m MESSAGE] [--dry-run]` | Saves the Topic's work as a git commit at a turn switch. Skips when nothing changed, refuses during a merge or rebase, and lists large files it saved. Never runs programs named in the Topic's git configuration. It waits for a write in progress and finishes an interrupted one first; `--dry-run` refuses (`failed_precondition`) while one is pending. |
 | `study doctor` | Diagnoses the setup and says how to fix what it finds. It works even when nothing else does. Exits 1 when a Finding failed. |
-| `study completion install [--shell S] [--dir D] [--yes] [--dry-run]` | Installs completions for bash, zsh or fish (default: from `$SHELL`) for your user. |
-| `study completion uninstall [--shell S] [--dry-run]` | Removes exactly what `install` added. |
+| `study completion install [--shell S] [--dir D] [--yes] [--force] [--dry-run]` | Installs completions for bash, zsh or fish (default: from `$SHELL`) for your user. |
+| `study completion uninstall [--shell S] [--dry-run]` | Removes what `install` added, for every shell or only `--shell`. |
 | `study completion bash\|zsh\|fish\|powershell` | Prints a completion script, for packagers. |
 | `study mcp` | Runs the MCP server over stdin and stdout. |
 
@@ -36,7 +36,9 @@ colours are dropped with `NO_COLOR=1`; `CLICOLOR_FORCE=1` keeps them in a pipe.
 Every command accepts `--json`. With it, `study` prints exactly one JSON document on
 stdout and nothing else; diagnostics, if any, go to stderr. `--json` is honoured even
 when an earlier argument is invalid. Help (`--help`), `--version`, `study mcp` (which
-speaks MCP on stdout) and the completion-script and man-page commands print text.
+speaks MCP on stdout) and the completion-script and man-page commands print text; a command
+group run without a subcommand, such as `study topic --json`, is a `usage` error. With
+`--json`, `study` never writes to the terminal or waits for it, even when stdout is one.
 
 Success:
 
@@ -144,7 +146,12 @@ Only a failure makes the setup unhealthy; then `ok` is `false`, the error code i
 `study_home` is absent when it cannot be resolved. Finding names, in order: `config`,
 `study_home`, `git`, `git_identity` (only when git works), and, when the Study home
 resolves, `local_state`, `topics`, one `topic:<id>` per Topic with a problem, and `library`;
-then `log` and `completion`.
+then `log` and `completion`. A Topic folder study cannot read is a failed `topic:<id>`; a
+Topic whose `.git` is missing, or is a file or a symlink (which Checkpoints refuse), is a
+warning.
+
+`study doctor` writes nothing: it checks permissions instead of writing test files, and the
+Log file is not created by checking it.
 
 ## Completions
 
@@ -153,16 +160,41 @@ records what it did in `$XDG_STATE_HOME/lamplight/completions.json` so `uninstal
 exactly that:
 
 - fish: `$XDG_CONFIG_HOME/fish/completions/study.fish`. No configuration changes.
-- bash: `$BASH_COMPLETION_USER_DIR/completions/study`, else
-  `$XDG_DATA_HOME/bash-completion/completions/study`. Loaded by the bash-completion package;
-  no configuration changes.
+- bash: `completions/study` in the first folder of `$BASH_COMPLETION_USER_DIR` (a
+  `:`-separated list), else `$XDG_DATA_HOME/bash-completion/completions/study`. Loaded by the
+  bash-completion package; no configuration changes.
 - zsh: `_study` in a writable folder already on `$fpath`. `study` cannot read zsh's `fpath`,
-  so it uses `--dir` if given, else the first writable folder in an exported `FPATH`, Oh My
-  Zsh's completion cache (`$ZSH_CACHE_DIR/completions`, when `$ZSH` is set), or Homebrew's
-  `$HOMEBREW_PREFIX/share/zsh/site-functions`. When none works, `study` installs to
-  `$XDG_DATA_HOME/lamplight/completions/_study` and adds one line to `${ZDOTDIR:-~}/.zshrc`
-  that sources it, but only with `--yes` or after asking at a terminal. Without consent it
-  stops with a `usage` error and writes nothing.
+  so it uses `--dir` if given, else the first existing, writable folder in an exported
+  `FPATH`, Oh My Zsh's completion cache (`$ZSH_CACHE_DIR/completions`, when `$ZSH` is set),
+  or Homebrew's `$HOMEBREW_PREFIX/share/zsh/site-functions`. When none works, `study`
+  installs to `$XDG_DATA_HOME/lamplight/completions/_study` and adds one line to
+  `${ZDOTDIR:-~}/.zshrc` that sources it, but only with `--yes` or after asking at a
+  terminal. Without consent it stops with a `usage` error and writes nothing.
+
+What `study` will and won't touch:
+
+- It never replaces a completion file it did not write: `install` stops with
+  `already_exists` unless you pass `--force`. When a package already provides completions
+  for the shell, `install` reports it in `provided_by` and installs nothing, again unless
+  `--force`.
+- The record keeps a SHA-256 of each script. `uninstall` deletes a script only while it is
+  unchanged, and lists changed ones under `kept`.
+- A `.zshrc` that is a symlink (stow, chezmoi) is edited where it points, so the link stays.
+  One that is read-only or has other hard links is never rewritten: `install` still installs
+  the script and lists the line to add by hand under `manual`, and `uninstall` lists the line
+  to remove.
+- `uninstall` finds its line even after an editor changed line endings. A line you edited is
+  left alone, reported as `not_removed` with the line to remove by hand, and kept in the
+  record so a later `uninstall` checks again. `.zshrc` is replaced atomically; if another
+  program keeps changing it meanwhile, `uninstall` stops with `busy`.
+- Installing to a different place first undoes the previous install. A failed install takes
+  back what it wrote.
+- `uninstall` removes a `.zshrc` that `install` created, once it is empty again.
+- A damaged record is `corrupt` (delete it and reinstall); a record from a newer `study` is
+  `newer_format` and is never rewritten.
+
+`uninstall` reports `removed`, `kept` and `already_gone` scripts, `rc_lines` with a
+`status` of `removed`, `already_gone` or `not_removed`, and any `manual` steps.
 
 Packages install the scripts from `study completion <shell>` system-wide instead.
 
@@ -177,6 +209,7 @@ The Log is application diagnostics, never the learner's activity. Records go to 
   is chosen explicitly.
 
 The level comes from `--log-level`, else `STUDY_LOG`, else `info`: one of `debug`, `info`,
-`warn`, `error`. An invalid `--log-level` is a usage error; an invalid `STUDY_LOG` is
-ignored with a warning. In `study mcp`, nothing but MCP messages is ever written to stdout,
+`warn`, `error`, in any case. Anything else, including slog's offsets such as `error+8`, is
+invalid: an invalid `--log-level` is a usage error; an invalid `STUDY_LOG` is ignored with a
+warning. In `study mcp`, nothing but MCP messages is ever written to stdout,
 and stderr shows only warnings and errors whatever the level.

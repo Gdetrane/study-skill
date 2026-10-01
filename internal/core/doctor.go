@@ -75,21 +75,27 @@ var minGit = [2]int{2, 28}
 
 // Diagnose examines the setup without needing it to work: an unresolvable
 // Study home, a missing git or a damaged file each become a Finding instead of
-// an error. It writes nothing except a temporary file that proves the Study
-// home is writable.
+// an error. It writes nothing.
 func Diagnose(ctx context.Context, opts Options) Diagnosis {
 	getenv := opts.Getenv
 	if getenv == nil {
 		getenv = os.Getenv
 	}
 	d := Diagnosis{Healthy: true, Findings: []Finding{}}
-	d.Add(diagnoseConfig(getenv))
+	config := diagnoseConfig(getenv)
+	d.Add(config)
 
 	home, err := resolveHome(getenv)
-	if err != nil {
+	switch {
+	case err != nil && config.Status == FindingFail:
+		// The config Finding already says what is wrong with config.toml.
+		d.Add(Finding{Name: "study_home", Status: FindingFail,
+			Message: "unknown, because config.toml cannot be read",
+			Fix:     "fix config.toml as the config Finding says, or set STUDY_HOME"})
+	case err != nil:
 		d.Add(Finding{Name: "study_home", Status: FindingFail, Message: err.Error(),
 			Fix: "set STUDY_HOME, or study_home in config.toml, to the absolute path of your Study home"})
-	} else {
+	default:
 		d.StudyHome = home
 		d.Add(diagnoseStudyHome(home))
 	}
@@ -155,14 +161,11 @@ func diagnoseStudyHome(home string) Finding {
 			"move the file away, or set STUDY_HOME to another folder"
 		return f
 	}
-	probe, err := os.CreateTemp(home, ".doctor-*")
-	if err != nil {
-		f.Status, f.Message, f.Fix = FindingFail, "cannot write to "+home+": "+err.Error(),
+	if !canWrite(home) {
+		f.Status, f.Message, f.Fix = FindingFail, "cannot write to "+home,
 			"give yourself write permission on "+home
 		return f
 	}
-	_ = probe.Close()
-	_ = os.Remove(probe.Name())
 	f.Status, f.Message = FindingOK, home
 	return f
 }
@@ -302,18 +305,32 @@ func (c *Core) diagnoseTopics(ctx context.Context, d *Diagnosis) {
 	d.Add(summary)
 	for _, p := range problems {
 		f := Finding{Name: "topic:" + p.ID, Status: FindingFail, Message: p.Message}
-		if p.Code == CodeNewerFormat {
+		switch p.Code {
+		case CodeNewerFormat:
 			f.Fix = "upgrade study"
-		} else {
+		case CodeInternal:
+			f.Fix = "make " + filepath.Join(c.home, p.ID) + " and its files readable"
+		default:
 			f.Fix = "fix the file by hand, or restore it from the Topic's git history"
 		}
 		d.Add(f)
 	}
 	for _, t := range topics {
-		if _, err := home.Lstat(filepath.Join(t.ID, ".git")); err != nil {
+		info, err := home.Lstat(filepath.Join(t.ID, ".git"))
+		switch {
+		case errors.Is(err, fs.ErrNotExist):
 			d.Add(Finding{Name: "topic:" + t.ID, Status: FindingWarn,
 				Message: t.ID + " is not a git repository, so Checkpoints cannot be saved",
 				Fix:     "git -C " + t.Path + " init --initial-branch=main"})
+		case err != nil:
+			d.Add(Finding{Name: "topic:" + t.ID, Status: FindingWarn,
+				Message: "cannot read " + t.ID + "/.git: " + err.Error(), Fix: "make " + t.Path + "/.git readable"})
+		case !info.IsDir():
+			// Checkpoints refuse a .git file or symlink: it could point them at
+			// another repository.
+			d.Add(Finding{Name: "topic:" + t.ID, Status: FindingWarn,
+				Message: t.ID + "/.git is a file or a symlink, not a folder, so Checkpoints refuse to save",
+				Fix:     "move " + t.Path + "/.git away, then run git -C " + t.Path + " init --initial-branch=main"})
 		}
 	}
 }
