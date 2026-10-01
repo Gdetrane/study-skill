@@ -1,0 +1,31 @@
+Reviewing linear-algebra
+
+1/3 Card 1 (explore) · new
+  What does a pivot column hold?
+  Enter shows the answer · f flag · s skip · q stop
+  → A leading 1
+  New Card: k keep · e edit · d drop · f flag · q stop
+  How well did you recall it? 1 again · 2 hard · 3 good · 4 easy · f flag · q stop
+  Good. Next in 10 minutes.
+
+2/3 Card 2 (explore) · new
+  What is a free variable?
+  Enter shows the answer · f flag · s skip · q stop
+  What is wrong with it? (Enter to skip)
+  Flagged: your agent will fix it, or edit it with study card edit.
+  Enter shows the answer · f flag · s skip · q stop
+  → One whose column has no pivot
+  New Card: k keep · e edit · d drop · f flag · q stop
+  New prompt (Enter keeps it):
+  New answer (Enter keeps it):
+  How well did you recall it? 1 again · 2 hard · 3 good · 4 easy · f flag · q stop
+  Hard. Next in 5 minutes.
+
+3/3 Card 3 (explore) · new
+  Who invented matrices?
+  Enter shows the answer · f flag · s skip · q stop
+  → Many people
+  New Card: k keep · e edit · d drop · f flag · q stop
+  Dropped.
+
+That's all for now. 2 Reviews recorded, 1 new Card dropped.

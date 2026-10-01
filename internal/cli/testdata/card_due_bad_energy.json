@@ -1,0 +1,7 @@
+{
+  "ok": false,
+  "error": {
+    "code": "invalid_argument",
+    "message": "energy must be full, half or fumes, not \"sleepy\""
+  }
+}
