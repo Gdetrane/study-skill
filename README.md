@@ -30,7 +30,7 @@ still to come.
 
 ## Build
 
-Lamplight needs Go 1.25 or later, and git.
+Lamplight needs Go 1.26 or later, and git.
 
 ```bash
 make build      # builds ./study

@@ -36,7 +36,7 @@ go test ./internal/cli -update      # rewrite CLI golden files, then review the 
 
 ## Code Conventions
 
-- Go 1.25 or later; the module is `github.com/mordor-forge/lamplight/v2`.
+- Go 1.26 or later (go-fsrs v4 needs it); the module is `github.com/mordor-forge/lamplight/v2`.
 - Domain logic lives in `internal/core`. `internal/cli` and `internal/mcpserver` only
   parse input, call the core and render results.
 - Core errors are `*core.Error` with a documented code (`invalid_argument`, `corrupt`,
