@@ -10,8 +10,6 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
-
-	"github.com/BurntSushi/toml"
 )
 
 // Items are what an Event edits, each recorded with its hash before and
@@ -165,10 +163,8 @@ func validateItem(item string, data []byte) error {
 		_, err := parseTopicSettings(data, item)
 		return err
 	case syllabusFile:
-		var f syllabusFileFormat
-		if _, err := toml.Decode(string(data), &f); err != nil {
-			return corruptf("%s is not valid TOML: %v", item, err)
-		}
+		_, err := parseSyllabusFile(data, item)
+		return err
 	}
 	return nil
 }

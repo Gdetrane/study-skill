@@ -1,12 +1,9 @@
 package core
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-
-	"github.com/BurntSushi/toml"
 )
 
 const syllabusFile = "syllabus.toml"
@@ -35,30 +32,29 @@ const (
 //
 // TODO(#25): target dates, Evidence per Lesson, Forecasts and Triage.
 type Syllabus struct {
-	Milestones []Milestone `json:"milestones" toml:"milestones"`
+	Milestones []Milestone `json:"milestones"`
+	// Extra holds settings this version of study does not know, kept as
+	// they are (see syllabus_file.go). Likewise in Milestones and Lessons.
+	Extra map[string]any `json:"-"`
 }
 
 // Milestone is a finish line within a Syllabus.
 type Milestone struct {
-	ID       string           `json:"id" toml:"id"`
-	Title    string           `json:"title" toml:"title"`
-	Outcome  string           `json:"outcome,omitempty" toml:"outcome,omitempty"`
-	Priority string           `json:"priority" toml:"priority" jsonschema:"must, if_time or after_deadline"`
-	Lessons  []SyllabusLesson `json:"lessons" toml:"lessons"`
+	ID       string           `json:"id"`
+	Title    string           `json:"title"`
+	Outcome  string           `json:"outcome,omitempty"`
+	Priority string           `json:"priority,omitempty" jsonschema:"must, if_time or after_deadline; must when left out"`
+	Lessons  []SyllabusLesson `json:"lessons"`
+	Extra    map[string]any   `json:"-"`
 }
 
 // SyllabusLesson is one Lesson as the Syllabus lists it. Its text and Check
 // live in lessons/<id>.md.
 type SyllabusLesson struct {
-	ID    string  `json:"id" toml:"id"`
-	Title string  `json:"title" toml:"title"`
-	Hours float64 `json:"hours,omitempty" toml:"hours,omitempty"`
-}
-
-// syllabusFileFormat is the content of syllabus.toml.
-type syllabusFileFormat struct {
-	Format     int         `toml:"format"`
-	Milestones []Milestone `toml:"milestones"`
+	ID    string         `json:"id"`
+	Title string         `json:"title"`
+	Hours float64        `json:"hours,omitempty"`
+	Extra map[string]any `json:"-"`
 }
 
 // lessons lists the Syllabus's Lessons in order.
@@ -95,7 +91,7 @@ func (s Syllabus) validate() (Syllabus, error) {
 		seen[id] = kind
 		return nil
 	}
-	out := Syllabus{Milestones: make([]Milestone, 0, len(s.Milestones))}
+	out := Syllabus{Milestones: make([]Milestone, 0, len(s.Milestones)), Extra: s.Extra}
 	for _, m := range s.Milestones {
 		if err := use("Milestone", m.ID); err != nil {
 			return s, err
@@ -118,7 +114,7 @@ func (s Syllabus) validate() (Syllabus, error) {
 		if len(m.Lessons) == 0 {
 			return s, invalidf("Milestone %s has no Lessons", m.ID)
 		}
-		clean := Milestone{ID: m.ID, Title: title, Outcome: outcome, Priority: m.Priority}
+		clean := Milestone{ID: m.ID, Title: title, Outcome: outcome, Priority: m.Priority, Extra: m.Extra}
 		for _, l := range m.Lessons {
 			if err := use("Lesson", l.ID); err != nil {
 				return s, err
@@ -130,39 +126,34 @@ func (s Syllabus) validate() (Syllabus, error) {
 			if l.Hours < 0 || l.Hours > maxLessonHours {
 				return s, invalidf("Lesson %s has %v hours: give an estimate between 0 and %d", l.ID, l.Hours, maxLessonHours)
 			}
-			clean.Lessons = append(clean.Lessons, SyllabusLesson{ID: l.ID, Title: lt, Hours: l.Hours})
+			clean.Lessons = append(clean.Lessons, SyllabusLesson{ID: l.ID, Title: lt, Hours: l.Hours, Extra: l.Extra})
 		}
 		out.Milestones = append(out.Milestones, clean)
 	}
 	return out, nil
 }
 
-func encodeSyllabus(s Syllabus) ([]byte, error) {
-	var buf bytes.Buffer
-	buf.WriteString("# Syllabus. Lamplight rewrites this file from approved Revisions; comments are not kept.\n")
-	if err := toml.NewEncoder(&buf).Encode(syllabusFileFormat{Format: FormatVersion, Milestones: s.Milestones}); err != nil {
-		return nil, internalError("encoding "+syllabusFile, err)
-	}
-	return buf.Bytes(), nil
-}
-
 // revisionProposedData is the payload of a revision.proposed Event. The
 // Revision's ID is the Event's ID.
 type revisionProposedData struct {
 	Summary string `json:"summary"`
-	// Base is the version of syllabus.toml the Revision was based on, or
-	// empty for a Topic's first Syllabus.
-	Base     string   `json:"base,omitempty"`
-	Syllabus Syllabus `json:"syllabus"`
+	// Base is the version of syllabus.toml the History recorded when the
+	// Revision was proposed, or empty for a Topic's first Syllabus.
+	Base     string       `json:"base,omitempty"`
+	Syllabus syllabusData `json:"syllabus"`
+	// FromFile marks a Revision that adopts a hand edit of syllabus.toml,
+	// and FileVersion is the version of the file it adopts.
+	FromFile    bool   `json:"from_file,omitempty"`
+	FileVersion string `json:"file_version,omitempty"`
 }
 
 // revisionAppliedData is the payload of a revision.applied Event. It
 // carries the whole Syllabus, so the Event can be applied from the History
 // alone.
 type revisionAppliedData struct {
-	Revision string   `json:"revision"`
-	Approval Approval `json:"approval"`
-	Syllabus Syllabus `json:"syllabus"`
+	Revision string       `json:"revision"`
+	Approval Approval     `json:"approval"`
+	Syllabus syllabusData `json:"syllabus"`
 }
 
 // Approval records how the learner approved a Revision. Approvals are
@@ -184,6 +175,9 @@ type RevisionSpec struct {
 	Summary string
 	// Syllabus is the whole Syllabus as it would be after the Revision.
 	Syllabus Syllabus
+	// FromFile proposes syllabus.toml as it is on disk instead, so a hand
+	// edit becomes an approved Revision rather than being overwritten.
+	FromFile bool
 	DryRun   bool
 }
 
@@ -209,26 +203,52 @@ type RevisionApplied struct {
 // ProposeRevision records a proposed change to the Syllabus, the first
 // Syllabus included. Nothing changes until the learner approves it with
 // ApplyRevision. Lessons already done must keep their place and title.
+//
+// While syllabus.toml differs from the version the History recorded, it was
+// edited outside Lamplight: only a Revision that adopts the edit, with
+// FromFile, can be proposed, so the edit is never silently overwritten.
 func (c *Core) ProposeRevision(ctx context.Context, topicID string, spec RevisionSpec) (RevisionProposal, error) {
 	summary, err := requiredText("summary", spec.Summary, maxSummaryRunes)
 	if err != nil {
 		return RevisionProposal{}, err
 	}
-	syllabus, err := spec.Syllabus.validate()
-	if err != nil {
-		return RevisionProposal{}, err
+	var syllabus Syllabus
+	if !spec.FromFile {
+		if syllabus, err = spec.Syllabus.validate(); err != nil {
+			return RevisionProposal{}, err
+		}
 	}
 	ev, err := c.writeTopic(ctx, topicID, func(s *replayed, view *topicView) (*change, error) {
-		if err := keepsDoneLessons(s, syllabus); err != nil {
-			return nil, err
-		}
 		current, exists, err := view.read(syllabusFile)
 		if err != nil {
 			return nil, err
 		}
-		return &change{Type: eventRevisionProposed, Data: revisionProposedData{
-			Summary: summary, Base: contentHash(current, exists), Syllabus: syllabus,
-		}}, nil
+		recorded := s.versions[syllabusFile].hash
+		edited := contentHash(current, exists) != recorded
+		d := revisionProposedData{Summary: summary, Base: recorded}
+		switch {
+		case spec.FromFile:
+			if !exists {
+				return nil, &Error{Code: CodeNotFound, Message: syllabusFile + " of " + topicID + " does not exist"}
+			}
+			onDisk, err := parseSyllabusFile(current, syllabusFile+" of "+topicID)
+			if err != nil {
+				return nil, err
+			}
+			if syllabus, err = onDisk.validate(); err != nil {
+				return nil, invalidf("%s of %s cannot be adopted as it is: %v", syllabusFile, topicID, err)
+			}
+			d.FromFile, d.FileVersion = true, contentHash(current, exists)
+		case edited:
+			return nil, editedOutside(topicID)
+		default:
+			syllabus = keepExtras(syllabus, s.study.syllabus)
+		}
+		if err := keepsDoneLessons(s, syllabus); err != nil {
+			return nil, err
+		}
+		d.Syllabus = syllabusData{syllabus}
+		return &change{Type: eventRevisionProposed, Data: d}, nil
 	}, spec.DryRun)
 	if err != nil {
 		return RevisionProposal{}, err
@@ -236,9 +256,18 @@ func (c *Core) ProposeRevision(ctx context.Context, topicID string, spec Revisio
 	return RevisionProposal{Topic: topicID, Revision: ev.ID, Summary: summary, Syllabus: syllabus, DryRun: spec.DryRun}, nil
 }
 
+// editedOutside explains why a Syllabus edited by hand blocks Revisions.
+func editedOutside(topicID string) error {
+	return &Error{Code: CodeFailedPrecondition, Message: fmt.Sprintf(
+		"%s of %s was changed outside Lamplight since the last approved Revision; to keep that edit, propose it "+
+			"as a Revision with from_file and apply it once the learner approves; to drop it, restore %s from the "+
+			"Topic's last Checkpoint", syllabusFile, topicID, syllabusFile)}
+}
+
 // ApplyRevision applies a proposed Revision once the learner has approved
-// it. It refuses when the Syllabus changed since the Revision was proposed.
-// Applying a Revision twice changes nothing.
+// it. It refuses when another Revision was applied since this one was
+// proposed, or when syllabus.toml was edited by hand, unless the Revision
+// adopts exactly that edit. Applying a Revision twice changes nothing.
 func (c *Core) ApplyRevision(ctx context.Context, topicID, revision string, approval Approval, dryRun bool) (RevisionApplied, error) {
 	if approval.Via != "chat" {
 		return RevisionApplied{}, invalidf("say how the learner approved the Revision: via must be \"chat\", not %q", approval.Via)
@@ -254,20 +283,24 @@ func (c *Core) ApplyRevision(ctx context.Context, topicID, revision string, appr
 		if !ok {
 			return nil, &Error{Code: CodeNotFound, Message: fmt.Sprintf("Topic %s has no proposed Revision %s", topicID, revision)}
 		}
-		syllabus = p.Syllabus
+		syllabus = p.Syllabus.Syllabus
 		if s.study.applied[revision] {
 			return nil, nil
+		}
+		recorded := s.versions[syllabusFile].hash
+		if p.Base != recorded {
+			return nil, &Error{Code: CodeFailedPrecondition, Message: fmt.Sprintf(
+				"the Syllabus of %s changed since Revision %s was proposed: propose it again from the current Syllabus",
+				topicID, revision)}
 		}
 		current, exists, err := view.read(syllabusFile)
 		if err != nil {
 			return nil, err
 		}
-		if contentHash(current, exists) != p.Base {
-			return nil, &Error{Code: CodeFailedPrecondition, Message: fmt.Sprintf(
-				"the Syllabus of %s changed since Revision %s was proposed: propose it again from the current Syllabus",
-				topicID, revision)}
+		if onDisk := contentHash(current, exists); onDisk != recorded && !(p.FromFile && onDisk == p.FileVersion) {
+			return nil, editedOutside(topicID)
 		}
-		if err := keepsDoneLessons(s, p.Syllabus); err != nil {
+		if err := keepsDoneLessons(s, syllabus); err != nil {
 			return nil, err
 		}
 		return &change{Type: eventRevisionApplied, Items: []string{syllabusFile},
@@ -307,7 +340,7 @@ func applyRevisionApplied(ev event, item string, _ []byte, _ bool) ([]byte, bool
 	if err := json.Unmarshal(ev.Data, &d); err != nil {
 		return nil, false, corruptf("Event %s has an unreadable payload: %v", ev.ID, err)
 	}
-	data, err := encodeSyllabus(d.Syllabus)
+	data, err := encodeSyllabus(d.Syllabus.Syllabus)
 	return data, err == nil, err
 }
 
@@ -328,7 +361,7 @@ func replayRevisionApplied(s *replayed, ev event) error {
 	if _, ok := s.study.proposals[d.Revision]; !ok {
 		return fmt.Errorf("%w: Revision %s", errUnknownItem, d.Revision)
 	}
-	syllabus := d.Syllabus
+	syllabus := d.Syllabus.Syllabus
 	// A Revision never removes a done Lesson; one that does was proposed on
 	// another machine before the Lesson was completed here.
 	for id, l := range s.study.lessons {
@@ -401,7 +434,8 @@ func (c *Core) SyllabusOf(ctx context.Context, topicID string) (SyllabusView, er
 			continue
 		}
 		p := s.study.proposals[ev.ID]
-		view.Proposals = append(view.Proposals, RevisionProposal{Topic: topicID, Revision: ev.ID, Summary: p.Summary, Syllabus: p.Syllabus})
+		view.Proposals = append(view.Proposals, RevisionProposal{Topic: topicID, Revision: ev.ID, Summary: p.Summary,
+			Syllabus: p.Syllabus.Syllabus})
 	}
 	return view, nil
 }

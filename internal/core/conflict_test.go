@@ -42,8 +42,8 @@ func conflicts(s *replayed) []Flag {
 func withLessonDone(t *testing.T) *history {
 	t.Helper()
 	h := &history{t: t}
-	h.add("a1", eventRevisionProposed, revisionProposedData{Summary: "s", Syllabus: oneLessonSyllabus})
-	h.add("a2", eventRevisionApplied, revisionAppliedData{Revision: "a1", Syllabus: oneLessonSyllabus})
+	h.add("a1", eventRevisionProposed, revisionProposedData{Summary: "s", Syllabus: syllabusData{oneLessonSyllabus}})
+	h.add("a2", eventRevisionApplied, revisionAppliedData{Revision: "a1", Syllabus: syllabusData{oneLessonSyllabus}})
 	h.add("a3", eventLessonCompleted, lessonCompletedData{Lesson: "answer", Attempt: "a0",
 		Cards: []cardLine{{ID: "answer.aaaa", Lesson: "answer", Prompt: "A?", Answer: "a"}}})
 	return h
@@ -80,8 +80,8 @@ func TestARevisionRemovingADoneLessonIsFlagged(t *testing.T) {
 	h := withLessonDone(t)
 	other := Syllabus{Milestones: []Milestone{{ID: "basics", Title: "Basics", Priority: PriorityMust,
 		Lessons: []SyllabusLesson{{ID: "question", Title: "The question"}}}}}
-	h.add("b1", eventRevisionProposed, revisionProposedData{Summary: "s", Syllabus: other})
-	h.add("b2", eventRevisionApplied, revisionAppliedData{Revision: "b1", Syllabus: other})
+	h.add("b1", eventRevisionProposed, revisionProposedData{Summary: "s", Syllabus: syllabusData{other}})
+	h.add("b2", eventRevisionApplied, revisionAppliedData{Revision: "b1", Syllabus: syllabusData{other}})
 	if c := conflicts(replay(h.events)); len(c) != 1 || !strings.Contains(c[0].Message, "removed Lesson answer") {
 		t.Errorf("conflicts = %+v", c)
 	}

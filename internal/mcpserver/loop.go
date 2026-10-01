@@ -34,10 +34,15 @@ func addLearnerLoop(server *mcp.Server, c *core.Core) {
 		Title: "Propose a Revision",
 		Description: "Propose a change to a Topic's Syllabus, the first Syllabus included: give the whole Syllabus as it " +
 			"would be afterwards, and a summary in plain words. Nothing changes until the learner approves it and you " +
-			"call revision_apply. Show the learner the change, naming Lessons by title.",
+			"call revision_apply. Show the learner the change, naming Lessons by title. If status flags syllabus.toml as " +
+			"edited outside Lamplight, set from_file instead to propose the learner's edit as it is.",
 		Annotations: write,
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in revisionProposeInput) (*mcp.CallToolResult, core.RevisionProposal, error) {
-		p, err := c.ProposeRevision(ctx, in.Topic, core.RevisionSpec{Summary: in.Summary, Syllabus: in.Syllabus})
+		spec := core.RevisionSpec{Summary: in.Summary, FromFile: in.FromFile}
+		if in.Syllabus != nil {
+			spec.Syllabus = *in.Syllabus
+		}
+		p, err := c.ProposeRevision(ctx, in.Topic, spec)
 		return nil, p, toolErr(err)
 	})
 
@@ -153,9 +158,10 @@ type lessonInput struct {
 }
 
 type revisionProposeInput struct {
-	Topic    string        `json:"topic" jsonschema:"the Topic's id"`
-	Summary  string        `json:"summary" jsonschema:"what changes and why, in plain words"`
-	Syllabus core.Syllabus `json:"syllabus" jsonschema:"the whole Syllabus as it would be after the Revision"`
+	Topic    string         `json:"topic" jsonschema:"the Topic's id"`
+	Summary  string         `json:"summary" jsonschema:"what changes and why, in plain words"`
+	Syllabus *core.Syllabus `json:"syllabus,omitempty" jsonschema:"the whole Syllabus as it would be after the Revision; leave out with from_file"`
+	FromFile bool           `json:"from_file,omitempty" jsonschema:"propose syllabus.toml as it is on disk, to adopt the learner's hand edit"`
 }
 
 type revisionApplyInput struct {
