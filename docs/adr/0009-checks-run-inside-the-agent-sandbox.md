@@ -51,6 +51,33 @@ Building it showed that this list alone is not enough, and closed three more rou
 that nothing ran, and then checks that plain git does run each one, so it cannot pass
 vacuously.
 
+The agent can also change the Topic while a Checkpoint runs, and a review showed it could
+redirect one: while the Checkpoint waited for the index lock, the agent swapped `.git` for a
+symbolic link to another of the learner's repositories, and the core committed the Topic's
+files onto that repository's branch. Checkpoints now pin the repository:
+
+- The Topic folder and its `.git` are opened once and held open. The index lock, the
+  temporary index and the replacement of the learner's index all go through the open
+  folders, never through their names.
+- On Linux, git works on the open folders too: it inherits them as descriptors and gets
+  `GIT_DIR=/proc/self/fd/3` and `GIT_WORK_TREE=/proc/self/fd/4`, running from `/`, outside
+  the work tree, where git keeps that `GIT_DIR` as given instead of resolving it to a name.
+  A test swaps `.git` just before the branch moves and checks the commit still lands in the
+  Topic.
+- Before each step in which git writes (staging, and moving the branch) the names are
+  checked again: the Topic folder and `.git` must still be the open folders, and `.git` must
+  have no `commondir` file and no symbolic link for `HEAD`, the refs and logs folders on the
+  way to the branch, `objects` or a folder in it. Afterwards the branch is read back through
+  the open `.git`. Any difference stops the Checkpoint with nothing committed, and the
+  learner's index is put back.
+
+What remains is a race of a few milliseconds between the last check and git's own writes.
+On Linux, the agent would have to turn a folder inside `.git`, such as `refs/heads`, into a
+symbolic link in that window. On other systems, where git receives names, swapping `.git`
+itself in that window is enough; the read-back then reports the Checkpoint as failed, but the
+other repository's branch has already moved. Closing the window completely would mean moving
+the branch without git, or keeping `.git` out of the agent's reach.
+
 The core also treats agent input as untrusted: Topic files are accessed through `os.Root` so
 symlinks cannot escape the Topic, IDs are validated, and child processes never inherit the
 MCP server's stdin.

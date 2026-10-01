@@ -97,25 +97,38 @@ func (r *repo) listUntracked(ctx context.Context, index, sub string) ([]string, 
 	return paths, nil
 }
 
-// hashWorktree writes a blob for every path that holds a regular file or a
-// symbolic link, and returns what it found. Paths that are missing, that are
-// folders or special files, or that lie beyond a symbolic link (as git would
-// see them) are left out of the result, which records them as deleted.
+// hashWorktree hashes every path that holds a regular file or a symbolic link,
+// writing the blobs when write is set, and returns what it found. Paths that
+// are missing, that are folders or special files, or that lie beyond a
+// symbolic link (as git would see them) are left out of the result, which
+// records them as deleted; so are files that vanish while being hashed.
 //
-// Files are opened by this process through an os.Root, so nothing outside the
-// Topic is ever read, and handed to git as already-open descriptors
-// (/dev/fd/N). git therefore hashes exactly the file that was checked, with
-// no window in which a folder could be swapped for a symbolic link.
-// --no-filters means the raw bytes are stored: no clean or process filter,
-// line-ending conversion or Git LFS.
-func (r *repo) hashWorktree(ctx context.Context, paths []string) (map[string]fileState, error) {
-	root, err := os.OpenRoot(r.dir)
-	if err != nil {
-		return nil, err
+// Files are opened by this process through the pinned Topic root, so nothing
+// outside the Topic is ever read, and handed to git as already-open
+// descriptors (/dev/fd/N). git therefore hashes exactly the file that was
+// checked, with no window in which a folder could be swapped for a symbolic
+// link. --no-filters means the raw bytes are stored: no clean or process
+// filter, line-ending conversion or Git LFS.
+//
+// A file that an editor replaces or rewrites while it is being hashed makes
+// the whole pass start again once; if files keep changing, it gives up with
+// ErrWorktreeChanged.
+func (r *repo) hashWorktree(ctx context.Context, paths []string, write bool) (map[string]fileState, error) {
+	states, err := r.hashWorktreeOnce(ctx, paths, write)
+	if errors.Is(err, errChanged) {
+		states, err = r.hashWorktreeOnce(ctx, paths, write)
 	}
-	defer root.Close()
+	if errors.Is(err, errChanged) {
+		return nil, fmt.Errorf("%w: %v", ErrWorktreeChanged, err)
+	}
+	return states, err
+}
 
-	s := scanner{root: root, dirs: map[string]bool{}}
+// errChanged marks a file that changed while it was being hashed.
+var errChanged = errors.New("changed while the Checkpoint was being taken")
+
+func (r *repo) hashWorktreeOnce(ctx context.Context, paths []string, write bool) (map[string]fileState, error) {
+	s := scanner{root: r.root, dirs: map[string]bool{}}
 	states := make(map[string]fileState, len(paths))
 	var files []pending
 	for _, p := range paths {
@@ -128,16 +141,18 @@ func (r *repo) hashWorktree(ctx context.Context, paths []string) (map[string]fil
 		case info.Mode().IsRegular():
 			files = append(files, pending{path: p, info: info})
 		case info.Mode()&fs.ModeSymlink != 0:
-			state, err := r.hashSymlink(ctx, p)
+			state, ok, err := r.hashSymlink(ctx, p, write)
 			if err != nil {
 				return nil, err
 			}
-			states[p] = state
+			if ok {
+				states[p] = state
+			}
 		}
 	}
 	for start := 0; start < len(files); start += blobBatch {
 		batch := files[start:min(start+blobBatch, len(files))]
-		if err := r.hashFiles(ctx, root, batch, states); err != nil {
+		if err := r.hashFiles(ctx, batch, write, states); err != nil {
 			return nil, err
 		}
 	}
@@ -150,65 +165,98 @@ type pending struct {
 	info fs.FileInfo
 }
 
-// hashFiles writes one batch of regular files as blobs.
-func (r *repo) hashFiles(ctx context.Context, root *os.Root, batch []pending, states map[string]fileState) error {
-	opened := make([]*os.File, 0, len(batch))
+// hashFiles hashes one batch of regular files, writing them as blobs when
+// write is set.
+func (r *repo) hashFiles(ctx context.Context, batch []pending, write bool, states map[string]fileState) error {
+	var opened []*os.File
+	var kept []pending
+	var before []fs.FileInfo
 	defer func() {
 		for _, f := range opened {
 			f.Close()
 		}
 	}()
-	args := []string{"hash-object", "-w", "--no-filters", "--"}
-	for i, p := range batch {
-		// O_NONBLOCK keeps a FIFO swapped in after the check from blocking.
-		f, err := root.OpenFile(p.path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
-		if err != nil {
-			return fmt.Errorf("open %s: %w", p.path, err)
+	args := []string{"hash-object", "--no-filters", "--"}
+	if write {
+		args = []string{"hash-object", "-w", "--no-filters", "--"}
+	}
+	hook("hash")
+	for _, p := range batch {
+		// O_NONBLOCK keeps a FIFO swapped in after the check from blocking;
+		// O_NOFOLLOW refuses a symbolic link swapped in for the file.
+		f, err := r.root.OpenFile(p.path, os.O_RDONLY|syscall.O_NONBLOCK|syscall.O_NOFOLLOW, 0)
+		if missing(err) {
+			continue // deleted since it was listed: record it as deleted
 		}
-		opened = append(opened, f)
+		if err != nil {
+			return fmt.Errorf("%s %w: %v", p.path, errChanged, err)
+		}
 		now, err := f.Stat()
 		if err != nil {
+			f.Close()
 			return err
 		}
 		if !now.Mode().IsRegular() || !os.SameFile(p.info, now) {
-			return fmt.Errorf("%s changed while the checkpoint was being taken; try again", p.path)
+			f.Close()
+			return fmt.Errorf("%s %w", p.path, errChanged)
 		}
-		args = append(args, "/dev/fd/"+strconv.Itoa(3+i))
+		args = append(args, "/dev/fd/"+strconv.Itoa(r.fdBase()+len(opened)))
+		opened = append(opened, f)
+		kept = append(kept, p)
+		before = append(before, now)
+	}
+	if len(kept) == 0 {
+		return nil
 	}
 	out, err := r.git(ctx, call{files: opened}, args...)
 	if err != nil {
 		return err
 	}
 	oids := strings.Fields(out)
-	if len(oids) != len(batch) {
-		return fmt.Errorf("git hash-object: got %d object IDs for %d files", len(oids), len(batch))
+	if len(oids) != len(kept) {
+		return fmt.Errorf("git hash-object: got %d object IDs for %d files", len(oids), len(kept))
 	}
-	for i, p := range batch {
+	for i, p := range kept {
+		// A file rewritten in place while git read it may have been hashed
+		// half old, half new.
+		after, err := opened[i].Stat()
+		if err != nil {
+			return err
+		}
+		if after.Size() != before[i].Size() || !after.ModTime().Equal(before[i].ModTime()) {
+			return fmt.Errorf("%s %w", p.path, errChanged)
+		}
 		mode := modeFile
-		if p.info.Mode()&0o100 != 0 {
+		if before[i].Mode()&0o100 != 0 {
 			mode = modeExec
 		}
-		states[p.path] = fileState{mode: mode, oid: oids[i], size: p.info.Size()}
+		states[p.path] = fileState{mode: mode, oid: oids[i], size: before[i].Size()}
 	}
 	return nil
 }
 
-// hashSymlink stores a symbolic link as git does: a blob holding its target,
-// with mode 120000. The target is never followed.
-func (r *repo) hashSymlink(ctx context.Context, path string) (fileState, error) {
-	// Go 1.24 has no Root.Readlink. scanner.lstat has just checked that no
-	// leading component is a link, so this reads a link inside the Topic;
-	// a concurrent swap could at worst expose a link's target text, never a
-	// file's contents.
-	target, err := os.Readlink(filepath.Join(r.dir, filepath.FromSlash(path)))
-	if err != nil {
-		return fileState{}, err
+// hashSymlink hashes a symbolic link as git stores it: a blob holding its
+// target, with mode 120000. The target is never followed. ok is false when
+// the link vanished since it was listed.
+func (r *repo) hashSymlink(ctx context.Context, path string, write bool) (_ fileState, ok bool, _ error) {
+	// scanner.lstat has just checked that no leading component is a link,
+	// and Root.Readlink resolves nothing outside the Topic.
+	target, err := r.root.Readlink(path)
+	if missing(err) {
+		return fileState{}, false, nil
 	}
-	out, err := r.git(ctx, call{stdin: strings.NewReader(target)}, "hash-object", "-w", "--no-filters", "--stdin")
 	if err != nil {
-		return fileState{}, err
+		return fileState{}, false, fmt.Errorf("%s %w: %v", path, errChanged, err)
 	}
-	return fileState{mode: modeSymlink, oid: strings.TrimSpace(out), size: int64(len(target))}, nil
+	args := []string{"hash-object", "--no-filters", "--stdin"}
+	if write {
+		args = []string{"hash-object", "-w", "--no-filters", "--stdin"}
+	}
+	out, err := r.git(ctx, call{stdin: strings.NewReader(target)}, args...)
+	if err != nil {
+		return fileState{}, false, err
+	}
+	return fileState{mode: modeSymlink, oid: strings.TrimSpace(out), size: int64(len(target))}, true, nil
 }
 
 // scanner looks at working tree paths the way git does: a path is absent when

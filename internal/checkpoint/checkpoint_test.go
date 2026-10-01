@@ -3,6 +3,8 @@ package checkpoint_test
 import (
 	"context"
 	"errors"
+	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -48,39 +50,81 @@ func TestTakeCommitsFirstCheckpointThenSkipsWhenUnchanged(t *testing.T) {
 	}
 }
 
-func TestTakeDryRunCommitsNothing(t *testing.T) {
+func TestTakeDryRunWritesNothingToGit(t *testing.T) {
 	dir := newRepo(t)
 	write(t, dir, "notes.md", "first")
 	first := take(t, dir, checkpoint.Learner, "")
 	write(t, dir, "notes.md", "second")
-	indexBefore, err := os.ReadFile(filepath.Join(dir, ".git", "index"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	write(t, dir, "data.bin", strings.Repeat("x", 2048))
+	before := gitFolder(t, dir)
 
-	res, err := checkpoint.Take(context.Background(), dir, checkpoint.Options{Role: checkpoint.Agent, Time: when, DryRun: true})
+	dry := checkpoint.Options{Role: checkpoint.Agent, Time: when, DryRun: true, LargeFileThreshold: 1024}
+	res, err := checkpoint.Take(context.Background(), dir, dry)
 	if err != nil {
 		t.Fatalf("Take: %v", err)
 	}
-	if !res.Committed || res.Commit != "" || res.Tree == "" {
+	if !res.Committed || res.Commit != "" || res.Tree != "" {
 		t.Errorf("dry run with changes = %+v, want a would-commit result with no commit", res)
 	}
-	if head := git(t, dir, "rev-parse", "HEAD"); head != first.Commit {
-		t.Errorf("a dry run moved HEAD from %s to %s", first.Commit, head)
+	if len(res.LargeFiles) != 1 || res.LargeFiles[0] != (checkpoint.LargeFile{Path: "data.bin", Size: 2048}) {
+		t.Errorf("large files = %+v, want data.bin", res.LargeFiles)
 	}
-	indexAfter, err := os.ReadFile(filepath.Join(dir, ".git", "index"))
-	if err != nil {
-		t.Fatal(err)
+	if after := gitFolder(t, dir); !maps.Equal(before, after) {
+		t.Errorf("a dry run changed .git:\nbefore %v\nafter  %v", before, after)
 	}
-	if string(indexAfter) != string(indexBefore) {
-		t.Error("a dry run changed the learner's index")
+
+	// A dry run reads the index as it is, without waiting for its lock.
+	write(t, dir, ".git/index.lock", "")
+	start := time.Now()
+	res, err = checkpoint.Take(context.Background(), dir, dry)
+	if err != nil || !res.Committed || time.Since(start) > 2*time.Second {
+		t.Errorf("dry run while the index is locked = %+v, %v after %s", res, err, time.Since(start))
+	}
+	if err := os.Remove(filepath.Join(dir, ".git", "index.lock")); err != nil {
+		t.Errorf("the other process's index.lock is gone: %v", err)
 	}
 
 	write(t, dir, "notes.md", "first")
-	res, err = checkpoint.Take(context.Background(), dir, checkpoint.Options{Role: checkpoint.Agent, Time: when, DryRun: true})
+	if err := os.Remove(filepath.Join(dir, "data.bin")); err != nil {
+		t.Fatal(err)
+	}
+	res, err = checkpoint.Take(context.Background(), dir, dry)
 	if err != nil || res.Committed || res.Commit != first.Commit {
 		t.Errorf("dry run without changes = %+v, %v; want a skip at HEAD", res, err)
 	}
+	// The dry run agrees with the Checkpoint it previews.
+	write(t, dir, "notes.md", "third")
+	preview, err := checkpoint.Take(context.Background(), dir, dry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if real := take(t, dir, checkpoint.Agent, ""); preview.Committed != real.Committed {
+		t.Errorf("dry run said committed=%v, the Checkpoint committed=%v", preview.Committed, real.Committed)
+	}
+}
+
+// gitFolder records every file and folder in dir/.git with its size and
+// modification time.
+func gitFolder(t *testing.T, dir string) map[string]string {
+	t.Helper()
+	seen := map[string]string{}
+	root := filepath.Join(dir, ".git")
+	err := filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(root, p)
+		seen[rel] = fmt.Sprintf("%d %d", info.Size(), info.ModTime().UnixNano())
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return seen
 }
 
 func TestTakeSkipsAnEmptyTopic(t *testing.T) {

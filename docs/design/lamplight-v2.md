@@ -323,15 +323,24 @@ well. The commit author is read from the learner's git configuration beforehand 
 explicitly.
 
 Checkpoints stage into a copy of git's index while holding `.git/index.lock`, then replace
-the index, so `git status` is clean afterwards and a refused Checkpoint leaves the learner's
-index untouched. A Checkpoint never runs `git init`: Topic creation does, and writes the
-default `.gitignore`. The cost is that Checkpoints store raw bytes, so
-line-ending conversion and Git LFS are not applied, which is acceptable for study Topics.
+the index, so `git status` is clean afterwards. A refused or failed Checkpoint leaves the
+learner's index untouched; if the branch cannot be moved, the learner's index is put back. A
+Checkpoint never runs `git init`: Topic creation does, and writes the default `.gitignore`.
+The cost is that Checkpoints store raw bytes, so line-ending conversion and Git LFS are not
+applied, which is acceptable for study Topics.
+
+The agent can change the Topic while a Checkpoint runs, so a Checkpoint pins the Topic
+folder and its `.git` when it starts, works through the open folders (on Linux, git does
+too), and checks the names again before git writes; ADR-0009 describes this and the race
+that remains.
 
 A Checkpoint skips empty commits, refuses to commit during a merge, a rebase or on a
-detached HEAD, retries when an editor holds git's lock (`GIT_OPTIONAL_LOCKS=0`), and warns
-before committing large files. The default `.gitignore` covers data and model artefacts
-(Parquet, DuckDB, GGUF, safetensors, PyTorch checkpoints).
+detached HEAD, waits briefly when an editor holds git's index lock, and warns before
+committing large files. Files an editor replaces while they are being saved are saved once
+more; files that vanish count as deleted. A dry run reports whether a Checkpoint would be
+made, and its large files, without writing anything to `.git` or waiting for the lock. The
+default `.gitignore` covers data and model artefacts (Parquet, DuckDB, GGUF, safetensors,
+PyTorch checkpoints).
 
 ## Distribution and setup
 

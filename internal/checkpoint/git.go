@@ -6,11 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 // hookEvents lists every hook event in githooks(5) as of git 2.55. Each one is
@@ -38,11 +41,29 @@ var emptyTrees = map[string]string{
 
 // repo runs git against one Topic. Every invocation goes through git, which
 // applies the same hardening to all of them.
+//
+// The Topic folder and its .git are pinned when the repo is opened: root and
+// gitRoot hold them open, so every file the core reads or writes itself (the
+// index, index.lock, the temporary index) stays in the folders that were
+// checked, even if a name is swapped for a symbolic link afterwards. On Linux
+// git is pinned too: it inherits both folders as descriptors and gets
+// GIT_DIR=/proc/self/fd/3, which git keeps as the repository path when it runs
+// outside the work tree, so its writes follow the pinned folder rather than
+// the name. verify re-checks the names before every step in which git writes.
 type repo struct {
 	dir       string      // the Topic's working tree, absolute
 	gitDir    string      // dir/.git, always a real directory
 	format    string      // object format: sha1 or sha256
 	overrides [][2]string // configuration forced at command scope
+
+	root    *os.Root    // the Topic folder, pinned
+	gitRoot *os.Root    // its .git folder, pinned
+	dirInfo fs.FileInfo // identity of the pinned Topic folder
+	gitInfo fs.FileInfo // identity of the pinned .git
+	// pins are .git and the Topic folder as open files, inherited by git as
+	// descriptors 3 and 4 where /proc/self/fd can name them (Linux). Empty
+	// elsewhere, where git gets the names.
+	pins []*os.File
 }
 
 // call describes one git invocation.
@@ -51,7 +72,7 @@ type call struct {
 	index    string     // GIT_INDEX_FILE; empty means the Topic's own index
 	stdin    io.Reader  // nil reads from the null device, never our stdin
 	env      []string   // extra environment, such as the commit identity
-	files    []*os.File // inherited as file descriptors 3, 4, ...
+	files    []*os.File // inherited after the pins, from descriptor fdBase
 	// learnerScopes keeps the learner's global and system configuration
 	// visible. Only plain `git config --get` reads use it.
 	learnerScopes bool
@@ -83,27 +104,83 @@ func exitCode(err error) int {
 	return -1
 }
 
+// canPin reports whether git can be handed the pinned folders as
+// /proc/self/fd paths.
+var canPin = sync.OnceValue(func() bool {
+	if runtime.GOOS != "linux" {
+		return false
+	}
+	info, err := os.Stat("/proc/self/fd")
+	return err == nil && info.IsDir()
+})
+
 // open checks that dir is the top folder of a git repository whose metadata
-// lives inside it, and prepares the hardened configuration.
-func open(ctx context.Context, dir string) (*repo, error) {
+// lives inside it, pins both folders and prepares the hardened configuration.
+// The caller closes the repo.
+func open(ctx context.Context, dir string) (_ *repo, err error) {
 	abs, err := filepath.Abs(dir)
 	if err != nil {
 		return nil, err
 	}
-	gitDir := filepath.Join(abs, ".git")
-	// A .git file or symbolic link could point the core's writes at another
-	// repository of the learner's, outside the agent's sandbox.
-	info, err := os.Lstat(gitDir)
+	// A symbolic link in place of the Topic folder or its .git, or a .git
+	// file, could point the core's writes at another repository of the
+	// learner's, outside the agent's sandbox.
+	info, err := os.Lstat(abs)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrNotRepository, err)
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("%w: %s is not a folder", ErrNotRepository, abs)
+	}
+	r := &repo{dir: abs, gitDir: filepath.Join(abs, ".git"), overrides: baseOverrides()}
+	defer func() {
+		if err != nil {
+			r.close()
+		}
+	}()
+	if r.root, err = os.OpenRoot(abs); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrNotRepository, err)
+	}
+	if r.dirInfo, err = r.root.Stat("."); err != nil {
+		return nil, err
+	}
+	if !os.SameFile(info, r.dirInfo) {
+		return nil, fmt.Errorf("%w: %s was replaced while it was being opened", ErrRepositoryChanged, abs)
+	}
+	gitInfo, err := r.root.Lstat(".git")
 	if err != nil {
 		return nil, fmt.Errorf("%w: no .git folder in %s", ErrNotRepository, abs)
 	}
-	if !info.IsDir() {
-		return nil, fmt.Errorf("%w: %s is not a folder", ErrNotRepository, gitDir)
+	if !gitInfo.IsDir() {
+		return nil, fmt.Errorf("%w: %s is not a folder", ErrNotRepository, r.gitDir)
 	}
-	r := &repo{dir: abs, gitDir: gitDir, overrides: baseOverrides()}
+	if r.gitRoot, err = r.root.OpenRoot(".git"); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrNotRepository, err)
+	}
+	if r.gitInfo, err = r.gitRoot.Stat("."); err != nil {
+		return nil, err
+	}
+	if !os.SameFile(gitInfo, r.gitInfo) {
+		return nil, fmt.Errorf("%w: %s was replaced while it was being opened", ErrRepositoryChanged, r.gitDir)
+	}
+	if canPin() {
+		for _, root := range []*os.Root{r.gitRoot, r.root} {
+			f, err := root.Open(".")
+			if err != nil {
+				return nil, err
+			}
+			r.pins = append(r.pins, f)
+		}
+	}
+	if err := r.verify(); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrNotRepository, err)
+	}
 
 	out, err := r.git(ctx, call{readOnly: true}, "rev-parse",
 		"--show-object-format", "--path-format=absolute", "--git-common-dir")
+	if errors.Is(err, exec.ErrNotFound) {
+		return nil, fmt.Errorf("%w: %v", ErrGitNotFound, err)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrNotRepository, err)
 	}
@@ -116,8 +193,8 @@ func open(ctx context.Context, dir string) (*repo, error) {
 		return nil, fmt.Errorf("unsupported object format %q", r.format)
 	}
 	// A commondir file would send refs and objects to another repository.
-	if !sameDir(lines[1], gitDir) {
-		return nil, fmt.Errorf("%w: %s shares refs with %s", ErrNotRepository, gitDir, lines[1])
+	if common, err := os.Stat(lines[1]); err != nil || !os.SameFile(common, r.gitInfo) {
+		return nil, fmt.Errorf("%w: %s shares refs with %s", ErrNotRepository, r.gitDir, lines[1])
 	}
 
 	names, err := r.configuredHooks(ctx)
@@ -139,6 +216,100 @@ func open(ctx context.Context, dir string) (*repo, error) {
 	}
 	return r, nil
 }
+
+// close releases the pinned folders.
+func (r *repo) close() {
+	for _, f := range r.pins {
+		f.Close()
+	}
+	if r.gitRoot != nil {
+		r.gitRoot.Close()
+	}
+	if r.root != nil {
+		r.root.Close()
+	}
+}
+
+// verify checks that the Topic folder and its .git are still the pinned
+// folders under their names, and that nothing in .git that git writes
+// through by name leads elsewhere: a commondir file, or a symbolic link for
+// HEAD, the refs, logs or objects folders, or a folder in objects. A
+// sandboxed agent can edit the Topic while a Checkpoint waits for the index
+// lock, so Take runs it again before every step in which git writes.
+func (r *repo) verify() error {
+	changed := func(format string, args ...any) error {
+		return fmt.Errorf("%w: "+format, append([]any{ErrRepositoryChanged}, args...)...)
+	}
+	if info, err := os.Lstat(r.dir); err != nil || !info.IsDir() || !os.SameFile(info, r.dirInfo) {
+		return changed("%s is no longer the Topic folder that was opened", r.dir)
+	}
+	if info, err := os.Lstat(r.gitDir); err != nil || !info.IsDir() || !os.SameFile(info, r.gitInfo) {
+		return changed("%s is no longer the .git folder that was opened", r.gitDir)
+	}
+	if _, err := r.gitRoot.Lstat("commondir"); !missing(err) {
+		return changed(".git/commondir would send refs and objects to another repository")
+	}
+	if info, err := r.gitRoot.Lstat("HEAD"); err == nil && !info.Mode().IsRegular() {
+		return changed(".git/HEAD is not a regular file")
+	}
+	for _, name := range []string{"refs", "refs/heads", "logs", "logs/refs", "logs/refs/heads", "objects"} {
+		if info, err := r.gitRoot.Lstat(name); err == nil && !info.IsDir() {
+			return changed(".git/%s is not a folder", name)
+		}
+	}
+	objects, err := fs.ReadDir(r.gitRoot.FS(), "objects")
+	if err != nil && !missing(err) {
+		return err
+	}
+	for _, e := range objects {
+		if e.Type()&fs.ModeSymlink != 0 {
+			return changed(".git/objects/%s is a symbolic link", e.Name())
+		}
+	}
+	return nil
+}
+
+// verifyBranch checks, through the pinned .git, that nothing on the way to
+// the branch's loose ref or its reflog is a symbolic link, so update-ref
+// writes inside this repository.
+func (r *repo) verifyBranch(branch string) error {
+	for _, base := range []string{"", "logs/"} {
+		parts := strings.Split(base+branch, "/")
+		for i := 1; i <= len(parts); i++ {
+			name := strings.Join(parts[:i], "/")
+			info, err := r.gitRoot.Lstat(name)
+			if missing(err) {
+				break
+			}
+			if err != nil {
+				return err
+			}
+			if info.Mode()&fs.ModeSymlink != 0 {
+				return fmt.Errorf("%w: .git/%s is a symbolic link", ErrRepositoryChanged, name)
+			}
+		}
+	}
+	return nil
+}
+
+// gitDirArg and workTreeArg are the paths git is given for the repository and
+// the work tree: the pinned descriptors where possible, else the names.
+func (r *repo) gitDirArg() string {
+	if len(r.pins) > 0 {
+		return "/proc/self/fd/3"
+	}
+	return r.gitDir
+}
+
+func (r *repo) workTreeArg() string {
+	if len(r.pins) > 0 {
+		return "/proc/self/fd/4"
+	}
+	return r.dir
+}
+
+// fdBase is the descriptor number git sees for call.files[0].
+func (r *repo) fdBase() int { return 3 + len(r.pins) }
 
 // baseOverrides is the configuration forced on every call. It is passed at
 // command scope (GIT_CONFIG_COUNT, the same scope as -c), which takes
@@ -203,12 +374,17 @@ func (r *repo) learnerConfig(ctx context.Context, key string, isPath bool) (stri
 }
 
 // git runs one git command in the Topic and returns its standard output.
+//
+// It runs from /, outside the work tree: git then keeps GIT_DIR exactly as
+// given instead of resolving it to a path, which is what keeps a pinned
+// /proc/self/fd/3 pinned. Commands that need the work tree change into it
+// themselves.
 func (r *repo) git(ctx context.Context, c call, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", append([]string{"--no-pager"}, args...)...)
-	cmd.Dir = r.dir
+	cmd.Dir = "/"
 	cmd.Env = r.environ(c)
 	cmd.Stdin = c.stdin
-	cmd.ExtraFiles = c.files
+	cmd.ExtraFiles = append(append([]*os.File{}, r.pins...), c.files...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {
@@ -231,10 +407,10 @@ func (r *repo) environ(c call) []string {
 	}
 	env = append(env,
 		"LC_ALL=C",
-		"GIT_DIR="+r.gitDir,
+		"GIT_DIR="+r.gitDirArg(),
 		// Overrides core.worktree, which could otherwise point the file
 		// listing at a folder outside the Topic.
-		"GIT_WORK_TREE="+r.dir,
+		"GIT_WORK_TREE="+r.workTreeArg(),
 		"GIT_TERMINAL_PROMPT=0",
 		"GIT_NO_LAZY_FETCH=1",
 		// Replace refs could make HEAD^{tree} name another tree.
@@ -261,17 +437,4 @@ func (r *repo) environ(c call) []string {
 // nullOID is the all-zero object ID, which update-index reads as "remove".
 func (r *repo) nullOID() string {
 	return strings.Repeat("0", len(emptyTrees[r.format]))
-}
-
-// sameDir reports whether a and b name the same directory.
-func sameDir(a, b string) bool {
-	ai, err := os.Stat(a)
-	if err != nil {
-		return false
-	}
-	bi, err := os.Stat(b)
-	if err != nil {
-		return false
-	}
-	return os.SameFile(ai, bi)
 }
