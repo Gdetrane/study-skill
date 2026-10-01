@@ -104,11 +104,20 @@ type SessionOpened struct {
 	// Resume is where the learner stopped, to show first.
 	Resume ResumePoint `json:"resume"`
 	// Unclosed is the previous Session when it ended without a Next step,
-	// for instance because the terminal was closed: ask the learner for
-	// the missing note, and record it with session_close naming that
-	// Session.
-	Unclosed *SessionInfo `json:"unclosed,omitempty"`
-	DryRun   bool         `json:"dry_run,omitempty"`
+	// for instance because the terminal was closed, with what changed
+	// since the last Checkpoint: show the learner, ask for the missing
+	// note, and record it with session_close naming that Session.
+	Unclosed *UnclosedSession `json:"unclosed,omitempty"`
+	// Suggested is the Focus the Energy suggests, when an Energy is given
+	// and no Focus was chosen yet. The learner chooses.
+	Suggested *FocusSuggestion `json:"suggested,omitempty"`
+	// Cards says whether Cards are ready to review, never how many.
+	Cards *CardsReady `json:"cards,omitempty"`
+	// LongGap is true when the previous Session was more than a week ago:
+	// start with a short recap of where the Topic stands and a two-minute
+	// warm-up, never with the size of any backlog.
+	LongGap bool `json:"long_gap,omitempty"`
+	DryRun  bool `json:"dry_run,omitempty"`
 }
 
 // SessionInfo describes a Session.
@@ -128,7 +137,9 @@ type SessionClosed struct {
 }
 
 // OpenSession opens a Session on a Topic, which also makes it the most
-// recent Topic, and returns where the learner stopped.
+// recent Topic, and returns where the learner stopped: the Resume point, a
+// Session left unclosed with what changed since the last Checkpoint, the
+// Focus the Energy suggests, and whether Cards are ready.
 func (c *Core) OpenSession(ctx context.Context, topicID string, spec SessionSpec) (SessionOpened, error) {
 	switch spec.Energy {
 	case "", EnergyFull, EnergyHalf, EnergyFumes:
@@ -141,10 +152,19 @@ func (c *Core) OpenSession(ctx context.Context, topicID string, spec SessionSpec
 		return SessionOpened{}, invalidf("focus must be learn, practice, reviews or explore, not %q", spec.Focus)
 	}
 	result := SessionOpened{Topic: topicID, DryRun: spec.DryRun}
-	ev, err := c.writeTopic(ctx, topicID, func(s *replayed, _ *topicView) (*change, error) {
+	now := c.now()
+	ev, err := c.writeTopic(ctx, topicID, func(s *replayed, view *topicView) (*change, error) {
 		result.Resume = s.study.resume()
-		if last := s.study.lastSession(); last != nil && !last.closed {
-			result.Unclosed = last.info()
+		describeBreakPoint(view.root, &result.Resume)
+		result.Cards = s.study.cardsReady(now)
+		if last := s.study.lastSession(); last != nil {
+			if !last.closed {
+				result.Unclosed = &UnclosedSession{SessionInfo: *last.info()}
+			}
+			result.LongGap = now.Sub(last.opened) > longGap
+		}
+		if spec.Focus == "" {
+			result.Suggested = suggestFocus(spec.Energy, result.Resume, result.Cards)
 		}
 		return &change{Type: eventSessionOpened, Data: sessionOpenedData{Energy: spec.Energy, Focus: spec.Focus}}, nil
 	}, spec.DryRun)
@@ -152,6 +172,9 @@ func (c *Core) OpenSession(ctx context.Context, topicID string, spec SessionSpec
 		return SessionOpened{}, err
 	}
 	result.Session = ev.ID
+	if result.Unclosed != nil {
+		c.workChanges(ctx, topicID, result.Unclosed)
+	}
 	return result, nil
 }
 
@@ -169,12 +192,11 @@ type CloseSpec struct {
 }
 
 // CloseSession closes a Session with a Next step, starting with a verb, and
-// free-text context.
-//
-// TODO(#28): show what changed since the last Checkpoint when a Session was
-// left unclosed.
+// free-text context. Naming an older Session that was left unclosed gives it
+// the note it never got; OpenSession reports such a Session, with what
+// changed since the last Checkpoint.
 func (c *Core) CloseSession(ctx context.Context, topicID string, spec CloseSpec) (SessionClosed, error) {
-	step, err := requiredText("Next step", spec.NextStep, maxNextStepRunes)
+	step, err := checkNextStep(spec.NextStep)
 	if err != nil {
 		return SessionClosed{}, err
 	}
@@ -264,6 +286,11 @@ func (c *Core) SetPhase(ctx context.Context, topicID string, spec PhaseSpec) (Ph
 	step, err := cleanText("Next step", spec.NextStep, maxNextStepRunes)
 	if err != nil {
 		return PhaseResult{}, err
+	}
+	if step != "" {
+		if step, err = checkNextStep(step); err != nil {
+			return PhaseResult{}, err
+		}
 	}
 	result := PhaseResult{Topic: topicID, Lesson: spec.Lesson, Phase: spec.Phase, DryRun: spec.DryRun}
 	ev, err := c.writeTopic(ctx, topicID, func(s *replayed, view *topicView) (*change, error) {
@@ -410,13 +437,15 @@ func (st *studyState) currentLesson() string {
 	return ""
 }
 
-// ResumePoint is where the learner stopped: the current Lesson and its
-// Phase, the Next step word for word, and any Session left open.
+// ResumePoint is where the learner stopped: the current Lesson, its Phase
+// and the last Break point reached in it, the Next step word for word, and
+// any Session left open.
 type ResumePoint struct {
-	Lesson      string    `json:"lesson,omitempty"`
-	LessonTitle string    `json:"lesson_title,omitempty"`
-	Phase       string    `json:"phase,omitempty"`
-	NextStep    *NextStep `json:"next_step,omitempty"`
+	Lesson      string      `json:"lesson,omitempty"`
+	LessonTitle string      `json:"lesson_title,omitempty"`
+	Phase       string      `json:"phase,omitempty"`
+	BreakPoint  *BreakPoint `json:"break_point,omitempty"`
+	NextStep    *NextStep   `json:"next_step,omitempty"`
 	// OpenSession is a Session not closed yet: in progress, or ended
 	// without a Next step.
 	OpenSession *SessionInfo `json:"open_session,omitempty"`
@@ -432,6 +461,9 @@ func (st *studyState) resume() ResumePoint {
 		r.Lesson, r.LessonTitle = l.ID, l.Title
 		if ls := st.lessons[id]; ls != nil {
 			r.Phase = ls.phase
+			if ls.breakPoint != "" {
+				r.BreakPoint = &BreakPoint{ID: ls.breakPoint}
+			}
 		}
 	} else if st.syllabus != nil {
 		r.SyllabusDone = true

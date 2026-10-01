@@ -82,6 +82,8 @@ func newStudyState() studyState {
 type lessonState struct {
 	// phase is the Lesson's Phase: teaching, practicing or feedback.
 	phase string
+	// breakPoint is the id of the last Break point reached in it.
+	breakPoint string
 	// shownCheck is the version of the Check shown to the learner when
 	// practicing last started: the one completion counts.
 	shownCheck string

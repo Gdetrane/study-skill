@@ -8,6 +8,11 @@
       "chosen_by": "recent",
       "reason": "it is the Topic you worked on most recently"
     },
+    "recommended": {
+      "topic": "linear-algebra",
+      "action": "plan",
+      "text": "Plan the Syllabus together, and approve it"
+    },
     "topics": [
       {
         "id": "linear-algebra",

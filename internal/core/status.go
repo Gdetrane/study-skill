@@ -26,12 +26,18 @@ const (
 )
 
 // Status is where the learner is: the Study home, the Active topic and why it
-// was chosen, every Topic, and any Topic that could not be read.
+// was chosen, the one recommended action, every Topic, and any Topic that
+// could not be read.
 type Status struct {
-	StudyHome   string         `json:"study_home"`
-	ActiveTopic *ActiveTopic   `json:"active_topic"`
-	Topics      []Topic        `json:"topics"`
-	Problems    []TopicProblem `json:"problems"`
+	StudyHome   string       `json:"study_home"`
+	ActiveTopic *ActiveTopic `json:"active_topic"`
+	// Recommended is the one action to take next on the Active topic.
+	Recommended *Recommendation `json:"recommended,omitempty"`
+	// LearnerProfile is the Learner profile's path, when it exists: read it
+	// at the start of every Session.
+	LearnerProfile string         `json:"learner_profile,omitempty"`
+	Topics         []Topic        `json:"topics"`
+	Problems       []TopicProblem `json:"problems"`
 }
 
 // ActiveTopic is the Topic the agent is working on, with the reason it was
@@ -78,6 +84,7 @@ func (c *Core) Status(ctx context.Context) (Status, error) {
 		return status, err
 	}
 	status.ActiveTopic = c.activeTopic(status.Topics, len(status.Problems), state.RecentTopic)
+	c.addGuidance(home, &status)
 	return status, nil
 }
 

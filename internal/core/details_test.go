@@ -102,10 +102,10 @@ func TestAnOlderUnclosedSessionGetsItsNote(t *testing.T) {
 	if err != nil || topic.Resume.OpenSession == nil || topic.Resume.OpenSession.ID != second.Session {
 		t.Errorf("resume = %+v, %v; want the second Session still open", topic.Resume, err)
 	}
-	if _, err := m.CloseSession(ctx, "c", CloseSpec{Session: first.Session, NextStep: "Again"}); CodeOf(err) != CodeFailedPrecondition {
+	if _, err := m.CloseSession(ctx, "c", CloseSpec{Session: first.Session, NextStep: "Write the note again"}); CodeOf(err) != CodeFailedPrecondition {
 		t.Errorf("closing a closed Session: err = %v, want failed_precondition", err)
 	}
-	if _, err := m.CloseSession(ctx, "c", CloseSpec{Session: "nope", NextStep: "Again"}); CodeOf(err) != CodeNotFound {
+	if _, err := m.CloseSession(ctx, "c", CloseSpec{Session: "nope", NextStep: "Write the note again"}); CodeOf(err) != CodeNotFound {
 		t.Errorf("closing an unknown Session: err = %v, want not_found", err)
 	}
 }

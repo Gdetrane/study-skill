@@ -57,6 +57,12 @@ type Topic struct {
 	// Evidence, once the Topic has Sources or a NotebookLM Knowledge base.
 	// They are marked, never blocked.
 	LessonsWithoutEvidence []string `json:"lessons_without_evidence,omitempty"`
+	// Cards says whether Cards are ready to review, never how many; absent
+	// for a Topic without Cards.
+	Cards *CardsReady `json:"cards,omitempty"`
+	// LearnerAdditions is the path of the Topic's additions to the Learner
+	// profile, when they exist.
+	LearnerAdditions string `json:"learner_additions,omitempty"`
 }
 
 // TopicSpec describes a Topic to create.
@@ -494,9 +500,11 @@ func (c *Core) loadTopic(home *os.Root, id string) (Topic, error) {
 	topic.Created = s.created
 	topic.Flags = c.topicFlags(root, s)
 	if r := s.study.resume(); !r.empty() {
+		describeBreakPoint(root, &r)
 		topic.Resume = &r
 	}
 	topic.LessonsWithoutEvidence = s.lessonsWithoutEvidence(s.citingLessons(topic.KnowledgeBase))
+	c.addTopicGuidance(root, s, &topic)
 	if unfinished := unfinishedItems(home, id, s); len(unfinished) > 0 {
 		kept := topic.Flags[:0]
 		for _, f := range topic.Flags {
