@@ -77,7 +77,7 @@ func (c *Core) Status(ctx context.Context) (Status, error) {
 	if err != nil {
 		return status, err
 	}
-	status.ActiveTopic = c.activeTopic(status.Topics, state.RecentTopic)
+	status.ActiveTopic = c.activeTopic(status.Topics, len(status.Problems), state.RecentTopic)
 	return status, nil
 }
 
@@ -113,7 +113,7 @@ func (c *Core) listTopics(ctx context.Context, home *os.Root) ([]Topic, []TopicP
 
 // activeTopic picks the Topic whose folder the agent started in, otherwise the
 // most recent Topic, otherwise the only Topic.
-func (c *Core) activeTopic(topics []Topic, recent string) *ActiveTopic {
+func (c *Core) activeTopic(topics []Topic, unreadable int, recent string) *ActiveTopic {
 	find := func(id string) *Topic {
 		for i := range topics {
 			if topics[i].ID == id {
@@ -134,7 +134,11 @@ func (c *Core) activeTopic(topics []Topic, recent string) *ActiveTopic {
 	}
 	if len(topics) == 1 {
 		t := topics[0]
-		return &ActiveTopic{ID: t.ID, Title: t.Title, ChosenBy: ChosenByOnly, Reason: "it is your only Topic"}
+		reason := "it is your only Topic"
+		if unreadable > 0 {
+			reason = "it is the only Topic that could be read"
+		}
+		return &ActiveTopic{ID: t.ID, Title: t.Title, ChosenBy: ChosenByOnly, Reason: reason}
 	}
 	return nil
 }

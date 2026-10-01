@@ -240,7 +240,7 @@ func (a *app) rootCommand() *cobra.Command {
 			if a.json {
 				return a.writeJSON(envelope{OK: true, Data: res})
 			}
-			return writeFlagDismissal(a.stdout, res)
+			return writeFlagDismissal(a.out, res)
 		},
 	}
 	dismiss.Flags().BoolVar(&dismissDryRun, "dry-run", false, "show the flag that would be dismissed without recording anything")
