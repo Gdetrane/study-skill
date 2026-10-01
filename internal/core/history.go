@@ -32,9 +32,6 @@ const clockTick = time.Microsecond
 // History with Events newer than it understands, but refuses to write to
 // it. An Event type's payload never changes shape within a format: a new
 // shape is a new type name, so an old payload is never reinterpreted.
-//
-// TODO(#26): Card IDs are <lesson-id>.<random suffix>, and Explore Cards use
-// explore.<random suffix>, so two machines adding Cards never collide.
 type event struct {
 	Format int    `json:"format"`
 	ID     string `json:"id"`

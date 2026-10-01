@@ -61,7 +61,7 @@ the maintainer's answers to the questions they raised.
     syllabus.toml                   Milestones (priority, target date) and Lessons
                                     (id, title, hour estimate), in order
     lessons/<lesson-id>.md          Lesson text; YAML header holds the Check and Break points
-    cards.jsonl                     Card content, sorted by ID
+    cards.jsonl                     Card content, in the order written
     sources.jsonl                   Sources: files (Topic path or name, content hash) and URLs
     history.jsonl                   Events, append only
     learner.md                      optional per-Topic additions to the Learner profile
@@ -138,6 +138,11 @@ the maintainer's answers to the questions they raised.
   | `attempt.recorded` | Lesson, Check version, snapshot, outcome, per-criterion outcomes (never output) | none |
   | `lesson.completed` | Lesson, the Attempt, its Check version and the one shown, snapshot, the turn it ended, draft Cards in full | `cards.jsonl#<id>` each |
   | `review.recorded` | Card, rating, and for a draft keep, edit (new content) or drop | `cards.jsonl#<id>` on edit or drop |
+  | `card.added` | the new Card in full | `cards.jsonl#<id>` |
+  | `card.edited` | Card, the new prompt or answer | `cards.jsonl#<id>` |
+  | `card.suspended`, `card.unsuspended` | Card | none |
+  | `card.deleted` | Card | `cards.jsonl#<id>` (removed) |
+  | `card.flagged` | Card, the learner's note | none |
   | `checkpoint.taken` | the Event whose Checkpoint it settles, role, commit | none |
 
   `syllabus.toml` keeps settings Lamplight does not know at every level, as `topic.toml`
@@ -145,8 +150,8 @@ the maintainer's answers to the questions they raised.
   recorded; while the file differs from it, Revisions are refused except one that adopts
   the hand edit (`from_file`), so a learner's edit is approved rather than overwritten.
   `cards.jsonl` merges by union like the History: a Card repeated with different content,
-  a Lesson completed on two machines (whose Cards are all kept), a Review of a dropped
-  Card and a Revision removing a done Lesson are flagged.
+  a Lesson completed on two machines (whose Cards are all kept), a Review or an edit of a
+  dropped or deleted Card, and a Revision removing a done Lesson are flagged.
 - **Sync**: v2.0 supports using a Topic on one machine at a time, synced through git between
   sessions. History files merge by union, which can leave lines in any order; because
   replay sorts Events, a merge in either direction gives the same state. Conflicting changes
@@ -314,9 +319,27 @@ hours before any learning happens is exactly what v1 produced.
 - The skill's card-writing rules: one fact per Card, no lists, no answer in the prompt, no
   trivia, at least one Card from the learner's own mistakes.
 - Cards can be added, edited, suspended and deleted; `study review` has a key to flag one.
+  A flagged Card shows as a `card_flagged` flag in `status` until it is edited or deleted,
+  or the flag is dismissed. Adding a Card with the same content twice, or deleting one
+  already gone, records nothing.
+- Explore Cards, written in an Explore Session, have IDs `explore.<random suffix>`.
+  New Cards are appended to `cards.jsonl` rather than kept sorted by ID: a union merge keeps
+  two machines' changes apart only when they touch different parts of the file, and
+  inserting in ID order makes them overlap. When a merge still leaves a stale copy of a
+  Card's line, the version the History recorded is read and the copy is not flagged.
+  Display numbers ("Card 4") come from the order Cards were written.
+- **Sizing**: the Cards offered are those due, earliest first, then drafts, as many as the
+  daily cap allows (10 decided a day). Without an explicit limit, the list is sized to the
+  Energy, given or taken from the open Session: 20 at full, 10 at half, 3 at fumes, 10
+  without one. Suspended Cards are never offered, and no count of what is due is shown.
+- **Scheduling** replays each Card's Reviews through go-fsrs (v3, fuzz off) from their
+  `wall` times, each clamped to the Card's previous Review so time never runs backwards.
+  Only `schedule()` knows go-fsrs, so moving to v4 (FSRS-6, which needs Go 1.26) changes that
+  function and its tests; it changes replayed schedules too, so it is settled before release.
 - Reviews work with the agent (conversational recall) or without it (`study review` in the
   terminal). Paused Topics hide their Cards; finished Topics keep reviewing at growing
-  intervals.
+  intervals. TODO(#29): paused and finished Topics, once Topics have states, and the daily
+  cap as a Topic setting next to Pace.
 
 ### Level, Goal, Pace and Tasks
 
@@ -375,8 +398,8 @@ apply. Search results carry an absolute path. Conversion leaves the Library.
 
 Every write names its Topic. Tools are named after things that happen in the domain.
 
-- **Read**: `status`, `syllabus`, `lesson`, `due_cards`, `history`, `check_results`,
-  `library_search`, `sources`, `evidence`.
+- **Read**: `status`, `syllabus`, `lesson`, `due_cards` (sized to Energy), `cards`, `history`,
+  `check_results`, `library_search`, `sources`, `evidence`.
 - **Topics**: `topic_create`, `topic_update` (Goal, Pace, Level, Approach, Knowledge base,
   Tasks, pause, finish), `task_done`, `assessment_record`, `source_add`, `source_update`,
   `evidence_record`, `evidence_retract`.

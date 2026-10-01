@@ -27,6 +27,15 @@ that scripts and agents can rely on. Terms follow [CONTEXT.md](../CONTEXT.md).
 | `study revision decline <topic> <revision> [--learner-said S] [--dry-run]` | Records that the learner said no. The Syllabus is unchanged, and the Revision can no longer be applied. The result is `{"topic", "revision", "decision", "changed"}`; `apply` returns `{"topic", "revision", "syllabus", "approval", "changed"}`. Answering again changes nothing and reports the answer recorded the first time, on a terminal too. |
 | `study checkpoint --topic ID --role agent\|learner [-m MESSAGE] [--dry-run]` | Saves the Topic's work as a git commit at a turn switch. Skips when nothing changed, refuses during a merge or rebase, and lists large files it saved. Never runs programs named in the Topic's git configuration. It waits for a write in progress and finishes an interrupted one first; `--dry-run` refuses (`failed_precondition`) while one is pending. |
 | `study check <lesson> [--topic ID] [--timeout D]` | Runs a Lesson's Check on the current work and records the Attempt (see "Checks" below). Without `--topic`, it uses the Topic whose folder it runs in. |
+| `study review [topic] [--energy E] [--limit N]` | Reviews the due Cards in the terminal, without an agent (see "Cards and Reviews" below). Without a Topic, it reviews the Active topic. Interactive only: with `--json` it is a usage error. |
+| `study card list <topic> [--lesson L]` | Lists the Topic's Cards in the order they were written, with their display numbers and state. `--lesson explore` lists the Explore Cards. |
+| `study card due <topic> [--energy E] [--limit N]` | Lists the Cards to review now, sized to the Energy, never saying how many more are due. |
+| `study card add <topic> --prompt P --answer A [--lesson L] [--dry-run]` | Adds a draft Card from a Lesson, or without `--lesson` an Explore Card. Adding the same Card again changes nothing. |
+| `study card edit <topic> <card> [--prompt P] [--answer A] [--dry-run]` | Changes a Card's prompt or answer, keeping its schedule; settles a flag on the Card. |
+| `study card suspend <topic> <card> [--undo] [--dry-run]` | Stops offering a Card for Review, or with `--undo` offers it again. |
+| `study card delete <topic> <card> [--dry-run]` | Deletes a Card for good; deleting it again changes nothing. |
+| `study card flag <topic> <card> [--note N] [--dry-run]` | Flags a Card as wrong or unclear, so it shows in `status` until fixed. |
+| `study card review <topic> <card> --rating R [--draft keep\|edit\|drop] [--prompt P --answer A] [--dry-run]` | Records one Review, for scripts; at a draft's first Review `--draft` is required. |
 | `study doctor` | Diagnoses the setup and says how to fix what it finds. It works even when nothing else does. Exits 1 when a Finding failed. |
 | `study completion install [--shell S] [--dir D] [--yes] [--force] [--dry-run]` | Installs completions for bash, zsh or fish (default: from `$SHELL`) for your user. |
 | `study completion uninstall [--shell S] [--dry-run]` | Removes what `install` added, for every shell or only `--shell`. |
@@ -113,6 +122,7 @@ that need the learner's attention. Flags are reported, never resolved automatica
 | `clock_ahead` | The History holds an Event dated more than a day after this computer's clock, so some machine's clock was wrong. New Events still sort after it. | when the clock catches up, or when dismissed |
 | `edited_outside` | Content that approves or gates progress differs from the version its last Event recorded. | when Lamplight next records that item, or the content is restored |
 | `interrupted_write` | A write to the Topic was interrupted; the next write to it finishes the job. | with the next write or Checkpoint |
+| `card_flagged` | The learner flagged a Card during a Review as wrong or unclear, with their note if any. | when the Card is edited or deleted, or when dismissed |
 
 `id` is stable across runs and machines, so a dismissal recorded on one machine applies on
 every other. `item` and `events` are present when the flag concerns a particular item or
@@ -258,6 +268,35 @@ A Check edited afterwards is flagged in `status` and must be shown again.
 
 Rubric and held-out criteria, and per-criterion results files, arrive in a later version;
 until then a Check with one is reported as `corrupt`.
+
+## Cards and Reviews
+
+A Card is one fact: a prompt and its expected answer, one line of `cards.jsonl`, in the order
+Cards were written. Its ID is `<lesson-id>.<random suffix>`, or `explore.<random suffix>` for
+an Explore Card written without a Lesson; its display number ("Card 4") comes from its
+position among the Topic's Cards. Whether a Card is a draft, suspended, flagged or due is
+replayed from the History, never stored in the file. A git merge can leave a stale copy of a
+Card's line beside the version the History recorded; that copy is read past, and the Card's
+next change removes it.
+
+A new Card is a draft until its first Review, where the learner keeps, edits or drops it.
+Each day at most 10 drafts are decided, so new Cards never pile up: `study card due` and
+`due_cards` offer the Cards due first, earliest first, then as many drafts as are left of
+the day's cap. Without `--limit`, the list is sized to the Energy, given with `--energy` or
+taken from the open Session: 20 Cards at full, 10 at half, 3 at fumes, and 10 without one.
+Suspended Cards are never offered. Neither command, nor `study review`, ever says how many
+more Cards are due.
+
+Scheduling replays every Review through FSRS (go-fsrs v3, with fuzz off), using the time
+each Review was really made, never earlier than the Card's previous Review, so the same
+History always gives the same schedule on every machine.
+
+`study review` shows each Card's prompt, waits while the learner recalls the answer, and
+shows it on Enter. The learner then rates their recall: `1` again, `2` hard, `3` good,
+`4` easy. At a new Card's first Review, `k` keeps it, `e` edits it (an empty line keeps the
+prompt or the answer) and `d` drops it. `f` flags a Card as wrong or unclear, `s` skips it
+and `q` stops; every Review made so far is kept. In a terminal each key is one keystroke;
+otherwise each key is read from one line of standard input, so a script can drive it.
 
 ## Writes
 

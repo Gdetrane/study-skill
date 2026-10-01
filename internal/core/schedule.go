@@ -7,7 +7,9 @@ import (
 )
 
 // This file is the only one that knows go-fsrs, so moving to another
-// version, such as v4 with Go 1.26 (#26), stays contained here.
+// version, such as v4 (FSRS-6, which needs Go 1.26), changes only this
+// file and its tests. It also changes every replayed schedule, so the move
+// is decided before release, while no learner data depends on it.
 
 // schedule replays a Card's Reviews, oldest first, and returns when it is
 // next due; zero for a Card never reviewed. Fuzz is off, so the same Reviews
