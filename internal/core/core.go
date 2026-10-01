@@ -38,8 +38,8 @@ type Options struct {
 	Now func() time.Time
 	// NewID returns a new unique Event ID. Defaults to a random ID.
 	NewID func() string
-	// Logger receives diagnostics, such as a hand edit kept during recovery.
-	// Defaults to slog.Default().
+	// Logger receives the Log: diagnostics, never the learner's activity.
+	// Defaults to discarding everything.
 	Logger *slog.Logger
 }
 
@@ -87,7 +87,7 @@ func Open(opts Options) (*Core, error) {
 		c.newID = randomID
 	}
 	if c.log == nil {
-		c.log = slog.Default()
+		c.log = slog.New(slog.DiscardHandler)
 	}
 	return c, nil
 }
@@ -105,21 +105,11 @@ type config struct {
 // config.toml, then ~/study. The result must be absolute (after expanding a
 // leading ~), so the same Study home is found from every folder.
 func resolveHome(getenv func(string) string) (string, error) {
-	userHome := func() (string, error) {
-		if h := getenv("HOME"); h != "" {
-			return h, nil
-		}
-		h, err := os.UserHomeDir()
-		if err != nil {
-			return "", &Error{Code: CodeInvalidArgument,
-				Message: "cannot find your home folder: set STUDY_HOME to the absolute path of your Study home", Err: err}
-		}
-		return h, nil
-	}
+	userHome := func() (string, error) { return userHomeDir(getenv) }
 
 	home, source := getenv("STUDY_HOME"), "STUDY_HOME"
 	if home == "" {
-		path, err := configPath(getenv, userHome)
+		path, err := configPath(getenv)
 		if err != nil {
 			return "", err
 		}
@@ -149,10 +139,24 @@ func resolveHome(getenv func(string) string) (string, error) {
 	return filepath.Clean(home), nil
 }
 
-func configPath(getenv func(string) string, userHome func() (string, error)) (string, error) {
+// userHomeDir returns the learner's home folder: HOME, or the operating
+// system's answer when HOME is unset.
+func userHomeDir(getenv func(string) string) (string, error) {
+	if h := getenv("HOME"); h != "" {
+		return h, nil
+	}
+	h, err := os.UserHomeDir()
+	if err != nil {
+		return "", &Error{Code: CodeInvalidArgument,
+			Message: "cannot find your home folder: set STUDY_HOME to the absolute path of your Study home", Err: err}
+	}
+	return h, nil
+}
+
+func configPath(getenv func(string) string) (string, error) {
 	base := getenv("XDG_CONFIG_HOME")
 	if base == "" {
-		h, err := userHome()
+		h, err := userHomeDir(getenv)
 		if err != nil {
 			return "", err
 		}

@@ -1,0 +1,22 @@
+✓ config         no $HOME/.config/lamplight/config.toml; using the defaults
+✓ study_home     $HOME/study
+✓ git            git 2.47.1
+! git_identity   git has no user.name or user.email, so Checkpoints cannot be saved
+                 fix: git config --global user.name "Your Name" && git config --global user.email you@example.com
+! local_state    $HOME/study/.lamplight/state.toml is damaged, so study ignores it: toml: line 1 (last key "recent_topic"): expected value but found '\n' instead
+                 fix: delete $HOME/study/.lamplight/state.toml; study writes it again
+✓ topics         2 Topics, 2 unreadable
+✗ topic:c        $HOME/study/c/topic.toml is not valid TOML: toml: line 1 (last key "title"): expected value but found "broken" instead
+                 fix: fix the file by hand, or restore it from the Topic's git history
+✗ topic:physics  $HOME/study/physics/topic.toml has format 99, but this version of study only understands format 1: upgrade study
+                 fix: upgrade study
+! topic:go       go is not a git repository, so Checkpoints cannot be saved
+                 fix: git -C $HOME/study/go init --initial-branch=main
+! library        $HOME/study/.lamplight/library.json was written by a newer version of study
+                 fix: upgrade study, or rebuild the index with study library build <folder>
+! log            STUDY_LOG="verbose" is not a level, so study uses info
+                 fix: set STUDY_LOG to debug, info, warn or error
+! completion     zsh completions are not installed
+                 fix: study completion install
+
+Fix the 2 failures marked ✗ before studying.

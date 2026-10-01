@@ -1,0 +1,54 @@
+{
+  "ok": true,
+  "data": {
+    "study_home": "$HOME/study",
+    "healthy": true,
+    "findings": [
+      {
+        "name": "config",
+        "status": "ok",
+        "message": "no $HOME/.config/lamplight/config.toml; using the defaults"
+      },
+      {
+        "name": "study_home",
+        "status": "ok",
+        "message": "$HOME/study"
+      },
+      {
+        "name": "git",
+        "status": "ok",
+        "message": "git 2.47.1"
+      },
+      {
+        "name": "git_identity",
+        "status": "ok",
+        "message": "Checkpoints are saved as Ada Lovelace <ada@example.com>"
+      },
+      {
+        "name": "local_state",
+        "status": "ok",
+        "message": "$HOME/study/.lamplight/state.toml"
+      },
+      {
+        "name": "topics",
+        "status": "ok",
+        "message": "1 Topic"
+      },
+      {
+        "name": "library",
+        "status": "ok",
+        "message": "no index yet: study library build <folder> indexes your books"
+      },
+      {
+        "name": "log",
+        "status": "ok",
+        "message": "$HOME/.local/state/lamplight/study.log (level info)"
+      },
+      {
+        "name": "completion",
+        "status": "ok",
+        "message": "fish completions are installed at $HOME/.config/fish/completions/study.fish"
+      }
+    ]
+  }
+}

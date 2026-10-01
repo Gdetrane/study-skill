@@ -70,13 +70,28 @@ func (c *Core) Status(ctx context.Context) (Status, error) {
 	}
 	defer home.Close()
 
+	if status.Topics, status.Problems, err = c.listTopics(ctx, home); err != nil {
+		return status, err
+	}
+	state, err := c.readState(home)
+	if err != nil {
+		return status, err
+	}
+	status.ActiveTopic = c.activeTopic(status.Topics, state.RecentTopic)
+	return status, nil
+}
+
+// listTopics reads every Topic in the Study home, sorted by ID. Topics that
+// cannot be read are returned as problems instead of failing the listing.
+func (c *Core) listTopics(ctx context.Context, home *os.Root) ([]Topic, []TopicProblem, error) {
+	topics, problems := []Topic{}, []TopicProblem{}
 	entries, err := fs.ReadDir(home.FS(), ".")
 	if err != nil {
-		return status, internalError("listing the Study home", err)
+		return topics, problems, internalError("listing the Study home", err)
 	}
 	for _, entry := range entries {
 		if err := ctx.Err(); err != nil {
-			return status, err
+			return topics, problems, err
 		}
 		name := entry.Name()
 		if !entry.IsDir() || strings.HasPrefix(name, ".") {
@@ -87,19 +102,13 @@ func (c *Core) Status(ctx context.Context) (Status, error) {
 		}
 		topic, err := c.loadTopic(home, name)
 		if err != nil {
-			status.Problems = append(status.Problems, TopicProblem{ID: name, Code: CodeOf(err), Message: err.Error()})
+			problems = append(problems, TopicProblem{ID: name, Code: CodeOf(err), Message: err.Error()})
 			continue
 		}
-		status.Topics = append(status.Topics, topic)
+		topics = append(topics, topic)
 	}
-	sort.Slice(status.Topics, func(i, j int) bool { return status.Topics[i].ID < status.Topics[j].ID })
-
-	state, err := c.readState(home)
-	if err != nil {
-		return status, err
-	}
-	status.ActiveTopic = c.activeTopic(status.Topics, state.RecentTopic)
-	return status, nil
+	sort.Slice(topics, func(i, j int) bool { return topics[i].ID < topics[j].ID })
+	return topics, problems, nil
 }
 
 // activeTopic picks the Topic whose folder the agent started in, otherwise the
@@ -175,6 +184,7 @@ func (c *Core) readState(home *os.Root) (localState, error) {
 	}
 	if _, err := toml.Decode(string(data), &state); err != nil {
 		// Local state is a convenience; a damaged file must not block studying.
+		c.log.Warn("ignoring damaged local state", "path", filepath.Join(c.home, localDir, stateFile), "err", err)
 		return localState{}, nil
 	}
 	if state.Format > FormatVersion {

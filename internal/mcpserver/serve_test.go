@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"context"
 	"io"
+	"log/slog"
 	"strings"
 	"sync"
 	"testing"
@@ -43,7 +44,7 @@ func TestServeReturnsWhenCancelledWithAWriteBlocked(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- Serve(ctx, c, "test", inR, out) }()
+	go func() { done <- Serve(ctx, c, "test", inR, out, slog.New(slog.DiscardHandler)) }()
 
 	initialize := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18",` +
 		`"capabilities":{},"clientInfo":{"name":"test","version":"1"}}}` + "\n"

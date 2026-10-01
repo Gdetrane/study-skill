@@ -1,0 +1,11 @@
+✓ config        no $HOME/.config/lamplight/config.toml; using the defaults
+✓ study_home    $HOME/study
+✓ git           git 2.47.1
+✓ git_identity  Checkpoints are saved as Ada Lovelace <ada@example.com>
+✓ local_state   $HOME/study/.lamplight/state.toml
+✓ topics        1 Topic
+✓ library       no index yet: study library build <folder> indexes your books
+✓ log           $HOME/.local/state/lamplight/study.log (level info)
+✓ completion    fish completions are installed at $HOME/.config/fish/completions/study.fish
+
+Everything looks good.

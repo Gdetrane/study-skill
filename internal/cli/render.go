@@ -1,43 +1,34 @@
 package cli
 
 import (
+	"charm.land/lipgloss/v2"
 	"fmt"
 	"io"
 	"strings"
-	"text/tabwriter"
 
 	"github.com/mordor-forge/lamplight/v2/internal/core"
 	"github.com/mordor-forge/lamplight/v2/internal/library"
 )
 
-// writeStatus renders the status for people. Styling arrives with #24.
-func writeStatus(w io.Writer, s core.Status) error {
-	if len(s.Topics) == 0 {
-		if _, err := fmt.Fprintf(w, "Study home: %s\n\nNo Topics yet. Start one with:\n  study topic create --title \"Linear algebra\"\n", s.StudyHome); err != nil {
-			return err
-		}
-		return writeProblems(w, s.Problems)
+// Styles for human output. They are always rendered; the writer they go
+// through (app.out) drops them when stdout is not a terminal or NO_COLOR is
+// set, so piped output and golden files stay plain.
+var (
+	styleLabel  = lipgloss.NewStyle().Bold(true)
+	styleDim    = lipgloss.NewStyle().Faint(true)
+	styleAccent = lipgloss.NewStyle().Foreground(lipgloss.Yellow).Bold(true)
+	styleOK     = lipgloss.NewStyle().Foreground(lipgloss.Green)
+	styleWarn   = lipgloss.NewStyle().Foreground(lipgloss.Yellow)
+	styleFail   = lipgloss.NewStyle().Foreground(lipgloss.Red).Bold(true)
+)
+
+// pad right-pads s to width columns. Padding is computed on the plain text,
+// before styling, so columns line up with or without colour.
+func pad(s string, width int) string {
+	if n := lipgloss.Width(s); n < width {
+		return s + strings.Repeat(" ", width-n)
 	}
-	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintf(tw, "Study home:\t%s\n", s.StudyHome)
-	if s.ActiveTopic != nil {
-		fmt.Fprintf(tw, "Active topic:\t%s (%s): %s\n", s.ActiveTopic.ID, s.ActiveTopic.Title, s.ActiveTopic.Reason)
-	} else {
-		fmt.Fprintf(tw, "Active topic:\tnone yet: start inside a Topic's folder, or name a Topic\n")
-	}
-	if err := tw.Flush(); err != nil {
-		return err
-	}
-	fmt.Fprintln(w, "\nTopics:")
-	tw = tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	for _, t := range s.Topics {
-		fmt.Fprintf(tw, "  %s\t%s\n", t.ID, t.Title)
-	}
-	if err := tw.Flush(); err != nil {
-		return err
-	}
-	writeFlags(w, s.Topics)
-	return writeProblems(w, s.Problems)
+	return s
 }
 
 // writeFlags lists what replaying each Topic's History found that needs the
@@ -47,10 +38,10 @@ func writeFlags(w io.Writer, topics []core.Topic) {
 	for _, t := range topics {
 		for _, f := range t.Flags {
 			if !header {
-				fmt.Fprintln(w, "\nNeeds attention:")
+				fmt.Fprintf(w, "\n%s\n", styleWarn.Render("Needs attention:"))
 				header = true
 			}
-			fmt.Fprintf(w, "  %s: %s (flag %s)\n", t.ID, f.Message, f.ID)
+			fmt.Fprintf(w, "  %s: %s (flag %s)\n", styleLabel.Render(t.ID), f.Message, f.ID)
 		}
 	}
 }
@@ -75,9 +66,9 @@ func writeTopicUpdate(w io.Writer, u core.TopicUpdate, dryRun bool) error {
 	case !u.Changed:
 		fmt.Fprintf(&b, "Topic %s already has that title and goal: nothing changed\n", t.ID)
 	case dryRun:
-		fmt.Fprintf(&b, "Would update Topic %s (%s)\n", t.ID, t.Title)
+		fmt.Fprintf(&b, "Would update Topic %s (%s)\n", styleAccent.Render(t.ID), t.Title)
 	default:
-		fmt.Fprintf(&b, "Updated Topic %s (%s)\n", t.ID, t.Title)
+		fmt.Fprintf(&b, "Updated Topic %s (%s)\n", styleAccent.Render(t.ID), t.Title)
 	}
 	if t.Goal != "" {
 		fmt.Fprintf(&b, "  Goal: %s\n", t.Goal)
@@ -87,22 +78,76 @@ func writeTopicUpdate(w io.Writer, u core.TopicUpdate, dryRun bool) error {
 	return err
 }
 
-func writeProblems(w io.Writer, problems []core.TopicProblem) error {
+func widest(items []string) int {
+	w := 0
+	for _, s := range items {
+		w = max(w, lipgloss.Width(s))
+	}
+	return w
+}
+
+// writeStatus renders the status for people.
+func writeStatus(w io.Writer, s core.Status) error {
+	var b strings.Builder
+	if len(s.Topics) == 0 {
+		fmt.Fprintf(&b, "%s %s\n\nNo Topics yet. Start one with:\n  %s\n",
+			styleLabel.Render("Study home:"), s.StudyHome, styleAccent.Render(`study topic create --title "Linear algebra"`))
+		writeProblems(&b, s.Problems)
+		_, err := io.WriteString(w, b.String())
+		return err
+	}
+	labels := widest([]string{"Study home:", "Active topic:"}) + 2
+	fmt.Fprintf(&b, "%s%s\n", styleLabel.Render(pad("Study home:", labels)), s.StudyHome)
+	if t := s.ActiveTopic; t != nil {
+		fmt.Fprintf(&b, "%s%s (%s): %s\n", styleLabel.Render(pad("Active topic:", labels)),
+			styleAccent.Render(t.ID), t.Title, styleDim.Render(t.Reason))
+	} else {
+		fmt.Fprintf(&b, "%s%s\n", styleLabel.Render(pad("Active topic:", labels)),
+			styleDim.Render("none yet: start inside a Topic's folder, or name a Topic"))
+	}
+	fmt.Fprintf(&b, "\n%s\n", styleLabel.Render("Topics:"))
+	ids := make([]string, len(s.Topics))
+	for i, t := range s.Topics {
+		ids[i] = t.ID
+	}
+	width := widest(ids) + 2
+	for _, t := range s.Topics {
+		id := pad(t.ID, width)
+		if s.ActiveTopic != nil && t.ID == s.ActiveTopic.ID {
+			id = styleAccent.Render(id)
+		}
+		fmt.Fprintf(&b, "  %s%s\n", id, t.Title)
+	}
+	writeFlags(&b, s.Topics)
+	writeProblems(&b, s.Problems)
+	_, err := io.WriteString(w, b.String())
+	return err
+}
+
+func writeProblems(b *strings.Builder, problems []core.TopicProblem) {
 	if len(problems) == 0 {
-		return nil
+		return
 	}
-	fmt.Fprintln(w, "\nTopics that could not be read:")
+	fmt.Fprintf(b, "\n%s\n", styleWarn.Render("Topics that could not be read:"))
 	for _, p := range problems {
-		fmt.Fprintf(w, "  %s: %s\n", p.ID, p.Message)
+		fmt.Fprintf(b, "  %s: %s\n", styleLabel.Render(p.ID), p.Message)
 	}
-	return nil
+}
+
+func writeTopicCreated(w io.Writer, t core.Topic, dryRun bool) error {
+	verb := "Created"
+	if dryRun {
+		verb = "Would create"
+	}
+	_, err := fmt.Fprintf(w, "%s Topic %s (%s) in %s\n", verb, styleAccent.Render(t.ID), t.Title, styleDim.Render(t.Path))
+	return err
 }
 
 func writeLibrarySummary(w io.Writer, s core.LibrarySummary) error {
 	var b strings.Builder
-	fmt.Fprintf(&b, "Indexed %d books from %s\n", s.Books, s.Root)
+	fmt.Fprintf(&b, "Indexed %s books from %s\n", styleAccent.Render(fmt.Sprint(s.Books)), s.Root)
 	if n := len(s.Skipped); n > 0 {
-		fmt.Fprintf(&b, "Skipped %d entries that could not be read:\n", n)
+		fmt.Fprintf(&b, "%s\n", styleWarn.Render(fmt.Sprintf("Skipped %d entries that could not be read:", n)))
 		for _, path := range s.Skipped {
 			fmt.Fprintf(&b, "  %s\n", path)
 		}
@@ -118,7 +163,8 @@ func writeSearchResults(w io.Writer, results []library.Result) error {
 	}
 	var b strings.Builder
 	for _, r := range results {
-		fmt.Fprintf(&b, "%s\n  %s · %s\n  %s\n", r.Title, r.Category, r.Format, r.Path)
+		fmt.Fprintf(&b, "%s\n  %s\n  %s\n", styleLabel.Render(r.Title),
+			styleDim.Render(r.Category+" · "+r.Format), r.Path)
 	}
 	_, err := io.WriteString(w, b.String())
 	return err
@@ -133,17 +179,21 @@ func writeCheckpoint(w io.Writer, res core.CheckpointResult) error {
 	case !res.Committed:
 		fmt.Fprintf(w, "Nothing changed in %s since Checkpoint %s.\n", res.Topic, short(res.Commit))
 	default:
-		fmt.Fprintf(w, "Checkpoint %s saved in %s.\n", short(res.Commit), res.Topic)
+		fmt.Fprintf(w, "Checkpoint %s saved in %s.\n", short(res.Commit), styleAccent.Render(res.Topic))
 	}
 	if len(res.LargeFiles) == 0 {
 		return nil
 	}
-	fmt.Fprintln(w, "\nLarge files in this Checkpoint (consider adding them to .gitignore):")
-	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	for _, f := range res.LargeFiles {
-		fmt.Fprintf(tw, "  %s\t%s\n", f.Path, humanSize(f.Size))
+	fmt.Fprintf(w, "\n%s\n", styleWarn.Render("Large files in this Checkpoint (consider adding them to .gitignore):"))
+	paths := make([]string, len(res.LargeFiles))
+	for i, f := range res.LargeFiles {
+		paths[i] = f.Path
 	}
-	return tw.Flush()
+	width := widest(paths) + 2
+	for _, f := range res.LargeFiles {
+		fmt.Fprintf(w, "  %s%s\n", pad(f.Path, width), humanSize(f.Size))
+	}
+	return nil
 }
 
 func short(commit string) string {
@@ -165,4 +215,78 @@ func humanSize(n int64) string {
 		exp++
 	}
 	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGTPE"[exp])
+}
+
+// writeDiagnosis renders study doctor's Findings, one per line, with the fix
+// under each warning or failure.
+func writeDiagnosis(w io.Writer, d core.Diagnosis) error {
+	var b strings.Builder
+	names := make([]string, len(d.Findings))
+	for i, f := range d.Findings {
+		names[i] = f.Name
+	}
+	width := widest(names) + 2
+	var warnings, failures int
+	for _, f := range d.Findings {
+		mark := styleOK.Render("✓")
+		switch f.Status {
+		case core.FindingWarn:
+			mark, warnings = styleWarn.Render("!"), warnings+1
+		case core.FindingFail:
+			mark, failures = styleFail.Render("✗"), failures+1
+		}
+		fmt.Fprintf(&b, "%s %s%s\n", mark, styleLabel.Render(pad(f.Name, width)), f.Message)
+		if f.Fix != "" {
+			fmt.Fprintf(&b, "  %s%s %s\n", strings.Repeat(" ", width), styleDim.Render("fix:"), f.Fix)
+		}
+	}
+	b.WriteString("\n")
+	switch {
+	case failures > 0:
+		b.WriteString(styleFail.Render(fmt.Sprintf("Fix the %d %s marked ✗ before studying.",
+			failures, plural(failures, "failure", "failures"))))
+	case warnings > 0:
+		b.WriteString(styleWarn.Render(fmt.Sprintf("Ready to study, with %d %s.", warnings, plural(warnings, "warning", "warnings"))))
+	default:
+		b.WriteString(styleOK.Render("Everything looks good."))
+	}
+	b.WriteString("\n")
+	_, err := io.WriteString(w, b.String())
+	return err
+}
+
+func writeInstallResult(w io.Writer, r installResult) error {
+	var b strings.Builder
+	install, add := "Installed", "Added"
+	if r.DryRun {
+		install, add = "Would install", "Would add"
+	}
+	fmt.Fprintf(&b, "%s %s completions in %s\n", install, styleAccent.Render(r.Shell), r.File)
+	if r.RCLine != "" {
+		fmt.Fprintf(&b, "%s this line to %s:\n  %s\n", add, r.RCFile, styleDim.Render(r.RCLine))
+	}
+	if !r.DryRun {
+		fmt.Fprintf(&b, "%s\n", styleDim.Render(strings.ToUpper(r.Note[:1])+r.Note[1:]+"."))
+	}
+	_, err := io.WriteString(w, b.String())
+	return err
+}
+
+func writeUninstallResult(w io.Writer, r uninstallResult) error {
+	var b strings.Builder
+	if len(r.Removed) == 0 && r.RCLine == "" {
+		fmt.Fprintf(&b, "Nothing to remove: %s\n", r.Note)
+	}
+	verb := "Removed"
+	if r.DryRun {
+		verb = "Would remove"
+	}
+	for _, path := range r.Removed {
+		fmt.Fprintf(&b, "%s %s\n", verb, path)
+	}
+	if r.RCLine != "" {
+		fmt.Fprintf(&b, "%s this line from %s:\n  %s\n", verb, r.RCFile, styleDim.Render(r.RCLine))
+	}
+	_, err := io.WriteString(w, b.String())
+	return err
 }

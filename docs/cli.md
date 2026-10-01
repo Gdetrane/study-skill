@@ -16,18 +16,27 @@ that scripts and agents can rely on. Terms follow [CONTEXT.md](../CONTEXT.md).
 | `study library build <folder>` | Indexes the books in a folder (relative to where you run it) and replaces the Library index in the Study home. |
 | `study library search <query> [--limit N]` | Ranks the books in the Library against the query. `--limit` defaults to 10 and is capped at 100; no matches is a success with an empty list. |
 | `study checkpoint --topic ID --role agent\|learner [-m MESSAGE] [--dry-run]` | Saves the Topic's work as a git commit at a turn switch. Skips when nothing changed, refuses during a merge or rebase, and lists large files it saved. Never runs programs named in the Topic's git configuration. It waits for a write in progress and finishes an interrupted one first; `--dry-run` refuses (`failed_precondition`) while one is pending. |
+| `study doctor` | Diagnoses the setup and says how to fix what it finds. It works even when nothing else does. Exits 1 when a Finding failed. |
+| `study completion install [--shell S] [--dir D] [--yes] [--dry-run]` | Installs completions for bash, zsh or fish (default: from `$SHELL`) for your user. |
+| `study completion uninstall [--shell S] [--dry-run]` | Removes exactly what `install` added. |
+| `study completion bash\|zsh\|fish\|powershell` | Prints a completion script, for packagers. |
 | `study mcp` | Runs the MCP server over stdin and stdout. |
 
 The Study home is `STUDY_HOME` if set, otherwise `study_home` in
 `$XDG_CONFIG_HOME/lamplight/config.toml`, otherwise `~/study`. It must be an absolute path
 or start with `~/`, so every folder finds the same Study home.
 
+Global flags: `--json` (below) and `--log-level` (see [The Log](#the-log)).
+
+Human output is styled when stdout is a terminal. Styles are dropped when it is not, and
+colours are dropped with `NO_COLOR=1`; `CLICOLOR_FORCE=1` keeps them in a pipe.
+
 ## JSON output
 
 Every command accepts `--json`. With it, `study` prints exactly one JSON document on
 stdout and nothing else; diagnostics, if any, go to stderr. `--json` is honoured even
 when an earlier argument is invalid. Help (`--help`), `--version`, `study mcp` (which
-speaks MCP on stdout) and the generated completion and man-page commands print text.
+speaks MCP on stdout) and the completion-script and man-page commands print text.
 
 Success:
 
@@ -62,14 +71,15 @@ Error codes:
 | `corrupt` | A file Lamplight reads is damaged or missing, for example invalid TOML after a hand edit, or a Topic's git repository is missing, was replaced during a Checkpoint, or leads outside the Topic. Fix or restore it; the message names it. |
 | `failed_precondition` | The request is valid but the Topic is not ready for it, for example a git merge is in progress or git has no identity. The message says what to do. |
 | `busy` | Another program is using the Topic: another `study` process writing to it for too long, an editor using its git repository, or files that kept changing while they were being saved. Try again shortly; the message says what to do if it persists. |
+| `unhealthy` | `study doctor` only: a Finding failed. `data` still holds the full diagnosis. |
 | `internal` | Anything else, such as a file that cannot be read. |
 
 ## Exit codes
 
 | Code | Meaning |
 |---|---|
-| 0 | Success, including empty results. |
-| 1 | The command failed (`already_exists`, `not_found`, `newer_format`, `corrupt`, `failed_precondition`, `busy`, `internal`). |
+| 0 | Success, including empty results, and `study doctor` with warnings only. |
+| 1 | The command failed (`already_exists`, `not_found`, `newer_format`, `corrupt`, `failed_precondition`, `busy`, `unhealthy`, `internal`). |
 | 2 | Usage error (`usage`, `invalid_argument`). |
 
 ## Flags in status
@@ -105,3 +115,68 @@ write interrupted by a crash is finished by the next write or Checkpoint. A dry 
 what the real run would do after finishing such a write, and writes nothing. Lock and
 intent-marker files live in the Study home's `.lamplight/` folder, are local to the
 machine, and are never synced.
+
+## study doctor
+
+`study doctor --json` reports a list of Findings. (A Finding is not a Check: Checks belong to
+Lessons.) Each has a `status` of `ok`, `warn` or `fail`, and a `fix` for anything not `ok`.
+Only a failure makes the setup unhealthy; then `ok` is `false`, the error code is
+`unhealthy`, the exit code is 1, and `data` is still present:
+
+```json
+{
+  "ok": false,
+  "data": {
+    "study_home": "/home/ada/study",
+    "healthy": false,
+    "findings": [
+      { "name": "git", "status": "fail", "message": "git is not installed, or not on PATH",
+        "fix": "install git 2.28 or newer" },
+      { "name": "topic:physics", "status": "warn",
+        "message": "physics is not a git repository, so Checkpoints cannot be saved",
+        "fix": "git -C /home/ada/study/physics init --initial-branch=main" }
+    ]
+  },
+  "error": { "code": "unhealthy", "message": "1 finding failed: git" }
+}
+```
+
+`study_home` is absent when it cannot be resolved. Finding names, in order: `config`,
+`study_home`, `git`, `git_identity` (only when git works), and, when the Study home
+resolves, `local_state`, `topics`, one `topic:<id>` per Topic with a problem, and `library`;
+then `log` and `completion`.
+
+## Completions
+
+`study completion install` writes completions for one shell, for your user only, and
+records what it did in `$XDG_STATE_HOME/lamplight/completions.json` so `uninstall` can undo
+exactly that:
+
+- fish: `$XDG_CONFIG_HOME/fish/completions/study.fish`. No configuration changes.
+- bash: `$BASH_COMPLETION_USER_DIR/completions/study`, else
+  `$XDG_DATA_HOME/bash-completion/completions/study`. Loaded by the bash-completion package;
+  no configuration changes.
+- zsh: `_study` in a writable folder already on `$fpath`. `study` cannot read zsh's `fpath`,
+  so it uses `--dir` if given, else the first writable folder in an exported `FPATH`, Oh My
+  Zsh's completion cache (`$ZSH_CACHE_DIR/completions`, when `$ZSH` is set), or Homebrew's
+  `$HOMEBREW_PREFIX/share/zsh/site-functions`. When none works, `study` installs to
+  `$XDG_DATA_HOME/lamplight/completions/_study` and adds one line to `${ZDOTDIR:-~}/.zshrc`
+  that sources it, but only with `--yes` or after asking at a terminal. Without consent it
+  stops with a `usage` error and writes nothing.
+
+Packages install the scripts from `study completion <shell>` system-wide instead.
+
+## The Log
+
+The Log is application diagnostics, never the learner's activity. Records go to two places:
+
+- JSON lines in `$XDG_STATE_HOME/lamplight/study.log` (default
+  `~/.local/state/lamplight/study.log`), at the chosen level. The file is created on the
+  first record.
+- stderr, formatted for people. It shows warnings and errors, or the chosen level when one
+  is chosen explicitly.
+
+The level comes from `--log-level`, else `STUDY_LOG`, else `info`: one of `debug`, `info`,
+`warn`, `error`. An invalid `--log-level` is a usage error; an invalid `STUDY_LOG` is
+ignored with a warning. In `study mcp`, nothing but MCP messages is ever written to stdout,
+and stderr shows only warnings and errors whatever the level.

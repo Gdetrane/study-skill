@@ -1,0 +1,40 @@
+{
+  "ok": false,
+  "data": {
+    "healthy": false,
+    "findings": [
+      {
+        "name": "config",
+        "status": "fail",
+        "message": "$HOME/.config/lamplight/config.toml is not valid TOML: toml: line 1 (last key \"study_home\"): unexpected EOF; expected value",
+        "fix": "fix the TOML in $HOME/.config/lamplight/config.toml, or delete it to use the defaults"
+      },
+      {
+        "name": "study_home",
+        "status": "fail",
+        "message": "$HOME/.config/lamplight/config.toml is not valid TOML: toml: line 1 (last key \"study_home\"): unexpected EOF; expected value",
+        "fix": "set STUDY_HOME, or study_home in config.toml, to the absolute path of your Study home"
+      },
+      {
+        "name": "git",
+        "status": "fail",
+        "message": "git is not installed, or not on PATH",
+        "fix": "install git 2.28 or newer"
+      },
+      {
+        "name": "log",
+        "status": "ok",
+        "message": "$HOME/.local/state/lamplight/study.log (level info)"
+      },
+      {
+        "name": "completion",
+        "status": "ok",
+        "message": "skipped: $SHELL is not bash, zsh or fish"
+      }
+    ]
+  },
+  "error": {
+    "code": "unhealthy",
+    "message": "3 findings failed: config, study_home, git"
+  }
+}

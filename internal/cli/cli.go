@@ -11,10 +11,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"regexp"
 	"runtime/debug"
 	"strings"
 
+	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/fang"
 	"github.com/spf13/cobra"
 
@@ -33,9 +35,15 @@ const (
 )
 
 // Run executes the study command line with args (without the program name)
-// and returns the process exit code. stdin is only read by study mcp.
+// and returns the process exit code. stdin is read by study mcp, and by
+// prompts when it is a terminal.
 func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer, opts core.Options) int {
-	a := &app{opts: opts, stdin: stdin, stdout: stdout, stderr: stderr}
+	if opts.Getenv == nil {
+		opts.Getenv = os.Getenv
+	}
+	a := &app{opts: opts, stdin: stdin, stdout: stdout, stderr: stderr,
+		out: colorprofile.NewWriter(stdout, environ(opts.Getenv))}
+	defer func() { a.logs.close() }()
 	root := a.rootCommand()
 	// Decide the output mode before parsing, so errors in earlier flags are
 	// still reported as JSON when --json appears later on the command line.
@@ -66,7 +74,12 @@ type app struct {
 	stdin  io.Reader
 	stdout io.Writer
 	stderr io.Writer
-	json   bool
+	// out is stdout for people: styles are downgraded to what the terminal
+	// supports, and dropped with NO_COLOR or when stdout is not a terminal.
+	out      io.Writer
+	json     bool
+	logLevel string
+	logs     *logs
 }
 
 func (a *app) rootCommand() *cobra.Command {
@@ -78,7 +91,30 @@ func (a *app) rootCommand() *cobra.Command {
 		Args: noArgs,
 		RunE: a.runStatus,
 	}
+	// Set before the completion command is built: it keeps the writer it
+	// sees then.
+	root.SetOut(a.stdout)
+	root.SetErr(a.stderr)
 	root.PersistentFlags().BoolVar(&a.json, "json", false, "print a JSON envelope on stdout (see docs/cli.md)")
+	root.PersistentFlags().StringVar(&a.logLevel, "log-level", "",
+		"Log detail: debug, info, warn or error (default from STUDY_LOG, else info)")
+	_ = root.RegisterFlagCompletionFunc("log-level",
+		cobra.FixedCompletions([]string{"debug", "info", "warn", "error"}, cobra.ShellCompDirectiveNoFileComp))
+
+	serve := &cobra.Command{
+		Use:   "mcp",
+		Short: "Run the MCP server for agents over stdin and stdout",
+		Args:  noArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			c, err := core.Open(a.opts)
+			if err != nil {
+				return a.fail(err)
+			}
+			a.logs.logger.Debug("serving MCP over stdio", "version", version(), "study_home", c.Home())
+			return mcpserver.Serve(cmd.Context(), c, version(), a.stdin, a.stdout, a.logs.logger)
+		},
+	}
+
 	// Once parsing succeeds, the parsed flag decides the output mode: the
 	// up-front scan in Run could mistake a flag value such as --title --json
 	// for the flag.
@@ -86,6 +122,14 @@ func (a *app) rootCommand() *cobra.Command {
 		if f := cmd.Flags().Lookup("json"); f == nil || !f.Changed {
 			a.json = false
 		}
+		levelFlag := cmd.Flags().Lookup("log-level")
+		logs, err := newLogs(a.opts.Getenv, a.stderr, a.logLevel, levelFlag != nil && levelFlag.Changed, cmd == serve)
+		if err != nil {
+			return err
+		}
+		a.logs = logs
+		a.opts.Logger = logs.logger
+		logs.logger.Debug("running", "command", cmd.CommandPath())
 		return nil
 	}
 	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error { return usageError{err} })
@@ -122,12 +166,7 @@ func (a *app) rootCommand() *cobra.Command {
 			if a.json {
 				return a.writeJSON(envelope{OK: true, Data: created})
 			}
-			verb := "Created"
-			if spec.DryRun {
-				verb = "Would create"
-			}
-			_, err = fmt.Fprintf(a.stdout, "%s Topic %s (%s) in %s\n", verb, created.ID, created.Title, created.Path)
-			return err
+			return writeTopicCreated(a.out, created, spec.DryRun)
 		},
 	}
 	create.Flags().StringVar(&spec.Title, "title", "", "what you are studying, for example \"Linear algebra\" (required)")
@@ -160,7 +199,7 @@ func (a *app) rootCommand() *cobra.Command {
 			if a.json {
 				return a.writeJSON(envelope{OK: true, Data: updated})
 			}
-			return writeTopicUpdate(a.stdout, updated, changes.DryRun)
+			return writeTopicUpdate(a.out, updated, changes.DryRun)
 		},
 	}
 	update.Flags().StringVar(&newTitle, "title", "", "the new title")
@@ -192,20 +231,17 @@ func (a *app) rootCommand() *cobra.Command {
 	dismiss.Flags().BoolVar(&dismissDryRun, "dry-run", false, "show the flag that would be dismissed without recording anything")
 	topic.AddCommand(create, update, dismiss)
 
-	serve := &cobra.Command{
-		Use:   "mcp",
-		Short: "Run the MCP server for agents over stdin and stdout",
-		Args:  noArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			c, err := core.Open(a.opts)
-			if err != nil {
-				return a.fail(err)
-			}
-			return mcpserver.Serve(cmd.Context(), c, version(), a.stdin, a.stdout)
-		},
+	doctor := &cobra.Command{
+		Use:   "doctor",
+		Short: "Diagnose your setup: Study home, git, Topics, Library, Log and completions",
+		Long: "Diagnose your setup. doctor works even when the rest of study cannot, and tells you how to\n" +
+			"fix what it finds. It exits with 1 when something must be fixed, and 0 otherwise.",
+		Args: noArgs,
+		RunE: a.runDoctor,
 	}
 
-	root.AddCommand(status, topic, a.checkpointCommand(), a.libraryCommand(), serve)
+	root.AddCommand(status, topic, a.checkpointCommand(), a.libraryCommand(), doctor, serve)
+	a.completionCommands(root)
 	return root
 }
 
@@ -231,7 +267,7 @@ func (a *app) checkpointCommand() *cobra.Command {
 			if a.json {
 				return a.writeJSON(envelope{OK: true, Data: res})
 			}
-			return writeCheckpoint(a.stdout, res)
+			return writeCheckpoint(a.out, res)
 		},
 	}
 	cmd.Flags().StringVar(&spec.Topic, "topic", "", "the Topic's id (required)")
@@ -239,6 +275,71 @@ func (a *app) checkpointCommand() *cobra.Command {
 	cmd.Flags().StringVarP(&spec.Message, "message", "m", "", "what happened in the turn")
 	cmd.Flags().BoolVar(&spec.DryRun, "dry-run", false, "show whether a Checkpoint would be made, without committing")
 	return cmd
+}
+
+func (a *app) runDoctor(cmd *cobra.Command, _ []string) error {
+	d := core.Diagnose(cmd.Context(), a.opts)
+	d.Add(a.diagnoseLogs())
+	d.Add(a.diagnoseCompletion())
+	if !d.Healthy {
+		failed := d.Failed()
+		err := fmt.Errorf("%d %s failed: %s", len(failed), plural(len(failed), "finding", "findings"), strings.Join(failed, ", "))
+		if a.json {
+			if werr := a.writeJSON(envelope{Data: d, Error: &errorBody{Code: codeUnhealthy, Message: err.Error()}}); werr != nil {
+				return werr
+			}
+			return reported{err}
+		}
+		if werr := writeDiagnosis(a.out, d); werr != nil {
+			return werr
+		}
+		return reported{err}
+	}
+	if a.json {
+		return a.writeJSON(envelope{OK: true, Data: d})
+	}
+	return writeDiagnosis(a.out, d)
+}
+
+// codeUnhealthy is the error code of study doctor when a Finding failed.
+const codeUnhealthy = "unhealthy"
+
+func (a *app) diagnoseLogs() core.Finding {
+	f := core.Finding{Name: "log"}
+	if err := a.logs.probe(); err != nil {
+		f.Status, f.Message = core.FindingWarn, "the Log cannot be written: "+err.Error()
+		f.Fix = "make the folder writable, or set XDG_STATE_HOME to a writable folder"
+		return f
+	}
+	if a.logs.badEnv != "" {
+		f.Status, f.Message = core.FindingWarn, fmt.Sprintf("STUDY_LOG=%q is not a level, so study uses info", a.logs.badEnv)
+		f.Fix = "set STUDY_LOG to debug, info, warn or error"
+		return f
+	}
+	f.Status, f.Message = core.FindingOK, fmt.Sprintf("%s (level %s)", a.logs.path(), levelName(a.logs.level))
+	return f
+}
+
+func (a *app) diagnoseCompletion() core.Finding {
+	f := core.Finding{Name: "completion"}
+	shell, err := a.pickShell("")
+	if err != nil {
+		f.Status, f.Message = core.FindingOK, "skipped: $SHELL is not bash, zsh or fish"
+		return f
+	}
+	if path := a.installedCompletion(shell); path != "" {
+		f.Status, f.Message = core.FindingOK, shell+" completions are installed at "+path
+		return f
+	}
+	f.Status, f.Message, f.Fix = core.FindingWarn, shell+" completions are not installed", "study completion install"
+	return f
+}
+
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
 }
 
 func (a *app) libraryCommand() *cobra.Command {
@@ -265,7 +366,7 @@ func (a *app) libraryCommand() *cobra.Command {
 			if a.json {
 				return a.writeJSON(envelope{OK: true, Data: summary})
 			}
-			return writeLibrarySummary(a.stdout, summary)
+			return writeLibrarySummary(a.out, summary)
 		},
 	}
 	var limit int
@@ -287,7 +388,7 @@ func (a *app) libraryCommand() *cobra.Command {
 			if a.json {
 				return a.writeJSON(envelope{OK: true, Data: map[string]any{"results": results}})
 			}
-			return writeSearchResults(a.stdout, results)
+			return writeSearchResults(a.out, results)
 		},
 	}
 	search.Flags().IntVar(&limit, "limit", core.DefaultSearchLimit,
@@ -308,7 +409,7 @@ func (a *app) runStatus(cmd *cobra.Command, _ []string) error {
 	if a.json {
 		return a.writeJSON(envelope{OK: true, Data: status})
 	}
-	return writeStatus(a.stdout, status)
+	return writeStatus(a.out, status)
 }
 
 // envelope is the JSON shape of every --json result. See docs/cli.md.
@@ -333,17 +434,17 @@ func (a *app) writeJSON(v envelope) error {
 // fail reports err. With --json the error envelope goes to stdout and the
 // returned error is marked as already reported, so fang prints nothing more.
 func (a *app) fail(err error) error {
+	code := string(core.CodeOf(err))
+	if isUsage(err) {
+		code = "usage"
+	} else if core.CodeOf(err) == core.CodeInvalidArgument {
+		err = usageError{err}
+	}
 	if !a.json {
-		if core.CodeOf(err) == core.CodeInvalidArgument {
-			return usageError{err}
-		}
 		return err
 	}
-	if werr := a.writeJSON(envelope{Error: &errorBody{Code: string(core.CodeOf(err)), Message: err.Error()}}); werr != nil {
+	if werr := a.writeJSON(envelope{Error: &errorBody{Code: code, Message: err.Error()}}); werr != nil {
 		return werr
-	}
-	if core.CodeOf(err) == core.CodeInvalidArgument {
-		return reported{usageError{err}}
 	}
 	return reported{err}
 }

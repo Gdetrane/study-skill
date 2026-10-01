@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -28,11 +29,12 @@ const Instructions = `Lamplight keeps the learner's study state. Follow these ru
 // More rules join Instructions as their features land: recording a Next step
 // when a Session stops (#28) and running Checks through the CLI (#30).
 
-// New returns an MCP server whose tools call c.
-func New(c *core.Core, version string) *mcp.Server {
+// New returns an MCP server whose tools call c. logger, if not nil, receives
+// the server's Log; it must never write to the transport's stdout.
+func New(c *core.Core, version string, logger *slog.Logger) *mcp.Server {
 	server := mcp.NewServer(
 		&mcp.Implementation{Name: "lamplight", Title: "Lamplight", Version: version},
-		&mcp.ServerOptions{Instructions: Instructions},
+		&mcp.ServerOptions{Instructions: Instructions, Logger: logger},
 	)
 	closedWorld := false
 	notDestructive := false
@@ -154,7 +156,7 @@ var shutdownGrace = 2 * time.Second
 // session a grace period, then closes the streams (which interrupts blocked
 // pipe I/O), and returns after a second grace period even if a write is still
 // stuck.
-func Serve(ctx context.Context, c *core.Core, version string, in io.Reader, out io.Writer) error {
+func Serve(ctx context.Context, c *core.Core, version string, in io.Reader, out io.Writer, logger *slog.Logger) error {
 	rc, ok := in.(io.ReadCloser)
 	if !ok {
 		rc = io.NopCloser(in)
@@ -164,7 +166,7 @@ func Serve(ctx context.Context, c *core.Core, version string, in io.Reader, out 
 		wc = nopWriteCloser{out}
 	}
 	done := make(chan error, 1)
-	go func() { done <- New(c, version).Run(ctx, &mcp.IOTransport{Reader: rc, Writer: wc}) }()
+	go func() { done <- New(c, version, logger).Run(ctx, &mcp.IOTransport{Reader: rc, Writer: wc}) }()
 
 	select {
 	case err := <-done:
