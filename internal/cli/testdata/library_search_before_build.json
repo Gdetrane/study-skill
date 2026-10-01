@@ -1,0 +1,7 @@
+{
+  "ok": false,
+  "error": {
+    "code": "not_found",
+    "message": "the Library has no index yet: run study library build <folder with your books>"
+  }
+}

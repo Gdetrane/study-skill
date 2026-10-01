@@ -1,0 +1,9 @@
+{
+  "ok": true,
+  "data": {
+    "root": "$STUDY_HOME/Books",
+    "books": 2,
+    "skipped": [],
+    "index": "$STUDY_HOME/.lamplight/library.json"
+  }
+}

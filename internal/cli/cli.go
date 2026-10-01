@@ -13,6 +13,7 @@ import (
 	"io"
 	"regexp"
 	"runtime/debug"
+	"strings"
 
 	"github.com/charmbracelet/fang"
 	"github.com/spf13/cobra"
@@ -148,8 +149,63 @@ func (a *app) rootCommand() *cobra.Command {
 		},
 	}
 
-	root.AddCommand(status, topic, serve)
+	root.AddCommand(status, topic, a.libraryCommand(), serve)
 	return root
+}
+
+func (a *app) libraryCommand() *cobra.Command {
+	lib := &cobra.Command{
+		Use:   "library",
+		Short: "Index and search your Library of books",
+		Args:  noArgs,
+		RunE:  showHelp,
+	}
+	build := &cobra.Command{
+		Use:     "build <folder>",
+		Short:   "Index the books in a folder, replacing the previous index",
+		Example: "  study library build ~/Books",
+		Args:    exactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := core.Open(a.opts)
+			if err != nil {
+				return a.fail(err)
+			}
+			summary, err := c.BuildLibrary(cmd.Context(), args[0])
+			if err != nil {
+				return a.fail(err)
+			}
+			if a.json {
+				return a.writeJSON(envelope{OK: true, Data: summary})
+			}
+			return writeLibrarySummary(a.stdout, summary)
+		},
+	}
+	var limit int
+	search := &cobra.Command{
+		Use:   "search <query>",
+		Short: "Find books in your Library",
+		Example: `  study library search "linear algebra"
+  study library search C --limit 5`,
+		Args: minArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := core.Open(a.opts)
+			if err != nil {
+				return a.fail(err)
+			}
+			results, err := c.SearchLibrary(cmd.Context(), strings.Join(args, " "), limit)
+			if err != nil {
+				return a.fail(err)
+			}
+			if a.json {
+				return a.writeJSON(envelope{OK: true, Data: map[string]any{"results": results}})
+			}
+			return writeSearchResults(a.stdout, results)
+		},
+	}
+	search.Flags().IntVar(&limit, "limit", core.DefaultSearchLimit,
+		fmt.Sprintf("most results to show, up to %d", core.MaxSearchLimit))
+	lib.AddCommand(build, search)
+	return lib
 }
 
 func (a *app) runStatus(cmd *cobra.Command, _ []string) error {
@@ -247,6 +303,24 @@ func noArgs(cmd *cobra.Command, args []string) error {
 		return usageError{fmt.Errorf("unexpected argument %q for %q", args[0], cmd.CommandPath())}
 	}
 	return nil
+}
+
+func exactArgs(n int) cobra.PositionalArgs {
+	return func(cmd *cobra.Command, args []string) error {
+		if len(args) != n {
+			return usageError{fmt.Errorf("%q takes %d argument(s), got %d", cmd.CommandPath(), n, len(args))}
+		}
+		return nil
+	}
+}
+
+func minArgs(n int) cobra.PositionalArgs {
+	return func(cmd *cobra.Command, args []string) error {
+		if len(args) < n {
+			return usageError{fmt.Errorf("%q needs at least %d argument(s)", cmd.CommandPath(), n)}
+		}
+		return nil
+	}
 }
 
 func wantsJSON(args []string) bool {

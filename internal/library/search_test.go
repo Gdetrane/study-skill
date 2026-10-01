@@ -19,13 +19,13 @@ func TestSearchRanksFixtureLibrary(t *testing.T) {
 		{"physics", []string{"Classical Mechanics", "Quantum Mechanics", "Relativity"}},
 		{"programming", []string{
 			"Python Programming", "The C Programming Language",
-			"C++ Primer", "Typescript Deep Dive",
+			"C++ Primer", "TypeScript Deep Dive",
 		}},
 		{"signal processing", []string{"Signal Processing First"}},
 		{"statistics with R", []string{"Advanced R"}},
 		{"go", []string{"Concurrency In Go"}},
 		{"c++", []string{"C++ Primer"}},
-		{"typescript", []string{"Typescript Deep Dive"}},
+		{"typescript", []string{"TypeScript Deep Dive"}},
 		{"linear algebra", []string{"Linear Algebra Done Right"}},
 		{"thermodynamics", []string{"Loose Notes On Thermodynamics"}},
 		{"underwater basket weaving", []string{}},
@@ -81,7 +81,7 @@ func TestSearchSingleLetterLanguage(t *testing.T) {
 
 	got := titlesOf(ix.Search("C programming", 10))
 	want := []string{
-		"The C Programming Language Kr",
+		"The C Programming Language KR",
 		"Effective C Robert C Seacord",
 		"Python Programming",
 		"Python Programming Fundamentals",

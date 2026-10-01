@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -58,7 +60,7 @@ func TestServerSendsInstructionsAndTools(t *testing.T) {
 			t.Error("status should be marked read-only")
 		}
 	}
-	if strings.Join(names, ",") != "status,topic_create" {
+	if strings.Join(names, ",") != "library_search,status,topic_create" {
 		t.Errorf("tools = %v", names)
 	}
 }
@@ -128,5 +130,47 @@ func TestStatusOnAnEmptyStudyHome(t *testing.T) {
 	decode(t, call(t, session, "status", map[string]any{}), &status)
 	if status.ActiveTopic != nil || len(status.Topics) != 0 || len(status.Problems) != 0 {
 		t.Errorf("status = %+v", status)
+	}
+}
+
+func TestLibrarySearch(t *testing.T) {
+	home := t.TempDir()
+	books := filepath.Join(home, "Books", "Programming")
+	if err := os.MkdirAll(books, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(books, "The_C_Programming_Language.pdf"), []byte("%PDF-1.4"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c, err := core.Open(core.Options{
+		Getenv: func(key string) string { return map[string]string{"STUDY_HOME": home, "HOME": home}[key] },
+		Dir:    home,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.BuildLibrary(context.Background(), "Books"); err != nil {
+		t.Fatal(err)
+	}
+
+	session := connect(t, home)
+	var out struct {
+		Results []struct {
+			Title string `json:"title"`
+			Path  string `json:"path"`
+			Score int    `json:"score"`
+		} `json:"results"`
+	}
+	decode(t, call(t, session, "library_search", map[string]any{"query": "C"}), &out)
+	if len(out.Results) != 1 || out.Results[0].Title != "The C Programming Language" || out.Results[0].Score <= 0 {
+		t.Fatalf("results = %+v", out.Results)
+	}
+
+	empty, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "library_search", Arguments: map[string]any{"query": ""}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !empty.IsError || !strings.Contains(text(empty), "invalid_argument") {
+		t.Errorf("empty query: IsError=%v, content %q", empty.IsError, text(empty))
 	}
 }

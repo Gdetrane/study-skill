@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/mordor-forge/lamplight/internal/library"
+	"github.com/mordor-forge/lamplight/v2/internal/library"
 )
 
 const (

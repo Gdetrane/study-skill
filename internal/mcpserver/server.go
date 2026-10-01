@@ -13,6 +13,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/mordor-forge/lamplight/v2/internal/core"
+	"github.com/mordor-forge/lamplight/v2/internal/library"
 )
 
 // Instructions are sent to every agent that connects. They carry the rules
@@ -63,7 +64,30 @@ func New(c *core.Core, version string) *mcp.Server {
 		return nil, topic, nil
 	})
 
+	mcp.AddTool(server, &mcp.Tool{
+		Name:  "library_search",
+		Title: "Search the Library",
+		Description: "Find books in the learner's Library, ranked by relevance, with their absolute paths. " +
+			"The learner builds the index with `study library build <folder>`.",
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, OpenWorldHint: &closedWorld},
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in librarySearchInput) (*mcp.CallToolResult, librarySearchOutput, error) {
+		results, err := c.SearchLibrary(ctx, in.Query, in.Limit)
+		if err != nil {
+			return nil, librarySearchOutput{}, toolError(err)
+		}
+		return nil, librarySearchOutput{Results: results}, nil
+	})
+
 	return server
+}
+
+type librarySearchInput struct {
+	Query string `json:"query" jsonschema:"what to look for, such as a subject, a title or a language"`
+	Limit int    `json:"limit,omitempty" jsonschema:"most results to return; default 10, at most 100"`
+}
+
+type librarySearchOutput struct {
+	Results []library.Result `json:"results"`
 }
 
 // shutdownGrace is how long Serve waits, once ctx is cancelled, for the

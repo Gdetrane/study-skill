@@ -6,7 +6,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/mordor-forge/lamplight/internal/library"
+	"github.com/mordor-forge/lamplight/v2/internal/library"
 )
 
 func TestBuildFindsEveryBookAndNothingElse(t *testing.T) {
@@ -90,7 +90,7 @@ func TestBuildPDFSignatureWithoutExtension(t *testing.T) {
 	if found.Format != "pdf" {
 		t.Errorf("Format = %q, want pdf", found.Format)
 	}
-	if want := "10 Unknown 1007%2F978 1 4614 6227 9"; found.Title != want {
+	if want := "10 Unknown 1007%2f978 1 4614 6227 9"; found.Title != want {
 		t.Errorf("Title = %q, want %q", found.Title, want)
 	}
 	if found.Category != "Unknown" {
@@ -107,7 +107,7 @@ func TestBuildCategories(t *testing.T) {
 	for title, want := range map[string]string{
 		"Loose Notes On Thermodynamics": "Uncategorized",
 		"Too Many Underscores":          "Uncategorized",
-		"Introduction To Algorithms":    "Cs", // title-cased as in v1
+		"Introduction To Algorithms":    "CS", // acronyms keep their case
 		"Relativity":                    "Science",
 		"Quantum Mechanics":             "Physics",
 	} {
@@ -147,7 +147,7 @@ func TestBuildDerivesTopicsAsWholeWords(t *testing.T) {
 	for title, want := range map[string][]string{
 		"The C Programming Language":    {"c", "programming"},
 		"C++ Primer":                    {"c++", "programming"},
-		"Typescript Deep Dive":          {"programming", "typescript"},
+		"TypeScript Deep Dive":          {"programming", "typescript"},
 		"Concurrency In Go":             {"go"},
 		"Advanced R":                    {"r", "statistics"},
 		"Introduction To Algorithms":    {"algorithms"},

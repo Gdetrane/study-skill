@@ -3,6 +3,7 @@ package library
 import (
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 // stopWords are dropped by the normalizer. None of them is a topic name, and
@@ -66,21 +67,17 @@ func cleanTitle(name string) string {
 	return titleCase(strings.Join(strings.Fields(spaced), " "))
 }
 
-// titleCase ports Python's str.title, which v1 used: a cased letter is
-// title-cased when it follows an uncased character and lowercased when it
-// follows a cased one. So "CS" becomes "Cs" and "c++" becomes "C++".
+// titleCase capitalises the first letter of each space-separated word and
+// leaves the rest of the word alone, so "CS" stays "CS", "2nd" stays "2nd",
+// "let's" becomes "Let's" and "c++" becomes "C++". (v1 used Python's
+// str.title, which turned these into "Cs", "2Nd" and "Let'S".)
 func titleCase(s string) string {
-	var b strings.Builder
-	b.Grow(len(s))
-	previousCased := false
-	for _, r := range s {
-		if previousCased {
-			r = unicode.ToLower(r)
-		} else {
-			r = unicode.ToTitle(r)
+	words := strings.Split(s, " ")
+	for i, word := range words {
+		r, size := utf8.DecodeRuneInString(word)
+		if size > 0 && unicode.IsLower(r) {
+			words[i] = string(unicode.ToTitle(r)) + word[size:]
 		}
-		previousCased = unicode.IsUpper(r) || unicode.IsLower(r) || unicode.IsTitle(r)
-		b.WriteRune(r)
 	}
-	return b.String()
+	return strings.Join(words, " ")
 }

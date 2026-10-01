@@ -10,7 +10,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/mordor-forge/lamplight/internal/library"
+	"github.com/mordor-forge/lamplight/v2/internal/library"
 )
 
 func TestSaveLoadRoundTrip(t *testing.T) {
