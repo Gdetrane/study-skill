@@ -330,6 +330,12 @@ func (c *Core) SetPhase(ctx context.Context, topicID string, spec PhaseSpec) (Ph
 		if ls != nil && ls.completed != nil {
 			return nil, &Error{Code: CodeFailedPrecondition, Message: "Lesson " + spec.Lesson + " is done"}
 		}
+		// A failed Attempt sends the Lesson from feedback back to
+		// practicing with a Next step that names the fix.
+		if spec.Phase == PhasePracticing && step == "" && ls != nil && failedDuringFeedback(ls) {
+			return nil, invalidf("the last Attempt of %s failed, so going back to practicing needs a Next step that "+
+				"names the fix, starting with a verb, such as \"Fix the off-by-one in count()\"", spec.Lesson)
+		}
 		d := phaseSetData{Lesson: spec.Lesson, Phase: spec.Phase, NextStep: step}
 		if spec.Phase == PhasePracticing {
 			_, version, err := readCheck(view.root, spec.Lesson)
