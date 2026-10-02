@@ -982,9 +982,12 @@ func (a *app) diagnoseCompletion() core.Finding {
 	}
 	if rec := records.find(shell); rec != nil && rec.File != "" {
 		switch _, err := os.Stat(rec.File); {
-		case err != nil:
+		case errors.Is(err, fs.ErrNotExist):
 			f.Status, f.Message = core.FindingWarn, "study completion install wrote "+rec.File+", but it is gone"
 			f.Fix = "study completion install"
+		case err != nil:
+			f.Status, f.Message = core.FindingWarn, "cannot check "+rec.File+": "+err.Error()
+			f.Fix = "check that you can read " + rec.File + " and its folder"
 		case fileSHA256(rec.File) != rec.SHA256:
 			f.Status, f.Message = core.FindingOK, shell+" completions are installed at "+rec.File+", changed since study wrote them"
 		default:

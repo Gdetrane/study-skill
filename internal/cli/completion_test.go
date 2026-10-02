@@ -638,3 +638,27 @@ func TestDoctorReportsTopicsItCannotRead(t *testing.T) {
 		t.Errorf("topic:go = %v", f)
 	}
 }
+
+// A completion file that cannot be checked is reported with its own error,
+// never as gone with advice to reinstall.
+func TestDoctorReportsAnUncheckableCompletionFile(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads any folder")
+	}
+	home := t.TempDir()
+	env := map[string]string{"HOME": home, "SHELL": "/usr/bin/fish"}
+	if r := runEnv(t, env, home, nil, "completion", "install"); r.code != cli.ExitOK {
+		t.Fatalf("install: exit %d, %s", r.code, r.stderr)
+	}
+	folder := filepath.Join(home, ".config", "fish", "completions")
+	if err := os.Chmod(folder, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(folder, 0o755) })
+	fakeGit(t, "Ada Lovelace", "ada@example.com")
+	doctor := decodeData(t, runEnv(t, env, home, nil, "doctor", "--json"))
+	got := finding(t, doctor, "completion")
+	if msg, _ := got["message"].(string); !strings.HasPrefix(msg, "cannot check ") || strings.Contains(msg, "gone") {
+		t.Errorf("doctor's completion Finding = %v, want the check's own error", got)
+	}
+}
