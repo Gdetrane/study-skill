@@ -23,8 +23,9 @@ example ten hours a week until a deadline, then three).
 _Avoid_: Budget, schedule
 
 **Approach**:
-How a Topic's Lessons relate to each other: standalone concepts, one project built step by
-step, or a run of challenges.
+How a Topic's Lessons relate to each other: `concepts` (standalone concepts), `project` (one
+project built step by step) or `challenges` (a run of challenges). Chosen with the learner
+when the Topic is created.
 _Avoid_: Style, track
 
 **Level**:
@@ -109,8 +110,8 @@ _Avoid_: Hidden tests, secret data
 
 **Hint**:
 Help the agent gives while the learner practises a Lesson: a nudge, an explanation of a
-concept again, or a step of the way to a solution. Each one is recorded, as a signal for
-adapting how the Topic is taught.
+concept again, or a step of the way to a solution, asked for by the learner or offered by
+the agent unasked. Each one is recorded, as a signal for adapting how the Topic is taught.
 _Avoid_: Help request, clue
 
 ### Sessions
