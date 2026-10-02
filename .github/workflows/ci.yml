@@ -22,3 +22,40 @@ jobs:
         run: go vet ./...
       - name: Test
         run: go test -race ./...
+
+  release:
+    # Not a required check: the v2 protection ruleset requires "Lamplight core".
+    name: Release snapshot
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+      - name: Check the GoReleaser configuration
+        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: check
+      - name: Build a snapshot without publishing
+        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --snapshot --clean --skip=publish
+      - name: Check that packages ship completions and the man page
+        run: |
+          set -eu
+          archive=$(ls dist/lamplight_*_linux_amd64.tar.gz)
+          for f in study completions/study.bash completions/study.zsh completions/study.fish manpages/study.1.gz; do
+            tar tzf "$archive" | grep -qx "$f" || { echo "missing $f in $archive"; exit 1; }
+          done
+          deb=$(ls dist/lamplight_*_amd64.deb)
+          ar p "$deb" data.tar.gz | tar tz | grep -q '^./usr/share/man/man1/study.1.gz$'
+          ar p "$deb" data.tar.gz | tar tz | grep -q '^./usr/share/zsh/vendor-completions/_study$'
+
