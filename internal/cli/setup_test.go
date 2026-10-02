@@ -4,9 +4,12 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
+	"io"
 	"io/fs"
 	"maps"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -56,8 +59,27 @@ case "$1 $2" in
 esac
 `
 
-// setupHome is a temporary HOME with fake claude, codex and study commands
-// on PATH; study sees bin/study as its own binary.
+// forbiddenAgent stands in for claude and codex on the test process's own
+// PATH, which study never uses for agents: anything that looks an agent up
+// there finds this, which records the call and fails, instead of the real
+// program.
+const forbiddenAgent = `#!/bin/sh
+echo "$0 $*" >> '%s'
+exit 97
+`
+
+// startPATH is the PATH the test binary started with. Setup tests resolve the
+// few programs they need from it (setupTools), and never run anything with it.
+var startPATH = os.Getenv("PATH")
+
+// setupTools are the only programs from the machine that setup tests put on
+// a PATH, each linked into the test's own folder: what the fake agents and
+// git-backed Topics need. Never claude or codex.
+var setupTools = []string{"sh", "cat", "rm", "sleep", "git"}
+
+// setupHome is a temporary HOME whose PATH holds only fake claude, codex and
+// study commands (bin/) and links to setupTools (tools/): no real agent can
+// run. study sees bin/study as its own binary.
 type setupHome struct {
 	home, bin string
 	env       map[string]string
@@ -66,25 +88,109 @@ type setupHome struct {
 func newSetupHome(t *testing.T, agents ...string) setupHome {
 	t.Helper()
 	home := t.TempDir()
-	bin := filepath.Join(home, "bin")
-	for name, script := range map[string]string{"claude": fakeClaude, "codex": fakeCodex, "study": "#!/bin/sh\n"} {
-		if name != "study" && !slices.Contains(agents, name) {
-			continue
+	h := setupHome{home: home, bin: filepath.Join(home, "bin")}
+	writeExec(t, filepath.Join(h.bin, "study"), "#!/bin/sh\n")
+	for _, agent := range agents {
+		writeExec(t, filepath.Join(h.bin, agent), map[string]string{"claude": fakeClaude, "codex": fakeCodex}[agent])
+	}
+	tools := h.path("tools")
+	if err := os.Mkdir(tools, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range setupTools {
+		real, err := lookTool(name)
+		if err != nil {
+			t.Fatal(err)
 		}
-		writeFile(t, filepath.Join(bin, name), script)
-		if err := os.Chmod(filepath.Join(bin, name), 0o755); err != nil {
+		if err := os.Symlink(real, filepath.Join(tools, name)); err != nil {
 			t.Fatal(err)
 		}
 	}
-	t.Cleanup(cli.SetExecutable(filepath.Join(bin, "study")))
-	return setupHome{home: home, bin: bin, env: map[string]string{
-		"HOME": home, "PATH": bin + string(os.PathListSeparator) + "/usr/bin" + string(os.PathListSeparator) + "/bin",
-	}}
+	absent := h.path("absent")
+	for _, agent := range []string{"claude", "codex"} {
+		writeExec(t, filepath.Join(absent, agent), fmt.Sprintf(forbiddenAgent, h.path("forbidden-calls.log")))
+	}
+	// git, run by the core for Topics, looks programs up on the process's
+	// PATH: give it the tools and the failing agents only.
+	t.Setenv("PATH", absent+string(os.PathListSeparator)+tools)
+	t.Cleanup(func() {
+		if data, err := os.ReadFile(h.path("forbidden-calls.log")); err == nil {
+			t.Errorf("an agent was looked up outside study's PATH and run:\n%s", data)
+		}
+	})
+	t.Cleanup(cli.SetExecutable(filepath.Join(h.bin, "study")))
+	h.env = map[string]string{"HOME": home, "PATH": h.bin + string(os.PathListSeparator) + tools, "TMPDIR": h.path("tmp")}
+	h.guard(t)
+	return h
+}
+
+// guard fails the test unless every PATH it runs with stays inside its own
+// folder and claude and codex resolve to its fakes or to nothing: never to
+// /usr/bin, ~/.local/bin or the PATH the tests started with.
+func (h setupHome) guard(t *testing.T) {
+	t.Helper()
+	for _, path := range []string{h.env["PATH"], os.Getenv("PATH")} {
+		for _, dir := range filepath.SplitList(path) {
+			if !inside(h.home, dir) {
+				t.Fatalf("PATH holds %s, outside the test's folder %s", dir, h.home)
+			}
+		}
+	}
+	for _, agent := range []string{"claude", "codex"} {
+		if p, err := exec.LookPath(agent); err == nil && !inside(h.home, p) {
+			t.Fatalf("%s resolves to %s, outside the test's fakes", agent, p)
+		}
+		for _, dir := range filepath.SplitList(h.env["PATH"]) {
+			p := filepath.Join(dir, agent)
+			if real, err := filepath.EvalSymlinks(p); err == nil && !inside(h.home, real) {
+				t.Fatalf("study's PATH finds %s at %s, outside the test's fakes", agent, real)
+			}
+		}
+	}
+	entries, _ := os.ReadDir(h.path("tools"))
+	for _, e := range entries {
+		real, _ := filepath.EvalSymlinks(h.path("tools", e.Name()))
+		if base := filepath.Base(real); base == "claude" || base == "codex" {
+			t.Fatalf("tools/%s is %s", e.Name(), real)
+		}
+	}
+}
+
+// inside reports whether p is root or below it.
+func inside(root, p string) bool {
+	rel, err := filepath.Rel(root, p)
+	return err == nil && filepath.IsAbs(p) && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// lookTool finds a program on the PATH the tests started with.
+func lookTool(name string) (string, error) {
+	for _, dir := range filepath.SplitList(startPATH) {
+		p := filepath.Join(dir, name)
+		if info, err := os.Stat(p); err == nil && info.Mode().IsRegular() && info.Mode()&0o111 != 0 {
+			return p, nil
+		}
+	}
+	return "", fmt.Errorf("setup tests need %s, which is not on PATH", name)
+}
+
+func writeExec(t *testing.T, path, content string) {
+	t.Helper()
+	writeFile(t, path, content)
+	if err := os.Chmod(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func (h setupHome) run(t *testing.T, args ...string) result {
 	t.Helper()
-	return runEnv(t, h.env, h.home, nil, args...)
+	h.guard(t)
+	return h.runIn(t, h.home, nil, args...)
+}
+
+func (h setupHome) runIn(t *testing.T, dir string, stdin io.Reader, args ...string) result {
+	t.Helper()
+	h.guard(t)
+	return runEnv(t, h.env, dir, stdin, args...)
 }
 
 func (h setupHome) path(parts ...string) string {
@@ -468,28 +574,28 @@ func TestSetupRecordDamagedOrNewer(t *testing.T) {
 }
 
 func TestSessionStartHookPrintsStatusOnlyInTheStudyHome(t *testing.T) {
-	home := t.TempDir()
-	study := filepath.Join(home, "study")
-	env := map[string]string{"HOME": home, "STUDY_HOME": study}
-	if r := runEnv(t, env, home, nil, "topic", "create", "--title", "Linear algebra"); r.code != cli.ExitOK {
+	h := newSetupHome(t)
+	study := h.path("study")
+	h.env["STUDY_HOME"] = study
+	if r := h.run(t, "topic", "create", "--title", "Linear algebra"); r.code != cli.ExitOK {
 		t.Fatalf("topic create: %s", r.stderr)
 	}
 	input := func(cwd string) *strings.Reader {
 		return strings.NewReader(`{"session_id":"s","hook_event_name":"SessionStart","source":"startup","cwd":"` + cwd + `"}`)
 	}
-	inside := runEnv(t, env, home, input(filepath.Join(study, "linear-algebra")), "claude-hook", "session-start")
-	if inside.code != cli.ExitOK || !strings.Contains(inside.stdout, "linear-algebra") || !strings.Contains(inside.stdout, "Lamplight") {
-		t.Errorf("inside the Study home: exit %d, %q", inside.code, inside.stdout)
+	in := h.runIn(t, h.home, input(filepath.Join(study, "linear-algebra")), "claude-hook", "session-start")
+	if in.code != cli.ExitOK || !strings.Contains(in.stdout, "linear-algebra") || !strings.Contains(in.stdout, "Lamplight") {
+		t.Errorf("inside the Study home: exit %d, %q", in.code, in.stdout)
 	}
-	outside := runEnv(t, env, home, input(home), "claude-hook", "session-start")
+	outside := h.runIn(t, h.home, input(h.home), "claude-hook", "session-start")
 	if outside.code != cli.ExitOK || outside.stdout != "" {
 		t.Errorf("outside the Study home: exit %d, %q", outside.code, outside.stdout)
 	}
-	garbage := runEnv(t, env, home, strings.NewReader("not json"), "claude-hook", "session-start")
+	garbage := h.runIn(t, h.home, strings.NewReader("not json"), "claude-hook", "session-start")
 	if garbage.code != cli.ExitOK {
 		t.Errorf("unreadable input: exit %d, %s", garbage.code, garbage.stderr)
 	}
-	if strings.Contains(runEnv(t, env, home, nil, "--help").stdout, "claude-hook") {
+	if strings.Contains(h.run(t, "--help").stdout, "claude-hook") {
 		t.Error("the hook command shows in help")
 	}
 }
