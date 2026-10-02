@@ -1,0 +1,7 @@
+{
+  "ok": false,
+  "error": {
+    "code": "invalid_argument",
+    "message": "stdin is not an Assessment in JSON: json: unknown field \"itens\""
+  }
+}

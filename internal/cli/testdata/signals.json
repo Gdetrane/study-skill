@@ -1,0 +1,70 @@
+{
+  "ok": true,
+  "data": {
+    "topic": "c",
+    "level": {
+      "level": "advanced",
+      "source": "learner",
+      "at": "2026-10-01T09:30:00Z"
+    },
+    "assessments": [
+      {
+        "id": "id005",
+        "kind": "placement",
+        "items": [
+          {
+            "area": "variables",
+            "question": "What does x := 1 do?",
+            "outcome": "correct"
+          },
+          {
+            "area": "pointers",
+            "outcome": "incorrect",
+            "note": "confused * and &"
+          },
+          {
+            "area": "goroutines",
+            "outcome": "not_reached"
+          }
+        ],
+        "summary": "Knows variables; pointers need work",
+        "minutes": 13,
+        "time_box": 15,
+        "level": "beginner",
+        "at": "2026-10-01T09:30:00Z",
+        "weak": [
+          "pointers"
+        ],
+        "confirm": [
+          "goroutines"
+        ]
+      }
+    ],
+    "lessons": [
+      {
+        "lesson": "answer",
+        "title": "The answer",
+        "done": false,
+        "first_try": false,
+        "attempts": 1,
+        "feedback_rounds": 0,
+        "hints": {
+          "nudge": 1,
+          "step": 1
+        }
+      }
+    ],
+    "reviews": {
+      "again": 0,
+      "hard": 0,
+      "good": 0,
+      "easy": 0
+    },
+    "totals": {
+      "first_try_passed": 0,
+      "first_try_measured": 1,
+      "feedback_rounds": 0,
+      "hints": 2
+    }
+  }
+}

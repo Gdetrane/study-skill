@@ -1,0 +1,6 @@
+Level: advanced (your choice)
+
+Placement 1 Oct 2026, Level beginner
+  Knows variables; pointers need work
+  To work on: pointers
+  To confirm during Lessons: goroutines

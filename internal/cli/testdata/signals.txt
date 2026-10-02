@@ -1,0 +1,6 @@
+Level: advanced (your choice)
+So far: 0 of 1 Lesson passed their Check on the first try; 0 feedback rounds; 2 hints
+
+answer (The answer)
+  Check failed on the first try; 1 Attempt; 0 feedback rounds
+  Hints: 1 nudge, 1 step
