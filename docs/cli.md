@@ -446,17 +446,20 @@ check:
 ```
 
 The Check's version is the hash of its criteria, kinds included, so editing a rubric item's
-text changes it too.
+text changes it too. A Check needs at least one run criterion or rubric item: one with only
+`held_out` criteria is refused as `corrupt`, since held-out results never decide whether a
+Lesson is done.
 
-`study check <lesson>` runs each run and held-out criterion's command, an argument list
-rather than a shell string, in `practice/<lesson-id>/`, with no standard input and these
-variables set:
+`study check <lesson>` runs each `run` and `held_out` criterion's command, an argument list
+rather than a shell string, in `practice/<lesson-id>/`, run criteria first, with no
+standard input and these variables set. Any other `STUDY_` variable in `study`'s own
+environment is removed first:
 
 | Variable | Set for | Meaning |
 |---|---|---|
 | `STUDY_TOPIC`, `STUDY_LESSON` | every command | the Topic's and the Lesson's ids |
 | `STUDY_RESULTS` | every command | where the command may write its results file, in a folder of its own outside the practice folder |
-| `STUDY_HELDOUT_DIR` | held-out commands only | the Lesson's Held-out data, `.heldout/<lesson-id>/` in the Topic |
+| `STUDY_HELDOUT_DIR` | `held_out` commands only | the Lesson's Held-out data, `.heldout/<lesson-id>/` in the Topic |
 
 A Check with only rubric items has nothing to run (`failed_precondition`): grade its items
 instead. Progress goes to stderr: each criterion as it starts, and every 15 seconds while a
@@ -466,28 +469,34 @@ long one runs; with `--json`, only the latter, so a quick Check keeps stderr emp
   if any, does not say `"passed": false`; it fails when the command exits with another
   status or the results say so; and it errors when the command cannot start, is stopped by
   a signal, runs longer than `--timeout` (default 30 minutes), leaves programs running in
-  the background, or writes a results file that is not valid. A held-out criterion follows
-  the same rules but must write a results file: without one, or without Held-out data, it
-  is errored. **The Attempt's outcome comes from its run criteria alone**: held-out results
-  are diagnostic and never change it.
+  the background, or writes a results file that is not valid. A `held_out` criterion
+  follows the same rules but must write a results file with a `score`: without one, or
+  without Held-out data, it is errored. **The Attempt's outcome comes from its run criteria
+  alone**: held-out results are diagnostic and never change it. A Check without run
+  criteria takes the outcome from its held-out results, so its Attempt passes only when
+  every one passed; completion still never depends on them.
 - **Processes.** Each command runs in a process group of its own. On a timeout, or when
   `study` receives SIGTERM or Ctrl-C, the whole group gets SIGTERM, then SIGKILL after
   two seconds; whatever a command leaves running when it exits is killed too. A Check
-  stopped by SIGTERM records nothing and reports `canceled`.
-- **The work.** The practice folder is snapshotted before and after the run, writing
-  nothing to `.git`. The snapshot covers every file that is not ignored and every ignore
-  rule that applies inside the folder (each `.gitignore` on the way and inside it,
-  `.git/info/exclude`, the global excludes file), so build outputs can be ignored, but
-  ignoring a file after a pass changes the snapshot. If the work changed during the run,
-  the Attempt is errored and the changed files are named; list files a Check writes in the
-  folder's `.gitignore`. The Attempt is also errored, without running anything, when the
-  snapshot would have a blind spot: files the index marks skip-worktree or
-  assume-unchanged, another git repository in the folder, a symbolic link leading outside
-  it, or a folder whose files are all ignored.
+  stopped by SIGTERM records nothing and reports `canceled`. A program that leaves the
+  group, with `setsid` say, escapes this and can outlive the Check; containing it is the
+  sandbox's job (ADR-0009).
+- **The work.** The practice folder is snapshotted before the run, after the run criteria
+  and after each `held_out` command, writing nothing to `.git`. The snapshot covers every
+  file that is not ignored and every ignore rule that applies inside the folder (each
+  `.gitignore` on the way and inside it, `.git/info/exclude`, the global excludes file),
+  so build outputs can be ignored, but ignoring a file after a pass changes the snapshot.
+  If a run criterion changed the work, the Attempt is errored and the changed files are
+  named; list files a Check writes in the folder's `.gitignore`. A `held_out` command must
+  not write into the work either: if it does, that criterion is errored, its results are
+  not kept and its run never counts, and the Attempt stands. The Attempt is also errored,
+  without running anything, when the snapshot would have a blind spot: files the index
+  marks skip-worktree or assume-unchanged, another git repository in the folder, a
+  symbolic link leading outside it, or a folder whose files are all ignored.
 
 **Results files.** A command may write a JSON object of at most 64 KiB to `STUDY_RESULTS`.
-Every field is optional, other fields are ignored and never recorded, and an invalid file
-makes the criterion errored:
+Every field is optional, except `score` for a `held_out` criterion; other fields are ignored
+and never recorded, and an invalid file makes the criterion errored:
 
 ```json
 {"format": 1, "passed": true, "score": 17, "max": 20,
@@ -495,13 +504,17 @@ makes the criterion errored:
 ```
 
 `format` is 1 (a newer one asks to upgrade `study`); `score` is at least 0 and at most
-`max`, which defaults to 1 and must be more than 0; `metrics` holds at most 20 numbers named
-with lowercase letters, digits, `_`, `.` and `-`; `summary` is text of at most 1,000
-characters for the learner.
+`max`, which defaults to 1 and must be more than 0; `metrics` holds at most 20 numbers,
+each named with 1 to 40 lowercase letters, digits, `_`, `.` and `-`, starting with a letter
+or a digit; `summary` is text of at most 1,000 characters for the learner. The file must be
+a regular file, not a link or a FIFO; it is opened without following links and read up to
+the limit only. A reason that quotes the file, such as a bad metric name or a JSON error,
+quotes at most 80 characters of it.
 
 `study check --json` prints the Attempt with the end of each run criterion's output. The
 History records the Attempt without any output, which could reveal test data, and a
-held-out criterion's output is never kept at all:
+`held_out` criterion's output is never kept at all. `not_counted` says why a held-out run is
+not the counted measurement:
 
 ```json
 {
@@ -509,7 +522,8 @@ held-out criterion's output is never kept at all:
   "outcome": "failed", "at": "...",
   "criteria": [
     { "id": "tests", "kind": "run", "outcome": "failed", "exit_code": 1, "output": "the end of what it printed" },
-    { "id": "accuracy", "kind": "held-out", "outcome": "passed", "exit_code": 0, "counted": true,
+    { "id": "accuracy", "kind": "held_out", "outcome": "passed", "exit_code": 0, "counted": false,
+      "not_counted": "an earlier run is the counted measurement",
       "results": { "score": 0.87, "max": 1, "summary": "87 of 100 cases" } }
   ]
 }
@@ -520,38 +534,59 @@ only through the command line, from the agent's own shell, so the agent's sandbo
 (ADR-0009); the MCP server reads Attempts (`check_results`) but never runs a Check.
 
 **Held-out data** lives in `.heldout/<lesson-id>/`, which is committed with the Topic so
-every machine measures on the same data. It is synthetic or public, never personal data.
-Lamplight never shows its contents, the files' names (they are left out of the changes an
-unclosed Session lists) or a held-out command's output, only its results. The first run of
-a held-out criterion in a Lesson that produces results is its **counted** measurement;
-later runs are recorded as not counted, so editing the Check never makes a fresh first run,
-and an errored run never uses the count up. Two machines that both measured first are
-flagged.
+every machine measures on the same data: the default `.gitignore` ends with `!.heldout/**`,
+so its files are committed whatever their format. It is synthetic or public, never
+personal data. Lamplight never shows its contents, the files' names (they are left out of
+the changes an unclosed Session lists and of a Checkpoint's `large_files`) or a `held_out`
+command's output, only its results.
+
+The **counted** measurement of a `held_out` criterion is its first run that produces
+results, on the Check shown to the learner when practicing last started, in an Attempt that
+is not errored. Every other run is recorded as not counted, with the reason: the Check was
+not shown yet, this version of it is not the one shown, the Attempt errored, or an earlier
+run counted. So editing the Check never makes a fresh first run, and an errored run never
+uses the count up. A criterion is known by its id, so renaming a `held_out` criterion does
+start a new count: agents must never rename or re-create one to get a fresh first run. Two
+machines that both measured first are flagged.
 
 **Rubric items** are graded by the agent, after the learner checks their own work against
 them, with `study rubric grade` or the MCP `rubric_record` tool: `met`, `partly` or
 `not_met`, with an optional note. A grade is for the Check shown to the learner and the
-work as it is now. **Written work** is files in the practice folder: typed final answers in
-a text file, or a photo of paper work; a grade names the files it looked at, and only their
-paths and content hashes are recorded.
+work as it is now, and the practice folder must hold work: at least one file that is not
+ignored. **Written work** is files in the practice folder: typed final answers in a text
+file, or a photo of paper work. A grade names the files it looked at, relative to the
+practice folder or to the Topic; each must be a file the work's snapshot sees, so never an
+ignored file or a link, and it is opened inside the practice folder, so nothing leads out
+of it. Only their paths and content hashes are recorded.
 
 | Command | What it does |
 |---|---|
 | `study rubric grade <lesson> <criterion> --grade G [--note N] [--looked-at FILE]... [--topic ID] [--dry-run]` | Grades a rubric item. Without `--topic`, it uses the Topic whose folder it runs in. The same grade, note and files again record nothing. |
-| `study results <lesson> [--topic ID]` | Shows the Check, the Attempts, each rubric item's grade (and whether it is for the current Check and work), each held-out criterion's counted measurement and latest run, whether the Lesson can be completed, and what to do next. Runs nothing. Without `--topic`, it uses the Active topic. |
+| `study results <lesson> [--topic ID]` | Shows the Check, the Attempts, each rubric item's grade (and whether it is for the current Check and work), each `held_out` criterion's counted measurement and latest run, whether the Lesson can be completed, and what to do next. Runs nothing. Without `--topic`, it uses the Active topic. |
+
+With `--json`, each criterion of the Check has its `id`, `kind` (`run`, `rubric` or
+`held_out`), `describe`, and either `command` (for `run` and `held_out`) or `rubric`.
 
 **Completion.** A Lesson can be completed when, for the Check shown to the learner when
 practicing last started (through `phase_set`), which must still be the current one, every
-run criterion passed on an Attempt of the current work, and every rubric item has a grade,
-whatever it is, for that Check and that work. Held-out results never decide it. A Check
-edited afterwards is flagged in `status` and must be shown again; changing the work after a
-pass means running the Check, and grading, again. `lesson_complete` records the Attempt and
-the grades it relied on, and a done Lesson is never reopened.
+run criterion passed on an Attempt of the current work, and every rubric item has a grade
+for that Check and that work, whose files it looked at are unchanged. Every rubric item
+needs a grade, but which grade does not matter: `not_met` counts as graded. Held-out
+results never decide it. A Check edited afterwards is flagged in `status` and must be shown
+again; changing the work after a pass means running the Check, and grading, again.
+`lesson_complete` records the Attempt and the grades it relied on, and a done Lesson is
+never reopened.
 
-**After a failed Attempt** during feedback, the agent gives feedback, then moves the Lesson
-back to practicing with `phase_set` and a Next step that names the fix: without one,
-`phase_set` refuses with `invalid_argument`. `study results` and `check_results` say so in
-`next`.
+**After a failed Attempt**, one where a run criterion of the Check shown to the learner
+failed, the agent gives feedback, then moves the Lesson to practicing with `phase_set` and
+a Next step that names the fix, whatever Phases it goes through on the way: without one,
+`phase_set` refuses with `invalid_argument`. Once that Next step is recorded, none is asked
+for again until another Attempt fails. `study results` and `check_results` say so in
+`next`, with a `code` for programs and a `text` for people:
+
+```json
+"next": {"code": "name_the_fix", "text": "give the learner feedback on the failed Attempt, then move the Lesson to practicing with phase_set and a Next step that names the fix"}
+```
 
 ## Cards and Reviews
 

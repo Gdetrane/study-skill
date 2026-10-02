@@ -90,8 +90,10 @@ _Avoid_: Template, practice folder, scaffold
 
 **Check**:
 The criteria a Lesson's exercise is measured against: repeatable runs, rubric items, and
-evaluations on Held-out data. Passing the runs and rubric items on the current work makes a
-Lesson done; Held-out results are recorded but don't decide it.
+evaluations on Held-out data. A Lesson is done when the runs pass on the current work and
+every rubric item is graded for it; any grade counts, `not_met` included, because grading
+records that the learner's work was checked, not that it is right. Held-out results are
+recorded but don't decide it, so a Check needs at least one run or rubric item.
 _Avoid_: Grading, validation
 
 **Attempt**:
@@ -101,7 +103,8 @@ _Avoid_: Try, submission, run
 
 **Held-out data**:
 Test data kept out of the learner's sight while they work; only the first run that produces
-results counts as its measurement. It is always synthetic or public, never personal data.
+results, on the Check shown to the learner and in an Attempt that did not error, counts as
+its measurement. It is always synthetic or public, never personal data.
 _Avoid_: Hidden tests, secret data
 
 ### Sessions
