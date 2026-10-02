@@ -89,7 +89,11 @@ func (c *Core) LessonOf(ctx context.Context, topicID, lessonID string) (LessonDe
 	}
 	d.Exists = exists
 	if !exists {
-		d.HeaderError = d.File + " does not exist yet: write the Lesson, with its Check in the YAML header"
+		if d.Status == LessonSkipped {
+			d.HeaderError = d.File + " does not exist, and the Lesson is skipped"
+		} else {
+			d.HeaderError = d.File + " does not exist yet: write the Lesson, with its Check in the YAML header"
+		}
 		return d, nil
 	}
 	var problems []string

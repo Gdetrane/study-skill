@@ -3,6 +3,8 @@ package core
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -55,6 +57,16 @@ check:`, 1))
 	if broken, err := m.LessonOf(ctx, "c", "next"); err != nil || broken.HeaderReadable || broken.HeaderError == "" || !broken.Exists {
 		t.Errorf("a broken header = %+v, %v", broken, err)
 	}
+	skipped := clone(answerThenNext)
+	skipped.Milestones[1].Lessons[0].Skipped = true
+	revise(t, m, skipped)
+	if err := os.Remove(filepath.Join(m.home, "c", "lessons", "next.md")); err != nil {
+		t.Fatal(err)
+	}
+	if gone, err := m.LessonOf(ctx, "c", "next"); err != nil || gone.Status != LessonSkipped || gone.Exists ||
+		strings.Contains(gone.HeaderError, "write") || gone.HeaderError == "" {
+		t.Errorf("a skipped Lesson without a file = %+v, %v", gone, err)
+	}
 	if _, err := m.LessonOf(ctx, "c", "nowhere"); CodeOf(err) != CodeNotFound {
 		t.Errorf("an unknown Lesson: %v", err)
 	}
@@ -81,7 +93,7 @@ func TestHistoryOf(t *testing.T) {
 		t.Fatalf("newest first = %+v", h.Entries)
 	}
 	last := h.Entries[len(h.Entries)-1]
-	if last.Type != eventTopicCreated || last.Summary != "Topic created: “C”" || last.Item == "" {
+	if last.Type != eventTopicCreated || last.Summary != "Topic created" || last.Item == "" {
 		t.Errorf("the oldest entry = %+v", last)
 	}
 	for i := 1; i < len(h.Entries); i++ {

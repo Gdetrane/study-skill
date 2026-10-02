@@ -1,5 +1,5 @@
 <time>  Checkpoint saved for the agent’s turn
 <time>  Phase set: practicing (answer)
 <time>  Revision applied, approved by chat
-<time>  Revision proposed: “A first Syllabus”
-<time>  Topic created: “C”
+<time>  Revision proposed
+<time>  Topic created

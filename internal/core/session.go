@@ -597,6 +597,14 @@ func replayPhaseSet(s *replayed, ev event) error {
 	if err := json.Unmarshal(ev.Data, &d); err != nil {
 		return fmt.Errorf("its payload is unreadable: %v", err)
 	}
+	if err := validateEntityID("Lesson", d.Lesson); err != nil {
+		return err
+	}
+	switch d.Phase {
+	case PhaseTeaching, PhasePracticing, PhaseFeedback:
+	default:
+		return fmt.Errorf("its Phase must be teaching, practicing or feedback, not %q", clip(d.Phase, 40))
+	}
 	l := s.study.lesson(d.Lesson)
 	if d.Phase == PhaseFeedback && l.phase != PhaseFeedback {
 		l.feedbackRounds++
