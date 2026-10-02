@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
 
 // Name is the plugin's name, in its manifest and in the marketplace entry, so
@@ -114,11 +115,17 @@ func Hash(files map[string][]byte) string {
 	return hex.EncodeToString(h.Sum(nil))[:16]
 }
 
+// StaleAfter is how old a temporary folder under parent must be before
+// Write removes it: older than any Write still filling it.
+const StaleAfter = 10 * time.Minute
+
 // Write writes the plugin into a folder under parent named after its content,
 // and returns that folder. A folder that already holds the same files is
-// reused; other plugin folders under parent, left by earlier versions, are
-// removed. Claude Code copies the folder when it installs or updates the
-// plugin, so removing old ones is safe.
+// reused. Plugin folders are never removed or replaced, because another
+// study (another version, or the same one in another session) may have just
+// printed one that Claude Code is about to copy; concurrent Writes of the
+// same plugin all succeed with the same folder. Only temporary folders left
+// by interrupted Writes are removed, once stale.
 func Write(parent string, opts Options) (string, error) {
 	files, err := Files(opts)
 	if err != nil {
@@ -127,44 +134,75 @@ func Write(parent string, opts Options) (string, error) {
 	if err := os.MkdirAll(parent, 0o755); err != nil {
 		return "", err
 	}
+	defer pruneTemps(parent, time.Now().Add(-StaleAfter))
 	dir := filepath.Join(parent, "plugin-"+Hash(files))
-	if !same(dir, files) {
-		tmp, err := os.MkdirTemp(parent, ".plugin-tmp-*")
+	switch _, err := os.Lstat(dir); {
+	case errors.Is(err, fs.ErrNotExist):
+	case err != nil:
+		return "", err
+	case same(dir, files):
+		// Another Write's rename makes a folder appear whole, so a folder
+		// that is there is complete, or damaged.
+		return dir, nil
+	default:
+		// Damaged, since its name is its content's hash: set it aside
+		// rather than delete it, and let pruning remove it once stale.
+		aside, err := os.MkdirTemp(parent, ".plugin-tmp-damaged-*")
 		if err != nil {
 			return "", err
 		}
-		for name, data := range files {
-			p := filepath.Join(tmp, filepath.FromSlash(name))
-			if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-				_ = os.RemoveAll(tmp)
-				return "", err
-			}
-			if err := os.WriteFile(p, data, 0o644); err != nil {
-				_ = os.RemoveAll(tmp)
-				return "", err
-			}
-		}
-		if err := os.Chmod(tmp, 0o755); err != nil {
-			_ = os.RemoveAll(tmp)
-			return "", err
-		}
-		_ = os.RemoveAll(dir)
-		if err := os.Rename(tmp, dir); err != nil {
-			_ = os.RemoveAll(tmp)
-			return "", err
+		if err := os.Rename(dir, filepath.Join(aside, "plugin")); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return "", fmt.Errorf("%s is damaged and cannot be set aside: %w", dir, err)
 		}
 	}
-	entries, err := os.ReadDir(parent)
-	if err == nil {
-		for _, e := range entries {
-			name := e.Name()
-			if e.IsDir() && name != filepath.Base(dir) &&
-				(strings.HasPrefix(name, "plugin-") || strings.HasPrefix(name, ".plugin-tmp-")) {
-				_ = os.RemoveAll(filepath.Join(parent, name))
-			}
+	tmp, err := os.MkdirTemp(parent, ".plugin-tmp-*")
+	if err != nil {
+		return "", err
+	}
+	if err := fill(tmp, files); err != nil {
+		_ = os.RemoveAll(tmp)
+		return "", err
+	}
+	if err := os.Rename(tmp, dir); err != nil {
+		_ = os.RemoveAll(tmp)
+		// Another Write got there first: its folder is as good as ours.
+		if errors.Is(err, fs.ErrExist) && same(dir, files) {
+			return dir, nil
 		}
+		return "", err
 	}
 	return dir, nil
+}
+
+// fill writes files into dir, a new folder only this Write knows.
+func fill(dir string, files map[string][]byte) error {
+	for name, data := range files {
+		p := filepath.Join(dir, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(p, data, 0o644); err != nil {
+			return err
+		}
+	}
+	return os.Chmod(dir, 0o755)
+}
+
+// pruneTemps removes temporary folders under parent last changed before
+// cutoff, left by Writes that were interrupted.
+func pruneTemps(parent string, cutoff time.Time) {
+	entries, err := os.ReadDir(parent)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if !e.IsDir() || !strings.HasPrefix(e.Name(), ".plugin-tmp-") {
+			continue
+		}
+		if info, err := e.Info(); err == nil && info.ModTime().Before(cutoff) {
+			_ = os.RemoveAll(filepath.Join(parent, e.Name()))
+		}
+	}
 }
 
 // same reports whether dir holds exactly files.
