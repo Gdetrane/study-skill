@@ -1,0 +1,7 @@
+{
+  "ok": false,
+  "error": {
+    "code": "invalid_argument",
+    "message": "an Approach is concepts, project or challenges, not \"lectures\""
+  }
+}

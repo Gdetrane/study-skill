@@ -258,6 +258,9 @@ func writePlan(b *strings.Builder, t core.Topic, labels int) {
 	if t.Level != nil {
 		fmt.Fprintf(b, "%s%s\n", styleLabel.Render(pad("Level:", labels)), describeLevel(t.Level))
 	}
+	if t.Approach != "" {
+		fmt.Fprintf(b, "%s%s\n", styleLabel.Render(pad("Approach:", labels)), t.Approach)
+	}
 	if t.Deadline != "" {
 		fmt.Fprintf(b, "%s%s\n", styleLabel.Render(pad("Deadline:", labels)), t.Deadline)
 	}
@@ -304,6 +307,9 @@ func writePlanSettings(w io.Writer, t core.Topic) {
 	}
 	if t.Level != nil {
 		fmt.Fprintf(w, "  Level: %s\n", describeLevel(t.Level))
+	}
+	if t.Approach != "" {
+		fmt.Fprintf(w, "  Approach: %s\n", t.Approach)
 	}
 	if t.Deadline != "" {
 		fmt.Fprintf(w, "  Deadline: %s\n", t.Deadline)

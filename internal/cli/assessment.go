@@ -3,7 +3,6 @@ package cli
 import (
 	"fmt"
 	"io"
-	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -29,8 +28,9 @@ func (a *app) assessmentCommand() *cobra.Command {
 		Long: "Record a placement Assessment, run when a Topic is created, or the Assessment that ends a Milestone.\n" +
 			"The file holds JSON in the shape the assessment_record tool takes: kind, milestone, items (area,\n" +
 			"question, outcome: correct, partly, incorrect or not_reached), summary, minutes, time_box, level and\n" +
-			"notes. With a level, the Assessment sets the Topic's Level. Recording the same Assessment again\n" +
-			"records nothing. - reads the JSON from stdin.",
+			"notes, and request, an id that makes a retry record nothing. With a level, the Assessment sets the\n" +
+			"Topic's Level. Without a request id, the same Assessment as the latest records nothing unless the\n" +
+			"Level changed since. - reads the JSON from stdin.",
 		Example: `  study assessment record go --file notes/placement.json
   study assessment record go --file - < assessment.json`,
 		Args: exactArgs(1),
@@ -114,8 +114,8 @@ func (a *app) hintCommand() *cobra.Command {
 		Long: "Record a hint given while the learner studies a Lesson: a nudge (a question or pointer), an\n" +
 			"explanation of a concept again, or a step of the way to a solution. Hints are a signal for adapting\n" +
 			"how the Topic is taught. --request makes a retry record nothing.",
-		Example: `  study hint record pointers --kind nudge --note "Asked what *p reads"
-  study hint record pointers --kind step --topic go`,
+		Example: `  study hint record pointers --kind nudge --requested-by learner --note "Asked what *p reads"
+  study hint record pointers --kind step --requested-by agent --topic go`,
 		Args: exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := core.Open(a.opts)
@@ -140,6 +140,11 @@ func (a *app) hintCommand() *cobra.Command {
 	}
 	record.Flags().StringVar(&topic, "topic", "", "the Topic's id; defaults to the Topic whose folder you are in")
 	record.Flags().StringVar(&spec.Kind, "kind", core.HintNudge, "nudge, explanation or step")
+	record.Flags().StringVar(&spec.RequestedBy, "requested-by", "", "learner, when the learner asked, or agent, when it was offered")
+	_ = record.RegisterFlagCompletionFunc("requested-by", cobra.FixedCompletions(
+		[]string{core.HintByLearner, core.HintByAgent}, cobra.ShellCompDirectiveNoFileComp))
+	_ = record.RegisterFlagCompletionFunc("kind", cobra.FixedCompletions(
+		[]string{core.HintNudge, core.HintExplanation, core.HintStep}, cobra.ShellCompDirectiveNoFileComp))
 	record.Flags().StringVar(&spec.Note, "note", "", "what the hint was about, in a few words")
 	record.Flags().StringVar(&spec.Request, "request", "", "an id for this hint, so a retry records nothing")
 	record.Flags().BoolVar(&spec.DryRun, "dry-run", false, "show the hint without recording it")
@@ -147,17 +152,20 @@ func (a *app) hintCommand() *cobra.Command {
 	return group
 }
 
+// signalsCommand is an interface for agents with a shell: the signals are
+// for adapting how a Topic is taught, never shown to the learner as counts
+// or scores, so the command is hidden and answers in JSON only.
 func (a *app) signalsCommand() *cobra.Command {
 	return &cobra.Command{
-		Use:   "signals [topic]",
-		Short: "Show the learning signals behind a Topic's Level",
-		Long: "Show what a future Level suggestion will use: Checks passed on the first try, feedback rounds,\n" +
-			"hints, the gap between dev and Held-out scores, Review ratings and the Assessments. They are\n" +
-			"recorded for adapting how a Topic is taught.",
-		Example: `  study signals go
-  study signals --json        # the Active topic`,
-		Args: maxArgs(1),
+		Use:    "signals [topic]",
+		Short:  "For agents: a Topic's learning signals, in JSON",
+		Hidden: true,
+		Args:   maxArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if !a.json {
+				_, err := fmt.Fprintln(a.out, "study signals is for agents, which read it with --json to adapt how they teach.")
+				return err
+			}
 			c, err := core.Open(a.opts)
 			if err != nil {
 				return a.fail(err)
@@ -170,10 +178,7 @@ func (a *app) signalsCommand() *cobra.Command {
 			if err != nil {
 				return a.fail(err)
 			}
-			if a.json {
-				return a.writeJSON(envelope{OK: true, Data: s})
-			}
-			return writeSignals(a.out, s)
+			return a.writeJSON(envelope{OK: true, Data: s})
 		},
 	}
 }
@@ -206,6 +211,9 @@ func writeAssessmentRecorded(w io.Writer, r core.AssessmentRecorded) error {
 	writeAssessmentBody(&b, as)
 	if r.Level != nil {
 		fmt.Fprintf(&b, "  %s%s\n", styleLabel.Render("Level: "), describeLevel(r.Level))
+	}
+	if r.Next != nil {
+		fmt.Fprintf(&b, "  %s%s\n", styleLabel.Render("Next: "), printable(r.Next.Text))
 	}
 	_, err := io.WriteString(w, b.String())
 	return err
@@ -244,7 +252,7 @@ func writeAssessments(w io.Writer, l core.AssessmentList) error {
 	if len(l.Assessments) == 0 {
 		fmt.Fprintf(&b, "No Assessments yet in %s.\n", printable(l.Topic))
 	}
-	for _, as := range slices.Backward(l.Assessments) {
+	for _, as := range l.Assessments {
 		what := "Placement"
 		if as.Kind == core.AssessmentMilestone {
 			what = "Milestone " + printable(as.Milestone)
@@ -262,71 +270,18 @@ func writeAssessments(w io.Writer, l core.AssessmentList) error {
 
 func writeHintRecorded(w io.Writer, r core.HintRecorded) error {
 	h := r.Hint
+	who := "offered unasked"
+	if h.RequestedBy == core.HintByLearner {
+		who = "asked for by the learner"
+	}
 	var err error
 	switch {
 	case !r.Changed:
 		_, err = fmt.Fprintf(w, "This hint for %s was already recorded.\n", printable(h.Lesson))
 	case r.DryRun:
-		_, err = fmt.Fprintf(w, "Would record a %s hint for %s.\n", h.Kind, printable(h.Lesson))
+		_, err = fmt.Fprintf(w, "Would record a %s hint for %s, %s.\n", h.Kind, printable(h.Lesson), who)
 	default:
-		_, err = fmt.Fprintf(w, "Recorded a %s hint for %s.\n", h.Kind, printable(h.Lesson))
+		_, err = fmt.Fprintf(w, "Recorded a %s hint for %s, %s.\n", h.Kind, printable(h.Lesson), who)
 	}
 	return err
-}
-
-func writeSignals(w io.Writer, s core.Signals) error {
-	var b strings.Builder
-	if s.Level != nil {
-		fmt.Fprintf(&b, "%s%s\n", styleLabel.Render("Level: "), describeLevel(s.Level))
-	}
-	fmt.Fprintf(&b, "%s%d of %s passed their Check on the first try; %s; %s\n",
-		styleLabel.Render("So far: "), s.Totals.FirstTryPassed, count(s.Totals.FirstTryMeasured, "Lesson", "Lessons"),
-		count(s.Totals.FeedbackRounds, "feedback round", "feedback rounds"), count(s.Totals.Hints, "hint", "hints"))
-	if r := s.Reviews; r != (core.ReviewSignals{}) {
-		fmt.Fprintf(&b, "%s%s\n", styleLabel.Render("Reviews: "), describeReviews(r))
-	}
-	for _, ls := range s.Lessons {
-		title := ""
-		if ls.Title != "" {
-			title = " (" + printable(ls.Title) + ")"
-		}
-		fmt.Fprintf(&b, "\n%s%s\n", styleAccent.Render(printable(ls.Lesson)), title)
-		first := "not measured yet"
-		if ls.FirstTry != nil {
-			first = "failed on the first try"
-			if *ls.FirstTry {
-				first = "passed on the first try"
-			}
-		}
-		fmt.Fprintf(&b, "  Check %s; %s; %s\n", first, count(ls.Attempts, "Attempt", "Attempts"),
-			count(ls.FeedbackRounds, "feedback round", "feedback rounds"))
-		if len(ls.Hints) > 0 {
-			var kinds []string
-			for _, k := range []string{core.HintNudge, core.HintExplanation, core.HintStep} {
-				if n := ls.Hints[k]; n > 0 {
-					kinds = append(kinds, fmt.Sprintf("%d %s", n, k))
-				}
-			}
-			fmt.Fprintf(&b, "  Hints: %s\n", strings.Join(kinds, ", "))
-		}
-		for _, g := range ls.HeldOut {
-			line := fmt.Sprintf("  Held-out %s: %.2f", printable(g.Criterion), g.HeldOut)
-			if g.Dev != nil && g.Gap != nil {
-				line += fmt.Sprintf(" against %.2f on the run criteria (gap %+.2f)", *g.Dev, *g.Gap)
-			}
-			fmt.Fprintln(&b, line)
-		}
-		if ls.Reviews != nil {
-			fmt.Fprintf(&b, "  Reviews: %s\n", describeReviews(*ls.Reviews))
-		}
-	}
-	_, err := io.WriteString(w, b.String())
-	return err
-}
-
-// count writes n with the singular or plural noun.
-func count(n int, one, many string) string { return fmt.Sprintf("%d %s", n, plural(n, one, many)) }
-
-func describeReviews(r core.ReviewSignals) string {
-	return fmt.Sprintf("%d again, %d hard, %d good, %d easy", r.Again, r.Hard, r.Good, r.Easy)
 }

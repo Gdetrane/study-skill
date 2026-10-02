@@ -3,6 +3,7 @@ Active topic:  c (C): it is the Topic you worked on most recently
 Lesson:        answer (The answer), practicing
 Do next:       Continue practicing Lesson “The answer”
 Level:         advanced (your choice)
+Approach:      project
 Forecast:      Basics needs hour estimates for "The answer" before it can be forecast.
                Set a Pace to see when each Milestone ends: study topic update c --pace 10
 

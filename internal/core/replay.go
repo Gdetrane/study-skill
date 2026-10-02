@@ -350,6 +350,7 @@ func (c *Core) topicFlags(topic *os.Root, s *replayed) []Flag {
 	all := append(append([]Flag{}, s.flags...), c.gatingFlags(topic, s)...)
 	all = append(all, s.study.cardFlags()...)
 	all = append(all, entityConflicts(topic, s)...)
+	all = append(all, levelFlags(topic, s)...)
 	if ahead := s.latest.Sub(c.now()); ahead > clockAheadLimit {
 		// The flag is named after the earliest Event dated ahead, which
 		// later Events, the dismissal included, never change.

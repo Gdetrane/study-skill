@@ -189,18 +189,19 @@ func (a *app) rootCommand() *cobra.Command {
 	create.Flags().StringVar(&spec.Goal, "goal", "", "what you want to be able to do at the end")
 	create.Flags().BoolVar(&spec.DryRun, "dry-run", false, "show what would be created without writing anything")
 	var changes core.TopicChanges
-	var newTitle, newGoal, deadline, state, level string
+	var newTitle, newGoal, deadline, state, level, approach string
 	var pace []string
 	var clearPace bool
 	var newCards int
 	var kb core.KnowledgeBase
 	update := &cobra.Command{
 		Use:   "update <topic>",
-		Short: "Change a Topic's title, goal, Knowledge base, deadline, Pace, Level or state",
+		Short: "Change a Topic's title, goal, Knowledge base, deadline, Pace, Level, Approach or state",
 		Example: `  study topic update linear-algebra --goal "Pass the June exam" --deadline 2027-06-01
   study topic update c --title "Systems programming in C" --dry-run
   study topic update c --knowledge-base notebooklm --notebook 4f2a9c1e
   study topic update c --pace 10 --pace 3@2026-11-16
+  study topic update c --level intermediate --approach project
   study topic update c --state paused`,
 		Args: exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -235,6 +236,9 @@ func (a *app) rootCommand() *cobra.Command {
 			if cmd.Flags().Changed("level") {
 				changes.Level = &level
 			}
+			if cmd.Flags().Changed("approach") {
+				changes.Approach = &approach
+			}
 			c, err := core.Open(a.opts)
 			if err != nil {
 				return a.fail(err)
@@ -267,6 +271,10 @@ func (a *app) rootCommand() *cobra.Command {
 	_ = update.RegisterFlagCompletionFunc("level", cobra.FixedCompletions(
 		[]string{core.LevelBeginner, core.LevelIntermediate, core.LevelAdvanced, core.LevelExpert},
 		cobra.ShellCompDirectiveNoFileComp))
+	update.Flags().StringVar(&approach, "approach", "",
+		"how the Lessons relate: concepts, project (one project built step by step) or challenges")
+	_ = update.RegisterFlagCompletionFunc("approach", cobra.FixedCompletions(
+		[]string{core.ApproachConcepts, core.ApproachProject, core.ApproachChallenges}, cobra.ShellCompDirectiveNoFileComp))
 	update.Flags().BoolVar(&changes.DryRun, "dry-run", false, "show the result without writing anything")
 	var dismissDryRun bool
 	dismiss := &cobra.Command{

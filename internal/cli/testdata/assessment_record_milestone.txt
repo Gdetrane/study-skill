@@ -1,0 +1,5 @@
+Recorded the Assessment of Milestone basics.
+  Pointers still need work
+  To work on: pointers
+  Level: advanced (your choice)
+  Next: propose a Revision for the weak areas (pointers), such as a review Lesson; nothing is blocked meanwhile

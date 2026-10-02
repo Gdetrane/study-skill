@@ -38,6 +38,28 @@
         "confirm": [
           "goroutines"
         ]
+      },
+      {
+        "id": "id008",
+        "kind": "milestone",
+        "milestone": "basics",
+        "items": [
+          {
+            "area": "pointers",
+            "outcome": "partly",
+            "note": "reads *p, not &x"
+          },
+          {
+            "area": "slices",
+            "outcome": "correct"
+          }
+        ],
+        "summary": "Pointers still need work",
+        "time_box": 15,
+        "at": "2026-10-01T09:30:00Z",
+        "weak": [
+          "pointers"
+        ]
       }
     ],
     "lessons": [
@@ -51,7 +73,9 @@
         "hints": {
           "nudge": 1,
           "step": 1
-        }
+        },
+        "hints_requested": 1,
+        "hints_offered": 1
       }
     ],
     "reviews": {
@@ -64,7 +88,8 @@
       "first_try_passed": 0,
       "first_try_measured": 1,
       "feedback_rounds": 0,
-      "hints": 2
+      "hints": 2,
+      "hints_requested": 1
     }
   }
 }

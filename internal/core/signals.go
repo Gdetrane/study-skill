@@ -35,14 +35,19 @@ type LessonSignals struct {
 	Done   bool   `json:"done"`
 	// FirstTry is whether the first Attempt measured on the Check shown to
 	// the learner passed; absent before one. Attempts the agent ran before
-	// showing the Check, and errored ones, are not measured.
+	// showing the Check, and errored ones, are not measured, and a Check
+	// without run criteria (rubric items only, or with held_out criteria)
+	// has no first try.
 	FirstTry *bool `json:"first_try,omitempty"`
 	// Attempts counts the Attempts measured on the Check shown.
 	Attempts int `json:"attempts"`
 	// FeedbackRounds counts the times the Lesson went to feedback.
 	FeedbackRounds int `json:"feedback_rounds"`
-	// Hints counts the hints recorded, by kind.
-	Hints map[string]int `json:"hints,omitempty"`
+	// Hints counts the hints recorded, by kind; HintsRequested those the
+	// learner asked for, HintsOffered those the agent offered unasked.
+	Hints          map[string]int `json:"hints,omitempty"`
+	HintsRequested int            `json:"hints_requested"`
+	HintsOffered   int            `json:"hints_offered"`
 	// HeldOut compares each held_out criterion's counted run with the run
 	// criteria of the same Attempt: the gap between dev and Held-out
 	// scores.
@@ -96,6 +101,7 @@ type SignalTotals struct {
 	FirstTryMeasured int `json:"first_try_measured"`
 	FeedbackRounds   int `json:"feedback_rounds"`
 	Hints            int `json:"hints"`
+	HintsRequested   int `json:"hints_requested"`
 }
 
 // SignalsOf returns a Topic's learning signals. It writes nothing.
@@ -145,6 +151,12 @@ func signalsOf(topicID string, s *replayed) Signals {
 		}
 		ls.Hints[h.Kind]++
 		sig.Totals.Hints++
+		if h.RequestedBy == HintByLearner {
+			ls.HintsRequested++
+			sig.Totals.HintsRequested++
+		} else {
+			ls.HintsOffered++
+		}
 	}
 	for _, cs := range s.study.cards {
 		for _, r := range cs.reviews {

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
-	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -409,13 +408,16 @@ func mergeExtras(current, next map[string]any) map[string]any {
 	return out
 }
 
+// maxSyllabusFileBytes bounds a Syllabus file given to propose a Revision.
+const maxSyllabusFileBytes = 4 << 20
+
 // ReadSyllabusFile reads a Syllabus from a file the learner or agent named;
-// a relative path is relative to the folder study started in.
+// a relative path is relative to the folder study started in. It must be a
+// regular file, so a FIFO or a device never makes it wait.
 func (c *Core) ReadSyllabusFile(path string) (Syllabus, error) {
-	full := c.expandPath(path)
-	data, err := os.ReadFile(full)
+	data, err := readRegularFile(c.expandPath(path), maxSyllabusFileBytes)
 	if err != nil {
-		return Syllabus{}, &Error{Code: CodeNotFound, Message: "cannot read " + full + ": " + err.Error(), Err: err}
+		return Syllabus{}, err
 	}
 	return ParseSyllabus(data, path)
 }

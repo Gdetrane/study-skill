@@ -20,9 +20,11 @@ var placement = AssessmentSpec{
 		{Area: "goroutines", Outcome: AnswerNotReached},
 	},
 	Summary: "Knows the basics; pointers need work",
-	Minutes: 14,
+	Minutes: minutes(14),
 	Level:   LevelIntermediate,
 }
+
+func minutes(n int) *int { return &n }
 
 func readTopicLevel(t *testing.T, m *machine) *LevelInfo {
 	t.Helper()
@@ -45,7 +47,7 @@ func TestAssessmentsSetTheLevelAndTheLearnerCanOverrideIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := res.Assessment
-	if !res.Changed || a.ID == "" || a.TimeBox != defaultTimeBoxMinutes || a.Minutes != 14 {
+	if !res.Changed || a.ID == "" || a.TimeBox != defaultTimeBoxMinutes || a.Minutes == nil || *a.Minutes != 14 {
 		t.Fatalf("recorded = %+v", res)
 	}
 	if !slices.Equal(a.Weak, []string{"pointers"}) || !slices.Equal(a.Confirm, []string{"goroutines"}) {
@@ -86,7 +88,8 @@ func TestAssessmentsSetTheLevelAndTheLearnerCanOverrideIt(t *testing.T) {
 		t.Errorf("Level after the Milestone's Assessment = %+v", l)
 	}
 	list, err := m.ListAssessments(ctx, "c")
-	if err != nil || len(list.Assessments) != 2 || list.Assessments[1].Milestone != "basics" {
+	// Newest first.
+	if err != nil || len(list.Assessments) != 2 || list.Assessments[0].Milestone != "basics" {
 		t.Errorf("ListAssessments = %+v, %v", list, err)
 	}
 
@@ -118,7 +121,13 @@ func TestAssessmentValidation(t *testing.T) {
 		"an unknown outcome":         {AssessmentSpec{Kind: AssessmentPlacement, Items: []AssessmentItem{{Area: "a", Outcome: "great"}}, Summary: "s"}, CodeInvalidArgument},
 		"no summary":                 {AssessmentSpec{Kind: AssessmentPlacement, Items: item}, CodeInvalidArgument},
 		"an unknown Level":           {AssessmentSpec{Kind: AssessmentPlacement, Items: item, Summary: "s", Level: "guru"}, CodeInvalidArgument},
-		"too many minutes":           {AssessmentSpec{Kind: AssessmentPlacement, Items: item, Summary: "s", Minutes: 999}, CodeInvalidArgument},
+		"too many minutes":           {AssessmentSpec{Kind: AssessmentPlacement, Items: item, Summary: "s", Minutes: minutes(999)}, CodeInvalidArgument},
+		"minutes over the time box":  {AssessmentSpec{Kind: AssessmentPlacement, Items: item, Summary: "s", Minutes: minutes(16)}, CodeInvalidArgument},
+		"negative minutes":           {AssessmentSpec{Kind: AssessmentPlacement, Items: item, Summary: "s", Minutes: minutes(-1)}, CodeInvalidArgument},
+		"a negative time box":        {AssessmentSpec{Kind: AssessmentPlacement, Items: item, Summary: "s", TimeBox: -1}, CodeInvalidArgument},
+		"too long a time box":        {AssessmentSpec{Kind: AssessmentPlacement, Items: item, Summary: "s", TimeBox: maxAssessmentMinutes + 1}, CodeInvalidArgument},
+		"a bad request id":           {AssessmentSpec{Kind: AssessmentPlacement, Items: item, Summary: "s", Request: "has space"}, CodeInvalidArgument},
+		"notes with a backslash":     {AssessmentSpec{Kind: AssessmentPlacement, Items: item, Summary: "s", Notes: `notes\placement.md`}, CodeInvalidArgument},
 		"a control character":        {AssessmentSpec{Kind: AssessmentPlacement, Items: []AssessmentItem{{Area: "a\x1b[2J", Outcome: AnswerCorrect}}, Summary: "s"}, CodeInvalidArgument},
 		"notes outside notes/":       {AssessmentSpec{Kind: AssessmentPlacement, Items: item, Summary: "s", Notes: "topic.toml"}, CodeInvalidArgument},
 		"notes not saved yet":        {AssessmentSpec{Kind: AssessmentPlacement, Items: item, Summary: "s", Notes: "notes/placement.md"}, CodeNotFound},
@@ -133,6 +142,22 @@ func TestAssessmentValidation(t *testing.T) {
 	}
 	if _, err := m.RecordAssessment(ctx, "c", many); CodeOf(err) != CodeInvalidArgument {
 		t.Errorf("too many items: err = %v", err)
+	}
+	// The bounds themselves are fine, and minutes of 0 are not "not given".
+	for _, spec := range []AssessmentSpec{
+		{Kind: AssessmentPlacement, Items: item, Summary: "longest", TimeBox: maxAssessmentMinutes, Minutes: minutes(maxAssessmentMinutes)},
+		{Kind: AssessmentPlacement, Items: item, Summary: "default", Minutes: minutes(defaultTimeBoxMinutes)},
+		{Kind: AssessmentPlacement, Items: item, Summary: "none", Minutes: minutes(0)},
+		{Kind: AssessmentPlacement, Items: item, Summary: "shortest", TimeBox: 1},
+	} {
+		r, err := m.RecordAssessment(ctx, "c", spec)
+		if err != nil {
+			t.Errorf("%s: %v", spec.Summary, err)
+			continue
+		}
+		if (spec.Minutes == nil) != (r.Assessment.Minutes == nil) {
+			t.Errorf("%s: minutes = %v, want %v", spec.Summary, r.Assessment.Minutes, spec.Minutes)
+		}
 	}
 
 	learn := learningTopic(t)
@@ -155,9 +180,20 @@ func TestAssessmentNotes(t *testing.T) {
 	if _, err := m.RecordAssessment(ctx, "c", spec); CodeOf(err) != CodeInvalidArgument {
 		t.Errorf("notes that are a link: err = %v", err)
 	}
-	spec.Notes = "notes/../topic.toml"
-	if _, err := m.RecordAssessment(ctx, "c", spec); CodeOf(err) != CodeInvalidArgument {
-		t.Errorf("notes leading out of notes/: err = %v", err)
+	if err := os.MkdirAll(filepath.Join(m.home, "c", "notes", "dir"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"notes/../topic.toml", "notes/sub/../../topic.toml", "notes", "notes/", "/etc/passwd",
+		`notes\placement.md`, `notes/sub\placement.md`, "notes/dir"} {
+		spec.Notes = name
+		if _, err := m.RecordAssessment(ctx, "c", spec); CodeOf(err) != CodeInvalidArgument {
+			t.Errorf("notes %q: err = %v, want invalid_argument", name, err)
+		}
+	}
+	spec.Notes = "./notes/placement.md"
+	if r, err := m.RecordAssessment(ctx, "c", AssessmentSpec{Kind: spec.Kind, Summary: spec.Summary, Items: spec.Items,
+		Notes: spec.Notes, DryRun: true}); err != nil || r.Assessment.Notes.Path != "notes/placement.md" {
+		t.Errorf("notes named from ./ = %+v, %v", r.Assessment.Notes, err)
 	}
 	spec.Notes = "notes/placement.md"
 	res, err := m.RecordAssessment(ctx, "c", spec)
@@ -194,8 +230,11 @@ func TestALevelEditedByHandIsTheLearners(t *testing.T) {
 	if err := os.WriteFile(path, []byte(edited), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if l := readTopicLevel(t, m); l == nil || l.Level != LevelExpert || l.Source != LevelFromLearner {
+	if l := readTopicLevel(t, m); l == nil || l.Level != LevelExpert || l.Source != LevelFromLearner || !l.At.IsZero() {
 		t.Errorf("a hand-edited Level = %+v, want expert from the learner", l)
+	}
+	if f := levelFlag(t, m); f != nil {
+		t.Errorf("a hand edit was flagged as a Level changed on two machines: %+v", f)
 	}
 
 	broken := strings.Replace(edited, `level = "expert"`, `level = "guru"`, 1)
@@ -213,6 +252,23 @@ func TestALevelEditedByHandIsTheLearners(t *testing.T) {
 	if up := m.update(t, TopicChanges{Level: ptr(LevelAdvanced)}); !up.Changed || up.Topic.Level == nil ||
 		len(up.Topic.SettingsProblems) != 0 {
 		t.Errorf("setting the Level over a broken one = %+v", up)
+	}
+
+	// A hand edit back to a Level an Assessment once set is still the
+	// learner's, not a merge: the file is no version an Event recorded.
+	data, err = os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	back := strings.Replace(string(data), `level = "advanced"`, `level = "intermediate"`, 1) + "# back to intermediate\n"
+	if err := os.WriteFile(path, []byte(back), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if l := readTopicLevel(t, m); l == nil || l.Level != LevelIntermediate || l.Source != LevelFromLearner || !l.At.IsZero() {
+		t.Errorf("a hand edit back to an earlier Level = %+v, want the learner's, with no Event", l)
+	}
+	if f := levelFlag(t, m); f != nil {
+		t.Errorf("a hand edit was flagged as a Level changed on two machines: %+v", f)
 	}
 }
 
@@ -232,30 +288,41 @@ func TestLevelUpdateValidationAndDryRun(t *testing.T) {
 	}
 	dryA, err := m.RecordAssessment(ctx, "c", AssessmentSpec{Kind: placement.Kind, Items: placement.Items,
 		Summary: placement.Summary, Level: placement.Level, DryRun: true})
-	if err != nil || !dryA.Changed || dryA.Assessment.ID != "" {
+	if err != nil || !dryA.Changed || dryA.Assessment.ID != "" || dryA.Level == nil || dryA.Level.Assessment != "" ||
+		dryA.Level.Level != LevelIntermediate {
 		t.Errorf("a dry-run Assessment = %+v, %v", dryA, err)
 	}
 	if s := replayFolder(t, filepath.Join(m.home, "c")); countEvents(s, eventAssessmentRecorded) != 0 {
 		t.Error("the dry-run Assessment was recorded")
+	}
+	// A dry run without a Level shows the Level the Topic has.
+	m.update(t, TopicChanges{Level: ptr(LevelAdvanced)})
+	dryB, err := m.RecordAssessment(ctx, "c", AssessmentSpec{Kind: placement.Kind, Items: placement.Items,
+		Summary: placement.Summary, DryRun: true})
+	if err != nil || dryB.Level == nil || dryB.Level.Level != LevelAdvanced || dryB.Level.Source != LevelFromLearner {
+		t.Errorf("a dry run without a Level = %+v, %v", dryB, err)
 	}
 }
 
 func TestHints(t *testing.T) {
 	ctx := context.Background()
 	m := learningTopic(t)
-	h, err := m.RecordHint(ctx, "c", HintSpec{Lesson: "answer", Note: "Look at what check.sh compares"})
-	if err != nil || !h.Changed || h.Hint.Kind != HintNudge || h.Hint.ID == "" {
+	h, err := m.RecordHint(ctx, "c", HintSpec{Lesson: "answer", RequestedBy: HintByLearner,
+		Note: "Look at what check.sh compares"})
+	if err != nil || !h.Changed || h.Hint.Kind != HintNudge || h.Hint.ID == "" || h.Hint.RequestedBy != HintByLearner {
 		t.Fatalf("a hint = %+v, %v", h, err)
 	}
-	if _, err := m.RecordHint(ctx, "c", HintSpec{Lesson: "answer", Kind: HintStep}); err != nil {
+	if _, err := m.RecordHint(ctx, "c", HintSpec{Lesson: "answer", Kind: HintStep, RequestedBy: HintByAgent}); err != nil {
 		t.Fatal(err)
 	}
 	// A retry with the same request id records nothing.
-	first, err := m.RecordHint(ctx, "c", HintSpec{Lesson: "answer", Kind: HintExplanation, Request: "r1"})
+	first, err := m.RecordHint(ctx, "c", HintSpec{Lesson: "answer", Kind: HintExplanation, RequestedBy: HintByAgent,
+		Request: "r1"})
 	if err != nil || !first.Changed {
 		t.Fatal(first, err)
 	}
-	retry, err := m.RecordHint(ctx, "c", HintSpec{Lesson: "answer", Kind: HintExplanation, Request: "r1"})
+	retry, err := m.RecordHint(ctx, "c", HintSpec{Lesson: "answer", Kind: HintExplanation, RequestedBy: HintByAgent,
+		Request: "r1"})
 	if err != nil || retry.Changed || retry.Hint.ID != first.Hint.ID {
 		t.Errorf("a retry = %+v, %v", retry, err)
 	}
@@ -266,20 +333,23 @@ func TestHints(t *testing.T) {
 		spec HintSpec
 		want ErrorCode
 	}{
-		"an unknown kind":   {HintSpec{Lesson: "answer", Kind: "answer"}, CodeInvalidArgument},
-		"an unknown Lesson": {HintSpec{Lesson: "later"}, CodeNotFound},
-		"a bad request id":  {HintSpec{Lesson: "answer", Request: "has space"}, CodeInvalidArgument},
+		"an unknown kind":           {HintSpec{Lesson: "answer", Kind: "answer", RequestedBy: HintByAgent}, CodeInvalidArgument},
+		"an unknown Lesson":         {HintSpec{Lesson: "later", RequestedBy: HintByAgent}, CodeNotFound},
+		"a bad request id":          {HintSpec{Lesson: "answer", RequestedBy: HintByAgent, Request: "has space"}, CodeInvalidArgument},
+		"no one asked":              {HintSpec{Lesson: "answer"}, CodeInvalidArgument},
+		"an unknown asker":          {HintSpec{Lesson: "answer", RequestedBy: "teacher"}, CodeInvalidArgument},
+		"a request for another one": {HintSpec{Lesson: "later", RequestedBy: HintByAgent, Request: "r1"}, CodeInvalidArgument},
 	} {
 		if _, err := m.RecordHint(ctx, "c", tc.spec); CodeOf(err) != tc.want {
 			t.Errorf("%s: err = %v, want %s", name, err, tc.want)
 		}
 	}
-	dry, err := m.RecordHint(ctx, "c", HintSpec{Lesson: "answer", DryRun: true})
+	dry, err := m.RecordHint(ctx, "c", HintSpec{Lesson: "answer", RequestedBy: HintByLearner, DryRun: true})
 	if err != nil || !dry.Changed || dry.Hint.ID != "" {
 		t.Errorf("a dry run = %+v, %v", dry, err)
 	}
 	completeAnswer(t, m)
-	if _, err := m.RecordHint(ctx, "c", HintSpec{Lesson: "answer"}); CodeOf(err) != CodeFailedPrecondition {
+	if _, err := m.RecordHint(ctx, "c", HintSpec{Lesson: "answer", RequestedBy: HintByLearner}); CodeOf(err) != CodeFailedPrecondition {
 		t.Errorf("a hint for a done Lesson: err = %v", err)
 	}
 }
@@ -303,7 +373,7 @@ func TestCrashesInAssessmentWrites(t *testing.T) {
 			return r.Changed, err
 		}},
 		{"hint.recorded", eventHintRecorded, func(m *machine, dry bool) (bool, error) {
-			r, err := m.RecordHint(ctx, "c", HintSpec{Lesson: "answer", Request: "same", DryRun: dry})
+			r, err := m.RecordHint(ctx, "c", HintSpec{Lesson: "answer", RequestedBy: HintByAgent, Request: "same", DryRun: dry})
 			return r.Changed, err
 		}},
 	}
@@ -357,14 +427,23 @@ func TestLevelOnTwoMachines(t *testing.T) {
 	}
 	onA, onB := merge(t, a, b)
 	for name, flags := range map[string][]string{"a": onA, "b": onB} {
-		if !mentions(flags, topicFile) {
+		if !mentions(flags, "the Level was changed on two machines: the learner set it to advanced") {
 			t.Errorf("flags on %s = %q, want the Level changed on two machines flagged", name, flags)
 		}
 	}
-	for _, m := range []*machine{a, b} {
+	for name, m := range map[string]*machine{"a": a, "b": b} {
 		list, err := m.ListAssessments(ctx, "c")
 		if err != nil || len(list.Assessments) != 2 {
-			t.Errorf("Assessments after the merge = %+v, %v", list.Assessments, err)
+			t.Errorf("%s: Assessments after the merge = %+v, %v", name, list.Assessments, err)
+		}
+		// The merge kept a's line, which a's level.set wrote: the Level is
+		// that choice, never a hand edit, and the flag names both Events.
+		l := readTopicLevel(t, m)
+		if l == nil || l.Level != LevelAdvanced || l.Source != LevelFromLearner || l.At.IsZero() {
+			t.Errorf("%s: Level after the merge = %+v", name, l)
+		}
+		if f := levelFlag(t, m); f == nil || !slices.Equal(f.Events, levelEvents(t, m)) {
+			t.Errorf("%s: flag = %+v, want both level.set Events %q", name, f, levelEvents(t, m))
 		}
 	}
 }

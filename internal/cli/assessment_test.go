@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/mordor-forge/lamplight/v2/internal/cli"
@@ -19,7 +20,18 @@ const placementJSON = `{
   ],
   "summary": "Knows variables; pointers need work",
   "minutes": 13,
-  "level": "beginner"
+  "level": "beginner",
+  "request": "placement"
+}`
+
+const milestoneJSON = `{
+  "kind": "milestone",
+  "milestone": "basics",
+  "items": [
+    {"area": "pointers", "outcome": "partly", "note": "reads *p, not &x"},
+    {"area": "slices", "outcome": "correct"}
+  ],
+  "summary": "Pointers still need work"
 }`
 
 func TestAssessmentHintAndSignalsCommands(t *testing.T) {
@@ -49,9 +61,19 @@ func TestAssessmentHintAndSignalsCommands(t *testing.T) {
 	golden(t, "assessment_record_unknown_field.json",
 		expect(runWithInput(t, home, `{"kind":"placement","itens":[]}`, "assessment", "record", "c", "--file", "-", "--json"),
 			cli.ExitUsage).stdout)
+	golden(t, "assessment_record_two_objects.json",
+		expect(runWithInput(t, home, placementJSON+placementJSON, "assessment", "record", "c", "--file", "-", "--json"),
+			cli.ExitUsage).stdout)
 
-	golden(t, "topic_update_level.txt", expect(run(t, home, "topic", "update", "c", "--level", "advanced"), cli.ExitOK).stdout)
+	golden(t, "topic_update_level.txt", expect(run(t, home, "topic", "update", "c", "--level", "advanced",
+		"--approach", "project"), cli.ExitOK).stdout)
+	golden(t, "topic_update_bad_approach.json", expect(run(t, home, "topic", "update", "c", "--approach", "lectures",
+		"--json"), cli.ExitUsage).stdout)
+	// A milestone Assessment with weak areas proposes a Revision.
+	golden(t, "assessment_record_milestone.txt",
+		expect(runWithInput(t, home, milestoneJSON, "assessment", "record", "c", "--file", "-"), cli.ExitOK).stdout)
 	golden(t, "assessment_list.txt", expect(run(t, home, "assessment", "list", "c"), cli.ExitOK).stdout)
+	golden(t, "assessment_list.json", expect(run(t, home, "assessment", "list", "c", "--json"), cli.ExitOK).stdout)
 
 	// One measured Attempt that fails, then hints.
 	c, err := core.Open(options(home, home))
@@ -63,13 +85,19 @@ func TestAssessmentHintAndSignalsCommands(t *testing.T) {
 	}
 	expect(run(t, home, "check", "answer", "--topic", "c"), cli.ExitOK)
 	golden(t, "hint_record.txt", expect(run(t, home, "hint", "record", "answer", "--topic", "c", "--kind", "step",
-		"--note", "Showed how to read check.sh"), cli.ExitOK).stdout)
+		"--requested-by", "agent", "--note", "Showed how to read check.sh"), cli.ExitOK).stdout)
 	golden(t, "hint_record.json", expect(run(t, home, "hint", "record", "answer", "--topic", "c", "--request", "r1",
-		"--json"), cli.ExitOK).stdout)
+		"--requested-by", "learner", "--json"), cli.ExitOK).stdout)
 	golden(t, "hint_record_bad_kind.json", expect(run(t, home, "hint", "record", "answer", "--topic", "c",
-		"--kind", "answer", "--json"), cli.ExitUsage).stdout)
+		"--kind", "answer", "--requested-by", "agent", "--json"), cli.ExitUsage).stdout)
+	golden(t, "hint_record_no_asker.json", expect(run(t, home, "hint", "record", "answer", "--topic", "c",
+		"--json"), cli.ExitUsage).stdout)
 
+	// The signals are for agents: JSON only, and not in help.
 	golden(t, "signals.txt", expect(run(t, home, "signals", "c"), cli.ExitOK).stdout)
 	golden(t, "signals.json", expect(run(t, home, "signals", "c", "--json"), cli.ExitOK).stdout)
+	if help := expect(run(t, home, "--help"), cli.ExitOK).stdout; strings.Contains(help, "signals") {
+		t.Errorf("study --help lists signals:\n%s", help)
+	}
 	golden(t, "status_with_level.txt", expect(run(t, home, "status"), cli.ExitOK).stdout)
 }

@@ -83,6 +83,9 @@ type Topic struct {
 	// Level is how advanced the teaching is, and where that came from: the
 	// last Assessment, or the learner's choice since. Absent until set.
 	Level *LevelInfo `json:"level,omitempty"`
+	// Approach is how the Topic's Lessons relate to each other: concepts,
+	// project or challenges. Absent until chosen.
+	Approach string `json:"approach,omitempty"`
 }
 
 // TopicSpec describes a Topic to create.
@@ -117,6 +120,8 @@ type TopicChanges struct {
 	// Level is the learner's choice of Level; it holds until the next
 	// Assessment sets one.
 	Level *string
+	// Approach is concepts, project or challenges.
+	Approach *string
 	// AddTasks adds Tasks; RemoveTasks removes Tasks by id.
 	AddTasks    []TaskSpec
 	RemoveTasks []string
@@ -379,6 +384,13 @@ func (c *Core) UpdateTopic(ctx context.Context, id string, changes TopicChanges)
 		}
 		steps = append(steps, topicStep{what: "Level", plan: planLevel(id, level)})
 	}
+	if changes.Approach != nil {
+		approach, err := checkApproach(*changes.Approach)
+		if err != nil {
+			return TopicUpdate{}, err
+		}
+		steps = append(steps, topicStep{what: "Approach", plan: planApproach(id, approach)})
+	}
 	if changes.State != nil {
 		state, err := checkTopicState(*changes.State)
 		if err != nil {
@@ -388,7 +400,7 @@ func (c *Core) UpdateTopic(ctx context.Context, id string, changes TopicChanges)
 	}
 	if len(steps) == 0 {
 		return TopicUpdate{}, invalidf("nothing to change: give a title, goal, Knowledge base, deadline, Pace, " +
-			"daily cap on new Cards, Tasks, Level or state")
+			"daily cap on new Cards, Tasks, Level, Approach or state")
 	}
 
 	var events []*event
@@ -542,7 +554,8 @@ func (c *Core) previewTopic(id string, events []*event) (Topic, error) {
 	}
 	topic.Title, topic.Goal, topic.KnowledgeBase = settings.Title, settings.Goal, knowledgeBaseOf(settings)
 	c.addPlan(&topic, s, settings, view)
-	addLevel(&topic, s, settings)
+	addLevel(&topic, s, settings, data)
+	addApproach(&topic, settings)
 	return topic, nil
 }
 
@@ -725,7 +738,8 @@ func (c *Core) loadTopic(home *os.Root, id string) (Topic, error) {
 	}
 	topic.LessonsWithoutEvidence = s.lessonsWithoutEvidence(s.citingLessons(topic.KnowledgeBase))
 	c.addPlan(&topic, s, settings, newView(root, s))
-	addLevel(&topic, s, settings)
+	addLevel(&topic, s, settings, data)
+	addApproach(&topic, settings)
 	c.addTopicGuidance(root, s, &topic)
 	if unfinished := unfinishedItems(home, id, s); len(unfinished) > 0 {
 		kept := topic.Flags[:0]

@@ -44,8 +44,9 @@ func TestSignalsFollowTheLearner(t *testing.T) {
 	if _, err := m.SetPhase(ctx, "c", PhaseSpec{Lesson: "answer", Phase: PhaseFeedback}); err != nil {
 		t.Fatal(err)
 	}
-	for _, kind := range []string{HintNudge, HintStep} {
-		if _, err := m.RecordHint(ctx, "c", HintSpec{Lesson: "answer", Kind: kind}); err != nil {
+	// The learner asks for a nudge; the agent offers a step.
+	for kind, by := range map[string]string{HintNudge: HintByLearner, HintStep: HintByAgent} {
+		if _, err := m.RecordHint(ctx, "c", HintSpec{Lesson: "answer", Kind: kind, RequestedBy: by}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -72,13 +73,13 @@ func TestSignalsFollowTheLearner(t *testing.T) {
 		ls.Title != "The answer" {
 		t.Errorf("Lesson signals = %+v", ls)
 	}
-	if ls.Hints[HintNudge] != 1 || ls.Hints[HintStep] != 1 {
-		t.Errorf("hints = %v", ls.Hints)
+	if ls.Hints[HintNudge] != 1 || ls.Hints[HintStep] != 1 || ls.HintsRequested != 1 || ls.HintsOffered != 1 {
+		t.Errorf("hints = %v, %d requested, %d offered", ls.Hints, ls.HintsRequested, ls.HintsOffered)
 	}
 	if ls.Reviews == nil || ls.Reviews.Good != 1 || sig.Reviews.Good != 1 {
 		t.Errorf("Reviews = %+v, %+v", ls.Reviews, sig.Reviews)
 	}
-	if sig.Totals != (SignalTotals{FirstTryPassed: 0, FirstTryMeasured: 1, FeedbackRounds: 1, Hints: 2}) {
+	if sig.Totals != (SignalTotals{FirstTryPassed: 0, FirstTryMeasured: 1, FeedbackRounds: 1, Hints: 2, HintsRequested: 1}) {
 		t.Errorf("totals = %+v", sig.Totals)
 	}
 }
