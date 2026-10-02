@@ -1,0 +1,4 @@
+Check of answer: failed
+  answer  failed (exit 1)
+    answer.txt holds 41
+Recorded as Attempt <id>.

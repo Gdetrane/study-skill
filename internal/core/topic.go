@@ -47,6 +47,9 @@ type Topic struct {
 	// Flags are what replaying the History found that needs the learner's
 	// attention.
 	Flags []Flag `json:"flags,omitempty"`
+	// Resume is where the learner stopped, once the Topic has a Syllabus
+	// or a Session: show its Next step first.
+	Resume *ResumePoint `json:"resume,omitempty"`
 }
 
 // TopicSpec describes a Topic to create.
@@ -291,7 +294,9 @@ func applyTopicCreated(ev event, item string, _ []byte, _ bool) ([]byte, bool, e
 		data, err := encodeTopicSettings(topicSettings{Title: d.Title, Goal: d.Goal})
 		return data, err == nil, err
 	case gitattributes:
-		return []byte(historyFile + " merge=union\n"), true, nil
+		// Both files hold one record per line, so a union merge keeps both
+		// machines' lines; replay and status flag what conflicts.
+		return []byte(historyFile + " merge=union\n" + cardsFile + " merge=union\n"), true, nil
 	}
 	return nil, false, corruptf("Event %s (%s) cannot edit %s", ev.ID, ev.Type, item)
 }
@@ -434,6 +439,9 @@ func (c *Core) loadTopic(home *os.Root, id string) (Topic, error) {
 	s := replayHistory(h)
 	topic.Created = s.created
 	topic.Flags = c.topicFlags(root, s)
+	if r := s.study.resume(); !r.empty() {
+		topic.Resume = &r
+	}
 	// A marker while the lock is held is a write in progress, not an
 	// interrupted one.
 	if hasIntent(home, id) && !lockHeld(home, id) {

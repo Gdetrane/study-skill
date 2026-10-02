@@ -101,6 +101,11 @@ func writeStatus(w io.Writer, s core.Status) error {
 	if t := s.ActiveTopic; t != nil {
 		fmt.Fprintf(&b, "%s%s (%s): %s\n", styleLabel.Render(pad("Active topic:", labels)),
 			styleAccent.Render(t.ID), t.Title, styleDim.Render(t.Reason))
+		for _, topic := range s.Topics {
+			if topic.ID == t.ID && topic.Resume != nil {
+				writeResume(&b, *topic.Resume, labels)
+			}
+		}
 	} else {
 		fmt.Fprintf(&b, "%s%s\n", styleLabel.Render(pad("Active topic:", labels)),
 			styleDim.Render("none yet: start inside a Topic's folder, or name a Topic"))
@@ -122,6 +127,31 @@ func writeStatus(w io.Writer, s core.Status) error {
 	writeProblems(&b, s.Problems)
 	_, err := io.WriteString(w, b.String())
 	return err
+}
+
+// writeResume shows where the learner stopped: the Lesson and its Phase,
+// then the Next step word for word.
+func writeResume(b *strings.Builder, r core.ResumePoint, labels int) {
+	switch {
+	case r.Lesson != "":
+		where := fmt.Sprintf("%s (%s)", styleAccent.Render(r.Lesson), r.LessonTitle)
+		if r.Phase != "" {
+			where += ", " + r.Phase
+		}
+		fmt.Fprintf(b, "%s%s\n", styleLabel.Render(pad("Lesson:", labels)), where)
+	case r.SyllabusDone:
+		fmt.Fprintf(b, "%s%s\n", styleLabel.Render(pad("Lesson:", labels)), "every Lesson in the Syllabus is done")
+	}
+	if r.NextStep != nil {
+		fmt.Fprintf(b, "%s%s\n", styleLabel.Render(pad("Next step:", labels)), styleAccent.Render(r.NextStep.Step))
+		if r.NextStep.Context != "" {
+			fmt.Fprintf(b, "%s%s\n", pad("", labels), styleDim.Render(strings.ReplaceAll(r.NextStep.Context, "\n", "\n"+pad("", labels))))
+		}
+	}
+	if r.OpenSession != nil {
+		fmt.Fprintf(b, "%s%s\n", pad("", labels), styleDim.Render("A Session opened "+
+			r.OpenSession.Opened.Format("2 Jan 15:04")+" is still open."))
+	}
 }
 
 func writeProblems(b *strings.Builder, problems []core.TopicProblem) {

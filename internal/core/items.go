@@ -35,8 +35,11 @@ type fileCodec struct {
 }
 
 // fileCodecs maps file patterns (path.Match syntax, slash-separated) to the
-// codec of their entities. Cards (#26) and Checks register theirs here.
-var fileCodecs []codecEntry
+// codec of their entities.
+var fileCodecs = []codecEntry{
+	{pattern: cardsFile, codec: jsonlCodec},
+	{pattern: "lessons/*.md", codec: lessonCodec},
+}
 
 type codecEntry struct {
 	pattern string
@@ -159,6 +162,9 @@ func validateItem(item string, data []byte) error {
 	case topicFile:
 		_, err := parseTopicSettings(data, item)
 		return err
+	case syllabusFile:
+		_, err := parseSyllabusFile(data, item)
+		return err
 	}
 	return nil
 }
@@ -169,7 +175,9 @@ func validateItem(item string, data []byte) error {
 // touch are kept byte for byte, and new entities are appended.
 var jsonlCodec = fileCodec{get: jsonlGet, put: jsonlPut}
 
-// jsonlEntries splits a JSONL file into lines and their ids.
+// jsonlEntries splits a JSONL file into lines and their ids. An id can
+// repeat: a union merge of two machines' edits of one entry keeps both
+// lines. The first counts; status flags the repeat (see jsonlRepeats).
 func jsonlEntries(file []byte) (lines [][]byte, ids []string, err error) {
 	for n, line := range bytes.Split(file, []byte{'\n'}) {
 		if len(bytes.TrimSpace(line)) == 0 {
@@ -181,12 +189,34 @@ func jsonlEntries(file []byte) (lines [][]byte, ids []string, err error) {
 		if err := json.Unmarshal(line, &head); err != nil || head.ID == "" {
 			return nil, nil, corruptf("line %d is not a JSON object with an id", n+1)
 		}
-		if i := indexOf(ids, head.ID); i >= 0 {
-			return nil, nil, corruptf("line %d repeats the id %s", n+1, head.ID)
-		}
 		lines, ids = append(lines, line), append(ids, head.ID)
 	}
 	return lines, ids, nil
+}
+
+// jsonlRepeats returns the ids that appear on more than one line with
+// different content, in file order.
+func jsonlRepeats(file []byte) []string {
+	lines, ids, err := jsonlEntries(file)
+	if err != nil {
+		return nil
+	}
+	first := map[string]string{}
+	var repeats []string
+	for i, id := range ids {
+		var canonical bytes.Buffer
+		if json.Compact(&canonical, lines[i]) != nil {
+			continue
+		}
+		seen, ok := first[id]
+		switch {
+		case !ok:
+			first[id] = canonical.String()
+		case seen != canonical.String() && indexOf(repeats, id) < 0:
+			repeats = append(repeats, id)
+		}
+	}
+	return repeats
 }
 
 func indexOf(ids []string, id string) int {
@@ -232,14 +262,17 @@ func jsonlPut(file []byte, key string, content []byte, exists bool) ([]byte, err
 		}
 		content = compact.Bytes()
 	}
+	// Every line of the entry is replaced by the one written: writing an
+	// entry settles a repeat, which only an explicit change does.
 	var out bytes.Buffer
 	found := false
 	for i, line := range lines {
 		if ids[i] == key {
-			found = true
-			if !exists {
+			if found || !exists {
+				found = true
 				continue
 			}
+			found = true
 			line = content
 		}
 		out.Write(line)

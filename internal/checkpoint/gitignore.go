@@ -20,6 +20,13 @@ const defaultGitignore = `# Written by Lamplight. Checkpoints save every file in
 *.ckpt
 *.onnx
 
+# Build outputs
+target/
+build/
+dist/
+*.o
+a.out
+
 # Caches and environments
 __pycache__/
 *.py[cod]

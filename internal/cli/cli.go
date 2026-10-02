@@ -255,7 +255,7 @@ func (a *app) rootCommand() *cobra.Command {
 		RunE: a.runDoctor,
 	}
 
-	root.AddCommand(status, topic, a.checkpointCommand(), a.libraryCommand(), doctor, serve)
+	root.AddCommand(status, topic, a.checkpointCommand(), a.checkCommand(), a.libraryCommand(), doctor, serve)
 	a.completionCommands(root)
 	return root
 }

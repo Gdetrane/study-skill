@@ -41,7 +41,29 @@ type Options struct {
 	// Logger receives the Log: diagnostics, never the learner's activity.
 	// Defaults to discarding everything.
 	Logger *slog.Logger
+	// Crash is only for tests that simulate a crash, and must be nil
+	// otherwise: it is called at each point of a write where one could
+	// happen (CrashAfterIntent and the other Crash points), and returning an
+	// error stops the write there without any cleanup, as a crash would.
+	Crash func(point string) error
 }
+
+// Points of a write where Options.Crash can simulate a crash.
+const (
+	// CrashAfterIntent: the intent marker is written, the Event is not.
+	CrashAfterIntent = crashAfterIntent
+	// CrashAfterEvent: the Event is in the History, no content is written.
+	CrashAfterEvent = crashAfterEvent
+	// CrashAfterItem: after each item the Event edits is replaced.
+	CrashAfterItem = crashAfterItem
+	// CrashBeforeClear: all content is written, the marker remains.
+	CrashBeforeClear = crashBeforeClear
+	// CrashRecoveryAfterItem: recovery replaced an item of an interrupted
+	// write.
+	CrashRecoveryAfterItem = crashRecoveryAfterItem
+	// CrashRecoveryBeforeClear: recovery is done, the marker remains.
+	CrashRecoveryBeforeClear = crashRecoveryBeforeClear
+)
 
 // Core is the Lamplight core for one Study home.
 type Core struct {
@@ -79,7 +101,7 @@ func Open(opts Options) (*Core, error) {
 	if dir, err = filepath.Abs(dir); err != nil {
 		return nil, internalError("resolving the working directory", err)
 	}
-	c := &Core{home: home, dir: dir, now: opts.Now, newID: opts.NewID, log: opts.Logger, gating: isGating}
+	c := &Core{home: home, dir: dir, now: opts.Now, newID: opts.NewID, log: opts.Logger, gating: isGating, crash: opts.Crash}
 	if c.now == nil {
 		c.now = time.Now
 	}
@@ -222,7 +244,10 @@ const (
 	// a state that prevents it, such as a git merge in progress.
 	CodeFailedPrecondition ErrorCode = "failed_precondition"
 	// CodeBusy means another program holds a lock; retrying shortly may work.
-	CodeBusy     ErrorCode = "busy"
+	CodeBusy ErrorCode = "busy"
+	// CodeCanceled means the command was stopped, by SIGTERM or Ctrl-C,
+	// before it finished; what it would have recorded was not recorded.
+	CodeCanceled ErrorCode = "canceled"
 	CodeInternal ErrorCode = "internal"
 )
 
