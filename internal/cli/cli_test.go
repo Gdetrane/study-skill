@@ -3,6 +3,7 @@ package cli_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -190,5 +191,73 @@ func golden(t *testing.T, name, got string) {
 	}
 	if got != string(want) {
 		t.Errorf("%s differs from the golden file:\n--- got\n%s\n--- want\n%s", name, got, want)
+	}
+}
+
+func TestLibraryCommands(t *testing.T) {
+	books := func(t *testing.T) string {
+		home := t.TempDir()
+		for _, book := range []string{"Programming/The_C_Programming_Language.pdf", "Physics/Quantum.Mechanics.PDF"} {
+			path := filepath.Join(home, "Books", book)
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte("%PDF-1.4"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return home
+	}
+	indexed := func(t *testing.T) string {
+		home := books(t)
+		if r := run(t, home, "library", "build", "Books"); r.code != cli.ExitOK {
+			t.Fatalf("setup: library build: %s", r.stderr)
+		}
+		return home
+	}
+	for _, tc := range []struct {
+		golden string
+		home   func(*testing.T) string
+		args   []string
+		code   int
+	}{
+		{"library_search_before_build", books, []string{"library", "search", "C", "--json"}, cli.ExitError},
+		{"library_build", books, []string{"library", "build", "Books", "--json"}, cli.ExitOK},
+		{"library_search", indexed, []string{"library", "search", "C", "--json"}, cli.ExitOK},
+		{"library_search_no_match", indexed, []string{"library", "search", "organic", "chemistry", "--json"}, cli.ExitOK},
+		{"library_build_no_folder", books, []string{"library", "build", "--json"}, cli.ExitUsage},
+		{"library_unknown_subcommand", books, []string{"library", "serch", "C", "--json"}, cli.ExitUsage},
+	} {
+		t.Run(tc.golden, func(t *testing.T) {
+			got := run(t, tc.home(t), tc.args...)
+			if got.code != tc.code {
+				t.Errorf("exit code = %d, want %d (stderr: %s)", got.code, tc.code, got.stderr)
+			}
+			golden(t, tc.golden+".json", got.stdout)
+		})
+	}
+	golden(t, "library_search.txt", run(t, indexed(t), "library", "search", "quantum", "mechanics").stdout)
+}
+
+// failingWriter fails every write, like a closed pipe.
+type failingWriter struct{}
+
+func (failingWriter) Write([]byte) (int, error) { return 0, errors.New("broken pipe") }
+
+func TestLibraryOutputErrorsAreReported(t *testing.T) {
+	home := t.TempDir()
+	books := filepath.Join(home, "Books", "Programming")
+	if err := os.MkdirAll(books, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(books, "The_C_Programming_Language.pdf"), []byte("%PDF-1.4"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"library", "build", "Books"}, {"library", "search", "C"}} {
+		var stderr bytes.Buffer
+		code := cli.Run(context.Background(), args, strings.NewReader(""), failingWriter{}, &stderr, options(home, home))
+		if code == cli.ExitOK {
+			t.Errorf("study %s exited 0 although writing its output failed", strings.Join(args, " "))
+		}
 	}
 }

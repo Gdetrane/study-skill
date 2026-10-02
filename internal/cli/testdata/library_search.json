@@ -1,0 +1,19 @@
+{
+  "ok": true,
+  "data": {
+    "results": [
+      {
+        "title": "The C Programming Language",
+        "path": "$STUDY_HOME/Books/Programming/The_C_Programming_Language.pdf",
+        "category": "Programming",
+        "format": "pdf",
+        "size_bytes": 8,
+        "topics": [
+          "c",
+          "programming"
+        ],
+        "score": 8
+      }
+    ]
+  }
+}

@@ -3,9 +3,11 @@ package cli
 import (
 	"fmt"
 	"io"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/mordor-forge/lamplight/v2/internal/core"
+	"github.com/mordor-forge/lamplight/v2/internal/library"
 )
 
 // writeStatus renders the status for people. Styling arrives with #24.
@@ -46,4 +48,30 @@ func writeProblems(w io.Writer, problems []core.TopicProblem) error {
 		fmt.Fprintf(w, "  %s: %s\n", p.ID, p.Message)
 	}
 	return nil
+}
+
+func writeLibrarySummary(w io.Writer, s core.LibrarySummary) error {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Indexed %d books from %s\n", s.Books, s.Root)
+	if n := len(s.Skipped); n > 0 {
+		fmt.Fprintf(&b, "Skipped %d entries that could not be read:\n", n)
+		for _, path := range s.Skipped {
+			fmt.Fprintf(&b, "  %s\n", path)
+		}
+	}
+	_, err := io.WriteString(w, b.String())
+	return err
+}
+
+func writeSearchResults(w io.Writer, results []library.Result) error {
+	if len(results) == 0 {
+		_, err := fmt.Fprintln(w, "No books match.")
+		return err
+	}
+	var b strings.Builder
+	for _, r := range results {
+		fmt.Fprintf(&b, "%s\n  %s · %s\n  %s\n", r.Title, r.Category, r.Format, r.Path)
+	}
+	_, err := io.WriteString(w, b.String())
+	return err
 }

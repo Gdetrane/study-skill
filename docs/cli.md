@@ -11,6 +11,8 @@ that scripts and agents can rely on. Terms follow [CONTEXT.md](../CONTEXT.md).
 | `study` | Same as `study status`. |
 | `study status` | Shows the Study home, the Active topic and why it was chosen, every Topic, and any Topic that could not be read (`problems`). A broken Topic never stops the others from being listed. |
 | `study topic create --title T [--id ID] [--goal G] [--dry-run]` | Creates a Topic folder with its settings, History and git repository. `--dry-run` validates and shows the result without writing. |
+| `study library build <folder>` | Indexes the books in a folder (relative to where you run it) and replaces the Library index in the Study home. |
+| `study library search <query> [--limit N]` | Ranks the books in the Library against the query. `--limit` defaults to 10 and is capped at 100; no matches is a success with an empty list. |
 | `study mcp` | Runs the MCP server over stdin and stdout. |
 
 The Study home is `STUDY_HOME` if set, otherwise `study_home` in
