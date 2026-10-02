@@ -195,6 +195,8 @@ func TestNoToolRunsACheck(t *testing.T) {
 	use("rubric_record", with(lesson, "criterion", "explained", "grade", "met", "note", "It says why",
 		"looked_at", []any{"answer.txt"}), nil)
 	use("check_results", lesson, nil)
+	use("lesson", lesson, nil)
+	use("history", with(topic, "limit", 5, "type", "card."), nil)
 	use("hint_record", with(lesson, "kind", "nudge", "requested_by", "learner", "note", "What does check.sh compare?"), nil)
 	use("signals", topic, nil)
 	use("assessment_record", with(topic, "kind", "placement", "summary", "Knows the basics", "level", "beginner",

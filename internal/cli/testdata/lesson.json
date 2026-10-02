@@ -1,0 +1,49 @@
+{
+  "ok": true,
+  "data": {
+    "topic": "c",
+    "number": "1.1",
+    "id": "answer",
+    "title": "The answer",
+    "status": "in_progress",
+    "phase": "practicing",
+    "milestone": {
+      "number": 1,
+      "id": "basics",
+      "title": "Basics"
+    },
+    "file": "lessons/answer.md",
+    "path": "$STUDY_HOME/c/lessons/answer.md",
+    "exists": true,
+    "header_readable": true,
+    "check": [
+      {
+        "id": "answer",
+        "kind": "run",
+        "describe": "answer.txt holds 42",
+        "command": [
+          "sh",
+          "check.sh"
+        ]
+      },
+      {
+        "id": "explained",
+        "kind": "rubric",
+        "rubric": "The notes say why the answer is 42"
+      },
+      {
+        "id": "hidden",
+        "kind": "held_out",
+        "describe": "The answer on the test set",
+        "command": [
+          "sh",
+          "eval.sh"
+        ]
+      }
+    ],
+    "check_version": "sha256:<hash>",
+    "check_shown": true,
+    "shown_check": "sha256:<hash>",
+    "break_points": []
+  }
+}

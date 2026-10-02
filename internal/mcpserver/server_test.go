@@ -64,12 +64,15 @@ func TestServerSendsInstructionsAndTools(t *testing.T) {
 	var names []string
 	for _, tool := range tools.Tools {
 		names = append(names, tool.Name)
-		if tool.Name == "status" && (tool.Annotations == nil || !tool.Annotations.ReadOnlyHint) {
-			t.Error("status should be marked read-only")
+		switch tool.Name {
+		case "status", "lesson", "history":
+			if tool.Annotations == nil || !tool.Annotations.ReadOnlyHint {
+				t.Errorf("%s should be marked read-only", tool.Name)
+			}
 		}
 	}
 	if strings.Join(names, ",") != "assessment_record,break_point_reached,card_add,card_delete,card_edit,card_flag,card_suspend,cards,"+
-		"check_results,checkpoint,due_cards,evidence,evidence_record,evidence_retract,flag_dismiss,hint_record,"+
+		"check_results,checkpoint,due_cards,evidence,evidence_record,evidence_retract,flag_dismiss,hint_record,history,lesson,"+
 		"lesson_complete,library_search,phase_set,review_record,revision_apply,revision_decline,revision_propose,rubric_record,session_close,session_open,"+
 		"signals,source_add,source_update,sources,status,syllabus,task_done,tasks,topic_create,topic_update" {
 		t.Errorf("tools = %v", names)

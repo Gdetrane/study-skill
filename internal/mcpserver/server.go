@@ -50,8 +50,10 @@ func New(c *core.Core, version string, logger *slog.Logger) *mcp.Server {
 		Description: "Show the Study home, the Active topic and why it was chosen, and every Topic. Call this first " +
 			"in every session. Tell the learner, for the Active topic: its resume point (Lesson, Break point, and the " +
 			"Next step word for word), the one recommended action, and whether Cards are ready (cards.ready; never a " +
-			"count). learner_profile and a Topic's learner_additions are files to read before teaching. A Topic's " +
-			"flags name anything that needs the learner's attention; tell the learner about them.",
+			"count). When recommended.action is assess, every Lesson of recommended.milestone is done: its " +
+			"Assessment comes next, before the next Lesson. learner_profile and a Topic's learner_additions are files " +
+			"to read before teaching. A Topic's flags name anything that needs the learner's attention; tell the " +
+			"learner about them.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, OpenWorldHint: &closedWorld},
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, core.Status, error) {
 		status, err := c.Status(ctx)
@@ -152,6 +154,7 @@ func New(c *core.Core, version string, logger *slog.Logger) *mcp.Server {
 	addKnowledgeTools(server, c)
 	addPlanTools(server, c)
 	addAssessmentTools(server, c)
+	addReadTools(server, c)
 	return server
 }
 

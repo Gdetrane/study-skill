@@ -1,0 +1,9 @@
+Lesson 1.1 The answer (answer) in c
+  Milestone 1: Basics
+  Status: in progress, practicing
+  File: $STUDY_HOME/c/lessons/answer.md
+Check:
+  answer     run: answer.txt holds 42
+  explained  rubric: The notes say why the answer is 42
+  hidden     held_out: The answer on the test set
+  This is the Check shown to the learner.
