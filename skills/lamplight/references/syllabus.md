@@ -45,7 +45,9 @@ recommends `assess`, the Milestone it names is finished: run its Assessment, as 
 with `assessment_record`, kind `milestone` and the Milestone's id. Give `level` only when
 the learner agreed a new Level; it replaces any they chose since the last Assessment.
 When `next` says `propose_revision`, propose a Revision for the weak areas, such as a
-review Lesson. Weak results never block the next Milestone.
+review Lesson. Weak results never block the next Milestone. When the learner stops before
+the Assessment, the Next step names the next Lesson's first step: `status` keeps
+recommending `assess` on its own, so offer it first at the next Session.
 
 Done when `assessment_record` succeeded, and any Revision it prompted is applied or
 declined.

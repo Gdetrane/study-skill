@@ -32,8 +32,11 @@ func addReadTools(server *mcp.Server, c *core.Core) {
 		Title: "What happened",
 		Description: "Show a Topic's most recent Events, newest first, each with its type, when it happened, a short " +
 			"summary and its Lesson: what happened in earlier Sessions, on any machine. Filter by an Event type prefix " +
-			"(such as card. or attempt) or a Lesson. It is for you to understand the Topic's past, never a tally to show " +
-			"the learner: never count Events, Attempts or Reviews back to them.",
+			"(such as card. or attempt) or a Lesson; a Lesson's Card Events are included. Entries are ordered by the " +
+			"History's own clock but show each writer's wall clock, so clock_behind marks one whose machine's clock was " +
+			"behind; held marks an Event that was not applied (status flags it). Summaries hold no text anyone " +
+			"wrote, and Events written by a newer version of study are not shown. It is for you to understand the " +
+			"Topic's past, never a tally to show the learner: never count Events, Attempts or Reviews back to them.",
 		Annotations: read,
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in historyInput) (*mcp.CallToolResult, core.HistoryView, error) {
 		v, err := c.HistoryOf(ctx, in.Topic, core.HistoryQuery{Limit: in.Limit, Type: in.Type, Lesson: in.Lesson})

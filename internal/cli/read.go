@@ -85,13 +85,14 @@ func (a *app) historyCommand() *cobra.Command {
 
 func writeLessonDetail(w io.Writer, d core.LessonDetail) error {
 	var b strings.Builder
-	fmt.Fprintf(&b, "Lesson %s %s (%s) in %s\n", d.Number, styleAccent.Render(printable(d.Title)), d.ID, d.Topic)
+	fmt.Fprintf(&b, "Lesson %s %s (%s) in %s\n", printable(d.Number), styleAccent.Render(printable(d.Title)),
+		printable(d.ID), printable(d.Topic))
 	fmt.Fprintf(&b, "  Milestone %d: %s\n", d.Milestone.Number, printable(d.Milestone.Title))
 	status := strings.ReplaceAll(d.Status, "_", " ")
 	if d.Phase != "" {
 		status += ", " + d.Phase
 	}
-	fmt.Fprintf(&b, "  Status: %s\n", status)
+	fmt.Fprintf(&b, "  Status: %s\n", printable(status))
 	fmt.Fprintf(&b, "  File: %s\n", printable(d.Path))
 	if !d.HeaderReadable {
 		fmt.Fprintf(&b, "%s\n", styleWarn.Render(sentence(printable(d.HeaderError))))
@@ -111,7 +112,7 @@ func writeLessonDetail(w io.Writer, d core.LessonDetail) error {
 			case what == "":
 				what = strings.Join(c.Command, " ")
 			}
-			fmt.Fprintf(&b, "  %s%s: %s\n", styleLabel.Render(pad(c.ID, width)), c.Kind, printable(what))
+			fmt.Fprintf(&b, "  %s%s: %s\n", styleLabel.Render(pad(printable(c.ID), width)), printable(c.Kind), printable(what))
 		}
 		switch {
 		case d.CheckShown:
@@ -123,7 +124,7 @@ func writeLessonDetail(w io.Writer, d core.LessonDetail) error {
 	if len(d.BreakPoints) > 0 {
 		fmt.Fprintln(&b, styleLabel.Render("Break points:"))
 		for _, p := range d.BreakPoints {
-			fmt.Fprintf(&b, "  %s: %s\n", p.ID, printable(p.Describe))
+			fmt.Fprintf(&b, "  %s: %s\n", printable(p.ID), printable(p.Describe))
 		}
 	}
 	_, err := io.WriteString(w, b.String())
@@ -133,12 +134,22 @@ func writeLessonDetail(w io.Writer, d core.LessonDetail) error {
 func writeHistory(w io.Writer, v core.HistoryView) error {
 	var b strings.Builder
 	if len(v.Entries) == 0 {
-		fmt.Fprintf(&b, "Nothing has happened in %s that matches.\n", v.Topic)
+		fmt.Fprintf(&b, "Nothing has happened in %s that matches.\n", printable(v.Topic))
 	}
 	for _, e := range v.Entries {
-		about := ""
+		var notes []string
 		if e.Lesson != "" {
-			about = styleDim.Render(" (" + e.Lesson + ")")
+			notes = append(notes, printable(e.Lesson))
+		}
+		if e.Held {
+			notes = append(notes, "held")
+		}
+		if e.ClockBehind {
+			notes = append(notes, "clock behind")
+		}
+		about := ""
+		if len(notes) > 0 {
+			about = styleDim.Render(" (" + strings.Join(notes, ", ") + ")")
 		}
 		fmt.Fprintf(&b, "%s  %s%s\n", styleDim.Render(e.At.Local().Format("2 Jan 2006 15:04")), printable(e.Summary), about)
 	}

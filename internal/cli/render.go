@@ -154,7 +154,13 @@ func writeActiveTopic(b *strings.Builder, t core.Topic, rec *core.Recommendation
 		writeResume(b, *t.Resume, labels, now)
 	}
 	if rec != nil && rec.Action != core.ActionNextStep {
-		fmt.Fprintf(b, "%s%s\n", styleLabel.Render(pad("Do next:", labels)), styleAccent.Render(printable(rec.Text)))
+		text := rec.Text
+		if rec.Action == core.ActionAssess && rec.Milestone != nil {
+			// Said to the learner, who may be reading this without an agent.
+			text = fmt.Sprintf("Take the Assessment of Milestone %d “%s”: ask your agent for it, or record one "+
+				"with study assessment record", rec.Milestone.Number, rec.Milestone.Title)
+		}
+		fmt.Fprintf(b, "%s%s\n", styleLabel.Render(pad("Do next:", labels)), styleAccent.Render(printable(text)))
 	}
 	writeCardsReady(b, t.Cards, labels, now)
 	writePlan(b, t, labels)
@@ -183,7 +189,7 @@ func writeResume(b *strings.Builder, r core.ResumePoint, labels int, now time.Ti
 	case r.Lesson != "":
 		where := fmt.Sprintf("%s (%s)", styleAccent.Render(printable(r.Lesson)), printable(r.LessonTitle))
 		if r.Phase != "" {
-			where += ", " + r.Phase
+			where += ", " + printable(r.Phase)
 		}
 		fmt.Fprintf(b, "%s%s\n", styleLabel.Render(pad("Lesson:", labels)), where)
 	case r.SyllabusDone:
@@ -414,6 +420,11 @@ func writeManual(b *strings.Builder, steps []string) {
 func sentence(s string) string {
 	if s == "" {
 		return s
+	}
+	// A message that starts with a file path, such as "lessons/x.md does
+	// not exist", keeps the path as it is.
+	if first, _, _ := strings.Cut(s, " "); strings.ContainsAny(first, "/") {
+		return s + "."
 	}
 	return strings.ToUpper(s[:1]) + s[1:] + "."
 }

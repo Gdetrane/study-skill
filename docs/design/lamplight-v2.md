@@ -270,8 +270,11 @@ hours before any learning happens is exactly what v1 produced.
   proposed Revision (for example a review Lesson). When a Milestone's last Lesson is done,
   `lesson_complete` returns `next` with the code `assess_milestone`, and `status`
   recommends `assess` for that Milestone, ahead of the Next step, until its Assessment is
-  recorded or the learner moves on (starts a Lesson of another Milestone, or records a Next
-  step). It is the next thing to do, never something late.
+  recorded or the learner deliberately moves on by starting a Lesson of another Milestone.
+  Stopping does not end it: the Next step written then names the next Lesson's first step,
+  since the Assessment is cued on its own, and at the next Session the agent offers the
+  Assessment first. Only an active Topic has one. It is the next thing to do, never
+  something late.
 
 ### Sessions
 
@@ -295,10 +298,12 @@ hours before any learning happens is exactly what v1 produced.
    With nothing due at fumes, the offer is "write tomorrow's first step"; without a
    Syllabus, it is to plan one. A paused Topic is never suggested for study, and a finished
    one only for its Reviews. `session_open` returns the suggestion when it gets an Energy
-   and no Focus yet, as one value: a Focus, `plan`, `stop` or `resume_topic`, the same words
-   `status` recommends. The suggestion is never recorded, only the Focus the learner chooses:
-   `session_open` again with the open Session's id and that Focus records it on the same
-   Session (`session.focused`) and opens nothing new.
+   and no Focus yet, as one value: a Focus, `plan`, `stop`, `resume_topic` or `assess`, the
+   same words `status` recommends. `assess` is suggested at full and half Energy; at fumes
+   the Assessment waits, and the suggestion is Reviews or `stop`. The suggestion is never
+   recorded, only the Focus the learner chooses: `session_open` again with the open
+   Session's id and that Focus records it on the same Session (`session.focused`) and opens
+   nothing new.
 3. The Learner profile and the Topic's additions are read at the start of every Session;
    `status` gives their paths when the files exist.
 4. A Lesson moves through its Phases: teaching → practicing → feedback. The Check's criteria
