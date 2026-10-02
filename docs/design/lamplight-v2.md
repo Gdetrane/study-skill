@@ -285,7 +285,8 @@ hours before any learning happens is exactly what v1 produced.
    otherwise the next move in the Syllabus (plan it, start, continue,
    practice or go over feedback on the current Lesson), otherwise Reviews or exploring once
    every Lesson is done. A paused Topic's recommendation is instead to resume it or pick
-   another Topic (`resume_topic`), and a finished Topic's is its Reviews, or `stop` when no
+   another Topic (`resume_topic`), an imported Topic's is to adopt it (`adopt`, see
+   Migration from v1) until it has a Syllabus, and a finished Topic's is its Reviews, or `stop` when no
    Card is ready. A Triage is never the recommendation. For Cards, `status` says only whether
    Reviews are possible now, under the Topic's daily cap on new Cards, or when the next Card
    falls due; a paused Topic's Cards are never ready. How many is decided when a Session's
@@ -298,12 +299,12 @@ hours before any learning happens is exactly what v1 produced.
    With nothing due at fumes, the offer is "write tomorrow's first step"; without a
    Syllabus, it is to plan one. A paused Topic is never suggested for study, and a finished
    one only for its Reviews. `session_open` returns the suggestion when it gets an Energy
-   and no Focus yet, as one value: a Focus, `plan`, `stop`, `resume_topic` or `assess`, the
-   same words `status` recommends. `assess` is suggested at full and half Energy; at fumes
-   the Assessment waits, and the suggestion is Reviews or `stop`. The suggestion is never
-   recorded, only the Focus the learner chooses: `session_open` again with the open
-   Session's id and that Focus records it on the same Session (`session.focused`) and opens
-   nothing new.
+   and no Focus yet, as one value: a Focus, `plan`, `adopt`, `stop`, `resume_topic` or
+   `assess`, the same words `status` recommends. `assess` is suggested at full and half
+   Energy; at fumes the Assessment waits, and the suggestion is Reviews or `stop`. The
+   suggestion is never recorded, only the Focus the learner chooses: `session_open` again
+   with the open Session's id and that Focus records it on the same Session
+   (`session.focused`) and opens nothing new.
 3. The Learner profile and the Topic's additions are read at the start of every Session;
    `status` gives their paths when the files exist.
 4. A Lesson moves through its Phases: teaching → practicing → feedback. The Check's criteria
@@ -717,13 +718,25 @@ for testing, against a separate Study home, so "let's study" keeps reaching v1.
    Study home and leaves the original untouched. It keeps v1 folder and Lesson names as IDs
    (`lesson-01`), so paths quoted in Lesson text and in `.gitignore` keep working. It moves
    `lessons/plan.md` to `notes/v1-plan.md`, converts `.study-config.json` into `topic.toml`,
-   and maps `sources` and `notebooklm` to the Knowledge base. It records one `imported` Event
-   plus the Lesson completions it can prove. v1's lesson-level cards are dropped.
-   `--dry-run` lists everything that will be dropped.
+   and maps `sources` and `notebooklm` to the Knowledge base. It records one
+   `topic.imported` Event, whose payload is the import's report and carries the Lesson
+   completions it can prove, after the settings and Sources it converts. v1's lesson-level
+   cards are dropped. `--dry-run` lists everything that will be converted and dropped.
+   - Lesson files move to `lessons/lesson-NN.md`, the Lesson file v2 reads, and v1's config
+     is kept as `notes/v1-config.json`.
+   - A Lesson v1 calls completed counts as done only with its file and v1's own record of
+     it: the commit v1 made on completing it, or the card v1 added for it. Anything else
+     stays open, and the report says it was not proven. A completion the import proves has
+     no Attempt; a Revision cannot remove or skip it.
+   - The workspace is copied under `.lamplight/tmp` and moved into place when complete, so
+     an interrupted import leaves no Topic; its history is read only through the hardened
+     checkpoint package, and links leading outside it are refused.
 2. An adoption Session works through a checklist: Goal and deadline, Pace periods, Syllabus
    from `notes/v1-plan.md` (the three tiers become three Milestone priorities), a Check for
    each open Lesson, the Knowledge base, Cards for completed Lessons, and the Next step from
    v1's `pending_action` and `context`. The learner approves the result as a Revision.
+   Until the Topic has a Syllabus, `status` recommends `adopt` and `session_open` suggests
+   it (Instruction 13); the skill's adoption reference is the checklist.
 3. Acceptance test: `~/study-workspaces/c` and `~/study-workspaces/llm-data-engineering`
    import and resume exactly where they stopped. Automated tests use sanitised copies,
    because the real workspaces contain work-related content.

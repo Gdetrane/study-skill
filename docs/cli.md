@@ -24,6 +24,7 @@ that scripts and agents can rely on. Terms follow [CONTEXT.md](../CONTEXT.md).
 | `study task remove <topic> <task>... [--dry-run]` | Removes Tasks that no longer matter. A Task removed already changes nothing; one that never existed is `not_found`. |
 | `study task list <topic> [--all]` | Lists the open Tasks, or all with `--all`, and the lines of `tasks.jsonl` that are not Tasks (`problems`). |
 | `study topic dismiss-flag <topic> <flag-id> [--dry-run]` | Dismisses one of the Topic's flags, by the id `status` shows, once the learner has looked at it. It records the decision in the History and never changes content. The result is `{"topic": ..., "flag": {...}, "changed": bool}`; dismissing a flag twice changes nothing. Only `held_event`, `conflict`, `damaged_line`, `clock_ahead` and `card_flagged` flags can be dismissed (see below). |
+| `study import <v1-workspace> [--topic ID] [--dry-run]` | Imports a v1 study workspace as a new Topic, with its history, leaving the original untouched. See [Importing a v1 workspace](#importing-a-v1-workspace). |
 | `study library build <folder>` | Indexes the books in a folder (relative to where you run it) and replaces the Library index in the Study home. |
 | `study library search <query> [--limit N]` | Ranks the books in the Library against the query. `--limit` defaults to 10 and is capped at 100; no matches is a success with an empty list. |
 | `study source add <topic> (--file PATH \| --url URL) [--title T] [--notebooklm-id ID] [--dry-run]` | Adds a file or a web page as a Source of the Topic. A file is hashed, never parsed. Adding a file or URL the Topic already has is `already_exists`, naming the Source. |
@@ -176,7 +177,8 @@ without a Next step.
 ```
 
 `action` is one of `next_step` (the text is the Next step word for word), `plan` (no
-Syllabus yet), `learn`, `practice` or `feedback` (the current Lesson's Phase), `reviews`
+Syllabus yet), `adopt` (imported from v1 and not adopted yet: see
+[Importing a v1 workspace](#importing-a-v1-workspace)), `learn`, `practice` or `feedback` (the current Lesson's Phase), `reviews`
 (every Lesson done, Cards ready) or `explore` (every Lesson done); or, whatever the Resume
 point says, `resume_topic` (the Topic is paused: resume it or pick another Topic), and for a
 finished Topic `reviews` (Cards ready) or `stop` (no Card ready: nothing to study on it now).
@@ -258,10 +260,11 @@ override and isolate controls (U+202A–U+202E, U+2066–U+2069).
 - `suggested`, when an Energy is given and no Focus chosen yet: `suggest` is a Focus to offer
   (`learn`, `practice`, `reviews`, `explore`), `plan` (no Syllabus yet: plan it together),
   `stop` (fumes with nothing due: write tomorrow's first step and end here; or a finished
-  Topic with no Card ready), `resume_topic` (the Topic is paused) or `assess` (at full or
+  Topic with no Card ready), `resume_topic` (the Topic is paused), `assess` (at full or
   half Energy, when `status` would recommend `assess`: offer the Milestone's Assessment
-  first). At fumes an Assessment waits for another day, and the suggestion is what it would
-  be without one: `reviews` when Cards are ready, otherwise `stop`; `reason` is English
+  first) or `adopt` (an imported Topic without a Syllabus: adopt it before planning). At
+  fumes an Assessment waits for another day, and the suggestion is what it would be without
+  one: `reviews` when Cards are ready, otherwise `stop`; `reason` is English
   prose a skill may rephrase. A paused Topic is never suggested for study, and a finished one
   only for its Reviews. A suggestion is never recorded.
 - `paused`, when the Topic is paused. The Session opens anyway; the Topic stays paused until
@@ -791,6 +794,68 @@ History recorded:
 
 The order of the lines never matters, so every machine reads the same entity, and the next
 change to it leaves a single line.
+
+## Importing a v1 workspace
+
+`study import <v1-workspace>` turns a workspace of the v1 study skill (`.study-config.json`,
+`lessons/`, `practice/`, `notes/`, `.fsrs/`, in a repository) into a new Topic. Run it with
+`--dry-run` first: the report lists everything that will be converted, moved, proven done,
+left open and dropped, and nothing is written. The workspace itself is only read, never
+changed, and its history is read through the same hardened calls as Checkpoints, which run
+no program its configuration names.
+
+The import copies the whole workspace, `.git` included, so every commit is kept. The Topic's
+id is the workspace folder's name unless `--topic` gives another, and v1's names become ids:
+Lesson 1 is `lesson-01`, as v1 named its practice folder, so paths quoted in Lesson text and
+in `.gitignore` keep working.
+
+| v1 | v2 |
+|---|---|
+| `topic`, `end_goal` | the Topic's title and Goal |
+| `difficulty_override`, else `difficulty` | the Level |
+| `approach` (`concept`, `project`, `challenge`) | the Approach (`concepts`, `project`, `challenges`) |
+| `lessons[]`, numbered | Lessons `lesson-NN`; each file moves to `lessons/lesson-NN.md` |
+| a Lesson `completed` with proof | done, through the import's Event, with no Attempt |
+| `lessons/plan.md` | `notes/v1-plan.md`, for the adoption Session |
+| `.study-config.json` | `topic.toml`; the original is kept as `notes/v1-config.json` |
+| `sources[]` (paths, or objects with `path`, `url`, `title`, `notebook_id`, `source_id`) | Sources: a file inside the workspace by its path there, one outside by its content, URLs as they are |
+| `notebooklm`, or a source's `notebook_id` | a NotebookLM Knowledge base (the first notebook; others are dropped) |
+| `session_state` (`pending_action`, `context`, `phase`) | `v1_next_step`, for the adoption Session's Next step |
+| `.gitignore`, `.gitattributes` | kept, with Lamplight's lines added after the learner's |
+
+**Proof.** A Lesson v1 calls `completed` (or `complete`, `done`) counts as done only when its
+Lesson file is there and v1's own records show it: a commit v1 made when it completed the
+Lesson (`[agent] complete lesson 01`), or the card v1 added for it (`lesson-01` in
+`.fsrs/cards.json`). Otherwise it stays open, and the report says it was not proven.
+
+**Dropped**, each with its reason in the report: v1's lesson-level cards (`.fsrs/`, removed
+from the working tree but kept in the history), templates, calibration rounds, progress
+counters, the review queue, the catalog path, companions' settings, Energy and time budget,
+v1's creation date, keys the importer does not know, and entries that are neither files,
+folders nor links (FIFOs, sockets).
+
+**Refused:** a folder without `.study-config.json`, one inside the Study home or that is a
+Lamplight Topic already, a config version newer than 3, a link that leads outside the
+workspace (`failed_precondition`, naming it), a linked worktree or submodule (`.git` is a
+file), a repository that borrows objects (alternates), one where a command is running in it
+(`busy`), an id that is taken (`already_exists`), and a workspace imported already with the
+same config and HEAD (`already_exists`, naming the Topic).
+
+The Topic is assembled under `.lamplight/tmp` and moved into place only when complete, so an
+interrupted import leaves no Topic, and importing again starts over. It records
+`topic.created`, then the settings (`level.set`, `approach.set`, `knowledge_base.set`), one
+`source.added` per Source, and one `topic.imported` Event, whose payload is the report:
+where it came from (`from`, `head`, `config_version`, `config_hash`), what was converted,
+moved and dropped, the Lessons proven done with their proof, the open ones, and where v1
+stopped. A Checkpoint then saves the import; without an identity for commits the result
+carries `checkpoint_error`, and the next Checkpoint saves it.
+
+An imported Topic shows `imported` in `status` (`from`, `at`, `adopted`, `v1_next_step`) and
+the recommendation `adopt` until it has a Syllabus. The adoption, with the agent, is a
+checklist: the Goal and deadline, the Pace, the Syllabus from `notes/v1-plan.md` (v1's three
+tiers become the priorities `must`, `if_time` and `after_deadline`) approved as a Revision
+that keeps every Lesson proven done, Checks for the open Lessons, the Knowledge base, Cards
+for the completed Lessons, and a Next step from where v1 stopped.
 
 ## Writes
 
