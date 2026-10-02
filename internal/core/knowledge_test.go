@@ -710,6 +710,77 @@ func TestDuplicateSourceLinesAreFlagged(t *testing.T) {
 	}
 }
 
+// A line whose id is not a Source id is not a Source: it is neither listed
+// as untracked nor flagged, so its id never reaches a terminal.
+func TestLinesWithMalformedIDsAreNotSources(t *testing.T) {
+	m := newTopic(t)
+	m.addSource(t, SourceSpec{URL: "https://example.com/a"})
+	path := filepath.Join(m.home, "c", sourcesFile)
+	bad := `{"id":"x\u001b]0;pwned\u0007","kind":"url","title":"t","url":"https://example.com/x"}` + "\n"
+	appendLine(t, path, bad+bad+`{"id":"hand.abc123","kind":"url","title":"Hand","url":"https://example.com/hand"}`+"\n")
+	list := m.sources(t)
+	if len(list.Sources) != 2 || list.Sources[1].ID != "hand.abc123" {
+		t.Errorf("ListSources = %+v, want only the well-formed hand-added line untracked", list.Sources)
+	}
+	if topic, err := m.readTopic("c"); err != nil || len(topic.Flags) != 0 {
+		t.Errorf("flags = %+v, %v; want none for lines that are not Sources", topic.Flags, err)
+	}
+}
+
+// The flag for a Source's duplicate lines has the same id whichever order a
+// union merge left the lines in, so dismissing it on one machine dismisses
+// it on the other.
+func TestTheDuplicateLinesFlagIsTheSameInEitherOrder(t *testing.T) {
+	m := newTopic(t)
+	src := m.addSource(t, SourceSpec{URL: "https://example.com/a"})
+	path := filepath.Join(m.home, "c", sourcesFile)
+	ours := strings.TrimSuffix(readSourcesFile(t, m), "\n")
+	theirs := `{"id":"` + src.ID + `","kind":"url","title":"Edited elsewhere","url":"https://example.com/a"}`
+	var ids []string
+	for _, lines := range [][]string{{ours, theirs}, {theirs, ours}} {
+		if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		topic, err := m.readTopic("c")
+		if err != nil || len(topic.Flags) != 1 {
+			t.Fatalf("flags = %+v, %v", topic.Flags, err)
+		}
+		ids = append(ids, topic.Flags[0].ID)
+	}
+	if ids[0] != ids[1] {
+		t.Errorf("the flag's id depends on the order of the lines: %s and %s", ids[0], ids[1])
+	}
+}
+
+// After a union merge leaves two lines for a Source, the next change writes
+// the History's version of every field, even when the other copy is the one
+// read first.
+func TestTheNextChangeWritesTheHistorysVersion(t *testing.T) {
+	ctx := context.Background()
+	m := newTopic(t)
+	m.update(t, TopicChanges{KnowledgeBase: &KnowledgeBase{Notebook: "nb-1"}})
+	src := m.addSource(t, SourceSpec{URL: "https://example.com/a"})
+	if _, err := m.UpdateSource(ctx, "c", src.ID, SourceChanges{Title: ptr("Your title")}); err != nil {
+		t.Fatal(err)
+	}
+	// The other machine's copy sorts before the History's version.
+	appendLine(t, filepath.Join(m.home, "c", sourcesFile),
+		`{"id":"`+src.ID+`","kind":"url","title":"A stray title","url":"https://example.com/a"}`+"\n")
+	if _, err := m.UpdateSource(ctx, "c", src.ID, SourceChanges{NotebookLMID: ptr("nlm-1")}); err != nil {
+		t.Fatal(err)
+	}
+	data := readSourcesFile(t, m)
+	if strings.Count(data, src.ID) != 1 || !strings.Contains(data, `"title":"Your title"`) || !strings.Contains(data, `"notebooklm_id":"nlm-1"`) {
+		t.Errorf("sources.jsonl after the next change, want the History's title and the new NotebookLM id:\n%s", data)
+	}
+	if got := m.sources(t).Sources; len(got) != 1 || got[0].Title != "Your title" || got[0].NotebookLMID != "nlm-1" {
+		t.Errorf("ListSources = %+v", got)
+	}
+	if topic, _ := m.readTopic("c"); len(topic.Flags) != 0 {
+		t.Errorf("flags after the next change: %+v", topic.Flags)
+	}
+}
+
 func TestEvidenceValidation(t *testing.T) {
 	ctx := context.Background()
 	m := newTopic(t)

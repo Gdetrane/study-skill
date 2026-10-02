@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"unicode"
@@ -289,6 +290,11 @@ type sourceUpdatedData struct {
 	Title              *string `json:"title,omitempty"`
 	NotebookLMID       *string `json:"notebooklm_id,omitempty"`
 	NotebookLMNotebook *string `json:"notebooklm_notebook,omitempty"`
+	// Source is the Source as the History has it after the change. The
+	// changed fields above are what replay applies, so edits made on two
+	// machines both survive; Source is what sources.jsonl is written from,
+	// so the line matches the History whichever copy a union merge left.
+	Source *Source `json:"source,omitempty"`
 }
 
 // AddSource registers a Source on a Topic. A file is hashed, never parsed, so
@@ -465,6 +471,8 @@ func (c *Core) UpdateSource(ctx context.Context, topicID, sourceID string, chang
 			if diff.Title == nil && diff.NotebookLMID == nil {
 				return nil, nil
 			}
+			after := src
+			diff.Source = &after
 			return &change{Type: eventSourceUpdated, Data: diff, Items: []string{sourceItem(sourceID)}}, nil
 		}, changes.DryRun)
 		if err != nil {
@@ -609,7 +617,7 @@ func untrackedSources(topic *os.Root, k *knowledgeState) []Source {
 	seen := map[string]bool{}
 	for _, line := range bytes.Split(data, []byte{'\n'}) {
 		var src Source
-		if json.Unmarshal(line, &src) != nil || src.ID == "" || seen[src.ID] {
+		if json.Unmarshal(line, &src) != nil || !sourceIDPattern.MatchString(src.ID) || seen[src.ID] {
 			continue
 		}
 		seen[src.ID] = true
@@ -644,9 +652,13 @@ func sourcesFileFlags(topic *os.Root) []Flag {
 	}
 	var flags []Flag
 	for _, id := range order {
-		if len(copies[id]) < 2 {
+		if len(copies[id]) < 2 || !sourceIDPattern.MatchString(id) {
 			continue
 		}
+		// A union merge leaves each machine's own line first, so the copies
+		// are sorted: the flag's id, and so its dismissal, is the same on
+		// every machine.
+		slices.Sort(copies[id])
 		flags = append(flags, newFlag(FlagConflict, sourceItem(id), nil, strings.Join(copies[id], "\n"),
 			fmt.Sprintf("%s has %d lines for Source %s, probably edited on two machines; Lamplight uses the History's "+
 				"version, and the next change to the Source leaves one line", sourcesFile, len(copies[id]), id)))
@@ -714,10 +726,12 @@ func applySourceAdded(ev event, item string, _ []byte, _ bool) ([]byte, bool, er
 	return line, err == nil, err
 }
 
-// applySourceUpdated rewrites a Source's line, keeping fields this version
-// does not know. The payload holds only what changed, so a line deleted by
-// hand cannot be rebuilt from it: the write stops and says how to restore
-// the line.
+// applySourceUpdated rewrites a Source's line as the History has it after
+// the change, keeping the fields this version does not know from the line.
+// A union merge can leave two lines for the Source, and the one read here
+// need not be the History's version, so the line is written from the
+// payload's Source, never from the line's known fields. A line deleted by
+// hand stops the write, which says how to restore it.
 func applySourceUpdated(ev event, item string, current []byte, exists bool) ([]byte, bool, error) {
 	var d sourceUpdatedData
 	if err := json.Unmarshal(ev.Data, &d); err != nil || d.ID == "" {
@@ -734,7 +748,14 @@ func applySourceUpdated(ev event, item string, current []byte, exists bool) ([]b
 	if err != nil {
 		return nil, false, err
 	}
-	d.applyTo(&src)
+	if d.Source != nil {
+		if d.Source.ID != d.ID {
+			return nil, false, corruptf("Event %s has an unreadable payload", ev.ID)
+		}
+		src = *d.Source
+	} else {
+		d.applyTo(&src)
+	}
 	line, err := encodeSourceLine(src, extra)
 	return line, err == nil, err
 }

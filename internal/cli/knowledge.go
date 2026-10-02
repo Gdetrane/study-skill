@@ -299,7 +299,7 @@ func writeSourceList(w io.Writer, l core.SourceList) error {
 	}
 	fmt.Fprintf(&b, "\n%s\n", styleLabel.Render("Sources:"))
 	for _, s := range l.Sources {
-		fmt.Fprintf(&b, "%s  %s\n", styleAccent.Render(s.ID), printable(s.Title))
+		fmt.Fprintf(&b, "%s  %s\n", styleAccent.Render(printable(s.ID)), printable(s.Title))
 		writeSourceDetails(&b, s)
 	}
 	_, err := io.WriteString(w, b.String())

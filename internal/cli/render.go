@@ -41,7 +41,7 @@ func writeFlags(w io.Writer, topics []core.Topic) {
 				fmt.Fprintf(w, "\n%s\n", styleWarn.Render("Needs attention:"))
 				header = true
 			}
-			fmt.Fprintf(w, "  %s: %s (flag %s)\n", styleLabel.Render(t.ID), f.Message, f.ID)
+			fmt.Fprintf(w, "  %s: %s (flag %s)\n", styleLabel.Render(t.ID), printable(f.Message), f.ID)
 		}
 	}
 }
