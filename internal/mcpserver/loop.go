@@ -36,7 +36,8 @@ func addLearnerLoop(server *mcp.Server, c *core.Core) {
 			"would be afterwards, and a summary in plain words. Nothing changes until the learner approves it. Show the " +
 			"learner changes.text, which names Lessons by title and shows any renumbering. Skip a Lesson by setting " +
 			"skipped on it, never by removing it; for each Lesson in changes.skipped_in_progress, go over what was " +
-			"already covered with the learner. Done and skipped Lessons keep their title, hours and Milestone. A " +
+			"already covered with the learner and offer to keep it as Cards with card_add, which accepts a skipped " +
+			"Lesson. Done and skipped Lessons keep their title, hours and Milestone. A " +
 			"Revision must change something. Milestones can carry " +
 			"a target date (YYYY-MM-DD). If status flags syllabus.toml as edited outside Lamplight, set from_file " +
 			"instead to propose the learner's edit as it is.",
@@ -136,29 +137,6 @@ func addLearnerLoop(server *mcp.Server, c *core.Core) {
 		r, err := c.CompleteLesson(ctx, in.Topic, core.CompleteSpec{Lesson: in.Lesson, Cards: in.Cards})
 		return nil, r, toolErr(err)
 	})
-
-	mcp.AddTool(server, &mcp.Tool{
-		Name:  "due_cards",
-		Title: "Cards to review",
-		Description: "List Cards to review now: those due, then drafts waiting for their first Review. Never tell the " +
-			"learner how many are due.",
-		Annotations: read,
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in dueCardsInput) (*mcp.CallToolResult, core.DueCards, error) {
-		r, err := c.DueCardsOf(ctx, in.Topic, in.Limit)
-		return nil, r, toolErr(err)
-	})
-
-	mcp.AddTool(server, &mcp.Tool{
-		Name:  "review_record",
-		Title: "Record a Review",
-		Description: "Record the learner's Review of a Card: again, hard, good or easy. At a draft's first Review, " +
-			"the learner also keeps, edits (give the new prompt and answer) or drops it.",
-		Annotations: write,
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in reviewRecordInput) (*mcp.CallToolResult, core.ReviewResult, error) {
-		r, err := c.RecordReview(ctx, in.Topic, core.ReviewSpec{Card: in.Card, Rating: in.Rating, Draft: in.Draft,
-			Prompt: in.Prompt, Answer: in.Answer})
-		return nil, r, toolErr(err)
-	})
 }
 
 // toolErr is toolError for a possibly nil error.
@@ -221,18 +199,4 @@ type lessonCompleteInput struct {
 	Topic  string           `json:"topic" jsonschema:"the Topic's id"`
 	Lesson string           `json:"lesson" jsonschema:"the Lesson's id"`
 	Cards  []core.CardDraft `json:"cards,omitempty" jsonschema:"draft Cards written from the Lesson"`
-}
-
-type dueCardsInput struct {
-	Topic string `json:"topic" jsonschema:"the Topic's id"`
-	Limit int    `json:"limit,omitempty" jsonschema:"most Cards to return; default 10, at most 100"`
-}
-
-type reviewRecordInput struct {
-	Topic  string `json:"topic" jsonschema:"the Topic's id"`
-	Card   string `json:"card" jsonschema:"the Card's id, from due_cards"`
-	Rating string `json:"rating,omitempty" jsonschema:"again, hard, good or easy; not needed to drop a draft"`
-	Draft  string `json:"draft,omitempty" jsonschema:"at a draft's first Review: keep, edit or drop"`
-	Prompt string `json:"prompt,omitempty" jsonschema:"the new prompt, when editing a draft"`
-	Answer string `json:"answer,omitempty" jsonschema:"the new answer, when editing a draft"`
 }

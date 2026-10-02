@@ -1,0 +1,6 @@
+Card 1 (explore) explore.<id>  draft
+  What does a pivot column hold?
+  → A leading 1
+Card 2 (explore) explore.<id>  draft
+  What is a free variable?
+  → One whose column has no pivot

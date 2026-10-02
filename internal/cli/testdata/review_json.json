@@ -1,0 +1,7 @@
+{
+  "ok": false,
+  "error": {
+    "code": "usage",
+    "message": "study review is interactive: for scripts, use study card due and study card review, which take --json"
+  }
+}

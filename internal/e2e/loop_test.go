@@ -334,7 +334,8 @@ func TestTheLearnerLoop(t *testing.T) {
 		t.Fatalf("due Cards = %+v", due)
 	}
 	var reviewed core.ReviewResult
-	a.call("review_record", map[string]any{"topic": "c", "card": due.Cards[0].ID, "rating": "good", "draft": "keep"}, &reviewed)
+	a.call("review_record", map[string]any{"topic": "c", "card": due.Cards[0].ID, "rating": "good", "draft": "keep",
+		"request": "review-1"}, &reviewed)
 	if reviewed.Card.Draft || !reviewed.Card.Due.After(a.clock.now()) {
 		t.Fatalf("review = %+v", reviewed)
 	}
@@ -557,7 +558,7 @@ func assertTwoMachinesMerge(t *testing.T, a *agent) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		due, err := c.DueCardsOf(ctx, "c", 0)
+		due, err := c.DueCardsOf(ctx, "c", core.DueQuery{})
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -896,9 +896,9 @@ func TestURLsAreNormalised(t *testing.T) {
 		"http://example.com:8080/x?y=1#part":                      "http://example.com:8080/x?y=1#part",
 		"https://[::1]:443/":                                      "https://[::1]/",
 		"http://例え.JP/パス":                                         "http://例え.jp/%E3%83%91%E3%82%B9",
-		"https://example.com/‮gnp.exe":                            "https://example.com/%E2%80%AEgnp.exe",
+		"https://example.com/\u202egnp.exe":                       "https://example.com/%E2%80%AEgnp.exe",
 		"https://user:secret@example.com/x":                       "",
-		"https://exa‮mple.com/":                                   "",
+		"https://exa\u202emple.com/":                              "",
 		"javascript:alert(1)":                                     "",
 		"https:example.com":                                       "",
 		"file:///etc/passwd":                                      "",
@@ -946,7 +946,7 @@ func TestDerivedTitlesAreSafe(t *testing.T) {
 	if strings.ContainsFunc(escape.Title, unicode.IsControl) || !strings.Contains(escape.Title, "Book") {
 		t.Errorf("derived %q from a Library title with an escape sequence", escape.Title)
 	}
-	if got := derivedText("a\x1b[2J‮b\xff", 10); got != "a [2J b" {
+	if got := derivedText("a\x1b[2J\u202eb\xff", 10); got != "a [2J b" {
 		t.Errorf("derivedText = %q", got)
 	}
 	symbols := m.addSource(t, SourceSpec{File: writeBook(t, filepath.Join(dir, "___.pdf"), "%PDF-1.4 ___")})

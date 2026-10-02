@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"sort"
 	"strings"
 	"unicode"
@@ -78,7 +77,7 @@ const (
 )
 
 func init() {
-	fileCodecs = append(fileCodecs, codecEntry{pattern: sourcesFile, codec: jsonlCodec})
+	fileCodecs = append(fileCodecs, codecEntry{pattern: sourcesFile, codec: jsonlHistoryCodec})
 	eventKinds[eventKnowledgeBaseSet] = eventKind{apply: applyKnowledgeBaseSet, replay: replayTopicUpdated}
 	eventKinds[eventSourceAdded] = eventKind{apply: applySourceAdded, replay: replaySourceAdded}
 	eventKinds[eventSourceUpdated] = eventKind{apply: applySourceUpdated, replay: replaySourceUpdated}
@@ -627,43 +626,6 @@ func untrackedSources(topic *os.Root, k *knowledgeState) []Source {
 		}
 	}
 	return out
-}
-
-// sourcesFileFlags flags Sources that sources.jsonl holds more than once,
-// which a union merge leaves when one Source was edited on two machines.
-// The History's version is the Source; the next change to it leaves one
-// line.
-func sourcesFileFlags(topic *os.Root) []Flag {
-	data, exists, err := readFile(topic, sourcesFile)
-	if err != nil || !exists {
-		return nil
-	}
-	lines, ids, err := jsonlEntries(data)
-	if err != nil {
-		return nil
-	}
-	copies := map[string][]string{}
-	var order []string
-	for i, id := range ids {
-		if copies[id] == nil {
-			order = append(order, id)
-		}
-		copies[id] = append(copies[id], string(lines[i]))
-	}
-	var flags []Flag
-	for _, id := range order {
-		if len(copies[id]) < 2 || !sourceIDPattern.MatchString(id) {
-			continue
-		}
-		// A union merge leaves each machine's own line first, so the copies
-		// are sorted: the flag's id, and so its dismissal, is the same on
-		// every machine.
-		slices.Sort(copies[id])
-		flags = append(flags, newFlag(FlagConflict, sourceItem(id), nil, strings.Join(copies[id], "\n"),
-			fmt.Sprintf("%s has %d lines for Source %s, probably edited on two machines; Lamplight uses the History's "+
-				"version, and the next change to the Source leaves one line", sourcesFile, len(copies[id]), id)))
-	}
-	return flags
 }
 
 // decodeSourceLine reads one line of sources.jsonl, and the fields this

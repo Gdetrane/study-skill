@@ -1,0 +1,14 @@
+{
+  "ok": true,
+  "data": {
+    "topic": "linear-algebra",
+    "card": {
+      "id": "explore.<id>",
+      "number": 1,
+      "prompt": "What does a pivot column hold?",
+      "answer": "A leading 1",
+      "draft": true
+    },
+    "changed": true
+  }
+}

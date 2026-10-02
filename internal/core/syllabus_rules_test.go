@@ -98,6 +98,10 @@ func TestASkippedLessonCannotBeStudied(t *testing.T) {
 		!strings.Contains(err.Error(), "skipped") {
 		t.Errorf("completing it: %v", err)
 	}
+	// What was covered before the skip can still become Cards.
+	if card := m.addCard(t, CardSpec{Lesson: "answer", Prompt: "What is the answer?", Answer: "42"}); card.Lesson != "answer" {
+		t.Errorf("a Card for the skipped Lesson = %+v", card)
+	}
 }
 
 // TestSettledLessonsAreCheckedAgainWhenApplying: a Lesson done between

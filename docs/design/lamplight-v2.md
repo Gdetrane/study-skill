@@ -61,7 +61,7 @@ the maintainer's answers to the questions they raised.
     syllabus.toml                   Milestones (priority, target date) and Lessons
                                     (id, title, hour estimate), in order
     lessons/<lesson-id>.md          Lesson text; YAML header holds the Check and Break points
-    cards.jsonl                     Card content, sorted by ID
+    cards.jsonl                     Card content, in the order written
     sources.jsonl                   Sources: files (Topic path or name, content hash) and URLs
     history.jsonl                   Events, append only
     learner.md                      optional per-Topic additions to the Learner profile
@@ -137,7 +137,12 @@ the maintainer's answers to the questions they raised.
   | `phase.set` | Lesson, Phase, optional Next step, the Check version shown when practicing starts, the turn it ended | none |
   | `attempt.recorded` | Lesson, Check version, snapshot, outcome, per-criterion outcomes (never output) | none |
   | `lesson.completed` | Lesson, the Attempt, its Check version and the one shown, snapshot, the turn it ended, draft Cards in full | `cards.jsonl#<id>` each |
-  | `review.recorded` | Card, rating, and for a draft keep, edit (new content) or drop | `cards.jsonl#<id>` on edit or drop |
+  | `review.recorded` | Card, rating, for a draft keep, edit (new content) or drop, and the client's optional request id | `cards.jsonl#<id>` on edit or drop |
+  | `card.added` | the new Card in full, Evidence ids included | `cards.jsonl#<id>` |
+  | `card.edited` | Card, the new prompt, answer or Evidence | `cards.jsonl#<id>` |
+  | `card.suspended`, `card.unsuspended` | Card | none |
+  | `card.deleted` | Card, how many of its Reviews the deleting machine knew | `cards.jsonl#<id>` (removed) |
+  | `card.flagged` | Card, the learner's note | none |
   | `checkpoint.taken` | the Event whose Checkpoint it settles, role, commit | none |
 
   `syllabus.toml` keeps settings Lamplight does not know at every level, as `topic.toml`
@@ -145,8 +150,8 @@ the maintainer's answers to the questions they raised.
   recorded; while the file differs from it, Revisions are refused except one that adopts
   the hand edit (`from_file`), so a learner's edit is approved rather than overwritten.
   `cards.jsonl` merges by union like the History: a Card repeated with different content,
-  a Lesson completed on two machines (whose Cards are all kept), a Review of a dropped
-  Card and a Revision removing a done Lesson are flagged.
+  a Lesson completed on two machines (whose Cards are all kept), a Review or an edit of a
+  dropped or deleted Card, and a Revision removing a done Lesson are flagged.
 - **Sync**: v2.0 supports using a Topic on one machine at a time, synced through git between
   sessions. History files merge by union, which can leave lines in any order; because
   replay sorts Events, a merge in either direction gives the same state. Conflicting changes
@@ -314,9 +319,44 @@ hours before any learning happens is exactly what v1 produced.
 - The skill's card-writing rules: one fact per Card, no lists, no answer in the prompt, no
   trivia, at least one Card from the learner's own mistakes.
 - Cards can be added, edited, suspended and deleted; `study review` has a key to flag one.
+  A flagged Card shows as a `card_flagged` flag in `status` until it is edited or deleted,
+  or the flag is dismissed; flagging it again after a dismissal is a new flag. Adding a Card
+  with the same Lesson and content twice, or deleting one already gone, records nothing.
+- Prompts and answers may span lines and hold tabs, for code Topics. A Card cites Evidence
+  by id, checked against the History; retracted Evidence is refused.
+- Explore Cards have IDs `explore.<random suffix>`, so `explore` is reserved and no Lesson
+  may use it. Adding one needs no open Explore Session: a useful answer comes up in any
+  Session, and the learner may add Cards from the command line with no Session at all.
+  New Cards are appended to `cards.jsonl` rather than kept sorted by ID: a union merge keeps
+  two machines' changes apart only when they touch different parts of the file, and
+  inserting in ID order makes them overlap. Display numbers ("Card 4") come from the order
+  Cards were written.
+- **Lines a merge leaves**: every reader and write of a `path#key` item, for Cards and
+  Sources alike, picks among the lines a union merge left by one rule. A line at the version
+  the History recorded last is the entity, and lines at versions an earlier Event recorded
+  are debris. A line at a version the History never recorded is an edit made outside
+  Lamplight: where the file is authoritative for text (`cards.jsonl`), one such edit wins and
+  several are a conflict; where the History holds the text (`sources.jsonl`), the recorded
+  version wins and any such edit is a conflict. A write leaves a single line.
+- **Retries and conflicts**: a Review may carry the client's request id; a retry with it, or
+  a repeated first decision on a draft, records nothing and returns what was recorded. A
+  delete records how many Reviews it had seen, so a delete and a Review made on two
+  machines are flagged whichever replays first, as is a draft decided on both.
+- **Sizing**: the Cards offered are those due, earliest first, then drafts, as many as the
+  daily cap allows (10 decided a day). Without an explicit limit, the list is sized to the
+  Energy, given or taken from the open Session: 20 at full, 10 at half, 3 at fumes, 10
+  without one. Suspended Cards are never offered, and no count of what is due is shown.
+- **Scheduling** replays each Card's Reviews through FSRS-6 (go-fsrs v4, which needs Go 1.26;
+  fuzz off) from their `wall` times, each clamped to the Card's previous Review so time never
+  runs backwards. Short-term learning steps are off: Lamplight works in sessions and offers a
+  session's Cards once, so every Review, the first included, schedules in days, and "again"
+  means the Card comes back next time. A Card starts at its first Review, never at the current time, so replay
+  does not depend on when it runs. Only `schedule()` knows go-fsrs; a later version changes
+  every replayed schedule, so it comes with a migration once learner data depends on it.
 - Reviews work with the agent (conversational recall) or without it (`study review` in the
   terminal). Paused Topics hide their Cards; finished Topics keep reviewing at growing
-  intervals.
+  intervals. TODO(#29): paused and finished Topics, once Topics have states, and the daily
+  cap as a Topic setting next to Pace.
 
 ### Level, Goal, Pace and Tasks
 
@@ -375,16 +415,16 @@ apply. Search results carry an absolute path. Conversion leaves the Library.
 
 Every write names its Topic. Tools are named after things that happen in the domain.
 
-- **Read**: `status`, `syllabus`, `lesson`, `due_cards`, `history`, `check_results`,
-  `library_search`, `sources`, `evidence`.
+- **Read**: `status`, `syllabus`, `lesson`, `due_cards` (sized to Energy), `cards`, `history`,
+  `check_results`, `library_search`, `sources`, `evidence`.
 - **Topics**: `topic_create`, `topic_update` (Goal, Pace, Level, Approach, Knowledge base,
   Tasks, pause, finish), `task_done`, `assessment_record`, `source_add`, `source_update`,
   `evidence_record`, `evidence_retract`.
 - **Syllabus**: `revision_propose`, `revision_apply`, `revision_decline`.
 - **Sessions**: `session_open`, `session_close`, `phase_set`, `break_point_reached`,
   `checkpoint`, `hint_record`, `rubric_record`, `lesson_complete`.
-- **Cards**: `card_add`, `card_edit`, `card_suspend`, `card_delete`, `review_record`
-  (including keep, edit or drop for drafts).
+- **Cards**: `card_add`, `card_edit`, `card_suspend`, `card_flag`, `card_delete`,
+  `review_record` (including keep, edit or drop for drafts, and a required request id).
 
 Opening a Session on a Topic also makes it the most recent Topic; there is no separate
 switch tool.

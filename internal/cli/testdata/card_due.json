@@ -1,0 +1,16 @@
+{
+  "ok": true,
+  "data": {
+    "topic": "linear-algebra",
+    "energy": "fumes",
+    "cards": [
+      {
+        "id": "explore.<id>",
+        "number": 2,
+        "prompt": "What is a free variable?",
+        "answer": "One whose column has no pivot",
+        "draft": true
+      }
+    ]
+  }
+}

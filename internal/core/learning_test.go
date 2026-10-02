@@ -341,7 +341,7 @@ func TestACrashDuringCompletionIsFinishedByTheNextCall(t *testing.T) {
 	if err != nil || res.Changed || len(res.Cards) != 1 || res.Checkpoint == nil {
 		t.Fatalf("completing again = %+v, %v; want the recorded completion and a Checkpoint", res, err)
 	}
-	due, err := m.DueCardsOf(ctx, "c", 0)
+	due, err := m.DueCardsOf(ctx, "c", DueQuery{})
 	if err != nil || len(due.Cards) != 1 || due.Cards[0].Prompt != "Q" || !due.Cards[0].Draft {
 		t.Errorf("due Cards after recovery = %+v, %v", due, err)
 	}
@@ -389,17 +389,17 @@ func TestReviewsDecideDraftsAndScheduleCards(t *testing.T) {
 		t.Errorf("reviewing a dropped Card: err = %v, want not_found", err)
 	}
 
-	due, err := m.DueCardsOf(ctx, "c", 0)
+	due, err := m.DueCardsOf(ctx, "c", DueQuery{})
 	if err != nil || len(due.Cards) != 0 {
 		t.Fatalf("right after the Reviews: %+v, %v; want nothing due", due, err)
 	}
 	m.setClock(t0.AddDate(0, 1, 0))
-	due, err = m.DueCardsOf(ctx, "c", 0)
+	due, err = m.DueCardsOf(ctx, "c", DueQuery{})
 	if err != nil || len(due.Cards) != 2 || due.Cards[0].ID != edit {
 		t.Fatalf("a month later: %+v, %v; want both kept Cards, the harder one first", due, err)
 	}
 	// The schedule is replayed, so it is the same every time.
-	again, err := m.DueCardsOf(ctx, "c", 0)
+	again, err := m.DueCardsOf(ctx, "c", DueQuery{})
 	if err != nil || !again.Cards[0].Due.Equal(due.Cards[0].Due) || !again.Cards[1].Due.Equal(due.Cards[1].Due) {
 		t.Errorf("replaying twice gave %+v, then %+v", due, again)
 	}

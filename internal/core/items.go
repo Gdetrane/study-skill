@@ -33,6 +33,100 @@ type fileCodec struct {
 	// put returns file with the entity replaced by content, added when it
 	// is new, or removed when exists is false.
 	put func(file []byte, key string, content []byte, exists bool) ([]byte, error)
+	// index returns, for each key, every distinct canonical content the
+	// file holds for it, in file order: more than one when a union merge
+	// left several lines. Nil for files that hold one copy of each entity.
+	index func(file []byte) (map[string][][]byte, error)
+	// historyText is set for files whose text the History holds, such as
+	// sources.jsonl: the History's version is the entity, and a line it
+	// never recorded is an edit made outside Lamplight. Otherwise the file
+	// is authoritative for text (ADR-0005), and a hand edit wins.
+	historyText bool
+}
+
+// itemVersions is what the History recorded for an item, which decides
+// among the lines a merge leaves for it.
+type itemVersions struct {
+	// latest is the hash the last Event that changed the item recorded,
+	// "" when that Event removed it; recorded is whether any did.
+	latest   string
+	recorded bool
+	// known maps every hash any Event recorded for the item, before or
+	// after, to the position of the last Event that did.
+	known map[string]int
+}
+
+// resolveEntity picks an entity's content among the distinct contents a
+// file holds for it. One content is the entity, whatever it is. When a
+// union merge left several, each is the version the History recorded last,
+// an older version an Event recorded (debris of the merge), or a version the
+// History never recorded (an edit made outside Lamplight). Then:
+//
+//   - where the file is authoritative for text, one edit made outside
+//     Lamplight wins over the recorded versions, as a hand edit does
+//     without a merge (ADR-0005). Several are a conflict, and the smallest
+//     canonical one is read, the same on every machine;
+//   - where the History holds the text, the recorded version wins, and any
+//     other edit is a conflict;
+//   - otherwise the version recorded last is read; when the last Event
+//     removed the entity, debris does not bring it back. Without it, the
+//     most recently recorded older version is read.
+//
+// unknown counts the contents the History never recorded, which decides
+// whether status flags the entity (see conflicting).
+func resolveEntity(contents [][]byte, v itemVersions, historyText bool) (content []byte, exists bool, unknown [][]byte) {
+	switch len(contents) {
+	case 0:
+		return nil, false, nil
+	case 1:
+		return contents[0], true, nil
+	}
+	var latest, debris []byte
+	debrisAt := -1
+	for _, c := range contents {
+		hash := contentHash(c, true)
+		at, isKnown := v.known[hash]
+		switch {
+		case v.recorded && hash == v.latest:
+			latest = c
+		case isKnown:
+			if at > debrisAt || (at == debrisAt && bytes.Compare(c, debris) < 0) {
+				debris, debrisAt = c, at
+			}
+		default:
+			unknown = append(unknown, c)
+		}
+	}
+	smallest := func(cs [][]byte) []byte {
+		best := cs[0]
+		for _, c := range cs[1:] {
+			if bytes.Compare(c, best) < 0 {
+				best = c
+			}
+		}
+		return best
+	}
+	switch {
+	case !historyText && len(unknown) > 0:
+		return smallest(unknown), true, unknown
+	case latest != nil:
+		return latest, true, unknown
+	case v.recorded && v.latest == "":
+		return nil, false, unknown
+	case len(unknown) > 0:
+		return smallest(unknown), true, unknown
+	}
+	return debris, true, unknown
+}
+
+// conflicting reports whether the contents resolveEntity found for an
+// entity are a conflict for the learner to settle: several edits made
+// outside Lamplight, or where the History holds the text, any.
+func conflicting(unknown [][]byte, historyText bool) bool {
+	if historyText {
+		return len(unknown) > 0
+	}
+	return len(unknown) > 1
 }
 
 // fileCodecs maps file patterns (path.Match syntax, slash-separated) to the
@@ -103,8 +197,16 @@ func readFile(topic *os.Root, file string) ([]byte, bool, error) {
 	return data, true, nil
 }
 
-// readItem returns an item's content and whether it exists.
+// readItem returns an item's content and whether it exists, without the
+// History: among several lines for an entity, the smallest canonical one.
+// Readers that have replayed the History use readItemWith or a topicView.
 func readItem(topic *os.Root, item string) ([]byte, bool, error) {
+	return readItemWith(topic, item, itemVersions{})
+}
+
+// readItemWith returns an item's content and whether it exists, resolving
+// the lines a merge leaves for an entity with what the History recorded.
+func readItemWith(topic *os.Root, item string, v itemVersions) ([]byte, bool, error) {
 	file, key, err := parseItem(item)
 	if err != nil {
 		return nil, false, err
@@ -114,11 +216,69 @@ func readItem(topic *os.Root, item string) ([]byte, bool, error) {
 		return data, exists, err
 	}
 	codec, _ := codecFor(file)
-	content, exists, err := codec.get(data, key)
+	if codec.index == nil {
+		content, exists, err := codec.get(data, key)
+		if err != nil {
+			return nil, false, corruptf("%s is damaged: %v", file, err)
+		}
+		return content, exists, nil
+	}
+	idx, err := codec.index(data)
 	if err != nil {
 		return nil, false, corruptf("%s is damaged: %v", file, err)
 	}
+	content, exists, _ := resolveEntity(idx[key], v, codec.historyText)
 	return content, exists, nil
+}
+
+// entityConflicts flags the entities of files with an index for which a
+// merge left contents that conflict (see conflicting): two edits made
+// outside Lamplight on two machines, or, where the History holds the text,
+// an edit it never recorded.
+func entityConflicts(topic *os.Root, s *replayed) []Flag {
+	var flags []Flag
+	for _, e := range fileCodecs {
+		if e.codec.index == nil || strings.ContainsAny(e.pattern, "*?[") {
+			continue
+		}
+		data, exists, err := readFile(topic, e.pattern)
+		if err != nil || !exists {
+			continue
+		}
+		idx, err := e.codec.index(data)
+		if err != nil {
+			continue
+		}
+		keys := make([]string, 0, len(idx))
+		for key, contents := range idx {
+			if len(contents) > 1 {
+				keys = append(keys, key)
+			}
+		}
+		slices.Sort(keys)
+		for _, key := range keys {
+			item := e.pattern + "#" + key
+			_, _, unknown := resolveEntity(idx[key], s.itemVersions(item), e.codec.historyText)
+			if !conflicting(unknown, e.codec.historyText) {
+				continue
+			}
+			detail := make([]string, len(unknown))
+			for i, c := range unknown {
+				detail[i] = string(c)
+			}
+			slices.Sort(detail)
+			msg := fmt.Sprintf("%s holds %d versions of %s that the History never recorded, probably edited by hand "+
+				"on two machines: Lamplight reads the same one on every machine; keep the right line by hand",
+				e.pattern, len(unknown), key)
+			if e.codec.historyText {
+				msg = fmt.Sprintf("%s holds a version of %s that the History never recorded, probably edited outside "+
+					"Lamplight: Lamplight uses the History's version, and the next change to it leaves one line",
+					e.pattern, key)
+			}
+			flags = append(flags, newFlag(FlagConflict, item, nil, strings.Join(detail, "\n"), msg))
+		}
+	}
+	return flags
 }
 
 // writeItem replaces an item atomically, or removes it. An entity is written
@@ -182,12 +342,40 @@ func validateItem(item string, data []byte) error {
 // JSON, so reformatting a line changes nothing. Lines Lamplight does not
 // touch are kept byte for byte, and new entities are appended.
 //
-// A file that merges by union can end up with two lines for one id, when
-// the entity was edited on two machines. Such a file stays usable: the line
-// with the smallest canonical form is read, so every machine reads the same
-// entity whatever order the merge left the lines in, and the next write of
-// the entity leaves a single line. Status flags the repeat.
-var jsonlCodec = fileCodec{get: jsonlGet, put: jsonlPut}
+// A file that merges by union can end up with several lines for one id:
+// a stale copy beside an edit, or two machines' edits. Such a file stays
+// usable: resolveEntity picks one with what the History recorded, the same
+// on every machine whatever order the merge left the lines in, status flags
+// a real conflict, and the next write of the entity leaves a single line.
+//
+// New entities are appended rather than inserted in order: a union merge
+// keeps both machines' changes apart only when they touch different parts of
+// the file, and two machines appending touch only its end.
+var jsonlCodec = fileCodec{get: jsonlGet, put: jsonlPut, index: jsonlIndex}
+
+// jsonlHistoryCodec is jsonlCodec for a file whose text the History holds,
+// such as sources.jsonl.
+var jsonlHistoryCodec = fileCodec{get: jsonlGet, put: jsonlPut, index: jsonlIndex, historyText: true}
+
+// jsonlIndex maps each id to the distinct canonical contents of its lines,
+// in file order.
+func jsonlIndex(file []byte) (map[string][][]byte, error) {
+	lines, ids, err := jsonlEntries(file)
+	if err != nil {
+		return nil, err
+	}
+	idx := make(map[string][][]byte, len(ids))
+	for i, id := range ids {
+		var canonical bytes.Buffer
+		if err := json.Compact(&canonical, lines[i]); err != nil {
+			return nil, corruptf("the entry %s is not valid JSON: %v", id, err)
+		}
+		if !slices.ContainsFunc(idx[id], func(c []byte) bool { return bytes.Equal(c, canonical.Bytes()) }) {
+			idx[id] = append(idx[id], canonical.Bytes())
+		}
+	}
+	return idx, nil
+}
 
 // jsonlEntries splits a JSONL file into lines and their ids. An id can
 // repeat: a union merge of two machines' edits of one entry keeps both
@@ -206,31 +394,6 @@ func jsonlEntries(file []byte) (lines [][]byte, ids []string, err error) {
 		lines, ids = append(lines, line), append(ids, head.ID)
 	}
 	return lines, ids, nil
-}
-
-// jsonlRepeats returns the ids that appear on more than one line with
-// different content, in file order.
-func jsonlRepeats(file []byte) []string {
-	lines, ids, err := jsonlEntries(file)
-	if err != nil {
-		return nil
-	}
-	first := map[string]string{}
-	var repeats []string
-	for i, id := range ids {
-		var canonical bytes.Buffer
-		if json.Compact(&canonical, lines[i]) != nil {
-			continue
-		}
-		seen, ok := first[id]
-		switch {
-		case !ok:
-			first[id] = canonical.String()
-		case seen != canonical.String() && !slices.Contains(repeats, id):
-			repeats = append(repeats, id)
-		}
-	}
-	return repeats
 }
 
 func jsonlGet(file []byte, key string) ([]byte, bool, error) {

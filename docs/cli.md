@@ -12,7 +12,7 @@ that scripts and agents can rely on. Terms follow [CONTEXT.md](../CONTEXT.md).
 | `study status` | Shows the Study home, the Active topic and why it was chosen, every Topic, and any Topic that could not be read (`problems`). A broken Topic never stops the others from being listed. Each Topic can carry `flags`, its Resume point (`resume`) and `lessons_without_evidence`: Lessons started or done that cite no Evidence yet, once the Topic has Sources or a NotebookLM Knowledge base (a reminder, never a block). |
 | `study topic create --title T [--id ID] [--goal G] [--dry-run]` | Creates a Topic folder with its settings, History and git repository. `--dry-run` validates and shows the result without writing. |
 | `study topic update <topic> [--title T] [--goal G] [--knowledge-base K [--notebook ID]] [--dry-run]` | Changes a Topic's title, goal or Knowledge base (`notebooklm` with the notebook's id, or `none`; see [Sources and Evidence](#sources-and-evidence)); flags left out stay as they are, and `--goal ""` removes the goal. Settings in `topic.toml` that this version does not know are kept. The result is `{"topic": ..., "changed": bool}`: asking for the values the Topic already has changes nothing and records nothing. |
-| `study topic dismiss-flag <topic> <flag-id> [--dry-run]` | Dismisses one of the Topic's flags, by the id `status` shows, once the learner has looked at it. It records the decision in the History and never changes content. The result is `{"topic": ..., "flag": {...}, "changed": bool}`; dismissing a flag twice changes nothing. Only `held_event`, `conflict`, `damaged_line` and `clock_ahead` flags can be dismissed (see below). |
+| `study topic dismiss-flag <topic> <flag-id> [--dry-run]` | Dismisses one of the Topic's flags, by the id `status` shows, once the learner has looked at it. It records the decision in the History and never changes content. The result is `{"topic": ..., "flag": {...}, "changed": bool}`; dismissing a flag twice changes nothing. Only `held_event`, `conflict`, `damaged_line`, `clock_ahead` and `card_flagged` flags can be dismissed (see below). |
 | `study library build <folder>` | Indexes the books in a folder (relative to where you run it) and replaces the Library index in the Study home. |
 | `study library search <query> [--limit N]` | Ranks the books in the Library against the query. `--limit` defaults to 10 and is capped at 100; no matches is a success with an empty list. |
 | `study source add <topic> (--file PATH \| --url URL) [--title T] [--notebooklm-id ID] [--dry-run]` | Adds a file or a web page as a Source of the Topic. A file is hashed, never parsed. Adding a file or URL the Topic already has is `already_exists`, naming the Source. |
@@ -27,6 +27,15 @@ that scripts and agents can rely on. Terms follow [CONTEXT.md](../CONTEXT.md).
 | `study revision decline <topic> <revision> [--learner-said S] [--dry-run]` | Records that the learner said no. The Syllabus is unchanged, and the Revision can no longer be applied. The result is `{"topic", "revision", "decision", "changed"}`; `apply` returns `{"topic", "revision", "syllabus", "approval", "changed"}`. Answering again changes nothing and reports the answer recorded the first time, on a terminal too. |
 | `study checkpoint --topic ID --role agent\|learner [-m MESSAGE] [--dry-run]` | Saves the Topic's work as a git commit at a turn switch. Skips when nothing changed, refuses during a merge or rebase, and lists large files it saved. Never runs programs named in the Topic's git configuration. It waits for a write in progress and finishes an interrupted one first; `--dry-run` refuses (`failed_precondition`) while one is pending. |
 | `study check <lesson> [--topic ID] [--timeout D]` | Runs a Lesson's Check on the current work and records the Attempt (see "Checks" below). Without `--topic`, it uses the Topic whose folder it runs in. |
+| `study review [topic] [--energy E] [--limit N]` | Reviews the due Cards in the terminal, without an agent (see "Cards and Reviews" below). Without a Topic, it reviews the Active topic. Interactive only: with `--json` it is a usage error. |
+| `study card list <topic> [--lesson L]` | Lists the Topic's Cards in the order they were written, with their display numbers and state. `--lesson explore` lists the Explore Cards. |
+| `study card due <topic> [--energy E] [--limit N]` | Lists the Cards to review now, sized to the Energy, never saying how many more are due. |
+| `study card add <topic> --prompt P --answer A [--lesson L] [--evidence E,...] [--dry-run]` | Adds a draft Card from a Lesson, or without `--lesson` an Explore Card, citing Evidence by id. Adding the same Card again changes nothing. |
+| `study card edit <topic> <card> [--prompt P] [--answer A] [--evidence E,... \| --clear-evidence] [--dry-run]` | Changes a Card's prompt, answer or Evidence, keeping its schedule; settles a flag on the Card. |
+| `study card suspend <topic> <card> [--undo] [--dry-run]` | Stops offering a Card for Review, or with `--undo` offers it again. |
+| `study card delete <topic> <card> [--dry-run]` | Deletes a Card for good; deleting it again changes nothing. |
+| `study card flag <topic> <card> [--note N] [--dry-run]` | Flags a Card as wrong or unclear, so it shows in `status` until fixed. |
+| `study card review <topic> <card> --rating R [--draft keep\|edit\|drop] [--prompt P --answer A] [--request ID] [--dry-run]` | Records one Review, for scripts; at a draft's first Review `--draft` is required. A retry with the same `--request`, or repeating a draft's first decision, returns the Review already recorded (`changed: false`). A dry run shows the Card after the Review. |
 | `study doctor` | Diagnoses the setup and says how to fix what it finds. It works even when nothing else does. Exits 1 when a Finding failed. |
 | `study completion install [--shell S] [--dir D] [--yes] [--force] [--dry-run]` | Installs completions for bash, zsh or fish (default: from `$SHELL`) for your user. |
 | `study completion uninstall [--shell S] [--dry-run]` | Removes what `install` added, for every shell or only `--shell`. |
@@ -113,6 +122,7 @@ that need the learner's attention. Flags are reported, never resolved automatica
 | `clock_ahead` | The History holds an Event dated more than a day after this computer's clock, so some machine's clock was wrong. New Events still sort after it. | when the clock catches up, or when dismissed |
 | `edited_outside` | Content that approves or gates progress differs from the version its last Event recorded. | when Lamplight next records that item, or the content is restored |
 | `interrupted_write` | A write to the Topic was interrupted; the next write to it finishes the job. | with the next write or Checkpoint |
+| `card_flagged` | The learner flagged a Card during a Review as wrong or unclear, with their note if any. | when the Card is edited or deleted, or when dismissed |
 
 `id` is stable across runs and machines, so a dismissal recorded on one machine applies on
 every other. `item` and `events` are present when the flag concerns a particular item or
@@ -258,6 +268,67 @@ A Check edited afterwards is flagged in `status` and must be shown again.
 
 Rubric and held-out criteria, and per-criterion results files, arrive in a later version;
 until then a Check with one is reported as `corrupt`.
+
+## Cards and Reviews
+
+A Card is one fact: a prompt and its expected answer, one line of `cards.jsonl`, in the order
+Cards were written. Prompts and answers may span lines and hold tabs, for code; other control
+characters are refused. A Card may cite Evidence by id (`--evidence`, `evidence` in MCP); the
+ids must be recorded in the Topic's History and not retracted. Its ID is
+`<lesson-id>.<random suffix>`, or `explore.<random suffix>` for an Explore Card written
+without a Lesson, which is why no Lesson may be called `explore`. Its display number
+("Card 4") comes from its position among the Topic's Cards. Whether a Card is a draft,
+suspended, flagged or due is replayed from the History, never stored in the file.
+
+A new Card is a draft until its first Review, where the learner keeps, edits or drops it.
+Each day, counted on this computer's clock, at most 10 drafts are decided, so new Cards
+never pile up: `study card due` and
+`due_cards` offer the Cards due first, earliest first, then as many drafts as are left of
+the day's cap. Without `--limit`, the list is sized to the Energy, given with `--energy` or
+taken from the open Session: 20 Cards at full, 10 at half, 3 at fumes, and 10 without one.
+Suspended Cards are never offered. Neither command, nor `study review`, ever says how many
+more Cards are due.
+
+Scheduling replays every Review through FSRS-6 (go-fsrs v4, with fuzz and short-term steps
+off), using the time each Review was really made, never earlier than the Card's previous
+Review, so the same History always gives the same schedule on every machine. Every Review,
+the first included, schedules the Card in days: Lamplight works in sessions, so a Card due
+"in 10 minutes" would only come back next time anyway.
+
+Reviews are safe to retry. A Review given a request id records nothing when the same id comes
+again, and returns what was recorded; repeating a draft's first decision does the same. Over
+MCP, `review_record` requires a request id, since a client may retry a call it saw fail. A
+Review of a Card deleted on another machine, a delete that had not seen a Review made
+elsewhere, and a draft decided on two machines are flagged in `status`.
+
+`study review` shows each Card's prompt and asks the learner to recall the answer. Enter
+shows it; the learner may type their answer first, and it is shown beside the real one to
+compare. A line holding just `f` flags the Card as wrong or unclear, `s` skips it and `q`
+stops. The learner then rates their recall with a single key: `1` again, `2` hard, `3` good,
+`4` easy. At a new Card's first Review, `k` keeps it, `e` edits it (an empty line keeps the
+prompt or the answer; the edit is shown and saved only after `y`) and `d` drops it, after
+asking `y/N`. Before each question, whatever was typed ahead is discarded, so a key only ever
+answers a question already on screen; arrow keys and other escape sequences are ignored.
+Ctrl-C, SIGINT, SIGTERM or SIGHUP stop the session like `q`: the terminal is restored, every
+Review made so far is kept, and `study` exits with 0 after "Stopped.". In a terminal each
+key is one keystroke; otherwise each answer is read from one line of standard input, so a
+script can drive it.
+
+### Lines a merge leaves
+
+`cards.jsonl` and `sources.jsonl` merge by union, so syncing can leave several lines for one
+Card or Source. Every reader and every write picks among them by one rule, using what the
+History recorded:
+
+- a line at the version the History recorded last is the entity;
+- lines at versions an earlier Event recorded are debris of the merge, and are ignored;
+- a line at a version the History never recorded is an edit made outside Lamplight. In
+  `cards.jsonl`, which is authoritative for text, one such edit wins, as a hand edit does
+  without a merge, and several are a conflict in `status`. In `sources.jsonl`, whose text the
+  History holds, the recorded version wins and any such edit is a conflict.
+
+The order of the lines never matters, so every machine reads the same entity, and the next
+change to it leaves a single line.
 
 ## Writes
 

@@ -113,12 +113,16 @@ func (c *Core) CompleteLesson(ctx context.Context, topicID string, spec Complete
 			TurnEnded: s.study.currentTurn()}
 		var items []string
 		for _, draft := range drafts {
+			evidence, err := checkCardEvidence(s, topicID, draft.Evidence)
+			if err != nil {
+				return nil, err
+			}
 			line := cardLine{Format: FormatVersion, ID: c.newCardID(s, spec.Lesson), Lesson: spec.Lesson,
-				Prompt: draft.Prompt, Answer: draft.Answer}
+				Prompt: draft.Prompt, Answer: draft.Answer, Evidence: evidence}
 			d.Cards = append(d.Cards, line)
 			items = append(items, cardItem(line.ID))
-			result.Cards = append(result.Cards, Card{ID: line.ID, Lesson: line.Lesson, Prompt: line.Prompt,
-				Answer: line.Answer, Draft: true})
+			result.Cards = append(result.Cards, Card{ID: line.ID, Number: liveCards(&s.study) + len(result.Cards) + 1,
+				Lesson: line.Lesson, Prompt: line.Prompt, Answer: line.Answer, Evidence: line.Evidence, Draft: true})
 		}
 		result.Attempt = attempt.ID
 		return &change{Type: eventLessonCompleted, Data: d, Items: items}, nil
@@ -142,10 +146,10 @@ func (c *Core) describeCompletion(s *replayed, view *topicView, topicID, lessonI
 	result.Attempt = done.Attempt
 	for _, id := range s.study.cardOrder {
 		cs := s.study.cards[id]
-		if cs.lesson != lessonID || cs.dropped {
+		if cs.lesson != lessonID || cs.gone() {
 			continue
 		}
-		card, err := readCard(view, cs)
+		card, err := readCard(view, s, cs)
 		if err != nil {
 			c.log.Warn("skipping a Card that cannot be read", "topic", topicID, "card", id, "err", err)
 			continue
@@ -199,7 +203,8 @@ func replayLessonCompleted(s *replayed, ev event) error {
 		if _, ok := s.study.cards[line.ID]; ok {
 			continue
 		}
-		s.study.cards[line.ID] = &cardState{id: line.ID, lesson: d.Lesson, created: wallOf(ev)}
+		s.study.cards[line.ID] = &cardState{id: line.ID, lesson: d.Lesson, created: wallOf(ev),
+			prompt: line.Prompt, answer: line.Answer}
 		s.study.cardOrder = append(s.study.cardOrder, line.ID)
 	}
 	if l.completed != nil {

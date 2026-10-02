@@ -133,9 +133,12 @@ func TestEditingADraftKeepsCardFieldsLamplightDoesNotKnow(t *testing.T) {
 		t.Errorf("%s = %s, %v", cardsFile, data, err)
 	}
 
-	// A union merge that repeats the Card with other content is flagged,
-	// and the Card is still readable.
-	repeated := string(data) + strings.Replace(strings.TrimSpace(string(data)), "Q2", "Q3", 1) + "\n"
+	// A repeat whose lines the History knows neither of is flagged, and
+	// the Card is still readable, the same way on every machine. (A stale
+	// copy beside the recorded version is not flagged: see
+	// TestAStaleCardLineIsReadPast.)
+	line := strings.TrimSpace(string(data))
+	repeated := strings.Replace(line, "Q2", "Q4", 1) + "\n" + strings.Replace(line, "Q2", "Q3", 1) + "\n"
 	if err := os.WriteFile(path, []byte(repeated), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -144,9 +147,9 @@ func TestEditingADraftKeepsCardFieldsLamplightDoesNotKnow(t *testing.T) {
 		t.Fatalf("flags = %+v, %v; want the repeated Card flagged", topic.Flags, err)
 	}
 	m.setClock(t0.AddDate(0, 6, 0))
-	due, err := m.DueCardsOf(ctx, "c", 0)
-	if err != nil || len(due.Cards) != 1 || due.Cards[0].Prompt != "Q2" {
-		t.Errorf("due Cards = %+v, %v; want the first line's Card", due, err)
+	due, err := m.DueCardsOf(ctx, "c", DueQuery{})
+	if err != nil || len(due.Cards) != 1 || due.Cards[0].Prompt != "Q3" {
+		t.Errorf("due Cards = %+v, %v; want the line with the smallest canonical form", due, err)
 	}
 	for _, f := range topic.Flags {
 		if f.Kind == FlagConflict {

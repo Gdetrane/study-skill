@@ -1,0 +1,7 @@
+{
+  "ok": false,
+  "error": {
+    "code": "usage",
+    "message": "give --evidence or --clear-evidence, not both"
+  }
+}

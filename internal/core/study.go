@@ -34,6 +34,11 @@ type studyState struct {
 	cards    map[string]*cardState
 	// cardOrder lists Card IDs in the order they were created.
 	cardOrder []string
+	// numbers caches the Cards' display numbers; see cardNumber.
+	numbers map[string]int
+	// requests maps the request ids clients gave Reviews to those Reviews,
+	// so a retry records nothing.
+	requests map[string]reviewRecordedData
 	// turn is whose turn it is, across all Lessons: the learner's while a
 	// Lesson is practicing, the agent's otherwise. Empty means the agent's.
 	turn string
@@ -69,6 +74,7 @@ func newStudyState() studyState {
 		declinedWith: map[string]Approval{},
 		lessons:      map[string]*lessonState{},
 		cards:        map[string]*cardState{},
+		requests:     map[string]reviewRecordedData{},
 	}
 }
 
