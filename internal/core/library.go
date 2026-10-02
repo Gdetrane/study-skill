@@ -68,6 +68,7 @@ func (c *Core) BuildLibrary(ctx context.Context, folder string) (LibrarySummary,
 	if skipped == nil {
 		skipped = []string{}
 	}
+	c.log.Info("library indexed", "root", ix.Root, "books", len(ix.Books), "skipped", len(skipped))
 	return LibrarySummary{Root: ix.Root, Books: len(ix.Books), Skipped: skipped, Index: path}, nil
 }
 

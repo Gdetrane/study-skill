@@ -173,7 +173,10 @@ func (c *Core) CreateTopic(ctx context.Context, spec TopicSpec) (Topic, error) {
 	}
 	// The most recent Topic is local convenience state: failing to record it
 	// must not turn a successful creation into an error.
-	_ = c.setRecentTopic(home, id)
+	if err := c.setRecentTopic(home, id); err != nil {
+		c.log.Warn("could not record the most recent Topic", "topic", id, "err", err)
+	}
+	c.log.Info("topic created", "topic", id, "path", topic.Path)
 	return topic, nil
 }
 

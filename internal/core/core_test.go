@@ -246,6 +246,18 @@ func TestStatusReportsUnreadableTopics(t *testing.T) {
 	if codes["c"] != core.CodeNewerFormat || codes["go"] != core.CodeCorrupt || len(codes) != 2 {
 		t.Errorf("problems = %+v", status.Problems)
 	}
+	// Without a most recent Topic, the readable one is chosen, without
+	// claiming it is the learner's only Topic.
+	if err := os.Remove(filepath.Join(home, ".lamplight", "state.toml")); err != nil {
+		t.Fatal(err)
+	}
+	status, err = testCore(t, home, "").Status(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := status.ActiveTopic; got == nil || got.ID != "physics" || got.Reason != "it is the only Topic that could be read" {
+		t.Errorf("active topic = %+v, want physics as the only readable Topic", got)
+	}
 }
 
 func TestCreateTopicIgnoresTheCallersGitEnvironment(t *testing.T) {

@@ -33,7 +33,7 @@ func connect(t *testing.T, home string) *mcp.ClientSession {
 		t.Fatal(err)
 	}
 	serverSide, clientSide := mcp.NewInMemoryTransports()
-	if _, err := mcpserver.New(c, "test").Connect(ctx, serverSide, nil); err != nil {
+	if _, err := mcpserver.New(c, "test", nil).Connect(ctx, serverSide, nil); err != nil {
 		t.Fatal(err)
 	}
 	session, err := mcp.NewClient(&mcp.Implementation{Name: "test-agent", Version: "1"}, nil).Connect(ctx, clientSide, nil)
