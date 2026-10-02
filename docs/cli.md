@@ -24,7 +24,7 @@ that scripts and agents can rely on. Terms follow [CONTEXT.md](../CONTEXT.md).
 | `study task remove <topic> <task>... [--dry-run]` | Removes Tasks that no longer matter. A Task removed already changes nothing; one that never existed is `not_found`. |
 | `study task list <topic> [--all]` | Lists the open Tasks, or all with `--all`, and the lines of `tasks.jsonl` that are not Tasks (`problems`). |
 | `study topic dismiss-flag <topic> <flag-id> [--dry-run]` | Dismisses one of the Topic's flags, by the id `status` shows, once the learner has looked at it. It records the decision in the History and never changes content. The result is `{"topic": ..., "flag": {...}, "changed": bool}`; dismissing a flag twice changes nothing. Only `held_event`, `conflict`, `damaged_line`, `clock_ahead` and `card_flagged` flags can be dismissed (see below). |
-| `study topic remove <topic> [--dry-run]` | Moves the Topic's folder, whole (git history included), out of the Study home into `.lamplight/removed/<YYYYMMDD-HHMMSS>-<topic>`, and records nothing in the History. Nothing is deleted: moving the folder back restores the Topic. The result is `{"topic": ..., "moved_to": path}`. It takes the Topic's lock, and refuses (`failed_precondition`) while an interrupted write to the Topic waits to be finished. `.lamplight/` is never synced, so on other computers sharing the Study home the Topic disappears; the copy stays on this one. It is for the learner, such as before importing a v1 workspace again with `--not-done`; agents have no tool for it. |
+| `study topic remove <topic> [--dry-run]` | Moves the Topic's folder, whole (git history included), out of the Study home into `.lamplight/removed/<YYYYMMDD-HHMMSS>-<topic>`, the time in UTC, and records nothing in the History. Nothing is deleted: the result, `{"topic": ..., "moved_to": path, "restore": command}`, carries the exact command that restores the Topic, `mv <moved_to> <Study home>/<topic>`, quoted for a POSIX shell; run it while no other Topic has that id. The removal is local to this computer: the Topic's git remote and other computers' copies are untouched. It waits for a write in progress (a dry run says so in `note`, without waiting), refuses (`failed_precondition`) while an interrupted write waits to be finished, and fails with `not_found` if the Topic is removed or replaced while it waits; every other write that was waiting then fails the same way and writes nothing. It is for the learner, such as before importing a v1 workspace again with `--not-done`; agents have no tool for it. |
 | `study import <v1-workspace> [--topic ID] [--not-done LESSON]... [--dry-run]` | Imports a v1 study workspace as a new Topic, with its history, leaving the original untouched. `--not-done` keeps a Lesson open that v1's records prove done. See [Importing a v1 workspace](#importing-a-v1-workspace). |
 | `study library build <folder>` | Indexes the books in a folder (relative to where you run it) and replaces the Library index in the Study home. |
 | `study library search <query> [--limit N]` | Ranks the books in the Library against the query. `--limit` defaults to 10 and is capped at 100; no matches is a success with an empty list. |
@@ -917,11 +917,14 @@ Commands that write accept `--dry-run`, which validates the request and reports 
 change without writing anything.
 
 Every write to a Topic takes the Topic's lock, so the CLI and the MCP server can run at
-the same time. It records its Event in the History before it changes any content, so a
+the same time. Once it holds the lock, it checks that the Topic's folder is still the one it
+opened; if the Topic was removed or replaced meanwhile, it fails with `not_found` and
+writes nothing. It records its Event in the History before it changes any content, so a
 write interrupted by a crash is finished by the next write or Checkpoint. A dry run reports
 what the real run would do after finishing such a write, and writes nothing. Lock and
-intent-marker files live in the Study home's `.lamplight/` folder, are local to the
-machine, and are never synced.
+intent-marker files live in the Study home's `.lamplight/` folder, which holds this
+computer's local state (removed Topics too). Lamplight never syncs it; if a file-sync tool
+syncs the Study home, exclude `.lamplight/` from it. Topics sync through git.
 
 ## Sources and Evidence
 

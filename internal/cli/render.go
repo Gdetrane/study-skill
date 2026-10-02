@@ -64,11 +64,14 @@ func writeTopicRemoval(w io.Writer, r core.TopicRemoval) error {
 	var err error
 	if r.DryRun {
 		_, err = fmt.Fprintf(w, "Would move Topic %s out of the Study home, to %s\n", styleAccent.Render(r.Topic), printable(r.MovedTo))
+		if err == nil && r.Note != "" {
+			_, err = fmt.Fprintf(w, "Note: %s\n", printable(r.Note))
+		}
 		return err
 	}
 	_, err = fmt.Fprintf(w, "Moved Topic %s out of the Study home, to %s\n"+
-		"Nothing was deleted: move the folder back into the Study home to restore it.\n",
-		styleAccent.Render(r.Topic), printable(r.MovedTo))
+		"Nothing was deleted. To restore it, while no other Topic is named %s, run:\n  %s\n",
+		styleAccent.Render(r.Topic), printable(r.MovedTo), r.Topic, printable(r.Restore))
 	return err
 }
 

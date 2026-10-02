@@ -3,7 +3,9 @@ package core
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -65,9 +67,12 @@ func TestRemoveTopicMovesItOutOfTheStudyHome(t *testing.T) {
 		t.Fatalf("two removals of one id: %s and %s", got.MovedTo, again.MovedTo)
 	}
 
-	// Moving the folder back restores the Topic.
-	if err := os.Rename(got.MovedTo, filepath.Join(home, "rust")); err != nil {
-		t.Fatal(err)
+	// The restore command, run as given, brings the Topic back under its id.
+	if want := "mv " + got.MovedTo + " " + filepath.Join(home, "rust"); got.Restore != want {
+		t.Errorf("restore = %q, want %q", got.Restore, want)
+	}
+	if out, err := exec.Command("sh", "-c", got.Restore).CombinedOutput(); err != nil {
+		t.Fatalf("%s: %v\n%s", got.Restore, err, out)
 	}
 	status, err = m.Status(ctx)
 	if err != nil {
@@ -126,22 +131,29 @@ func TestRemoveTopicRefusals(t *testing.T) {
 		t.Errorf("a link to a Topic: %v", err)
 	}
 
-	// An interrupted write is finished first, by the next write, never
-	// carried away half done.
-	root, err := os.OpenRoot(home)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer root.Close()
-	if err := writeIntent(root, intent{Format: FormatVersion, Topic: "rust", Event: "id999", Type: "topic.updated"}); err != nil {
-		t.Fatal(err)
-	}
+	// An interrupted write (a marker and no writer holding the lock) is
+	// finished first, by the next write, never carried away half done.
+	leaveIntent(t, home, "rust")
 	for _, dryRun := range []bool{true, false} {
-		if _, err := m.RemoveTopic(ctx, "rust", dryRun); CodeOf(err) != CodeFailedPrecondition {
+		if _, err := m.RemoveTopic(ctx, "rust", dryRun); CodeOf(err) != CodeFailedPrecondition ||
+			!strings.Contains(err.Error(), "interrupted") {
 			t.Errorf("an interrupted write (dry run %v): %v", dryRun, err)
 		}
 	}
 	if !exists(filepath.Join(home, "rust", "topic.toml")) {
 		t.Fatal("a refused removal moved the Topic")
+	}
+}
+
+// leaveIntent leaves the marker a write to the Topic leaves while it runs.
+func leaveIntent(t *testing.T, home, topicID string) {
+	t.Helper()
+	root, err := os.OpenRoot(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	if err := writeIntent(root, intent{Format: FormatVersion, Topic: topicID, Event: "id999", Type: "topic.updated"}); err != nil {
+		t.Fatal(err)
 	}
 }

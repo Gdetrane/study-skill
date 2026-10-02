@@ -131,7 +131,7 @@ func (c *Core) takeCheckpoint(ctx context.Context, spec CheckpointSpec) (Checkpo
 		if err := ctx.Err(); err != nil {
 			return CheckpointResult{}, err
 		}
-		unlock, err := lockTopic(ctx, home, spec.Topic)
+		unlock, err := c.lockOpenedTopic(ctx, home, topic, spec.Topic)
 		if err != nil {
 			return CheckpointResult{}, err
 		}

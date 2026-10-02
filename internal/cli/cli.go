@@ -172,7 +172,7 @@ func (a *app) rootCommand() *cobra.Command {
 
 	topic := &cobra.Command{
 		Use:   "topic",
-		Short: "Create and inspect Topics",
+		Short: "Create, change and remove Topics, and dismiss their flags",
 		Args:  noArgs,
 		RunE:  a.groupHelp,
 	}
@@ -318,10 +318,13 @@ func (a *app) rootCommand() *cobra.Command {
 	remove := &cobra.Command{
 		Use:   "remove <topic>",
 		Short: "Move a Topic out of the Study home, deleting nothing",
-		Long: "Move a Topic's folder, whole, into the Study home's .lamplight/removed folder, named\n" +
-			"with the time and the Topic's id. Nothing is deleted: move the folder back to restore\n" +
-			"the Topic. Use it to import a v1 workspace again, for example with --not-done.\n" +
-			".lamplight is never synced, so other computers see the Topic gone.",
+		Long: "Move a Topic's folder, whole, into the Study home's .lamplight/removed folder, as\n" +
+			"<YYYYMMDD-HHMMSS>-<topic> in UTC. Nothing is deleted: study prints the exact command\n" +
+			"that restores it, mv <moved to> <Study home>/<topic>, to run while no other Topic has\n" +
+			"that id. Use it to import a v1 workspace again, for example with --not-done.\n\n" +
+			"It acts on this computer only: the Topic's git remote and other computers keep their\n" +
+			"copies. It waits for a write in progress, and refuses while an interrupted one waits\n" +
+			"to be finished.",
 		Example: "  study topic remove go-concurrency --dry-run\n  study topic remove go-concurrency",
 		Args:    exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
