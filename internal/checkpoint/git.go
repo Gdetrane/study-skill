@@ -233,7 +233,8 @@ func (r *repo) close() {
 // verify checks that the Topic folder and its .git are still the pinned
 // folders under their names, and that nothing in .git that git writes
 // through by name leads elsewhere: a commondir file, or a symbolic link for
-// HEAD, the refs, logs or objects folders, or a folder in objects. A
+// HEAD, the refs, logs, objects or reftable folders, or for an entry in
+// objects or reftable. A
 // sandboxed agent can edit the Topic while a Checkpoint waits for the index
 // lock, so Take runs it again before every step in which git writes.
 func (r *repo) verify() error {
@@ -252,18 +253,35 @@ func (r *repo) verify() error {
 	if info, err := r.gitRoot.Lstat("HEAD"); err == nil && !info.Mode().IsRegular() {
 		return changed(".git/HEAD is not a regular file")
 	}
-	for _, name := range []string{"refs", "refs/heads", "logs", "logs/refs", "logs/refs/heads", "objects"} {
-		if info, err := r.gitRoot.Lstat(name); err == nil && !info.IsDir() {
-			return changed(".git/%s is not a folder", name)
+	// A reftable repository keeps its refs in .git/reftable and leaves
+	// .git/refs/heads as a stub file, so that stub is accepted only when
+	// .git/reftable is a real folder.
+	reftable := false
+	if info, err := r.gitRoot.Lstat("reftable"); err == nil {
+		if !info.IsDir() {
+			return changed(".git/reftable is not a folder")
 		}
+		reftable = true
 	}
-	objects, err := fs.ReadDir(r.gitRoot.FS(), "objects")
-	if err != nil && !missing(err) {
-		return err
+	for _, name := range []string{"refs", "refs/heads", "logs", "logs/refs", "logs/refs/heads", "objects"} {
+		info, err := r.gitRoot.Lstat(name)
+		if err != nil || info.IsDir() {
+			continue
+		}
+		if reftable && name == "refs/heads" && info.Mode().IsRegular() {
+			continue
+		}
+		return changed(".git/%s is not a folder", name)
 	}
-	for _, e := range objects {
-		if e.Type()&fs.ModeSymlink != 0 {
-			return changed(".git/objects/%s is a symbolic link", e.Name())
+	for _, dir := range []string{"objects", "reftable"} {
+		entries, err := fs.ReadDir(r.gitRoot.FS(), dir)
+		if err != nil && !missing(err) {
+			return err
+		}
+		for _, e := range entries {
+			if e.Type()&fs.ModeSymlink != 0 {
+				return changed(".git/%s/%s is a symbolic link", dir, e.Name())
+			}
 		}
 	}
 	return nil
