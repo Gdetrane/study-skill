@@ -23,6 +23,9 @@ const placementJSON = `{
 }`
 
 func TestAssessmentHintAndSignalsCommands(t *testing.T) {
+	// study check takes a Checkpoint, which needs a git identity: CI has
+	// none of its own.
+	setGitIdentity(t)
 	home := withLesson(t)
 	if err := os.WriteFile(filepath.Join(home, "placement.json"), []byte(placementJSON), 0o644); err != nil {
 		t.Fatal(err)
