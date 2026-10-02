@@ -765,6 +765,13 @@ func replayAttemptRecorded(s *replayed, ev event) error {
 	a := Attempt{ID: ev.ID, Lesson: d.Lesson, CheckVersion: d.CheckVersion,
 		Snapshot: d.Snapshot, Outcome: d.Outcome, Criteria: d.Criteria, Reason: d.Reason, At: wallOf(ev)}
 	l.attempts = append(l.attempts, a)
+	if l.shownCheck != "" && a.CheckVersion == l.shownCheck && a.Outcome != OutcomeErrored && hasRunCriteria(a) {
+		l.measured++
+		if l.firstTry == nil {
+			passed := a.Outcome == OutcomePassed
+			l.firstTry = &passed
+		}
+	}
 	// A run criterion that failed on the Check shown to the learner calls
 	// for a Next step that names the fix before practicing resumes; a
 	// passed Attempt settles it. The agent trying its Check before showing
@@ -805,6 +812,16 @@ func (d *attemptRecordedData) validate() error {
 		}
 	}
 	return nil
+}
+
+// hasRunCriteria reports whether an Attempt ran any run criterion.
+func hasRunCriteria(a Attempt) bool {
+	for _, r := range a.Criteria {
+		if r.kind() == CriterionRun {
+			return true
+		}
+	}
+	return false
 }
 
 // failedOnRun reports whether an Attempt failed because of a run criterion:

@@ -155,6 +155,8 @@ type replayed struct {
 	know *knowledgeState
 	// plans is the Topic's state and its Tasks done; see planning().
 	plans *planningState
+	// assess is the Topic's Assessments, Level and hints; see assessing().
+	assess *assessmentState
 
 	// repeat is set by an Event's replay when the Event repeats a change
 	// already replayed, such as one Revision approved on two machines: its

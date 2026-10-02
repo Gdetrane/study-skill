@@ -492,6 +492,9 @@ func replayPhaseSet(s *replayed, ev event) error {
 		return fmt.Errorf("its payload is unreadable: %v", err)
 	}
 	l := s.study.lesson(d.Lesson)
+	if d.Phase == PhaseFeedback && l.phase != PhaseFeedback {
+		l.feedbackRounds++
+	}
 	l.phase = d.Phase
 	s.study.turn = turnOwner(d.Phase)
 	if d.TurnEnded != "" {
