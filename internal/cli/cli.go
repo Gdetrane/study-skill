@@ -362,15 +362,15 @@ func (a *app) rootCommand() *cobra.Command {
 	root.AddCommand(a.rubricCommand(), a.resultsCommand(), a.lessonCommand(), a.historyCommand())
 	root.AddCommand(a.assessmentCommand(), a.hintCommand(), a.signalsCommand())
 	root.AddCommand(a.setupCommand(), a.claudePluginPathCommand(), a.claudeHookCommand())
-	root.AddCommand(manCommand())
+	root.AddCommand(a.manCommand())
 	a.completionCommands(root)
 	return root
 }
 
 // manCommand prints study's man page in roff, for packages to install as
 // study.1. It replaces fang's own, which writes to the process's stdout
-// rather than the command's.
-func manCommand() *cobra.Command {
+// rather than the command's. The page is roff, so --json is a usage error.
+func (a *app) manCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:                   "man",
 		Short:                 "Print the man page, for packagers",
@@ -378,6 +378,9 @@ func manCommand() *cobra.Command {
 		DisableFlagsInUseLine: true,
 		Args:                  noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if a.json {
+				return a.fail(usageError{errors.New("study man prints the man page in roff, never JSON: run it without --json")})
+			}
 			page, err := mango.NewManPage(1, cmd.Root())
 			if err != nil {
 				return err

@@ -57,7 +57,7 @@ that scripts and agents can rely on. Terms follow [CONTEXT.md](../CONTEXT.md).
 | `study completion install [--shell S] [--dir D] [--yes] [--force] [--dry-run]` | Installs completions for bash, zsh or fish (default: from `$SHELL`) for your user. |
 | `study completion uninstall [--shell S] [--dry-run]` | Removes what `install` added, for every shell or only `--shell`. |
 | `study completion bash`, `study completion zsh`, `study completion fish`, `study completion powershell` `[--no-descriptions]` | Prints a completion script, for packagers. `--no-descriptions` leaves out the help text shown next to each completion. |
-| `study man` | Prints study's man page in roff, for packagers to install as `study.1` (hidden from help). |
+| `study man` | Prints study's man page in roff, for packagers to install as `study.1` (hidden from help). It has no JSON form: with `--json` it is a usage error. |
 | `study setup [--agent claude\|codex\|all] [--dry-run] [--force]` | Installs the `lamplight` skill and registers `study mcp` with Claude Code and Codex. See [Setting up agents](#setting-up-agents). |
 | `study setup --check [--agent A]` | Reports what is missing or stale, changing nothing; exits 1 (`unhealthy`) when setup has something to do. |
 | `study setup --remove [--agent A] [--dry-run]` | Undoes exactly what `study setup` did. |

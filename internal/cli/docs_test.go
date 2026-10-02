@@ -20,6 +20,11 @@ func TestManWritesToItsOutput(t *testing.T) {
 	if r.code != cli.ExitOK || !strings.Contains(r.stdout, ".TH ") || !strings.Contains(r.stdout, "study") {
 		t.Errorf("study man: exit %d, stdout %.200q, stderr %q", r.code, r.stdout, r.stderr)
 	}
+	// The page is roff: asked for JSON, it says so in the JSON envelope.
+	r = run(t, t.TempDir(), "man", "--json")
+	if r.code != cli.ExitUsage || !strings.Contains(r.stdout, `"code": "usage"`) || strings.Contains(r.stdout, ".TH ") {
+		t.Errorf("study man --json: exit %d, stdout %.200q, stderr %q", r.code, r.stdout, r.stderr)
+	}
 }
 
 // TestDocsDescribeEveryCommand keeps docs/cli.md, the contract scripts and
