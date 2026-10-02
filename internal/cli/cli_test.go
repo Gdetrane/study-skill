@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -30,12 +31,14 @@ type result struct {
 	stdout, stderr string
 }
 
-// eventIDs numbers Events across the whole test process: like real random
-// IDs, they never repeat between runs against one Study home.
-var eventIDs atomic.Int64
+// eventIDs numbers Events per Study home: like real random IDs they never
+// repeat between runs against one home, and because each home counts from
+// id001 the golden files don't depend on which tests ran before.
+var eventIDs sync.Map // Study home → *atomic.Int64
 
 func options(home, dir string) core.Options {
-	n := &eventIDs
+	counter, _ := eventIDs.LoadOrStore(home, new(atomic.Int64))
+	n := counter.(*atomic.Int64)
 	return core.Options{
 		Getenv: func(key string) string {
 			return map[string]string{"STUDY_HOME": home, "HOME": home}[key]
