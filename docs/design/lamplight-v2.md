@@ -423,8 +423,8 @@ Every write names its Topic. Tools are named after things that happen in the dom
 - **Syllabus**: `revision_propose`, `revision_apply`, `revision_decline`.
 - **Sessions**: `session_open`, `session_close`, `phase_set`, `break_point_reached`,
   `checkpoint`, `hint_record`, `rubric_record`, `lesson_complete`.
-- **Cards**: `card_add`, `card_edit`, `card_suspend`, `card_delete`, `review_record`
-  (including keep, edit or drop for drafts).
+- **Cards**: `card_add`, `card_edit`, `card_suspend`, `card_flag`, `card_delete`,
+  `review_record` (including keep, edit or drop for drafts, and a required request id).
 
 Opening a Session on a Topic also makes it the most recent Topic; there is no separate
 switch tool.

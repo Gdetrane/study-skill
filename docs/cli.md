@@ -12,7 +12,7 @@ that scripts and agents can rely on. Terms follow [CONTEXT.md](../CONTEXT.md).
 | `study status` | Shows the Study home, the Active topic and why it was chosen, every Topic, and any Topic that could not be read (`problems`). A broken Topic never stops the others from being listed. Each Topic can carry `flags`, its Resume point (`resume`) and `lessons_without_evidence`: Lessons started or done that cite no Evidence yet, once the Topic has Sources or a NotebookLM Knowledge base (a reminder, never a block). |
 | `study topic create --title T [--id ID] [--goal G] [--dry-run]` | Creates a Topic folder with its settings, History and git repository. `--dry-run` validates and shows the result without writing. |
 | `study topic update <topic> [--title T] [--goal G] [--knowledge-base K [--notebook ID]] [--dry-run]` | Changes a Topic's title, goal or Knowledge base (`notebooklm` with the notebook's id, or `none`; see [Sources and Evidence](#sources-and-evidence)); flags left out stay as they are, and `--goal ""` removes the goal. Settings in `topic.toml` that this version does not know are kept. The result is `{"topic": ..., "changed": bool}`: asking for the values the Topic already has changes nothing and records nothing. |
-| `study topic dismiss-flag <topic> <flag-id> [--dry-run]` | Dismisses one of the Topic's flags, by the id `status` shows, once the learner has looked at it. It records the decision in the History and never changes content. The result is `{"topic": ..., "flag": {...}, "changed": bool}`; dismissing a flag twice changes nothing. Only `held_event`, `conflict`, `damaged_line` and `clock_ahead` flags can be dismissed (see below). |
+| `study topic dismiss-flag <topic> <flag-id> [--dry-run]` | Dismisses one of the Topic's flags, by the id `status` shows, once the learner has looked at it. It records the decision in the History and never changes content. The result is `{"topic": ..., "flag": {...}, "changed": bool}`; dismissing a flag twice changes nothing. Only `held_event`, `conflict`, `damaged_line`, `clock_ahead` and `card_flagged` flags can be dismissed (see below). |
 | `study library build <folder>` | Indexes the books in a folder (relative to where you run it) and replaces the Library index in the Study home. |
 | `study library search <query> [--limit N]` | Ranks the books in the Library against the query. `--limit` defaults to 10 and is capped at 100; no matches is a success with an empty list. |
 | `study source add <topic> (--file PATH \| --url URL) [--title T] [--notebooklm-id ID] [--dry-run]` | Adds a file or a web page as a Source of the Topic. A file is hashed, never parsed. Adding a file or URL the Topic already has is `already_exists`, naming the Source. |
@@ -296,7 +296,8 @@ the first included, schedules the Card in days: Lamplight works in sessions, so 
 "in 10 minutes" would only come back next time anyway.
 
 Reviews are safe to retry. A Review given a request id records nothing when the same id comes
-again, and returns what was recorded; repeating a draft's first decision does the same. A
+again, and returns what was recorded; repeating a draft's first decision does the same. Over
+MCP, `review_record` requires a request id, since a client may retry a call it saw fail. A
 Review of a Card deleted on another machine, a delete that had not seen a Review made
 elsewhere, and a draft decided on two machines are flagged in `status`.
 

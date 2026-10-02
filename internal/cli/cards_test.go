@@ -147,7 +147,7 @@ func TestReviewSession(t *testing.T) {
 		"A leading one", "k", "3", // type an answer to compare and reveal, keep, good
 		"f", "the prompt is vague", // flag at recall
 		"", "e", // reveal, edit
-		"What is a free‮ variable?", "", // a control character: refused, ask again
+		"What is a free\u202e variable?", "", // a control character: refused, ask again
 		"What is a free variable in a linear system?", "", "y", "2", // the new prompt, the answer kept, save, hard
 		"", "d", "n", // reveal, drop, but not confirmed
 		"d", "y", // drop, confirmed

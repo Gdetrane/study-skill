@@ -86,3 +86,48 @@ func TestCardTools(t *testing.T) {
 		t.Errorf("an unknown Energy: IsError=%v, %q", res.IsError, text(res))
 	}
 }
+
+// TestReviewsNeedARequestID: over MCP a client may retry a call it saw fail,
+// so a Review without a request id is refused before anything is recorded.
+func TestReviewsNeedARequestID(t *testing.T) {
+	ctx := context.Background()
+	session := connect(t, t.TempDir())
+	call(t, session, "topic_create", map[string]any{"title": "C"})
+	var added core.CardChange
+	decode(t, call(t, session, "card_add", map[string]any{"topic": "c", "prompt": "P", "answer": "A"}), &added)
+	for name, args := range map[string]map[string]any{
+		"no request":    {"topic": "c", "card": added.Card.ID, "rating": "good", "draft": "keep"},
+		"empty request": {"topic": "c", "card": added.Card.ID, "rating": "good", "draft": "keep", "request": " "},
+	} {
+		res, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "review_record", Arguments: args})
+		if err == nil && !res.IsError {
+			t.Errorf("%s: review_record succeeded: %+v", name, res.StructuredContent)
+		}
+	}
+	var list core.CardList
+	decode(t, call(t, session, "cards", map[string]any{"topic": "c"}), &list)
+	if len(list.Cards) != 1 || !list.Cards[0].Draft {
+		t.Errorf("a refused Review was recorded: %+v", list.Cards)
+	}
+}
+
+// TestCardFlag: a Card the learner finds wrong can be flagged over MCP, and
+// shows as flagged until it is edited.
+func TestCardFlag(t *testing.T) {
+	session := connect(t, t.TempDir())
+	call(t, session, "topic_create", map[string]any{"title": "C"})
+	var added core.CardChange
+	decode(t, call(t, session, "card_add", map[string]any{"topic": "c", "prompt": "P", "answer": "A"}), &added)
+	for i, want := range []bool{true, false} {
+		var flagged core.CardChange
+		decode(t, call(t, session, "card_flag", map[string]any{"topic": "c", "card": added.Card.ID, "note": "the answer is wrong"}), &flagged)
+		if flagged.Changed != want || !flagged.Card.Flagged {
+			t.Errorf("card_flag call %d = %+v, want changed %v", i+1, flagged, want)
+		}
+	}
+	var edited core.CardChange
+	decode(t, call(t, session, "card_edit", map[string]any{"topic": "c", "card": added.Card.ID, "answer": "B"}), &edited)
+	if edited.Card.Flagged {
+		t.Errorf("the flag outlived an edit: %+v", edited)
+	}
+}

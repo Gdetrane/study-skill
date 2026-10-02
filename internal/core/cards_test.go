@@ -203,7 +203,7 @@ func TestCardTextMaySpanLines(t *testing.T) {
 	if got := m.due(t, DueQuery{}); len(got) != 1 || got[0].Prompt != card.Prompt {
 		t.Errorf("read back as %+v", got)
 	}
-	for _, bad := range []string{"bell\a", "escape \x1b[2J", "reversed ‮ text"} {
+	for _, bad := range []string{"bell\a", "escape \x1b[2J", "reversed \u202e text"} {
 		if _, err := m.AddCard(ctx, "c", CardSpec{Prompt: bad, Answer: "A"}); CodeOf(err) != CodeInvalidArgument {
 			t.Errorf("prompt %q: err = %v, want invalid_argument", bad, err)
 		}

@@ -23,7 +23,7 @@ func buildStudy(t *testing.T) string {
 		t.Skip("builds the study binary")
 	}
 	bin := filepath.Join(t.TempDir(), "study")
-	if out, err := exec.Command("go", "build", "-o", bin, "github.com/mordor-forge/lamplight/v2/cmd/study").CombinedOutput(); err != nil {
+	if out, err := exec.CommandContext(t.Context(), "go", "build", "-o", bin, "github.com/mordor-forge/lamplight/v2/cmd/study").CombinedOutput(); err != nil {
 		t.Fatalf("building study: %v\n%s", err, out)
 	}
 	return bin
@@ -45,7 +45,7 @@ func startOnTerminal(t *testing.T, bin, home string, args ...string) *terminal {
 	t.Helper()
 	master, slave := openPTY(t)
 	term := &terminal{t: t, master: master, slave: slave}
-	term.cmd = exec.Command(bin, args...)
+	term.cmd = exec.CommandContext(t.Context(), bin, args...)
 	term.cmd.Env = append(os.Environ(), "STUDY_HOME="+home, "HOME="+home, "NO_COLOR=1", "TERM=dumb")
 	term.cmd.Stdin, term.cmd.Stdout, term.cmd.Stderr = slave, slave, slave
 	if err := term.cmd.Start(); err != nil {

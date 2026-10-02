@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"context"
+	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -34,10 +35,16 @@ func addCardTools(server *mcp.Server, c *core.Core) {
 		Title: "Record a Review",
 		Description: "Record the learner's Review of a Card: again, hard, good or easy, as the learner rates their own " +
 			"recall. At a draft's first Review, the learner also keeps, edits (give the new prompt and answer) or drops it. " +
-			"Give each Review a request id of your own: retrying with it after an error returns the Review already " +
-			"recorded instead of recording it twice.",
+			"Every Review needs a request id of your own, new for each Review: retrying with the same id after an " +
+			"error returns the Review already recorded instead of recording it twice.",
 		Annotations: write,
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in reviewRecordInput) (*mcp.CallToolResult, core.ReviewResult, error) {
+		// A client may retry a call it saw fail, and without a request id
+		// a retried Review of an established Card would be recorded twice.
+		if strings.TrimSpace(in.Request) == "" {
+			return nil, core.ReviewResult{}, &core.Error{Code: core.CodeInvalidArgument,
+				Message: "give the Review a request id of your own, so a retry cannot record it twice"}
+		}
 		r, err := c.RecordReview(ctx, in.Topic, core.ReviewSpec{Card: in.Card, Rating: in.Rating, Draft: in.Draft,
 			Prompt: in.Prompt, Answer: in.Answer, Request: in.Request})
 		return nil, r, toolErr(err)
@@ -94,6 +101,18 @@ func addCardTools(server *mcp.Server, c *core.Core) {
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
+		Name:  "card_flag",
+		Title: "Flag a Card",
+		Description: "Flag a Card the learner finds wrong or unclear, with their note, when it cannot be fixed now: it " +
+			"shows in status until the Card is edited or deleted, or the flag dismissed. When you can fix it with the " +
+			"learner, use card_edit instead.",
+		Annotations: idempotent,
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in cardFlagInput) (*mcp.CallToolResult, core.CardChange, error) {
+		r, err := c.FlagCard(ctx, in.Topic, in.Card, in.Note, false)
+		return nil, r, toolErr(err)
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
 		Name:  "card_delete",
 		Title: "Delete a Card",
 		Description: "Delete a Card for good, once the learner agrees: it leaves cards.jsonl and is never scheduled " +
@@ -118,7 +137,7 @@ type reviewRecordInput struct {
 	Draft   string `json:"draft,omitempty" jsonschema:"at a draft's first Review: keep, edit or drop"`
 	Prompt  string `json:"prompt,omitempty" jsonschema:"the new prompt, when editing a draft"`
 	Answer  string `json:"answer,omitempty" jsonschema:"the new answer, when editing a draft"`
-	Request string `json:"request,omitempty" jsonschema:"your own id for this Review, so a retry records nothing"`
+	Request string `json:"request" jsonschema:"your own id for this Review, new for each Review and the same on a retry: letters, digits and . _ : -, up to 64 characters"`
 }
 
 type cardsInput struct {
@@ -145,6 +164,12 @@ type cardEditInput struct {
 	Prompt   string   `json:"prompt,omitempty" jsonschema:"the new prompt; leave out to keep it"`
 	Answer   string   `json:"answer,omitempty" jsonschema:"the new answer; leave out to keep it"`
 	Evidence []string `json:"evidence,omitempty" jsonschema:"the Card's Evidence ids; leave out to keep them, [] removes them"`
+}
+
+type cardFlagInput struct {
+	Topic string `json:"topic" jsonschema:"the Topic's id"`
+	Card  string `json:"card" jsonschema:"the Card's id, from cards or due_cards"`
+	Note  string `json:"note,omitempty" jsonschema:"what the learner found wrong or unclear, in their words"`
 }
 
 type cardSuspendInput struct {
