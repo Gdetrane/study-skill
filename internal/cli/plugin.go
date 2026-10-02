@@ -36,16 +36,20 @@ func (a *app) claudePluginPathCommand() *cobra.Command {
 				return a.fail(&core.Error{Code: core.CodeFailedPrecondition, Message: "study setup already provides " +
 					"Lamplight to Claude Code: run study setup --remove --agent claude, then install the plugin"})
 			}
-			study, _, err := a.studyPath()
+			loc, err := a.studyPath()
 			if err != nil {
 				return a.fail(err)
+			}
+			if loc.Temporary {
+				return a.fail(&core.Error{Code: core.CodeFailedPrecondition, Message: "this study runs from " + loc.Path +
+					", a temporary build folder that will soon be gone: install study with a package or go install"})
 			}
 			parent, err := cacheDir(a.opts.Getenv)
 			if err != nil {
 				return a.fail(err)
 			}
 			dir, err := claudeplugin.Write(filepath.Join(parent, "claude-plugin"), claudeplugin.Options{
-				Study: study, Version: strings.TrimPrefix(version(), "v"), Skill: lamplight.FS(),
+				Study: loc.Path, Version: strings.TrimPrefix(version(), "v"), Skill: lamplight.FS(),
 			})
 			if err != nil {
 				return a.fail(&core.Error{Code: core.CodeInternal, Message: "writing the Claude Code plugin: " + err.Error(), Err: err})
@@ -88,6 +92,11 @@ func (a *app) sessionStartHook(cmd *cobra.Command) {
 		Cwd string `json:"cwd"`
 	}
 	data, _ := io.ReadAll(io.LimitReader(a.stdin, 1<<20))
+	// Read past the limit too, so Claude Code never writes into a closed
+	// pipe; input that long is not a hook's, and is ignored.
+	if n, _ := io.Copy(io.Discard, a.stdin); n > 0 {
+		data = nil
+	}
 	_ = json.Unmarshal(data, &input)
 	cwd := input.Cwd
 	if !filepath.IsAbs(cwd) {

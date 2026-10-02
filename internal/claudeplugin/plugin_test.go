@@ -135,7 +135,7 @@ func TestWriteSetsADamagedFolderAside(t *testing.T) {
 
 func TestWriteIsSafeToRunConcurrently(t *testing.T) {
 	const writers = 16
-	for round := range 5 {
+	for round := range 100 {
 		parent := t.TempDir()
 		var wg sync.WaitGroup
 		start := make(chan struct{})

@@ -2,13 +2,11 @@ package cli
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path"
 	"path/filepath"
 	"slices"
@@ -23,10 +21,11 @@ import (
 )
 
 // study setup installs the lamplight skill and registers study's MCP server
-// with Claude Code and Codex (ADR-0008). It records everything it writes in
-// setup.json, so --remove undoes exactly that and --check finds what went
-// stale, and it never replaces or deletes a file or folder it did not
-// create.
+// with Claude Code and Codex (ADR-0008). It records each step in setup.json
+// before or as it takes it, under a lock, so --remove undoes exactly what was
+// done even when a run stopped part-way, and --check finds what went stale.
+// It never replaces or deletes a file or folder it did not create (see
+// setup_paths.go).
 
 const (
 	setupRecordFile   = "setup.json"
@@ -43,9 +42,6 @@ const (
 
 var setupAgents = []string{agentClaude, agentCodex}
 
-// executable returns the running study's path. Tests replace it.
-var executable = os.Executable
-
 // setupRecord is what study setup did, so --remove can undo exactly that.
 type setupRecord struct {
 	Format        int                  `json:"format"`
@@ -57,20 +53,26 @@ type setupRecord struct {
 // skillRecord is the skill folder study setup created.
 type skillRecord struct {
 	Dir string `json:"dir"`
+	// Real is where Dir led when setup created it, with symlinks resolved.
+	Real string `json:"real"`
 	// Files maps each file setup wrote, by slash-separated path inside Dir,
 	// to the sha256 of what it wrote: it replaces or removes a file only
 	// while it still has that content.
 	Files map[string]string `json:"files"`
-	// Dirs are the folders setup created, parents first, Dir included.
-	Dirs []string `json:"dirs"`
+	// Parents are the folders above Dir that setup created for it.
+	Parents []dirRecord `json:"parents,omitempty"`
 }
 
 // linkRecord is the link to the skill folder that study setup made where
 // Claude Code finds skills.
 type linkRecord struct {
-	Path   string   `json:"path"`
-	Target string   `json:"target"`
-	Dirs   []string `json:"dirs,omitempty"`
+	Path   string `json:"path"`
+	Target string `json:"target"`
+	// Parent is where the link's folder led when setup made the link, with
+	// symlinks resolved.
+	Parent string `json:"parent"`
+	// Parents are the folders setup created for the link.
+	Parents []dirRecord `json:"parents,omitempty"`
 }
 
 // registrationRecord is an MCP server study setup registered with an agent.
@@ -94,6 +96,11 @@ func (r *setupRecord) dropRegistration(agent string) {
 	r.Registrations = slices.DeleteFunc(r.Registrations, func(g registrationRecord) bool { return g.Agent == agent })
 }
 
+func (r *setupRecord) setRegistration(g registrationRecord) {
+	r.dropRegistration(g.Agent)
+	r.Registrations = append(r.Registrations, g)
+}
+
 func (r *setupRecord) empty() bool {
 	return r.Skill == nil && r.Link == nil && len(r.Registrations) == 0
 }
@@ -102,7 +109,7 @@ func (r *setupRecord) empty() bool {
 type setupResult struct {
 	// Study is the path agents run study by.
 	Study string `json:"study,omitempty"`
-	// StudyNote explains a Study path that may not survive upgrades.
+	// StudyNote says how agents reach Study, or why the path may not last.
 	StudyNote string        `json:"study_note,omitempty"`
 	Skill     skillResult   `json:"skill"`
 	Agents    []agentResult `json:"agents"`
@@ -111,15 +118,18 @@ type setupResult struct {
 	Note      string        `json:"note,omitempty"`
 	// Manual lists what is left for the learner to do by hand.
 	Manual []string `json:"manual"`
-	// Findings and UpToDate are set by --check.
-	Findings []core.Finding `json:"findings,omitempty"`
-	UpToDate *bool          `json:"up_to_date,omitempty"`
+}
+
+func newSetupResult(dryRun, remove bool) setupResult {
+	return setupResult{DryRun: dryRun, Remove: remove, Agents: []agentResult{}, Manual: []string{},
+		Skill: skillResult{Written: []string{}, Removed: []string{}, Kept: []string{}}}
 }
 
 // skillResult says what happened to the skill folder.
 type skillResult struct {
 	Dir    string `json:"dir"`
 	Status string `json:"status"`
+	Note   string `json:"note,omitempty"`
 	// Written, Removed and Kept list files by their path inside Dir. Kept
 	// are files changed by hand since setup wrote them: setup leaves them.
 	Written []string `json:"written"`
@@ -137,13 +147,20 @@ type agentResult struct {
 	LinkStatus string `json:"link_status,omitempty"`
 }
 
+// setupCheckResult is the --json data of study setup --check.
+type setupCheckResult struct {
+	Study    string         `json:"study"`
+	UpToDate bool           `json:"up_to_date"`
+	Findings []core.Finding `json:"findings"`
+}
+
 // Statuses in setupResult.
 const (
 	statusInstalled    = "installed"
 	statusUpdated      = "updated"
 	statusCurrent      = "current"
 	statusRegistered   = "registered"
-	statusReregistered = "re-registered"
+	statusReregistered = "re_registered"
 	statusKept         = "kept"
 	statusSkipped      = "skipped"
 	statusPlugin       = "plugin"
@@ -151,20 +168,21 @@ const (
 	statusRemoved      = "removed"
 	statusAlreadyGone  = "already_gone"
 	statusNotInstalled = "not_installed"
+	statusFailed       = "failed"
 )
 
 func (a *app) setupCommand() *cobra.Command {
 	var agent string
-	var dryRun, check, remove bool
+	var dryRun, check, remove, force bool
 	cmd := &cobra.Command{
 		Use:   "setup",
 		Short: "Install the lamplight skill and register study with Claude Code and Codex",
 		Long: "Install the lamplight skill in ~/.agents/skills/lamplight, link it from ~/.claude/skills/lamplight,\n" +
 			"and register study's MCP server at user scope with each agent's own command\n" +
 			"(claude mcp add --scope user, codex mcp add), by study's absolute path.\n\n" +
-			"study setup never replaces or deletes a file or folder it did not create, and records what\n" +
-			"it did: --remove undoes exactly that, and --check reports what went stale. When the Claude\n" +
-			"Code plugin is enabled, setup leaves Claude Code to the plugin.\n\n" +
+			"study setup never replaces or deletes a file or folder it did not create, and records each\n" +
+			"step: --remove undoes exactly what was done, and --check reports what went stale. When the\n" +
+			"Claude Code plugin is enabled, setup leaves Claude Code to the plugin.\n\n" +
 			"Other agents: add an MCP server that runs \"study mcp\" (see docs/cli.md).",
 		Example: `  study setup
   study setup --agent codex --dry-run
@@ -176,34 +194,32 @@ func (a *app) setupCommand() *cobra.Command {
 			if err != nil {
 				return a.fail(err)
 			}
-			if check && (remove || dryRun) {
-				return a.fail(usageError{errors.New("--check writes nothing: give it without --remove or --dry-run")})
+			if check && (remove || dryRun || force) {
+				return a.fail(usageError{errors.New("--check changes nothing: give it without --remove, --dry-run or --force")})
+			}
+			if check {
+				return a.runSetupCheck(cmd.Context(), agents)
 			}
 			var res setupResult
-			switch {
-			case check:
-				res, err = a.setupCheck(cmd.Context(), agents)
-				if err == nil && res.UpToDate != nil && !*res.UpToDate {
-					a.exit = ExitError
-				}
-			case remove:
+			if remove {
 				res, err = a.setupRemove(cmd.Context(), agents, dryRun)
-			default:
-				res, err = a.setupInstall(cmd.Context(), agents, dryRun)
+			} else {
+				res, err = a.setupInstall(cmd.Context(), agents, dryRun, force)
 			}
 			if err != nil {
-				return a.fail(err)
+				return a.failWith(res, err)
 			}
 			if a.json {
 				return a.writeJSON(envelope{OK: true, Data: res})
 			}
-			return writeSetupResult(a.out, res)
+			return writeSetupResult(a.out, res, false)
 		},
 	}
 	cmd.Flags().StringVar(&agent, "agent", "all", "claude, codex or all")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "show what would change without changing anything")
 	cmd.Flags().BoolVar(&check, "check", false, "report what is missing or stale, without changing anything; exit 1 when setup is needed")
 	cmd.Flags().BoolVar(&remove, "remove", false, "undo what study setup did")
+	cmd.Flags().BoolVar(&force, "force", false, "register a study that runs from a temporary build folder anyway")
 	_ = cmd.RegisterFlagCompletionFunc("agent", cobra.FixedCompletions(
 		append(slices.Clone(setupAgents), "all"), cobra.ShellCompDirectiveNoFileComp))
 	return cmd
@@ -219,42 +235,118 @@ func pickAgents(flag string) ([]string, error) {
 	return nil, usageError{fmt.Errorf("--agent must be claude, codex or all, not %q", flag)}
 }
 
-func (a *app) setupInstall(ctx context.Context, agents []string, dryRun bool) (setupResult, error) {
+// failWith reports err after a setup that did part of its work: the JSON
+// envelope holds what was done as its data, and people see it before the
+// error. An error before setup looked at anything is reported alone.
+func (a *app) failWith(res setupResult, err error) error {
+	if !res.didSomething() && res.Skill.Status == "" {
+		return a.fail(err)
+	}
+	if !a.json {
+		if res.didSomething() {
+			_ = writeSetupResult(a.out, res, true)
+		}
+		return err
+	}
+	if werr := a.writeJSON(envelope{Data: res, Error: &errorBody{Code: string(core.CodeOf(err)), Message: err.Error()}}); werr != nil {
+		return werr
+	}
+	return reported{err}
+}
+
+func (r setupResult) didSomething() bool {
+	return len(r.Skill.Written) > 0 || len(r.Skill.Removed) > 0 || len(r.Agents) > 0
+}
+
+// setupRun is one study setup or --remove. It works on the record and saves
+// it after each step, never in a dry run, which instead takes every step on
+// its copy of the record only: a dry run decides exactly as the real run.
+type setupRun struct {
+	a      *app
+	ctx    context.Context
+	rec    setupRecord
+	dryRun bool
+}
+
+func (s *setupRun) save() error {
+	if s.dryRun {
+		return nil
+	}
+	return s.a.writeSetupRecord(s.rec)
+}
+
+// beginSetup locks the record, proves its folder writable and reads it. A
+// dry run only reads.
+func (a *app) beginSetup(ctx context.Context, dryRun bool) (*setupRun, func(), error) {
+	unlock := func() {}
+	if !dryRun {
+		u, err := a.lockSetup(ctx, lockWaitSetup)
+		if err != nil {
+			return nil, nil, err
+		}
+		unlock = u
+		if err := a.probeStateDir(); err != nil {
+			unlock()
+			return nil, nil, err
+		}
+	}
 	rec, err := a.readSetupRecord()
 	if err != nil {
-		return setupResult{}, err
+		unlock()
+		return nil, nil, err
 	}
-	study, onPath, err := a.studyPath()
+	return &setupRun{a: a, ctx: ctx, rec: rec, dryRun: dryRun}, unlock, nil
+}
+
+func (a *app) setupInstall(ctx context.Context, agents []string, dryRun, force bool) (setupResult, error) {
+	res := newSetupResult(dryRun, false)
+	loc, err := a.studyPath()
 	if err != nil {
-		return setupResult{}, err
+		return res, err
 	}
-	res := setupResult{Study: study, DryRun: dryRun, Agents: []agentResult{}, Manual: []string{}}
-	if !onPath {
-		res.StudyNote = "this study is not on your PATH, so agents will run it from " + study +
-			": install study with a package or go install so the path survives upgrades"
+	res.Study, res.StudyNote = loc.Path, loc.Note
+	if loc.Temporary && !force {
+		return setupResult{}, &core.Error{Code: core.CodeFailedPrecondition, Message: "this study runs from " + loc.Path +
+			", a temporary build folder that will soon be gone (go run builds there): install study with a package " +
+			"or go install and run its setup, or pass --force to register this one anyway"}
 	}
 	files, err := skillFiles()
 	if err != nil {
 		return res, err
 	}
-	skill, err := a.installSkill(&rec, files, dryRun)
-	res.Skill = skill
+	// A skill folder setup did not create stops it before it writes
+	// anything, its lock and state folder included.
+	if !dryRun {
+		dry, unlock, err := a.beginSetup(ctx, true)
+		if err != nil {
+			return setupResult{}, err
+		}
+		unlock()
+		if skill, err := dry.installSkill(files); err != nil {
+			res.Skill = skill
+			res.Skill.Written = []string{}
+			return res, err
+		}
+	}
+	run, unlock, err := a.beginSetup(ctx, dryRun)
+	if err != nil {
+		return setupResult{}, err
+	}
+	defer unlock()
+	res.Skill, err = run.installSkill(files)
 	if err != nil {
 		return res, err
 	}
-	plugin := a.claudePluginEnabled()
+	plugin := a.claudePlugin()
 	var firstErr error
 	for _, agent := range agents {
-		r, err := a.setupAgent(ctx, agent, study, plugin, &rec, dryRun)
+		r, err := run.setupAgent(agent, loc.Path, plugin)
 		res.Agents = append(res.Agents, r)
 		if err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}
-	if !dryRun {
-		if err := a.writeSetupRecord(rec); err != nil && firstErr == nil {
-			firstErr = err
-		}
+	if !dryRun && firstErr == nil {
 		res.Note = "Start a new conversation in your agent to use Lamplight."
 	}
 	return res, firstErr
@@ -262,241 +354,400 @@ func (a *app) setupInstall(ctx context.Context, agents []string, dryRun bool) (s
 
 // installSkill installs or updates the skill folder setup owns, and refuses
 // one it did not create before anything is written.
-func (a *app) installSkill(rec *setupRecord, files map[string][]byte, dryRun bool) (skillResult, error) {
-	dir, err := a.skillDir()
+func (s *setupRun) installSkill(files map[string][]byte) (skillResult, error) {
+	res := skillResult{Written: []string{}, Removed: []string{}, Kept: []string{}}
+	dir, err := s.a.skillDir()
 	if err != nil {
-		return skillResult{}, err
+		return res, err
 	}
-	res := skillResult{Dir: dir, Written: []string{}, Removed: []string{}, Kept: []string{}}
-	info, err := os.Lstat(dir)
+	res.Dir = dir
+	_, err = os.Lstat(dir)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
 		res.Status = statusInstalled
-		next := &skillRecord{Dir: dir, Files: map[string]string{}, Dirs: []string{}}
-		for _, rel := range sortedKeys(files) {
-			res.Written = append(res.Written, rel)
-			if dryRun {
-				continue
-			}
-			if err := writeRecorded(filepath.Join(dir, filepath.FromSlash(rel)), files[rel], &next.Dirs); err != nil {
-				return res, err
-			}
-			next.Files[rel] = sha256Hex(files[rel])
-		}
-		if !dryRun {
-			rec.Skill = next
-		}
-		return res, nil
+		return res, s.createSkill(dir, files, &res)
 	case err != nil:
 		return res, fmt.Errorf("reading %s: %w", dir, err)
-	case !info.IsDir() || rec.Skill == nil || rec.Skill.Dir != dir:
+	case s.rec.Skill == nil:
 		res.Status = statusKept
 		return res, &core.Error{Code: core.CodeAlreadyExists, Message: dir +
 			" already exists and study setup did not create it: move it away or remove it, then run study setup again"}
+	case !realDir(dir, s.rec.Skill.Real):
+		res.Status = statusKept
+		return res, &core.Error{Code: core.CodeAlreadyExists, Message: dir +
+			" is no longer the folder study setup created (it is a symlink now, or it moved): run study setup --remove, " +
+			"which leaves it alone, move it away, then run study setup again"}
 	}
-
-	prev := rec.Skill
-	next := &skillRecord{Dir: dir, Files: map[string]string{}, Dirs: slices.Clone(prev.Dirs)}
-	for _, rel := range sortedKeys(files) {
-		p := filepath.Join(dir, filepath.FromSlash(rel))
-		want := sha256Hex(files[rel])
-		got := fileSHA256(p)
-		switch {
-		case got == want:
-			next.Files[rel] = want
-		case got == "" && !pathExists(p), got != "" && got == prev.Files[rel]:
-			res.Written = append(res.Written, rel)
-			next.Files[rel] = want
-			if !dryRun {
-				if err := writeRecorded(p, files[rel], &next.Dirs); err != nil {
-					return res, err
-				}
-			}
-		default:
-			// Changed by hand since setup wrote it, or never written by
-			// setup: the learner's now.
-			res.Kept = append(res.Kept, rel)
-			if h, ok := prev.Files[rel]; ok {
-				next.Files[rel] = h
-			}
-		}
-	}
-	for _, rel := range sortedKeys(prev.Files) {
-		if _, still := files[rel]; still {
-			continue
-		}
-		p := filepath.Join(dir, filepath.FromSlash(rel))
-		if fileSHA256(p) == prev.Files[rel] {
-			res.Removed = append(res.Removed, rel)
-			if !dryRun {
-				if err := os.Remove(p); err != nil {
-					return res, err
-				}
-			}
-		} else if pathExists(p) {
-			res.Kept = append(res.Kept, rel)
-		}
+	if err := s.updateSkill(files, true, &res); err != nil {
+		return res, err
 	}
 	res.Status = statusCurrent
 	if len(res.Written) > 0 || len(res.Removed) > 0 {
 		res.Status = statusUpdated
 	}
-	if !dryRun {
-		rec.Skill = next
-	}
 	return res, nil
+}
+
+// createSkill creates the skill folder: it records the folders it will
+// create before creating them, and each file once written.
+func (s *setupRun) createSkill(dir string, files map[string][]byte, res *skillResult) error {
+	home, err := s.a.homeDir()
+	if err != nil {
+		return err
+	}
+	plan, err := planDirs(dir, home)
+	if err == nil && len(plan) == 0 {
+		err = errors.New("it appeared while study setup was creating it")
+	}
+	if err != nil {
+		return fmt.Errorf("cannot create %s: %w", dir, err)
+	}
+	// Folders an earlier setup created above the skill folder, and still
+	// its own, stay recorded for --remove.
+	var parents []dirRecord
+	if old := s.rec.Skill; old != nil {
+		for _, d := range old.Parents {
+			if d.owned() {
+				parents = append(parents, d)
+			}
+		}
+	}
+	above := plan[:len(plan)-1]
+	s.rec.Skill = &skillRecord{Dir: dir, Real: plan[len(plan)-1].Real, Files: map[string]string{},
+		Parents: slices.Concat(parents, above)}
+	if s.dryRun {
+		res.Written = sortedKeys(files)
+		return nil
+	}
+	if err := s.save(); err != nil {
+		return err
+	}
+	if made, err := makeDirs(plan); err != nil {
+		// Record only the folders it did create.
+		s.rec.Skill.Parents = slices.Concat(parents, above[:min(made, len(above))])
+		return errors.Join(err, s.save())
+	}
+	f, err := openSkillFolder(s.rec.Skill)
+	if err != nil {
+		return err
+	}
+	defer f.close()
+	for _, rel := range sortedKeys(files) {
+		if err := f.write(rel, files[rel]); err != nil {
+			return err
+		}
+		res.Written = append(res.Written, rel)
+		s.rec.Skill.Files[rel] = sha256Hex(files[rel])
+		if err := s.save(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// updateSkill brings the skill folder setup owns to this version: it writes
+// files that are setup's and unchanged, and files that are absent (with
+// restore, also files the learner deleted), and removes setup's files that
+// this version no longer has. Files changed by hand are kept.
+func (s *setupRun) updateSkill(files map[string][]byte, restore bool, res *skillResult) error {
+	sk := s.rec.Skill
+	f, err := openSkillFolder(sk)
+	if err != nil {
+		return err
+	}
+	defer f.close()
+	changed := false
+	for _, rel := range sortedKeys(files) {
+		want := sha256Hex(files[rel])
+		kind, got, err := f.stat(rel)
+		if err != nil {
+			return err
+		}
+		recorded, ours := sk.Files[rel]
+		switch {
+		case kind == fileRegular && got == want:
+			if recorded != want {
+				sk.Files[rel], changed = want, true
+			}
+		case kind == fileAbsent && (restore || !ours), kind == fileRegular && ours && got == recorded:
+			if !s.dryRun {
+				if err := f.write(rel, files[rel]); err != nil {
+					return errors.Join(err, s.saveIf(changed))
+				}
+			}
+			res.Written = append(res.Written, rel)
+			sk.Files[rel] = want
+			if err := s.save(); err != nil {
+				return err
+			}
+			changed = false
+		case kind != fileAbsent:
+			// Changed by hand since setup wrote it, never written by
+			// setup, or reached through a symlink: the learner's.
+			res.Kept = append(res.Kept, rel)
+		}
+	}
+	var removed []string
+	for _, rel := range sortedKeys(sk.Files) {
+		if _, still := files[rel]; still {
+			continue
+		}
+		kind, got, err := f.stat(rel)
+		if err != nil {
+			return err
+		}
+		switch {
+		case kind == fileRegular && got == sk.Files[rel]:
+			if !s.dryRun {
+				if err := f.remove(rel); err != nil {
+					return errors.Join(err, s.saveIf(changed))
+				}
+			}
+			res.Removed = append(res.Removed, rel)
+			removed = append(removed, rel)
+		case kind != fileAbsent:
+			res.Kept = append(res.Kept, rel)
+		}
+		// Gone, or the learner's now.
+		delete(sk.Files, rel)
+		changed = true
+	}
+	if !s.dryRun {
+		f.removeEmptyDirs(removed)
+	}
+	return s.saveIf(changed)
+}
+
+func (s *setupRun) saveIf(changed bool) error {
+	if !changed {
+		return nil
+	}
+	return s.save()
 }
 
 // setupAgent registers study with one agent, and for Claude Code links the
 // skill where it finds skills, unless the Claude Code plugin provides both.
-func (a *app) setupAgent(ctx context.Context, agent, study string, plugin bool, rec *setupRecord, dryRun bool) (agentResult, error) {
+func (s *setupRun) setupAgent(agent, study string, plugin pluginState) (agentResult, error) {
 	res := agentResult{Agent: agent}
-	if agent == agentClaude && plugin {
-		res.Status = statusPlugin
-		res.Note = "the Claude Code plugin provides Lamplight, so study setup leaves Claude Code to it"
-		// Undo what an earlier setup did for Claude Code, so the two never
-		// both register.
-		var undone []string
-		if g := rec.registration(agentClaude); g != nil {
-			if out, err := a.unregister(ctx, agentClaude, *g, rec, dryRun); err != nil {
-				return res, err
-			} else if out == statusRemoved {
-				undone = append(undone, "its MCP registration")
-			}
-		}
-		if rec.Link != nil {
-			if out, err := a.removeLink(rec, dryRun); err != nil {
-				return res, err
-			} else if out == statusRemoved {
-				undone = append(undone, "its skill link")
-			}
-		}
-		if len(undone) > 0 {
-			res.Note += "; removed " + strings.Join(undone, " and ") + " from an earlier study setup"
-		}
-		return res, nil
+	if agent == agentClaude && plugin.enabled {
+		return s.leaveToPlugin(plugin)
 	}
-	var linkNote string
-	if agent == agentClaude {
-		res.Link, res.LinkStatus, linkNote = a.installLink(rec, dryRun)
-	}
-	defer func() {
-		if linkNote != "" {
-			if res.Note != "" {
-				res.Note += "; "
-			}
-			res.Note += linkNote
-		}
-	}()
-	bin := a.lookPath(agent)
+	bin := s.a.lookPath(agent)
 	if bin == "" {
 		res.Status = statusSkipped
 		res.Note = agent + " is not on your PATH; run study setup again once it is installed"
 		return res, nil
 	}
-	current, found, err := a.currentRegistration(ctx, agent, bin)
-	if err != nil {
-		res.Status = statusSkipped
-		res.Note = err.Error()
-		return res, nil
+	var err error
+	res.Status, res.Note, err = s.register(agent, bin, study)
+	if agent == agentClaude {
+		link, status, note, lerr := s.installLink()
+		res.Link, res.LinkStatus = link, status
+		res.Note = joinNotes(res.Note, note)
+		err = errors.Join(err, lerr)
 	}
-	want := registrationRecord{Agent: agent, Name: mcpServerName, Command: study, Args: []string{"mcp"}}
-	ours := rec.registration(agent)
-	switch {
-	case !found:
-		res.Status = statusRegistered
-		if !dryRun {
-			if err := a.register(ctx, bin, want); err != nil {
-				res.Status = statusSkipped
-				return res, err
-			}
-			rec.dropRegistration(agent)
-			rec.Registrations = append(rec.Registrations, want)
-		}
-	case ours != nil && sameRegistration(current, *ours):
-		if current.Command == study && slices.Equal(current.Args, want.Args) {
-			res.Status = statusCurrent
-			return res, nil
-		}
-		res.Status = statusReregistered
-		res.Note = "study moved from " + current.Command
-		if !dryRun {
-			if err := a.unregisterCommand(ctx, bin, agent); err != nil {
-				return res, err
-			}
-			rec.dropRegistration(agent)
-			if err := a.register(ctx, bin, want); err != nil {
-				return res, err
-			}
-			rec.Registrations = append(rec.Registrations, want)
-		}
-	default:
-		res.Status = statusKept
-		res.Note = "a server named " + mcpServerName + " is already registered, not by study setup, so it is left alone"
-		if current.Command != "" {
-			res.Note += " (it runs " + strings.Join(append([]string{current.Command}, current.Args...), " ") + ")"
-		}
-		if ours != nil && !dryRun {
-			rec.dropRegistration(agent)
-		}
-	}
-	return res, nil
+	return res, err
 }
 
-func sameRegistration(current, recorded registrationRecord) bool {
-	return current.Command == recorded.Command && slices.Equal(current.Args, recorded.Args)
+// leaveToPlugin undoes what an earlier setup did for Claude Code, so the
+// plugin and setup never both register.
+func (s *setupRun) leaveToPlugin(plugin pluginState) (agentResult, error) {
+	res := agentResult{Agent: agentClaude, Status: statusPlugin,
+		Note: "the Claude Code plugin is enabled in " + plugin.file + ", so study setup leaves Claude Code to it"}
+	var undone []string
+	var err error
+	if g := s.rec.registration(agentClaude); g != nil {
+		out, uerr := s.unregister(agentClaude, *g)
+		switch {
+		case uerr != nil:
+			err = uerr
+			res.Note = joinNotes(res.Note, "could not remove the MCP registration an earlier study setup made: "+uerr.Error())
+		case out == statusRemoved:
+			undone = append(undone, "its MCP registration")
+		case out == statusSkipped:
+			res.Note = joinNotes(res.Note, "claude is not on your PATH, so the MCP registration an earlier study setup made stays")
+		}
+	}
+	if s.rec.Link != nil {
+		res.Link = s.rec.Link.Path
+		out, lerr := s.removeLink()
+		res.LinkStatus = out
+		switch {
+		case lerr != nil:
+			err = errors.Join(err, lerr)
+		case out == statusRemoved:
+			undone = append(undone, "its skill link")
+		}
+	}
+	if len(undone) > 0 {
+		res.Note = joinNotes(res.Note, "removed "+strings.Join(undone, " and ")+" from an earlier study setup")
+	}
+	if err != nil {
+		res.Status = statusFailed
+	}
+	return res, err
+}
+
+// register makes sure the agent runs this study. It records a registration
+// before making it, so --remove finds it even when the agent fails
+// part-way; --remove removes it only while it runs exactly this.
+func (s *setupRun) register(agent, bin, study string) (status, note string, err error) {
+	current, found, err := s.a.currentRegistration(s.ctx, agent, bin)
+	if err != nil {
+		return statusFailed, err.Error(), err
+	}
+	want := registrationRecord{Agent: agent, Name: mcpServerName, Command: study, Args: []string{"mcp"}}
+	ours := s.rec.registration(agent)
+	switch {
+	case !found:
+		status = statusRegistered
+	case ours != nil && sameRegistration(current, *ours):
+		if sameRegistration(current, want) {
+			return statusCurrent, "", nil
+		}
+		status, note = statusReregistered, "study moved from "+current.Command
+		if !s.dryRun {
+			if err := s.a.unregisterCommand(s.ctx, bin, agent); err != nil {
+				return statusFailed, err.Error(), err
+			}
+		}
+	default:
+		note = "a server named " + mcpServerName + " is already registered with " + agent +
+			", not by study setup, so it is left alone"
+		if current.Command != "" {
+			note += " (it runs " + strings.Join(append([]string{current.Command}, current.Args...), " ") + ")"
+		}
+		if ours != nil {
+			s.rec.dropRegistration(agent)
+			if err := s.save(); err != nil {
+				return statusFailed, err.Error(), err
+			}
+		}
+		return statusKept, note, nil
+	}
+	s.rec.setRegistration(want)
+	if err := s.save(); err != nil {
+		return statusFailed, err.Error(), err
+	}
+	if !s.dryRun {
+		if err := s.a.register(s.ctx, bin, want); err != nil {
+			return statusFailed, joinNotes(note, err.Error()), err
+		}
+	}
+	return status, note, nil
+}
+
+func sameRegistration(a, b registrationRecord) bool {
+	return a.Command == b.Command && slices.Equal(a.Args, b.Args)
 }
 
 // installLink links Claude Code's skills folder to the skill folder. It
 // returns the link's path, what happened, and why when it did not link.
-func (a *app) installLink(rec *setupRecord, dryRun bool) (string, string, string) {
-	link, err := a.claudeSkillLink()
+func (s *setupRun) installLink() (link, status, note string, err error) {
+	link, err = s.a.claudeSkillLink()
 	if err != nil {
-		return link, statusSkipped, err.Error()
+		return "", statusFailed, err.Error(), err
 	}
-	if rec.Skill == nil && !dryRun {
-		return link, statusSkipped, "the skill is not installed"
-	}
-	target, err := a.skillDir()
-	if err != nil {
-		return link, statusSkipped, err.Error()
+	skill := s.rec.Skill
+	if skill == nil {
+		return link, statusSkipped, "the skill is not installed", nil
 	}
 	info, err := os.Lstat(link)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
-		if dryRun {
-			return link, statusLinked, ""
-		}
-		next := &linkRecord{Path: link, Target: target}
-		if err := mkdirRecorded(filepath.Dir(link), &next.Dirs); err != nil {
-			return link, statusSkipped, "cannot link the skill: " + err.Error()
-		}
-		if err := os.Symlink(target, link); err != nil {
-			removeEmptyDirs(next.Dirs)
-			return link, statusSkipped, "cannot link the skill: " + err.Error()
-		}
-		rec.Link = next
-		return link, statusLinked, ""
 	case err != nil:
-		return link, statusSkipped, "cannot read " + link + ": " + err.Error()
-	case info.Mode()&fs.ModeSymlink != 0:
-		if dest, err := os.Readlink(link); err == nil && dest == target {
-			return link, statusCurrent, ""
+		return link, statusFailed, "cannot read " + link + ": " + err.Error(), err
+	case s.rec.Link != nil && s.rec.Link.owned():
+		return link, statusCurrent, "", nil
+	case info.Mode()&fs.ModeSymlink != 0 && sameFolder(link, skill.Dir):
+		return link, statusCurrent, link + " leads to the skill, but study setup did not make it, so --remove leaves it", nil
+	default:
+		return link, statusKept, link + " exists and study setup did not make it, so Claude Code loads that skill instead", nil
+	}
+	claude, err := s.a.claudeDir()
+	if err != nil {
+		return link, statusFailed, err.Error(), err
+	}
+	plan, err := planDirs(filepath.Dir(link), filepath.Dir(claude))
+	if err != nil {
+		return link, statusSkipped, "cannot link the skill: " + err.Error(), nil
+	}
+	parent := ""
+	if len(plan) > 0 {
+		parent = plan[len(plan)-1].Real
+	} else if parent, err = filepath.EvalSymlinks(filepath.Dir(link)); err != nil {
+		return link, statusFailed, "cannot read " + filepath.Dir(link) + ": " + err.Error(), err
+	}
+	// Folders an earlier setup created for its link, and still its own,
+	// stay recorded for --remove.
+	var parents []dirRecord
+	if old := s.rec.Link; old != nil {
+		for _, d := range old.Parents {
+			if d.owned() {
+				parents = append(parents, d)
+			}
 		}
 	}
-	return link, statusKept, link + " exists and study setup did not make it, so Claude Code loads that skill instead"
+	s.rec.Link = &linkRecord{Path: link, Target: skill.Dir, Parent: parent, Parents: slices.Concat(parents, plan)}
+	if s.dryRun {
+		return link, statusLinked, "", nil
+	}
+	if err := s.save(); err != nil {
+		return link, statusFailed, err.Error(), err
+	}
+	made, err := makeDirs(plan)
+	if err == nil {
+		err = os.Symlink(skill.Dir, link)
+	}
+	if err != nil {
+		// Undo the folders created for it; keep recording any that stay.
+		s.rec.Link.Parents = slices.Concat(parents, plan[:made])
+		removeDirs(s.rec.Link.Parents)
+		s.rec.Link.Parents = slices.DeleteFunc(s.rec.Link.Parents, func(d dirRecord) bool { return !pathExists(d.Path) })
+		if len(s.rec.Link.Parents) == 0 {
+			s.rec.Link = nil
+		}
+		err = errors.Join(fmt.Errorf("linking %s: %w", link, err), s.save())
+		return link, statusFailed, err.Error(), err
+	}
+	return link, statusLinked, "", nil
+}
+
+// owned reports whether l is still the link setup made: a symlink with the
+// target setup gave it, in the folder it made it in.
+func (l linkRecord) owned() bool {
+	info, err := os.Lstat(l.Path)
+	if err != nil || info.Mode()&fs.ModeSymlink == 0 {
+		return false
+	}
+	dest, err := os.Readlink(l.Path)
+	if err != nil || dest != l.Target {
+		return false
+	}
+	parent, err := filepath.EvalSymlinks(filepath.Dir(l.Path))
+	return err == nil && parent == l.Parent
+}
+
+func joinNotes(a, b string) string {
+	switch {
+	case a == "":
+		return b
+	case b == "":
+		return a
+	}
+	return a + "; " + b
 }
 
 // setupRemove undoes what study setup did, for agents, and removes the skill
 // folder once no agent needs it.
 func (a *app) setupRemove(ctx context.Context, agents []string, dryRun bool) (setupResult, error) {
-	rec, err := a.readSetupRecord()
+	res := newSetupResult(dryRun, true)
+	run, unlock, err := a.beginSetup(ctx, dryRun)
 	if err != nil {
-		return setupResult{}, err
+		return res, err
 	}
-	res := setupResult{DryRun: dryRun, Remove: true, Agents: []agentResult{},
-		Skill: skillResult{Written: []string{}, Removed: []string{}, Kept: []string{}}, Manual: []string{}}
-	if rec.empty() {
+	defer unlock()
+	if run.rec.empty() {
 		res.Skill.Status = statusNotInstalled
 		res.Note = "study setup has not installed anything"
 		return res, nil
@@ -504,51 +755,54 @@ func (a *app) setupRemove(ctx context.Context, agents []string, dryRun bool) (se
 	var firstErr error
 	for _, agent := range agents {
 		r := agentResult{Agent: agent, Status: statusNotInstalled}
-		if g := rec.registration(agent); g != nil {
-			out, err := a.unregister(ctx, agent, *g, &rec, dryRun)
+		if g := run.rec.registration(agent); g != nil {
+			out, err := run.unregister(agent, *g)
 			r.Status = out
 			switch {
 			case err != nil:
 				r.Note = err.Error()
-				if firstErr == nil {
-					firstErr = err
-				}
+				firstErr = firstOf(firstErr, err)
 			case out == statusKept:
 				r.Note = "its registration changed since study setup made it, so it is left alone"
 			case out == statusSkipped:
-				r.Note = agent + " is not on your PATH, so the registration stays"
+				r.Note = agent + " is not on your PATH, so its registration stays"
 				res.Manual = append(res.Manual, removeHint(agent))
 			}
 		}
-		if agent == agentClaude && rec.Link != nil {
-			r.Link = rec.Link.Path
-			out, err := a.removeLink(&rec, dryRun)
+		if agent == agentClaude && run.rec.Link != nil {
+			r.Link = run.rec.Link.Path
+			out, err := run.removeLink()
 			r.LinkStatus = out
-			if err != nil && firstErr == nil {
-				firstErr = err
+			switch {
+			case err != nil:
+				r.Note = joinNotes(r.Note, err.Error())
+				firstErr = firstOf(firstErr, err)
+			case out == statusKept:
+				r.Note = joinNotes(r.Note, "its skill link changed since study setup made it, so it is left alone")
 			}
 		}
 		res.Agents = append(res.Agents, r)
 	}
-	if rec.Skill != nil {
-		res.Skill.Dir = rec.Skill.Dir
-		res.Skill.Status = statusKept
-		if len(rec.Registrations) == 0 && rec.Link == nil {
-			if err := a.removeSkill(&rec, &res.Skill, dryRun); err != nil && firstErr == nil {
-				firstErr = err
-			}
-		} else {
-			res.Note = "the skill folder stays while another agent uses it"
-		}
-	} else {
+	switch {
+	case run.rec.Skill == nil:
 		res.Skill.Status = statusNotInstalled
-	}
-	if !dryRun {
-		if err := a.writeSetupRecord(rec); err != nil && firstErr == nil {
-			firstErr = err
+	case len(run.rec.Registrations) > 0 || run.rec.Link != nil:
+		res.Skill.Dir, res.Skill.Status = run.rec.Skill.Dir, statusKept
+		res.Note = "the skill folder stays while another agent uses it"
+	default:
+		if err := run.removeSkill(&res.Skill); err != nil {
+			firstErr = firstOf(firstErr, err)
 		}
 	}
 	return res, firstErr
+}
+
+// firstOf keeps the first error.
+func firstOf(first, err error) error {
+	if first != nil {
+		return first
+	}
+	return err
 }
 
 func removeHint(agent string) string {
@@ -559,166 +813,234 @@ func removeHint(agent string) string {
 }
 
 // unregister removes a registration study setup made, while it is still the
-// one setup made, and updates rec.
-func (a *app) unregister(ctx context.Context, agent string, g registrationRecord, rec *setupRecord, dryRun bool) (string, error) {
-	bin := a.lookPath(agent)
+// one setup made, and updates the record.
+func (s *setupRun) unregister(agent string, g registrationRecord) (string, error) {
+	bin := s.a.lookPath(agent)
 	if bin == "" {
 		return statusSkipped, nil
 	}
-	current, found, err := a.currentRegistration(ctx, agent, bin)
+	current, found, err := s.a.currentRegistration(s.ctx, agent, bin)
 	if err != nil {
-		return statusSkipped, err
+		return statusFailed, err
 	}
+	status := statusRemoved
 	switch {
 	case !found:
-		if !dryRun {
-			rec.dropRegistration(agent)
-		}
-		return statusAlreadyGone, nil
+		status = statusAlreadyGone
 	case !sameRegistration(current, g):
-		if !dryRun {
-			rec.dropRegistration(agent)
+		status = statusKept
+	case !s.dryRun:
+		if err := s.a.unregisterCommand(s.ctx, bin, agent); err != nil {
+			return statusFailed, err
 		}
-		return statusKept, nil
 	}
-	if !dryRun {
-		if err := a.unregisterCommand(ctx, bin, agent); err != nil {
-			return statusKept, err
-		}
-		rec.dropRegistration(agent)
-	}
-	return statusRemoved, nil
+	s.rec.dropRegistration(agent)
+	return status, s.save()
 }
 
 // removeLink removes Claude Code's link to the skill folder while it is the
-// link setup made.
-func (a *app) removeLink(rec *setupRecord, dryRun bool) (string, error) {
-	l := rec.Link
-	info, err := os.Lstat(l.Path)
+// link setup made, and the folders setup created for it once empty.
+func (s *setupRun) removeLink() (string, error) {
+	l := *s.rec.Link
 	status := statusKept
+	_, err := os.Lstat(l.Path)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
 		status = statusAlreadyGone
 	case err != nil:
-		return statusKept, err
-	case info.Mode()&fs.ModeSymlink != 0:
-		if dest, err := os.Readlink(l.Path); err == nil && dest == l.Target {
-			status = statusRemoved
-			if !dryRun {
-				if err := os.Remove(l.Path); err != nil {
-					return statusKept, err
-				}
+		return statusFailed, fmt.Errorf("reading %s: %w", l.Path, err)
+	case l.owned():
+		status = statusRemoved
+		if !s.dryRun {
+			if err := os.Remove(l.Path); err != nil {
+				return statusFailed, fmt.Errorf("removing %s: %w", l.Path, err)
 			}
 		}
 	}
-	if !dryRun {
-		removeEmptyDirs(l.Dirs)
-		rec.Link = nil
+	if !s.dryRun {
+		removeDirs(l.Parents)
 	}
-	return status, nil
+	s.rec.Link = nil
+	return status, s.save()
 }
 
 // removeSkill removes the skill files setup wrote and nobody changed, and
 // the folders it created once they are empty.
-func (a *app) removeSkill(rec *setupRecord, res *skillResult, dryRun bool) error {
-	s := rec.Skill
-	for _, rel := range sortedKeys(s.Files) {
-		p := filepath.Join(s.Dir, filepath.FromSlash(rel))
-		switch got := fileSHA256(p); {
-		case got == s.Files[rel]:
-			res.Removed = append(res.Removed, rel)
-			if !dryRun {
-				if err := os.Remove(p); err != nil {
-					return err
-				}
+func (s *setupRun) removeSkill(res *skillResult) error {
+	sk := s.rec.Skill
+	res.Dir = sk.Dir
+	_, err := os.Lstat(sk.Dir)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		res.Status = statusAlreadyGone
+	case err != nil:
+		return fmt.Errorf("reading %s: %w", sk.Dir, err)
+	case !realDir(sk.Dir, sk.Real):
+		res.Status = statusKept
+		res.Note = sk.Dir + " is no longer the folder study setup created (it is a symlink now, or it moved), so it is left alone"
+	default:
+		f, err := openSkillFolder(sk)
+		if err != nil {
+			return err
+		}
+		defer f.close()
+		var removed []string
+		for _, rel := range sortedKeys(sk.Files) {
+			kind, got, err := f.stat(rel)
+			if err != nil {
+				return errors.Join(err, s.save())
 			}
-		case pathExists(p):
-			res.Kept = append(res.Kept, rel)
+			switch {
+			case kind == fileRegular && got == sk.Files[rel]:
+				if !s.dryRun {
+					if err := f.remove(rel); err != nil {
+						return errors.Join(err, s.save())
+					}
+				}
+				res.Removed = append(res.Removed, rel)
+				removed = append(removed, rel)
+				delete(sk.Files, rel)
+			case kind != fileAbsent:
+				res.Kept = append(res.Kept, rel)
+			}
+		}
+		res.Status = statusRemoved
+		if len(res.Kept) > 0 {
+			res.Status = statusKept
+		}
+		if !s.dryRun {
+			f.removeEmptyDirs(removed)
+			removeDirs([]dirRecord{{Path: sk.Dir, Real: sk.Real}})
 		}
 	}
-	res.Status = statusRemoved
-	if len(res.Kept) > 0 {
-		res.Status = statusKept
+	if !s.dryRun {
+		removeDirs(sk.Parents)
 	}
-	if !dryRun {
-		removeEmptyDirs(s.Dirs)
-		rec.Skill = nil
+	s.rec.Skill = nil
+	return s.save()
+}
+
+// runSetupCheck reports what is missing or stale. With something to do it
+// exits 1, and --json reports it as study doctor reports a failure: ok is
+// false, the error code is unhealthy, and data holds the full report.
+func (a *app) runSetupCheck(ctx context.Context, agents []string) error {
+	res, err := a.setupCheck(ctx, agents)
+	if err != nil {
+		return a.fail(err)
 	}
-	return nil
+	if !res.UpToDate {
+		a.exit = ExitError
+		if a.json {
+			var pending []string
+			for _, f := range res.Findings {
+				if f.Status != core.FindingOK {
+					pending = append(pending, f.Name)
+				}
+			}
+			msg := fmt.Sprintf("study setup has something to do: %s", strings.Join(pending, ", "))
+			return a.writeJSON(envelope{Data: res, Error: &errorBody{Code: codeUnhealthy, Message: msg}})
+		}
+	} else if a.json {
+		return a.writeJSON(envelope{OK: true, Data: res})
+	}
+	return writeSetupCheck(a.out, res)
 }
 
 // setupCheck reports what is missing or stale without changing anything.
-func (a *app) setupCheck(ctx context.Context, agents []string) (setupResult, error) {
+func (a *app) setupCheck(ctx context.Context, agents []string) (setupCheckResult, error) {
 	rec, err := a.readSetupRecord()
 	if err != nil {
-		return setupResult{}, err
+		return setupCheckResult{}, err
 	}
-	study, _, err := a.studyPath()
+	loc, err := a.studyPath()
 	if err != nil {
-		return setupResult{}, err
+		return setupCheckResult{}, err
 	}
-	res := setupResult{Study: study, Agents: []agentResult{}, Manual: []string{},
-		Skill: skillResult{Written: []string{}, Removed: []string{}, Kept: []string{}}}
 	files, err := skillFiles()
 	if err != nil {
-		return res, err
+		return setupCheckResult{}, err
 	}
-	res.Findings = append(res.Findings, a.checkSkill(rec, files))
-	plugin := a.claudePluginEnabled()
+	res := setupCheckResult{Study: loc.Path, Findings: []core.Finding{a.checkSkill(rec, files)}}
+	plugin := a.claudePlugin()
 	for _, agent := range agents {
-		res.Findings = append(res.Findings, a.checkAgent(ctx, agent, study, plugin, rec)...)
+		res.Findings = append(res.Findings, a.checkAgent(ctx, agent, loc.Path, plugin, rec)...)
 	}
-	upToDate := true
+	res.UpToDate = true
 	for _, f := range res.Findings {
 		if f.Status != core.FindingOK {
-			upToDate = false
+			res.UpToDate = false
 		}
 	}
-	res.UpToDate = &upToDate
 	return res, nil
 }
 
 func (a *app) checkSkill(rec setupRecord, files map[string][]byte) core.Finding {
-	f := core.Finding{Name: "setup:skill"}
-	if rec.Skill == nil {
-		f.Status, f.Message, f.Fix = core.FindingWarn, "study setup has not installed the lamplight skill", "study setup"
+	f := core.Finding{Name: "setup:skill", Status: core.FindingWarn}
+	sk := rec.Skill
+	if sk == nil {
+		f.Message, f.Fix = "study setup has not installed the lamplight skill", "study setup"
 		return f
 	}
-	if _, err := os.Stat(rec.Skill.Dir); err != nil {
-		f.Status, f.Message, f.Fix = core.FindingWarn, rec.Skill.Dir+" is gone", "study setup"
+	if _, err := os.Lstat(sk.Dir); err != nil {
+		f.Message, f.Fix = sk.Dir+" is gone", "study setup"
 		return f
 	}
-	var stale, changed int
+	folder, err := openSkillFolder(sk)
+	if err != nil {
+		f.Message = sk.Dir + " is no longer the folder study setup created (it is a symlink now, or it moved)"
+		f.Fix = "move it away, then run study setup --remove and study setup"
+		return f
+	}
+	defer folder.close()
+	var stale, missing, changed int
 	for rel, data := range files {
-		want := sha256Hex(data)
-		got := fileSHA256(filepath.Join(rec.Skill.Dir, filepath.FromSlash(rel)))
+		kind, got, err := folder.stat(rel)
+		if err != nil {
+			f.Message, f.Fix = err.Error(), "study setup"
+			return f
+		}
+		recorded, ours := sk.Files[rel]
 		switch {
-		case got == want:
-		case got != "" && got != rec.Skill.Files[rel]:
-			changed++
-		default:
+		case kind == fileRegular && got == sha256Hex(data):
+		case kind == fileAbsent && ours:
+			missing++
+		case kind == fileAbsent, kind == fileRegular && ours && got == recorded:
 			stale++
+		default:
+			changed++
+		}
+	}
+	for rel, sum := range sk.Files {
+		if _, still := files[rel]; !still {
+			if kind, got, err := folder.stat(rel); err == nil && kind == fileRegular && got == sum {
+				stale++
+			}
 		}
 	}
 	switch {
+	case missing > 0:
+		// study mcp's refresh never restores a file the learner deleted.
+		f.Message = fmt.Sprintf("%d %s of the skill in %s %s missing", missing,
+			plural(missing, "file", "files"), sk.Dir, plural(missing, "is", "are"))
+		f.Fix = "study setup"
 	case stale > 0:
-		f.Status, f.Fix = core.FindingWarn, "study setup (study mcp also refreshes it when it starts)"
 		f.Message = fmt.Sprintf("the skill in %s is from another version of study (%d %s to update)",
-			rec.Skill.Dir, stale, plural(stale, "file", "files"))
+			sk.Dir, stale, plural(stale, "file", "files"))
+		f.Fix = "study setup (study mcp also updates it when it starts)"
 	case changed > 0:
 		f.Status = core.FindingOK
 		f.Message = fmt.Sprintf("the skill is installed in %s; %d %s changed by hand, which study keeps",
-			rec.Skill.Dir, changed, plural(changed, "file", "files"))
+			sk.Dir, changed, plural(changed, "file", "files"))
 	default:
-		f.Status, f.Message = core.FindingOK, "the skill is installed in "+rec.Skill.Dir
+		f.Status, f.Message = core.FindingOK, "the skill is installed in "+sk.Dir
 	}
 	return f
 }
 
-func (a *app) checkAgent(ctx context.Context, agent, study string, plugin bool, rec setupRecord) []core.Finding {
+func (a *app) checkAgent(ctx context.Context, agent, study string, plugin pluginState, rec setupRecord) []core.Finding {
 	f := core.Finding{Name: "setup:" + agent}
 	ours := rec.registration(agent)
-	if agent == agentClaude && plugin {
+	if agent == agentClaude && plugin.enabled {
 		if ours != nil || rec.Link != nil {
 			f.Status, f.Fix = core.FindingWarn, "study setup --remove --agent claude"
 			f.Message = "both the Claude Code plugin and study setup provide Lamplight to Claude Code"
@@ -762,19 +1084,14 @@ func (a *app) checkAgent(ctx context.Context, agent, study string, plugin bool, 
 		switch {
 		case err != nil:
 			l.Status, l.Message, l.Fix = core.FindingWarn, "Claude Code does not see the skill: "+link+" is missing", "study setup --agent claude"
-		case info.Mode()&fs.ModeSymlink != 0 && readlink(link) == rec.Skill.Dir:
-			l.Status, l.Message = core.FindingOK, link+" links to the skill"
+		case info.Mode()&fs.ModeSymlink != 0 && sameFolder(link, rec.Skill.Dir):
+			l.Status, l.Message = core.FindingOK, link+" leads to the skill"
 		default:
 			l.Status, l.Message = core.FindingOK, link+" exists, not made by study setup"
 		}
 		out = append(out, l)
 	}
 	return out
-}
-
-func readlink(p string) string {
-	dest, _ := os.Readlink(p)
-	return dest
 }
 
 // diagnoseSetup is study doctor's setup Finding: one line that says whether
@@ -791,18 +1108,18 @@ func (a *app) diagnoseSetup(ctx context.Context) core.Finding {
 		}
 		return f
 	}
-	plugin := a.claudePluginEnabled()
+	plugin := a.claudePlugin()
 	found := []string{}
 	for _, agent := range setupAgents {
 		if a.lookPath(agent) != "" {
 			found = append(found, agent)
 		}
 	}
-	if rec.empty() && !plugin && len(found) == 0 {
+	if rec.empty() && !plugin.enabled && len(found) == 0 {
 		f.Status, f.Message = core.FindingOK, "no Claude Code or Codex found; other agents need an MCP server that runs study mcp"
 		return f
 	}
-	if rec.empty() && !plugin {
+	if rec.empty() && !plugin.enabled {
 		f.Status, f.Message, f.Fix = core.FindingWarn, "Lamplight is not set up for "+strings.Join(found, " or "), "study setup"
 		return f
 	}
@@ -818,69 +1135,43 @@ func (a *app) diagnoseSetup(ctx context.Context) core.Finding {
 		}
 	}
 	f.Status, f.Message = core.FindingOK, "agents run study from "+res.Study
-	if plugin && rec.empty() {
+	if plugin.enabled && rec.empty() {
 		f.Message = "the Claude Code plugin provides Lamplight"
 	}
 	return f
 }
 
+// lockWaitRefresh is how long study mcp waits to refresh the skill before it
+// starts without refreshing.
+const lockWaitRefresh = 2 * time.Second
+
 // refreshSkill updates the skill files study setup wrote to this version's,
-// when nobody changed them since. study mcp calls it when it starts, so an
-// upgrade reaches the skill without running setup again. It never writes
-// anything else, and never fails the server: problems go to the Log.
-func (a *app) refreshSkill() {
-	rec, err := a.readSetupRecord()
-	if err != nil || rec.Skill == nil {
-		return
-	}
-	info, err := os.Lstat(rec.Skill.Dir)
-	if err != nil || !info.IsDir() {
+// when nobody changed them since, under the setup lock. study mcp calls it
+// when it starts, so an upgrade reaches the skill without running setup
+// again. It never restores a file the learner deleted, never writes
+// anywhere else, and never fails the server: problems go to the Log.
+func (a *app) refreshSkill(ctx context.Context) {
+	if rec, err := a.readSetupRecord(); err != nil || rec.Skill == nil {
 		return
 	}
 	files, err := skillFiles()
 	if err != nil {
 		return
 	}
-	changed := false
-	for _, rel := range sortedKeys(files) {
-		want := sha256Hex(files[rel])
-		recorded, ours := rec.Skill.Files[rel]
-		if recorded == want {
-			continue
-		}
-		p := filepath.Join(rec.Skill.Dir, filepath.FromSlash(rel))
-		got := fileSHA256(p)
-		switch {
-		case got == want:
-			rec.Skill.Files[rel] = want
-			changed = true
-		case ours && got == recorded, !ours && !pathExists(p):
-			if err := writeRecorded(p, files[rel], &rec.Skill.Dirs); err != nil {
-				a.logWarn("refreshing the lamplight skill", "file", p, "error", err)
-				continue
-			}
-			rec.Skill.Files[rel] = want
-			changed = true
-		}
+	unlock, err := a.lockSetup(ctx, lockWaitRefresh)
+	if err != nil {
+		a.logWarn("not refreshing the lamplight skill", "error", err)
+		return
 	}
-	for _, rel := range sortedKeys(rec.Skill.Files) {
-		if _, still := files[rel]; still {
-			continue
-		}
-		p := filepath.Join(rec.Skill.Dir, filepath.FromSlash(rel))
-		if fileSHA256(p) == rec.Skill.Files[rel] {
-			if err := os.Remove(p); err != nil {
-				a.logWarn("refreshing the lamplight skill", "file", p, "error", err)
-				continue
-			}
-		}
-		delete(rec.Skill.Files, rel)
-		changed = true
+	defer unlock()
+	rec, err := a.readSetupRecord()
+	if err != nil || rec.Skill == nil || !realDir(rec.Skill.Dir, rec.Skill.Real) {
+		return
 	}
-	if changed {
-		if err := a.writeSetupRecord(rec); err != nil {
-			a.logWarn("recording the refreshed lamplight skill", "error", err)
-		}
+	run := &setupRun{a: a, ctx: ctx, rec: rec}
+	var res skillResult
+	if err := run.updateSkill(files, false, &res); err != nil {
+		a.logWarn("refreshing the lamplight skill", "error", err)
 	}
 }
 
@@ -907,285 +1198,6 @@ func skillFiles() (map[string][]byte, error) {
 	return files, err
 }
 
-// studyPath returns the path agents should run study by. The running binary
-// is often a versioned path that the next upgrade removes (Homebrew's
-// Cellar or Caskroom, for example), while the study on PATH (Homebrew's bin
-// link, ~/go/bin, /usr/bin) stays put. So when the study on PATH is this
-// same program, its PATH entry is used as written; otherwise the running
-// binary's real path, and onPath is false.
-func (a *app) studyPath() (string, bool, error) {
-	exe, err := executable()
-	if err != nil {
-		return "", false, &core.Error{Code: core.CodeInternal, Message: "cannot find the study binary: " + err.Error(), Err: err}
-	}
-	if real, err := filepath.EvalSymlinks(exe); err == nil {
-		exe = real
-	}
-	exeInfo, err := os.Stat(exe)
-	if err != nil {
-		return exe, false, nil
-	}
-	for _, dir := range filepath.SplitList(a.opts.Getenv("PATH")) {
-		if !filepath.IsAbs(dir) {
-			continue
-		}
-		cand := filepath.Join(dir, "study")
-		if info, err := os.Stat(cand); err == nil && os.SameFile(info, exeInfo) {
-			return cand, true, nil
-		}
-	}
-	return exe, false, nil
-}
-
-// lookPath finds an agent's command on the PATH study was given, or "".
-func (a *app) lookPath(name string) string {
-	for _, dir := range filepath.SplitList(a.opts.Getenv("PATH")) {
-		if !filepath.IsAbs(dir) {
-			continue
-		}
-		p := filepath.Join(dir, name)
-		if info, err := os.Stat(p); err == nil && info.Mode().IsRegular() && info.Mode()&0o111 != 0 {
-			return p
-		}
-	}
-	return ""
-}
-
-// agentEnv is the environment for an agent's command: study's own, with the
-// variables that decide where agents keep their configuration taken from
-// study's view of the environment, so tests and wrappers control them.
-func (a *app) agentEnv() []string {
-	keys := []string{"HOME", "PATH", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "CLAUDE_CONFIG_DIR", "CODEX_HOME"}
-	env := slices.DeleteFunc(os.Environ(), func(kv string) bool {
-		k, _, _ := strings.Cut(kv, "=")
-		return slices.Contains(keys, k)
-	})
-	for _, k := range keys {
-		if v := a.opts.Getenv(k); v != "" {
-			env = append(env, k+"="+v)
-		}
-	}
-	return env
-}
-
-func (a *app) runAgent(ctx context.Context, bin string, args ...string) (string, error) {
-	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, bin, args...)
-	cmd.Env = a.agentEnv()
-	cmd.Stdin = nil
-	out, err := cmd.CombinedOutput()
-	return string(out), err
-}
-
-func (a *app) register(ctx context.Context, bin string, g registrationRecord) error {
-	args := []string{"mcp", "add", g.Name, "--", g.Command}
-	if g.Agent == agentClaude {
-		args = []string{"mcp", "add", "--scope", "user", g.Name, "--", g.Command}
-	}
-	args = append(args, g.Args...)
-	if out, err := a.runAgent(ctx, bin, args...); err != nil {
-		return agentError(g.Agent, args, out, err)
-	}
-	return nil
-}
-
-func (a *app) unregisterCommand(ctx context.Context, bin, agent string) error {
-	args := []string{"mcp", "remove", mcpServerName}
-	if agent == agentClaude {
-		args = []string{"mcp", "remove", "--scope", "user", mcpServerName}
-	}
-	if out, err := a.runAgent(ctx, bin, args...); err != nil {
-		return agentError(agent, args, out, err)
-	}
-	return nil
-}
-
-func agentError(agent string, args []string, out string, err error) error {
-	msg := strings.TrimSpace(out)
-	if len(msg) > 300 {
-		msg = msg[:300] + "…"
-	}
-	return &core.Error{Code: core.CodeInternal, Err: err, Message: fmt.Sprintf("%s %s failed: %v %s",
-		agent, strings.Join(args, " "), err, printable(msg))}
-}
-
-// currentRegistration reads the server named lamplight that an agent has
-// at user scope. Claude Code's is read from its configuration file, because
-// claude mcp get may start the server to check it; Codex's from codex mcp
-// get --json, which only reads.
-func (a *app) currentRegistration(ctx context.Context, agent, bin string) (registrationRecord, bool, error) {
-	g := registrationRecord{Agent: agent, Name: mcpServerName}
-	if agent == agentClaude {
-		p, err := a.claudeJSONPath()
-		if err != nil {
-			return g, false, err
-		}
-		data, err := os.ReadFile(p)
-		if errors.Is(err, fs.ErrNotExist) {
-			return g, false, nil
-		}
-		if err != nil {
-			return g, false, fmt.Errorf("reading %s: %w", p, err)
-		}
-		var cfg struct {
-			MCPServers map[string]struct {
-				Command string   `json:"command"`
-				Args    []string `json:"args"`
-			} `json:"mcpServers"`
-		}
-		if err := json.Unmarshal(data, &cfg); err != nil {
-			return g, false, fmt.Errorf("cannot read Claude Code's MCP servers in %s: %v", p, err)
-		}
-		s, ok := cfg.MCPServers[mcpServerName]
-		if !ok {
-			return g, false, nil
-		}
-		g.Command, g.Args = s.Command, s.Args
-		return g, true, nil
-	}
-	out, err := a.runAgent(ctx, bin, "mcp", "get", mcpServerName, "--json")
-	if err != nil {
-		if strings.Contains(strings.ToLower(out), "no mcp server") {
-			return g, false, nil
-		}
-		return g, false, agentError(agent, []string{"mcp", "get", mcpServerName, "--json"}, out, err)
-	}
-	var s struct {
-		Transport struct {
-			Command string   `json:"command"`
-			Args    []string `json:"args"`
-		} `json:"transport"`
-	}
-	if err := json.Unmarshal([]byte(out), &s); err != nil {
-		return g, true, nil
-	}
-	g.Command, g.Args = s.Transport.Command, s.Transport.Args
-	return g, true, nil
-}
-
-// claudePluginEnabled reports whether Claude Code has Lamplight's plugin
-// enabled at user scope, in enabledPlugins of its settings.
-func (a *app) claudePluginEnabled() bool {
-	dir, err := a.claudeDir()
-	if err != nil {
-		return false
-	}
-	data, err := os.ReadFile(filepath.Join(dir, "settings.json"))
-	if err != nil {
-		return false
-	}
-	var settings struct {
-		EnabledPlugins map[string]any `json:"enabledPlugins"`
-	}
-	if json.Unmarshal(data, &settings) != nil {
-		return false
-	}
-	for id, on := range settings.EnabledPlugins {
-		if strings.HasPrefix(id, mcpServerName+"@") && on == true {
-			return true
-		}
-	}
-	return false
-}
-
-func (a *app) homeDir() (string, error) {
-	if home := a.opts.Getenv("HOME"); filepath.IsAbs(home) {
-		return home, nil
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", &core.Error{Code: core.CodeInternal, Message: "cannot find your home folder: set HOME", Err: err}
-	}
-	return home, nil
-}
-
-// skillDir is where study setup installs the skill: the Agent Skills
-// folder that Codex reads and Claude Code's link points to.
-func (a *app) skillDir() (string, error) {
-	home, err := a.homeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(home, ".agents", "skills", lamplight.Name), nil
-}
-
-// claudeDir is Claude Code's configuration folder: CLAUDE_CONFIG_DIR, or
-// ~/.claude.
-func (a *app) claudeDir() (string, error) {
-	if dir := a.opts.Getenv("CLAUDE_CONFIG_DIR"); filepath.IsAbs(dir) {
-		return dir, nil
-	}
-	home, err := a.homeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(home, ".claude"), nil
-}
-
-// claudeJSONPath is the file where Claude Code keeps user-scope MCP servers.
-func (a *app) claudeJSONPath() (string, error) {
-	if dir := a.opts.Getenv("CLAUDE_CONFIG_DIR"); filepath.IsAbs(dir) {
-		return filepath.Join(dir, ".claude.json"), nil
-	}
-	home, err := a.homeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(home, ".claude.json"), nil
-}
-
-func (a *app) claudeSkillLink() (string, error) {
-	dir, err := a.claudeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(dir, "skills", lamplight.Name), nil
-}
-
-// writeRecorded writes data to p atomically, creating and recording the
-// folders it needs.
-func writeRecorded(p string, data []byte, dirs *[]string) error {
-	if err := mkdirRecorded(filepath.Dir(p), dirs); err != nil {
-		return err
-	}
-	return replaceFile(p, data, 0o644)
-}
-
-// mkdirRecorded creates dir and its missing parents, appending each folder
-// it creates to dirs, parents first.
-func mkdirRecorded(dir string, dirs *[]string) error {
-	var missing []string
-	for d := dir; ; d = filepath.Dir(d) {
-		if _, err := os.Lstat(d); err == nil {
-			break
-		}
-		missing = append(missing, d)
-		if filepath.Dir(d) == d {
-			break
-		}
-	}
-	for i := len(missing) - 1; i >= 0; i-- {
-		if err := os.Mkdir(missing[i], 0o755); err != nil && !errors.Is(err, fs.ErrExist) {
-			return err
-		}
-		if !slices.Contains(*dirs, missing[i]) {
-			*dirs = append(*dirs, missing[i])
-		}
-	}
-	return nil
-}
-
-// removeEmptyDirs removes the folders in dirs that are empty, deepest
-// first; anything someone put in them keeps them.
-func removeEmptyDirs(dirs []string) {
-	sorted := slices.Clone(dirs)
-	sort.Slice(sorted, func(i, j int) bool { return len(sorted[i]) > len(sorted[j]) })
-	for _, d := range sorted {
-		_ = os.Remove(d) // fails, as it should, unless d is empty
-	}
-}
-
 // pathExists reports whether anything, a link included, is at p.
 func pathExists(p string) bool {
 	_, err := os.Lstat(p)
@@ -1201,138 +1213,70 @@ func sortedKeys[V any](m map[string]V) []string {
 	return keys
 }
 
-func (a *app) setupRecordPath() (string, error) {
-	dir, err := stateDir(a.opts.Getenv)
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(dir, setupRecordFile), nil
-}
-
-func (a *app) readSetupRecord() (setupRecord, error) {
-	rec := setupRecord{Format: setupRecordFormat, Registrations: []registrationRecord{}}
-	p, err := a.setupRecordPath()
-	if err != nil {
-		return rec, err
-	}
-	data, err := os.ReadFile(p)
-	if errors.Is(err, fs.ErrNotExist) {
-		return rec, nil
-	}
-	if err != nil {
-		return rec, fmt.Errorf("reading %s: %w", p, err)
-	}
-	damaged := func(why string) error {
-		return &core.Error{Code: core.CodeCorrupt, Message: fmt.Sprintf(
-			"%s is damaged (%s): delete it, then run study setup; study cannot undo earlier setups without it", p, why)}
-	}
-	if err := json.Unmarshal(data, &rec); err != nil {
-		return rec, damaged(err.Error())
-	}
-	switch {
-	case rec.Format > setupRecordFormat:
-		return rec, &core.Error{Code: core.CodeNewerFormat, Message: fmt.Sprintf(
-			"%s has format %d, but this version of study only understands format %d: upgrade study",
-			p, rec.Format, setupRecordFormat)}
-	case rec.Format < 1:
-		return rec, damaged("it has no format")
-	}
-	if rec.Registrations == nil {
-		rec.Registrations = []registrationRecord{}
-	}
-	if rec.Skill != nil && rec.Skill.Files == nil {
-		rec.Skill.Files = map[string]string{}
-	}
-	return rec, nil
-}
-
-func (a *app) writeSetupRecord(rec setupRecord) error {
-	p, err := a.setupRecordPath()
-	if err != nil {
-		return err
-	}
-	if rec.empty() {
-		if err := os.Remove(p); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return err
+// statusText is a status for people; a dry run says what it would do.
+func statusText(status string, dryRun bool) string {
+	if dryRun {
+		if w, ok := map[string]string{
+			statusInstalled: "would install", statusUpdated: "would update", statusRegistered: "would register",
+			statusReregistered: "would re-register", statusLinked: "would link", statusRemoved: "would remove",
+		}[status]; ok {
+			return w
 		}
-		return nil
 	}
-	rec.Format = setupRecordFormat
-	data, err := json.MarshalIndent(rec, "", "  ")
-	if err != nil {
-		return err
+	if status == statusReregistered {
+		return "re-registered"
 	}
-	return writeFile(p, append(data, '\n'))
+	return strings.ReplaceAll(status, "_", " ")
 }
 
-// writeSetupResult renders study setup, --remove and --check for people.
-func writeSetupResult(w io.Writer, r setupResult) error {
+// writeSetupResult renders study setup and --remove for people. failed says
+// the run stopped part-way: the error follows on stderr.
+func writeSetupResult(w io.Writer, r setupResult, failed bool) error {
 	var b strings.Builder
-	if r.UpToDate != nil {
-		names := make([]string, len(r.Findings))
-		for i, f := range r.Findings {
-			names[i] = f.Name
-		}
-		width := widest(names) + 2
-		for _, f := range r.Findings {
-			mark := styleOK.Render("✓")
-			if f.Status != core.FindingOK {
-				mark = styleWarn.Render("!")
-			}
-			fmt.Fprintf(&b, "%s %s%s\n", mark, styleLabel.Render(pad(f.Name, width)), printable(f.Message))
-			if f.Fix != "" {
-				fmt.Fprintf(&b, "  %s%s %s\n", strings.Repeat(" ", width), styleDim.Render("fix:"), f.Fix)
-			}
-		}
-		b.WriteString("\n")
-		if *r.UpToDate {
-			b.WriteString(styleOK.Render("study setup is up to date.") + "\n")
-		} else {
-			b.WriteString(styleWarn.Render("study setup has something to do: see the fixes above.") + "\n")
-		}
-		_, err := io.WriteString(w, b.String())
-		return err
-	}
-	would := func(done, planned string) string {
-		if r.DryRun {
-			return planned
-		}
-		return done
-	}
 	nothing := r.Remove && r.Skill.Status == statusNotInstalled && len(r.Agents) == 0
 	switch {
+	case failed && r.Remove:
+		b.WriteString("study setup --remove stopped part-way, after this:\n")
+	case failed:
+		fmt.Fprintf(&b, "study setup stopped part-way, with study at %s, after this:\n", styleAccent.Render(printable(r.Study)))
 	case nothing:
 		b.WriteString("study setup has not installed anything, so there is nothing to remove.\n")
+	case r.Remove && r.DryRun:
+		b.WriteString("study setup --remove would undo:\n")
 	case r.Remove:
-		b.WriteString(would("Removed what study setup did:", "study setup --remove would undo:") + "\n")
+		b.WriteString("Removed what study setup did:\n")
+	case r.DryRun:
+		fmt.Fprintf(&b, "study setup would set up Lamplight with study at %s\n", styleAccent.Render(printable(r.Study)))
 	default:
-		fmt.Fprintf(&b, "%s %s\n", would("Lamplight is set up with study at", "study setup would set up Lamplight with study at"),
-			styleAccent.Render(printable(r.Study)))
-		if r.StudyNote != "" {
-			fmt.Fprintf(&b, "%s\n", styleWarn.Render(printable(r.StudyNote)))
-		}
+		fmt.Fprintf(&b, "Lamplight is set up with study at %s\n", styleAccent.Render(printable(r.Study)))
 	}
-	if r.Skill.Dir != "" {
+	if r.StudyNote != "" {
+		fmt.Fprintf(&b, "%s\n", styleWarn.Render(printable(r.StudyNote)))
+	}
+	if r.Skill.Dir != "" && r.Skill.Status != "" {
 		in := "in"
-		if r.Remove {
+		if r.Skill.Status == statusRemoved {
 			in = "from"
 		}
-		fmt.Fprintf(&b, "  %s%s %s %s", styleLabel.Render(pad("skill", 8)), r.Skill.Status, in, printable(r.Skill.Dir))
-		if n := len(r.Skill.Written); n > 0 && !r.Remove {
-			fmt.Fprintf(&b, " (%d %s %s)", n, plural(n, "file", "files"), would("written", "to write"))
+		fmt.Fprintf(&b, "  %s%s %s %s", styleLabel.Render(pad("skill", 8)), statusText(r.Skill.Status, r.DryRun), in, printable(r.Skill.Dir))
+		if n := len(r.Skill.Written); n > 0 {
+			fmt.Fprintf(&b, " (%d %s %s)", n, plural(n, "file", "files"), would(r.DryRun, "written", "to write"))
 		}
 		if n := len(r.Skill.Removed); n > 0 {
-			fmt.Fprintf(&b, " (%d %s %s)", n, plural(n, "file", "files"), would("removed", "to remove"))
+			fmt.Fprintf(&b, " (%d %s %s)", n, plural(n, "file", "files"), would(r.DryRun, "removed", "to remove"))
 		}
 		b.WriteString("\n")
+		if r.Skill.Note != "" {
+			fmt.Fprintf(&b, "  %s%s\n", pad("", 8), styleDim.Render(printable(r.Skill.Note)))
+		}
 		for _, k := range r.Skill.Kept {
-			fmt.Fprintf(&b, "  %s%s\n", pad("", 8), styleDim.Render("kept "+printable(k)+": changed since study setup wrote it"))
+			fmt.Fprintf(&b, "  %s%s\n", pad("", 8), styleDim.Render("kept "+printable(k)+": changed, or moved behind a symlink, since study setup wrote it"))
 		}
 	}
 	for _, g := range r.Agents {
-		fmt.Fprintf(&b, "  %s%s", styleLabel.Render(pad(g.Agent, 8)), g.Status)
+		fmt.Fprintf(&b, "  %s%s", styleLabel.Render(pad(g.Agent, 8)), statusText(g.Status, r.DryRun))
 		if g.Link != "" && g.LinkStatus != "" {
-			fmt.Fprintf(&b, "; skill link %s %s", printable(g.Link), g.LinkStatus)
+			fmt.Fprintf(&b, "; %s", linkText(g.LinkStatus, printable(g.Link), r.DryRun, r.Remove))
 		}
 		b.WriteString("\n")
 		if g.Note != "" {
@@ -1344,6 +1288,60 @@ func writeSetupResult(w io.Writer, r setupResult) error {
 	}
 	if r.Note != "" && !nothing {
 		fmt.Fprintf(&b, "%s\n", printable(r.Note))
+	}
+	_, err := io.WriteString(w, b.String())
+	return err
+}
+
+// linkText says what happened to Claude Code's link to the skill.
+func linkText(status, link string, dryRun, remove bool) string {
+	switch status {
+	case statusLinked:
+		return would(dryRun, "linked ", "would link ") + link
+	case statusRemoved:
+		return would(dryRun, "removed ", "would remove ") + link
+	case statusCurrent:
+		return link + " leads to the skill"
+	case statusAlreadyGone:
+		return link + " was already gone"
+	case statusFailed:
+		return would(!remove, "could not remove ", "could not link ") + link
+	case statusSkipped:
+		return "did not link " + link
+	}
+	return statusText(status, dryRun) + " " + link
+}
+
+func would(dryRun bool, done, planned string) string {
+	if dryRun {
+		return planned
+	}
+	return done
+}
+
+// writeSetupCheck renders study setup --check for people.
+func writeSetupCheck(w io.Writer, r setupCheckResult) error {
+	var b strings.Builder
+	names := make([]string, len(r.Findings))
+	for i, f := range r.Findings {
+		names[i] = f.Name
+	}
+	width := widest(names) + 2
+	for _, f := range r.Findings {
+		mark := styleOK.Render("✓")
+		if f.Status != core.FindingOK {
+			mark = styleWarn.Render("!")
+		}
+		fmt.Fprintf(&b, "%s %s%s\n", mark, styleLabel.Render(pad(f.Name, width)), printable(f.Message))
+		if f.Fix != "" {
+			fmt.Fprintf(&b, "  %s%s %s\n", strings.Repeat(" ", width), styleDim.Render("fix:"), f.Fix)
+		}
+	}
+	b.WriteString("\n")
+	if r.UpToDate {
+		b.WriteString(styleOK.Render("study setup is up to date.") + "\n")
+	} else {
+		b.WriteString(styleWarn.Render("study setup has something to do: see the fixes above.") + "\n")
 	}
 	_, err := io.WriteString(w, b.String())
 	return err

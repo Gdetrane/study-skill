@@ -1,5 +1,5 @@
 Lamplight is set up with study at $HOME/bin/study
   skill   installed in $HOME/.agents/skills/lamplight (8 files written)
-  claude  registered; skill link $HOME/.claude/skills/lamplight linked
+  claude  registered; linked $HOME/.claude/skills/lamplight
   codex   registered
 Start a new conversation in your agent to use Lamplight.

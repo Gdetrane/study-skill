@@ -135,7 +135,7 @@ func (a *app) rootCommand() *cobra.Command {
 				return a.fail(err)
 			}
 			a.logs.logger.Debug("serving MCP over stdio", "version", version(), "study_home", c.Home())
-			a.refreshSkill()
+			a.refreshSkill(cmd.Context())
 			return mcpserver.Serve(cmd.Context(), c, version(), a.stdin, a.stdout, a.logs.logger)
 		},
 	}
