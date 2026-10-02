@@ -349,3 +349,13 @@ func TestCheckpointCommand(t *testing.T) {
 		golden(t, tc.golden+".json", r.stdout)
 	}
 }
+
+func TestTopicUpdateOutputErrorsAreReported(t *testing.T) {
+	home := withTopic(t)
+	var stderr bytes.Buffer
+	code := cli.Run(context.Background(), []string{"topic", "update", "linear-algebra", "--goal", "Pass the exam"},
+		strings.NewReader(""), failingWriter{}, &stderr, options(home, home))
+	if code == cli.ExitOK {
+		t.Error("study topic update exited 0 although writing its output failed")
+	}
+}

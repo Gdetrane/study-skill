@@ -69,20 +69,22 @@ func writeFlagDismissal(w io.Writer, d core.FlagDismissal) error {
 }
 
 func writeTopicUpdate(w io.Writer, u core.TopicUpdate, dryRun bool) error {
+	var b strings.Builder
 	t := u.Topic
 	switch {
 	case !u.Changed:
-		fmt.Fprintf(w, "Topic %s already has that title and goal: nothing changed\n", t.ID)
+		fmt.Fprintf(&b, "Topic %s already has that title and goal: nothing changed\n", t.ID)
 	case dryRun:
-		fmt.Fprintf(w, "Would update Topic %s (%s)\n", t.ID, t.Title)
+		fmt.Fprintf(&b, "Would update Topic %s (%s)\n", t.ID, t.Title)
 	default:
-		fmt.Fprintf(w, "Updated Topic %s (%s)\n", t.ID, t.Title)
+		fmt.Fprintf(&b, "Updated Topic %s (%s)\n", t.ID, t.Title)
 	}
 	if t.Goal != "" {
-		fmt.Fprintf(w, "  Goal: %s\n", t.Goal)
+		fmt.Fprintf(&b, "  Goal: %s\n", t.Goal)
 	}
-	writeFlags(w, []core.Topic{t})
-	return nil
+	writeFlags(&b, []core.Topic{t})
+	_, err := io.WriteString(w, b.String())
+	return err
 }
 
 func writeProblems(w io.Writer, problems []core.TopicProblem) error {

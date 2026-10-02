@@ -113,19 +113,33 @@ var errNewerEvent = errors.New("written by a newer version of study")
 
 // parseEvent reads one line of the History.
 func parseEvent(line []byte) (event, error) {
-	var head struct {
-		Format int       `json:"format"`
-		ID     string    `json:"id"`
-		Time   time.Time `json:"time"`
-	}
 	if !json.Valid(line) {
 		return event{}, errors.New("it is not valid JSON")
+	}
+	// The format number is read on its own first: a newer format may change
+	// the type of any other field, and its Events must still be recognised
+	// as newer, never as damaged lines this binary could write past.
+	var head struct {
+		Format int `json:"format"`
 	}
 	if err := json.Unmarshal(line, &head); err != nil {
 		return event{}, fmt.Errorf("it is not an Event: %v", err)
 	}
 	if head.Format > FormatVersion {
-		return event{Format: head.Format, ID: head.ID, Time: head.Time, raw: line}, errNewerEvent
+		ev := event{Format: head.Format, raw: line}
+		var id struct {
+			ID string `json:"id"`
+		}
+		if json.Unmarshal(line, &id) == nil {
+			ev.ID = id.ID
+		}
+		var at struct {
+			Time time.Time `json:"time"`
+		}
+		if json.Unmarshal(line, &at) == nil {
+			ev.Time = at.Time
+		}
+		return ev, errNewerEvent
 	}
 	var ev event
 	if err := json.Unmarshal(line, &ev); err != nil {

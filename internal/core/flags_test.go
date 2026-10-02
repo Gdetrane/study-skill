@@ -128,6 +128,46 @@ func TestANewerEventIsHeldAndBlocksWrites(t *testing.T) {
 	}
 }
 
+// TestANewerEventWithChangedFieldTypesIsStillNewer: a newer format may change
+// the type of any field but format, and such a line must still block writes
+// and never be treated (or truncated) as a damaged line.
+func TestANewerEventWithChangedFieldTypesIsStillNewer(t *testing.T) {
+	for name, line := range map[string]string{
+		"time as a number": `{"format":2,"id":"zz","time":1790000000,"type":"x"}`,
+		"id as an object":  `{"format":2,"id":{"machine":"a","n":1},"time":"2026-10-01T10:00:00Z"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			m := newTopic(t)
+			dir := filepath.Join(m.home, "c")
+			appendToHistory(t, dir, line+"\n")
+			topic, err := m.readTopic("c")
+			if err != nil {
+				t.Fatalf("reading: %v", err)
+			}
+			if len(topic.Flags) != 1 || topic.Flags[0].Kind != FlagHeldEvent {
+				t.Errorf("flags = %+v, want one held Event", topic.Flags)
+			}
+			if _, err := m.UpdateTopic(context.Background(), "c", TopicChanges{Title: ptr("X")}); CodeOf(err) != CodeNewerFormat {
+				t.Errorf("writing: err = %v, want newer_format", err)
+			}
+		})
+	}
+	// Without its final newline, the same line is a complete newer Event,
+	// never an interrupted append to truncate.
+	m := newTopic(t)
+	dir := filepath.Join(m.home, "c")
+	line := `{"format":2,"id":"zz","time":1790000000,"type":"x"}`
+	appendToHistory(t, dir, line)
+	_, _ = m.UpdateTopic(context.Background(), "c", TopicChanges{Title: ptr("X")})
+	data, err := os.ReadFile(filepath.Join(dir, "history.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), line) {
+		t.Errorf("the newer Event was truncated from the History:\n%s", data)
+	}
+}
+
 // TestLinesThatAreNotEventsAreFlagged covers the format rules: every Event
 // has a format, an id, a type, a time and a wall time.
 func TestLinesThatAreNotEventsAreFlagged(t *testing.T) {
