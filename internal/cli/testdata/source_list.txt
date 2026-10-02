@@ -1,0 +1,13 @@
+Knowledge base: notebooklm (notebook nb-42)
+
+Sources:
+strang-linear-algebra.<id>  Strang Linear Algebra
+  strang_linear_algebra.pdf
+  ! not found on this computer: say where it is with study source update --path,
+    or add its folder to the Library with study library build
+  NotebookLM: nlm-7
+strang-s-course-page.<id>  Strang's course page
+  https://math.mit.edu/~gs/linearalgebra/
+by-hand.abc123  By hand
+  https://example.com/hand
+  ! added to sources.jsonl by hand, so not a Source yet: add it with study source add

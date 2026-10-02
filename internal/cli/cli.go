@@ -190,11 +190,13 @@ func (a *app) rootCommand() *cobra.Command {
 	create.Flags().BoolVar(&spec.DryRun, "dry-run", false, "show what would be created without writing anything")
 	var changes core.TopicChanges
 	var newTitle, newGoal string
+	var kb core.KnowledgeBase
 	update := &cobra.Command{
 		Use:   "update <topic>",
-		Short: "Change a Topic's title or goal",
+		Short: "Change a Topic's title, goal or Knowledge base",
 		Example: `  study topic update linear-algebra --goal "Pass the June exam"
-  study topic update c --title "Systems programming in C" --dry-run`,
+  study topic update c --title "Systems programming in C" --dry-run
+  study topic update c --knowledge-base notebooklm --notebook 4f2a9c1e`,
 		Args: exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if cmd.Flags().Changed("title") {
@@ -202,6 +204,9 @@ func (a *app) rootCommand() *cobra.Command {
 			}
 			if cmd.Flags().Changed("goal") {
 				changes.Goal = &newGoal
+			}
+			if cmd.Flags().Changed("knowledge-base") || cmd.Flags().Changed("notebook") {
+				changes.KnowledgeBase = &kb
 			}
 			c, err := core.Open(a.opts)
 			if err != nil {
@@ -219,6 +224,10 @@ func (a *app) rootCommand() *cobra.Command {
 	}
 	update.Flags().StringVar(&newTitle, "title", "", "the new title")
 	update.Flags().StringVar(&newGoal, "goal", "", "the new goal; an empty goal removes it")
+	update.Flags().StringVar(&kb.Kind, "knowledge-base", "", "where the Topic's Sources are searched: notebooklm or none")
+	update.Flags().StringVar(&kb.Notebook, "notebook", "", "the NotebookLM notebook's id, with --knowledge-base notebooklm")
+	_ = update.RegisterFlagCompletionFunc("knowledge-base", cobra.FixedCompletions(
+		[]string{core.KnowledgeBaseNotebookLM, core.KnowledgeBaseNone}, cobra.ShellCompDirectiveNoFileComp))
 	update.Flags().BoolVar(&changes.DryRun, "dry-run", false, "show the result without writing anything")
 	var dismissDryRun bool
 	dismiss := &cobra.Command{
@@ -256,6 +265,7 @@ func (a *app) rootCommand() *cobra.Command {
 	}
 
 	root.AddCommand(status, topic, a.checkpointCommand(), a.checkCommand(), a.libraryCommand(), doctor, serve)
+	root.AddCommand(a.sourceCommand(), a.evidenceCommand())
 	a.completionCommands(root)
 	return root
 }

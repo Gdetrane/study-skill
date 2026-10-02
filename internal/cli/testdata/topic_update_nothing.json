@@ -2,6 +2,6 @@
   "ok": false,
   "error": {
     "code": "invalid_argument",
-    "message": "nothing to change: give a new title or goal"
+    "message": "nothing to change: give a new title, goal or Knowledge base"
   }
 }

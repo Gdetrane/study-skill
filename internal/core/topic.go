@@ -44,12 +44,19 @@ type Topic struct {
 	Goal    string    `json:"goal,omitempty"`
 	Path    string    `json:"path"`
 	Created time.Time `json:"created"`
+	// KnowledgeBase is where the Topic's Sources are searched for Evidence;
+	// absent until one is chosen.
+	KnowledgeBase *KnowledgeBase `json:"knowledge_base,omitempty"`
 	// Flags are what replaying the History found that needs the learner's
 	// attention.
 	Flags []Flag `json:"flags,omitempty"`
 	// Resume is where the learner stopped, once the Topic has a Syllabus
 	// or a Session: show its Next step first.
 	Resume *ResumePoint `json:"resume,omitempty"`
+	// LessonsWithoutEvidence are the Lessons started or done that cite no
+	// Evidence, once the Topic has Sources or a NotebookLM Knowledge base.
+	// They are marked, never blocked.
+	LessonsWithoutEvidence []string `json:"lessons_without_evidence,omitempty"`
 }
 
 // TopicSpec describes a Topic to create.
@@ -71,6 +78,8 @@ type TopicChanges struct {
 	Title *string
 	// Goal replaces the goal; an empty goal removes it.
 	Goal *string
+	// KnowledgeBase chooses the Topic's Knowledge base.
+	KnowledgeBase *KnowledgeBase
 	// DryRun validates the request and returns the Topic as it would be,
 	// without writing anything.
 	DryRun bool
@@ -216,8 +225,13 @@ func (c *Core) initTopic(ctx context.Context, home *os.Root, dir string, topic T
 	return gitInit(ctx, filepath.Join(c.home, dir))
 }
 
-// UpdateTopic changes a Topic's title or goal. Asking for the values it
-// already has changes nothing and records no Event.
+// UpdateTopic changes a Topic's title, goal or Knowledge base. Asking for
+// the values it already has changes nothing and records no Event.
+//
+// The Knowledge base is recorded by its own Event type, so changing it with
+// the title or goal records two Events. Everything is validated first, so
+// the second write can only fail for reasons such as a full disk; the error
+// then says the first change was recorded.
 func (c *Core) UpdateTopic(ctx context.Context, id string, changes TopicChanges) (TopicUpdate, error) {
 	var want topicUpdatedData
 	if changes.Title != nil {
@@ -237,51 +251,90 @@ func (c *Core) UpdateTopic(ctx context.Context, id string, changes TopicChanges)
 		}
 		want.Goal = &goal
 	}
-	if want.Title == nil && want.Goal == nil {
-		return TopicUpdate{}, invalidf("nothing to change: give a new title or goal")
+	var kb *KnowledgeBase
+	if changes.KnowledgeBase != nil {
+		checked, err := checkKnowledgeBase(*changes.KnowledgeBase)
+		if err != nil {
+			return TopicUpdate{}, err
+		}
+		kb = &checked
 	}
+	settingsChange := want.Title != nil || want.Goal != nil
+	if !settingsChange && kb == nil {
+		return TopicUpdate{}, invalidf("nothing to change: give a new title, goal or Knowledge base")
+	}
+	changed := false
 	// The settings as the write finds them: after recovery, in a dry run too.
 	var current topicSettings
-	ev, err := c.writeTopic(ctx, id, func(_ *replayed, view *topicView) (*change, error) {
-		data, exists, err := view.read(topicFile)
+	// applied is what the first Event changed, for an error after it.
+	var applied topicUpdatedData
+	if settingsChange {
+		ev, err := c.writeTopic(ctx, id, func(_ *replayed, view *topicView) (*change, error) {
+			data, exists, err := view.read(topicFile)
+			if err != nil {
+				return nil, err
+			}
+			if !exists {
+				return nil, corruptf("%s of %s is missing", topicFile, id)
+			}
+			if current, err = parseTopicSettings(data, filepath.Join(id, topicFile)); err != nil {
+				return nil, err
+			}
+			var diff topicUpdatedData
+			if want.Title != nil && *want.Title != current.Title {
+				diff.Title = want.Title
+			}
+			if want.Goal != nil && *want.Goal != current.Goal {
+				diff.Goal = want.Goal
+			}
+			if diff.Title == nil && diff.Goal == nil {
+				return nil, nil
+			}
+			applied = diff
+			return &change{Type: eventTopicUpdated, Data: diff, Items: []string{topicFile}}, nil
+		}, changes.DryRun)
 		if err != nil {
-			return nil, err
+			return TopicUpdate{}, err
 		}
-		if !exists {
-			return nil, corruptf("%s of %s is missing", topicFile, id)
+		changed = ev != nil
+	}
+	if kb != nil {
+		ev, err := c.writeTopic(ctx, id, planKnowledgeBase(id, *kb), changes.DryRun)
+		if err != nil {
+			if changed {
+				what := "title and goal of " + id + " were"
+				switch {
+				case applied.Goal == nil:
+					what = "title of " + id + " was"
+				case applied.Title == nil:
+					what = "goal of " + id + " was"
+				}
+				return TopicUpdate{}, &Error{Code: CodeOf(err), Err: err, Message: fmt.Sprintf(
+					"the %s changed, but not its Knowledge base: %v", what, err)}
+			}
+			return TopicUpdate{}, err
 		}
-		if current, err = parseTopicSettings(data, filepath.Join(id, topicFile)); err != nil {
-			return nil, err
-		}
-		var diff topicUpdatedData
-		if want.Title != nil && *want.Title != current.Title {
-			diff.Title = want.Title
-		}
-		if want.Goal != nil && *want.Goal != current.Goal {
-			diff.Goal = want.Goal
-		}
-		if diff.Title == nil && diff.Goal == nil {
-			return nil, nil
-		}
-		return &change{Type: eventTopicUpdated, Data: diff, Items: []string{topicFile}}, nil
-	}, changes.DryRun)
-	if err != nil {
-		return TopicUpdate{}, err
+		changed = changed || ev != nil
 	}
 	topic, err := c.readTopic(id)
 	if err != nil {
 		return TopicUpdate{}, err
 	}
 	if changes.DryRun {
-		topic.Title, topic.Goal = current.Title, current.Goal
+		if settingsChange {
+			topic.Title, topic.Goal = current.Title, current.Goal
+		}
 		if want.Title != nil {
 			topic.Title = *want.Title
 		}
 		if want.Goal != nil {
 			topic.Goal = *want.Goal
 		}
+		if kb != nil {
+			topic.KnowledgeBase = kb
+		}
 	}
-	return TopicUpdate{Topic: topic, Changed: ev != nil}, nil
+	return TopicUpdate{Topic: topic, Changed: changed}, nil
 }
 
 func applyTopicCreated(ev event, item string, _ []byte, _ bool) ([]byte, bool, error) {
@@ -294,9 +347,9 @@ func applyTopicCreated(ev event, item string, _ []byte, _ bool) ([]byte, bool, e
 		data, err := encodeTopicSettings(topicSettings{Title: d.Title, Goal: d.Goal})
 		return data, err == nil, err
 	case gitattributes:
-		// Both files hold one record per line, so a union merge keeps both
+		// These files hold one record per line, so a union merge keeps both
 		// machines' lines; replay and status flag what conflicts.
-		return []byte(historyFile + " merge=union\n" + cardsFile + " merge=union\n"), true, nil
+		return []byte(historyFile + " merge=union\n" + cardsFile + " merge=union\n" + sourcesFile + " merge=union\n"), true, nil
 	}
 	return nil, false, corruptf("Event %s (%s) cannot edit %s", ev.ID, ev.Type, item)
 }
@@ -431,7 +484,8 @@ func (c *Core) loadTopic(home *os.Root, id string) (Topic, error) {
 	if err != nil {
 		return Topic{}, err
 	}
-	topic := Topic{ID: id, Title: settings.Title, Goal: settings.Goal, Path: filepath.Join(c.home, id)}
+	topic := Topic{ID: id, Title: settings.Title, Goal: settings.Goal, Path: filepath.Join(c.home, id),
+		KnowledgeBase: knowledgeBaseOf(settings)}
 	h, err := readHistory(root, id)
 	if err != nil {
 		return Topic{}, err
@@ -442,6 +496,7 @@ func (c *Core) loadTopic(home *os.Root, id string) (Topic, error) {
 	if r := s.study.resume(); !r.empty() {
 		topic.Resume = &r
 	}
+	topic.LessonsWithoutEvidence = s.lessonsWithoutEvidence(s.citingLessons(topic.KnowledgeBase))
 	// A marker while the lock is held is a write in progress, not an
 	// interrupted one.
 	if hasIntent(home, id) && !lockHeld(home, id) {
@@ -458,9 +513,12 @@ func validateTopicID(id string) error {
 	return nil
 }
 
-// cleanText trims s and rejects control characters, which an agent could use
-// to inject terminal escape sequences into human output.
+// cleanText trims s and rejects invalid UTF-8 and control characters, which
+// an agent could use to inject terminal escape sequences into human output.
 func cleanText(field, s string, maxRunes int) (string, error) {
+	if !utf8.ValidString(s) {
+		return "", invalidf("the %s is not valid UTF-8 text", field)
+	}
 	s = strings.TrimSpace(s)
 	for _, r := range s {
 		if unicode.IsControl(r) {

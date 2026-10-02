@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"slices"
 
 	"github.com/BurntSushi/toml"
 )
@@ -26,7 +27,7 @@ var (
 func extras(m map[string]any, known []string) map[string]any {
 	out := map[string]any{}
 	for k, v := range m {
-		if indexOf(known, k) < 0 {
+		if !slices.Contains(known, k) {
 			out[k] = v
 		}
 	}

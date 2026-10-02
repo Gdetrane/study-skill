@@ -9,6 +9,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -113,7 +114,11 @@ func readItem(topic *os.Root, item string) ([]byte, bool, error) {
 		return data, exists, err
 	}
 	codec, _ := codecFor(file)
-	return codec.get(data, key)
+	content, exists, err := codec.get(data, key)
+	if err != nil {
+		return nil, false, corruptf("%s is damaged: %v", file, err)
+	}
+	return content, exists, nil
 }
 
 // writeItem replaces an item atomically, or removes it. An entity is written
@@ -135,6 +140,9 @@ func writeItem(topic *os.Root, item string, content itemContent) error {
 		codec, _ := codecFor(file)
 		next, err := codec.put(current, key, content.data, content.exists)
 		if err != nil {
+			if CodeOf(err) == CodeCorrupt {
+				return corruptf("%s is damaged: %v", file, err)
+			}
 			return err
 		}
 		content = itemContent{data: next, exists: true}
@@ -173,11 +181,17 @@ func validateItem(item string, data []byte) error {
 // string "id" that is its key. An entity's canonical form is its compact
 // JSON, so reformatting a line changes nothing. Lines Lamplight does not
 // touch are kept byte for byte, and new entities are appended.
+//
+// A file that merges by union can end up with two lines for one id, when
+// the entity was edited on two machines. Such a file stays usable: the line
+// with the smallest canonical form is read, so every machine reads the same
+// entity whatever order the merge left the lines in, and the next write of
+// the entity leaves a single line. Status flags the repeat.
 var jsonlCodec = fileCodec{get: jsonlGet, put: jsonlPut}
 
 // jsonlEntries splits a JSONL file into lines and their ids. An id can
 // repeat: a union merge of two machines' edits of one entry keeps both
-// lines. The first counts; status flags the repeat (see jsonlRepeats).
+// lines. Status flags the repeat (see jsonlRepeats).
 func jsonlEntries(file []byte) (lines [][]byte, ids []string, err error) {
 	for n, line := range bytes.Split(file, []byte{'\n'}) {
 		if len(bytes.TrimSpace(line)) == 0 {
@@ -212,20 +226,11 @@ func jsonlRepeats(file []byte) []string {
 		switch {
 		case !ok:
 			first[id] = canonical.String()
-		case seen != canonical.String() && indexOf(repeats, id) < 0:
+		case seen != canonical.String() && !slices.Contains(repeats, id):
 			repeats = append(repeats, id)
 		}
 	}
 	return repeats
-}
-
-func indexOf(ids []string, id string) int {
-	for i, s := range ids {
-		if s == id {
-			return i
-		}
-	}
-	return -1
 }
 
 func jsonlGet(file []byte, key string) ([]byte, bool, error) {
@@ -233,15 +238,21 @@ func jsonlGet(file []byte, key string) ([]byte, bool, error) {
 	if err != nil {
 		return nil, false, err
 	}
-	i := indexOf(ids, key)
-	if i < 0 {
-		return nil, false, nil
+	var entry []byte
+	found := false
+	for i, id := range ids {
+		if id != key {
+			continue
+		}
+		var canonical bytes.Buffer
+		if err := json.Compact(&canonical, lines[i]); err != nil {
+			return nil, false, corruptf("the entry %s is not valid JSON: %v", key, err)
+		}
+		if !found || bytes.Compare(canonical.Bytes(), entry) < 0 {
+			entry, found = canonical.Bytes(), true
+		}
 	}
-	var canonical bytes.Buffer
-	if err := json.Compact(&canonical, lines[i]); err != nil {
-		return nil, false, corruptf("the entry %s is not valid JSON: %v", key, err)
-	}
-	return canonical.Bytes(), true, nil
+	return entry, found, nil
 }
 
 func jsonlPut(file []byte, key string, content []byte, exists bool) ([]byte, error) {
@@ -269,6 +280,7 @@ func jsonlPut(file []byte, key string, content []byte, exists bool) ([]byte, err
 	for i, line := range lines {
 		if ids[i] == key {
 			if found || !exists {
+				// Later copies of the entity go: one line remains.
 				found = true
 				continue
 			}

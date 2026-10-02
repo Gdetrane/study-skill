@@ -1,0 +1,10 @@
+<id>  Lesson elimination, Source strang-linear-algebra.<id>
+  > Elimination produces an upper triangular system.
+  p. 46 (location from source)
+
+<id>  Lesson pivots, Source strang-linear-algebra.<id>
+  > The pivots are on the diagonal.
+  > They must not be zero.
+
+<id>  Lesson pivots, Source strang-linear-algebra.<id> (retracted)
+  > A misquote.

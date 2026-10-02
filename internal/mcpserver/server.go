@@ -22,7 +22,7 @@ import (
 const Instructions = `Lamplight keeps the learner's study state. Follow these rules:
 1. Call the status tool at the start of every session, and tell the learner which Topic is active and why.
 2. Every tool that writes names its Topic explicitly. The Active topic is only a default for reading.
-3. Never edit Lamplight's state files yourself (topic.toml, syllabus.toml, history.jsonl, cards.jsonl). Write lesson text, notes and exercise files directly.
+3. Never edit Lamplight's state files yourself (topic.toml, syllabus.toml, history.jsonl, cards.jsonl, sources.jsonl). Write lesson text, notes and exercise files directly.
 4. Never show counts of overdue or late work. Show where the learner is and one next action.
 5. Every turn switch gets a Checkpoint: role "learner" when the learner hands their work to you, "agent" when you hand the turn back. phase_set and lesson_complete take these Checkpoints for you; outside them, call checkpoint. When a result has checkpoint_error, tell the learner, and once the problem is fixed call checkpoint with its checkpoint_role. Never run git commit yourself.
 6. Whenever a Session stops, at a Break point or when the learner leaves, record a Next step that starts with a verb with session_close. When a Session opens with an unclosed one, ask the learner for the missing note.
@@ -86,11 +86,16 @@ func New(c *core.Core, version string, logger *slog.Logger) *mcp.Server {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:  "topic_update",
 		Title: "Change a Topic",
-		Description: "Change a Topic's title or goal. Fields left out stay as they are; an empty goal removes it. " +
-			"Asking for the values the Topic already has changes nothing.",
+		Description: "Change a Topic's title, goal or Knowledge base. Fields left out stay as they are; an empty goal " +
+			"removes it. The Knowledge base is kind notebooklm, with the notebook's id, or none; choose it with the " +
+			"learner when creating the Topic. Asking for the values the Topic already has changes nothing.",
 		Annotations: &mcp.ToolAnnotations{DestructiveHint: &notDestructive, IdempotentHint: true, OpenWorldHint: &closedWorld},
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in topicUpdateInput) (*mcp.CallToolResult, core.TopicUpdate, error) {
-		updated, err := c.UpdateTopic(ctx, in.Topic, core.TopicChanges{Title: in.Title, Goal: in.Goal})
+		changes := core.TopicChanges{Title: in.Title, Goal: in.Goal}
+		if in.KnowledgeBase != nil {
+			changes.KnowledgeBase = &core.KnowledgeBase{Kind: in.KnowledgeBase.Kind, Notebook: in.KnowledgeBase.Notebook}
+		}
+		updated, err := c.UpdateTopic(ctx, in.Topic, changes)
 		if err != nil {
 			return nil, core.TopicUpdate{}, toolError(err)
 		}
@@ -128,6 +133,7 @@ func New(c *core.Core, version string, logger *slog.Logger) *mcp.Server {
 		return nil, librarySearchOutput{Results: results}, nil
 	})
 
+	addKnowledgeTools(server, c)
 	return server
 }
 
@@ -203,6 +209,8 @@ type topicUpdateInput struct {
 	Topic string  `json:"topic" jsonschema:"the id of the Topic to change"`
 	Title *string `json:"title,omitempty" jsonschema:"the new title"`
 	Goal  *string `json:"goal,omitempty" jsonschema:"the new goal; an empty string removes it"`
+	// KnowledgeBase chooses where the Topic's Sources are searched.
+	KnowledgeBase *knowledgeBaseInput `json:"knowledge_base,omitempty" jsonschema:"the Knowledge base: kind notebooklm with the notebook's id, or none"`
 }
 
 type topicCreateInput struct {

@@ -9,12 +9,18 @@ that scripts and agents can rely on. Terms follow [CONTEXT.md](../CONTEXT.md).
 | Command | What it does |
 |---|---|
 | `study` | Same as `study status`. |
-| `study status` | Shows the Study home, the Active topic and why it was chosen, every Topic, and any Topic that could not be read (`problems`). A broken Topic never stops the others from being listed. |
+| `study status` | Shows the Study home, the Active topic and why it was chosen, every Topic, and any Topic that could not be read (`problems`). A broken Topic never stops the others from being listed. Each Topic can carry `flags`, its Resume point (`resume`) and `lessons_without_evidence`: Lessons started or done that cite no Evidence yet, once the Topic has Sources or a NotebookLM Knowledge base (a reminder, never a block). |
 | `study topic create --title T [--id ID] [--goal G] [--dry-run]` | Creates a Topic folder with its settings, History and git repository. `--dry-run` validates and shows the result without writing. |
-| `study topic update <topic> [--title T] [--goal G] [--dry-run]` | Changes a Topic's title or goal; flags left out stay as they are, and `--goal ""` removes the goal. Settings in `topic.toml` that this version does not know are kept. The result is `{"topic": ..., "changed": bool}`: asking for the values the Topic already has changes nothing and records nothing. |
+| `study topic update <topic> [--title T] [--goal G] [--knowledge-base K [--notebook ID]] [--dry-run]` | Changes a Topic's title, goal or Knowledge base (`notebooklm` with the notebook's id, or `none`; see [Sources and Evidence](#sources-and-evidence)); flags left out stay as they are, and `--goal ""` removes the goal. Settings in `topic.toml` that this version does not know are kept. The result is `{"topic": ..., "changed": bool}`: asking for the values the Topic already has changes nothing and records nothing. |
 | `study topic dismiss-flag <topic> <flag-id> [--dry-run]` | Dismisses one of the Topic's flags, by the id `status` shows, once the learner has looked at it. It records the decision in the History and never changes content. The result is `{"topic": ..., "flag": {...}, "changed": bool}`; dismissing a flag twice changes nothing. Only `held_event`, `conflict`, `damaged_line` and `clock_ahead` flags can be dismissed (see below). |
 | `study library build <folder>` | Indexes the books in a folder (relative to where you run it) and replaces the Library index in the Study home. |
 | `study library search <query> [--limit N]` | Ranks the books in the Library against the query. `--limit` defaults to 10 and is capped at 100; no matches is a success with an empty list. |
+| `study source add <topic> (--file PATH \| --url URL) [--title T] [--notebooklm-id ID] [--dry-run]` | Adds a file or a web page as a Source of the Topic. A file is hashed, never parsed. Adding a file or URL the Topic already has is `already_exists`, naming the Source. |
+| `study source update <topic> <source> [--title T] [--path P] [--notebooklm-id ID] [--dry-run]` | Changes a Source's title or NotebookLM id (`""` removes it), which the History records, or says where its file is on this computer (`--path`, remembered locally only); the file at `--path` must hold the same content. |
+| `study source list <topic>` | Lists the Topic's Knowledge base and Sources, and finds each file on this computer. |
+| `study evidence record <topic> --lesson L --source S --quote Q [--location LOC --location-from F] [--dry-run]` | Records an exact quote from a Source that a Lesson cites. `--quote -` reads the quote from stdin. Recording the same Evidence twice changes nothing. |
+| `study evidence retract <topic> <evidence> [--dry-run]` | Takes back Evidence recorded by mistake. The retraction is recorded, never deleted; retracting twice changes nothing. |
+| `study evidence list <topic> [--lesson L] [--all]` | Lists the Evidence recorded in the Topic, or only what one Lesson cites. Retracted Evidence is listed only with `--all`. |
 | `study checkpoint --topic ID --role agent\|learner [-m MESSAGE] [--dry-run]` | Saves the Topic's work as a git commit at a turn switch. Skips when nothing changed, refuses during a merge or rebase, and lists large files it saved. Never runs programs named in the Topic's git configuration. It waits for a write in progress and finishes an interrupted one first; `--dry-run` refuses (`failed_precondition`) while one is pending. |
 | `study check <lesson> [--topic ID] [--timeout D]` | Runs a Lesson's Check on the current work and records the Attempt (see "Checks" below). Without `--topic`, it uses the Topic whose folder it runs in. |
 | `study doctor` | Diagnoses the setup and says how to fix what it finds. It works even when nothing else does. Exits 1 when a Finding failed. |
@@ -193,6 +199,75 @@ write interrupted by a crash is finished by the next write or Checkpoint. A dry 
 what the real run would do after finishing such a write, and writes nothing. Lock and
 intent-marker files live in the Study home's `.lamplight/` folder, are local to the
 machine, and are never synced.
+
+## Sources and Evidence
+
+The Knowledge seam ([ADR-0007](adr/0007-knowledge-bases-return-evidence.md)) records where
+a Topic's material comes from. `study` never parses a document and never calls a knowledge
+service: the agent searches the Knowledge base itself, such as a NotebookLM notebook through
+the NotebookLM MCP server, or reads the Sources when there is none, and records the quotes
+it relied on.
+
+- **Knowledge base**: `notebooklm`, with the notebook's id, or `none`; `--notebook` alone
+  means `notebooklm`. It is stored in the `[knowledge_base]` table of `topic.toml`, whose
+  other keys stay while the kind stays, and shown on the Topic in `status`. A Topic without
+  one behaves as `none`.
+- **Sources**: the History records which Sources exist and what they are;
+  `sources.jsonl` is the readable copy Lamplight writes, one line per Source. Edit Sources
+  with `study source`, not by hand: a line added by hand is listed as `untracked` and is not
+  a Source until `study source add` records it. A Source's id is a slug of its title plus a
+  random suffix, such as `strang-linear-algebra.k3f9a2`. Each line holds only what is the
+  same on every computer:
+
+  ```json
+  {"id":"strang-linear-algebra.k3f9a2","kind":"file","title":"Linear Algebra","file_name":"strang.pdf",
+   "hash":"sha256:…","size_bytes":15,"notebooklm_id":"7b1e","notebooklm_notebook":"nb-42"}
+  {"id":"notes-paper.p2x7q1","kind":"file","title":"Paper","topic_path":"notes/paper.pdf","hash":"sha256:…","size_bytes":9}
+  {"id":"go-dev-blog-context.m4k8s3","kind":"url","title":"Go Concurrency Patterns: Context","url":"https://go.dev/blog/context"}
+  ```
+
+  A file inside the Topic is kept by its `topic_path`, so every clone has it; a file
+  outside, by its original `file_name`, `hash` and `size_bytes`. A `notebooklm_id` belongs to
+  the `notebooklm_notebook` it was recorded for; after the Topic moves to another notebook,
+  `source list` marks it `notebooklm_stale`. URLs are normalised: the scheme and host are
+  lowercased, a default port is dropped, an international host stays readable (Unicode,
+  NFC), and addresses with a user name or password are refused.
+- **Where files are** differs from one computer to the next, so it is local state, never
+  synced: `.lamplight/sources/<topic>.json` in the Study home.
+
+  ```json
+  {"format": 1, "files": {"strang-linear-algebra.k3f9a2": {"path": "/home/ada/Books/strang.pdf",
+   "size_bytes": 15, "mtime": "2026-10-01T09:30:00Z"}}}
+  ```
+
+  `source list` finds each file Source inside the Topic, where it was last found, or in the
+  Library by its content (rebuild the Library with `study library build` after reorganising
+  your books), and updates this file as it goes, recording nothing in the History. A file is
+  hashed again only when its size or modification time changed. Each file Source gets a
+  `state`: `ok`, `changed` (the file where it was last found has other content now, and the
+  recorded content is nowhere in the Library) or `missing` (say where it is with
+  `source update --path`). Files are opened without blocking and must be regular files, so a
+  FIFO or a device is refused, and hashing stops when the command is cancelled.
+- **Evidence** is an exact quote, cited by a Lesson, with an optional `location` and
+  `location_from`: `source` (read in the Source itself, such as a printed page number),
+  `knowledge_base` (a citation as the Knowledge base gave it; NotebookLM citations carry no
+  page numbers), `learner`, or `estimate`. Evidence lives in the History only, and Evidence
+  whose Source has not arrived from another machine yet is held until it does. Retracted
+  Evidence no longer counts for its Lesson. Lessons without Evidence are marked, never
+  blocked.
+
+  ```json
+  { "id": "k3f9a2b7qd", "lesson": "elimination", "source": "strang-linear-algebra.k3f9a2",
+    "quote": "Elimination produces an upper triangular system.", "location": "p. 46",
+    "location_from": "source", "recorded": "2026-10-01T09:30:00Z" }
+  ```
+- **Two machines**: Sources and Evidence added on two machines merge: each Source is its own
+  item in the History, and `history.jsonl` and `sources.jsonl` both merge by union in git.
+  One Source edited on both machines is flagged as a `conflict`, and the union merge may
+  leave two lines for it in `sources.jsonl`; the History's version is used, and the next
+  change to the Source leaves one line. Under the one-machine-at-a-time contract, adding the
+  same file or URL, or the same Evidence, on both machines before syncing gives two of them;
+  that is not flagged.
 
 ## study doctor
 

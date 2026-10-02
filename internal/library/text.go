@@ -1,6 +1,7 @@
 package library
 
 import (
+	"path/filepath"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -65,6 +66,14 @@ func cleanTitle(name string) string {
 		return r
 	}, name)
 	return titleCase(strings.Join(strings.Fields(spaced), " "))
+}
+
+// TitleOf returns the title the Library gives the file at path: its name
+// without the extension, cleaned and title-cased, so "the_c_book.pdf" becomes
+// "The C Book".
+func TitleOf(path string) string {
+	name := filepath.Base(path)
+	return cleanTitle(strings.TrimSuffix(name, filepath.Ext(name)))
 }
 
 // titleCase capitalises the first letter of each space-separated word and

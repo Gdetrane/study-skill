@@ -41,7 +41,7 @@ func writeFlags(w io.Writer, topics []core.Topic) {
 				fmt.Fprintf(w, "\n%s\n", styleWarn.Render("Needs attention:"))
 				header = true
 			}
-			fmt.Fprintf(w, "  %s: %s (flag %s)\n", styleLabel.Render(t.ID), f.Message, f.ID)
+			fmt.Fprintf(w, "  %s: %s (flag %s)\n", styleLabel.Render(t.ID), printable(f.Message), f.ID)
 		}
 	}
 }
@@ -64,7 +64,7 @@ func writeTopicUpdate(w io.Writer, u core.TopicUpdate, dryRun bool) error {
 	t := u.Topic
 	switch {
 	case !u.Changed:
-		fmt.Fprintf(&b, "Topic %s already has that title and goal: nothing changed\n", t.ID)
+		fmt.Fprintf(&b, "Topic %s already has those settings: nothing changed\n", t.ID)
 	case dryRun:
 		fmt.Fprintf(&b, "Would update Topic %s (%s)\n", styleAccent.Render(t.ID), t.Title)
 	default:
@@ -72,6 +72,9 @@ func writeTopicUpdate(w io.Writer, u core.TopicUpdate, dryRun bool) error {
 	}
 	if t.Goal != "" {
 		fmt.Fprintf(&b, "  Goal: %s\n", t.Goal)
+	}
+	if t.KnowledgeBase != nil {
+		fmt.Fprintf(&b, "  Knowledge base: %s\n", describeKnowledgeBase(t.KnowledgeBase))
 	}
 	writeFlags(&b, []core.Topic{t})
 	_, err := io.WriteString(w, b.String())
@@ -121,8 +124,13 @@ func writeStatus(w io.Writer, s core.Status) error {
 		if s.ActiveTopic != nil && t.ID == s.ActiveTopic.ID {
 			id = styleAccent.Render(id)
 		}
-		fmt.Fprintf(&b, "  %s%s\n", id, t.Title)
+		kb := ""
+		if t.KnowledgeBase != nil {
+			kb = styleDim.Render("  Knowledge base: " + describeKnowledgeBase(t.KnowledgeBase))
+		}
+		fmt.Fprintf(&b, "  %s%s%s\n", id, t.Title, kb)
 	}
+	writeLessonsWithoutEvidence(&b, s.Topics)
 	writeFlags(&b, s.Topics)
 	writeProblems(&b, s.Problems)
 	_, err := io.WriteString(w, b.String())
@@ -358,4 +366,20 @@ func sentence(s string) string {
 		return s
 	}
 	return strings.ToUpper(s[:1]) + s[1:] + "."
+}
+
+// writeLessonsWithoutEvidence lists the Lessons that cite no Evidence yet.
+// They are a reminder, never a block.
+func writeLessonsWithoutEvidence(w io.Writer, topics []core.Topic) {
+	header := false
+	for _, t := range topics {
+		if len(t.LessonsWithoutEvidence) == 0 {
+			continue
+		}
+		if !header {
+			fmt.Fprintf(w, "\n%s\n", styleLabel.Render("Lessons without Evidence:"))
+			header = true
+		}
+		fmt.Fprintf(w, "  %s: %s\n", styleLabel.Render(t.ID), strings.Join(t.LessonsWithoutEvidence, ", "))
+	}
 }

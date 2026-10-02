@@ -1,0 +1,3 @@
+Recorded Evidence <id> for Lesson pivots from Source strang-linear-algebra.<id>
+  > The pivots are on the diagonal.
+  > They must not be zero.

@@ -137,6 +137,8 @@ type replayed struct {
 	dismissed map[string]string
 	// study is the learning state: Syllabus, Lessons, Sessions and Cards.
 	study studyState
+	// know is the Topic's Sources and Evidence; see knowledge().
+	know *knowledgeState
 
 	seen  map[string][]byte            // Event ID → its line, to apply each ID once
 	bases map[string]map[string]string // item → version changed from → Event ID
@@ -279,6 +281,7 @@ func isGating(item string) bool {
 func (c *Core) topicFlags(topic *os.Root, s *replayed) []Flag {
 	all := append(append([]Flag{}, s.flags...), c.gatingFlags(topic, s)...)
 	all = append(all, repeatedCardFlags(topic)...)
+	all = append(all, sourcesFileFlags(topic)...)
 	if ahead := s.latest.Sub(c.now()); ahead > clockAheadLimit {
 		// The flag is named after the earliest Event dated ahead, which
 		// later Events, the dismissal included, never change.
@@ -334,7 +337,8 @@ func applyNothing(ev event, item string, _ []byte, _ bool) ([]byte, bool, error)
 
 // repeatedCardFlags flags Cards that appear twice in cards.jsonl with
 // different content, as a union merge leaves two machines' edits of one
-// Card. The first line counts until the learner settles it.
+// Card. Until the learner settles it, every machine reads the same one of
+// the lines (see jsonlCodec).
 func repeatedCardFlags(topic *os.Root) []Flag {
 	data, exists, err := readFile(topic, cardsFile)
 	if err != nil || !exists {
@@ -344,7 +348,7 @@ func repeatedCardFlags(topic *os.Root) []Flag {
 	for _, id := range jsonlRepeats(data) {
 		flags = append(flags, newFlag(FlagConflict, cardItem(id), nil, "",
 			fmt.Sprintf("Card %s appears twice in %s with different content, probably edited on two machines: "+
-				"the first counts; keep one of the lines by hand", id, cardsFile)))
+				"keep the right line by hand", id, cardsFile)))
 	}
 	return flags
 }

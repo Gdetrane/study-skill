@@ -1,0 +1,16 @@
+{
+  "ok": true,
+  "data": {
+    "topic": "linear-algebra",
+    "lesson": "pivots",
+    "evidence": [
+      {
+        "id": "<id>",
+        "lesson": "pivots",
+        "source": "strang-linear-algebra.<id>",
+        "quote": "The pivots are on the diagonal.\nThey must not be zero.",
+        "recorded": "2026-10-01T09:30:00Z"
+      }
+    ]
+  }
+}
