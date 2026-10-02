@@ -27,6 +27,11 @@ dist/
 *.o
 a.out
 
+# Test coverage, which Checks often write
+.coverage
+.coverage.*
+coverage.out
+
 # Caches and environments
 __pycache__/
 *.py[cod]
@@ -44,6 +49,10 @@ node_modules/
 
 # Temporary files Lamplight leaves if a write is interrupted
 .*.lamplight-tmp-*
+
+# Held-out data is committed with the Topic, whatever its format, so every
+# machine measures on the same data. Keep this last.
+!.heldout/**
 `
 
 // DefaultGitignore returns the .gitignore written into a new Topic: data and
