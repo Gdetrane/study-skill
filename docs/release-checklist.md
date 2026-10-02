@@ -2,31 +2,65 @@
 
 The maintainer's steps to ship Lamplight v2.0 (issue #36). CI already proves the learner
 loop (`internal/e2e/loop_test.go`) and the acceptance walkthrough
-(`internal/e2e/journey_test.go`: `study setup` with fake agents, a Lesson with a failing
-then passing Check and a rubric item, a break and a resume, the Milestone's Assessment, and
-an imported and adopted v1 workspace). What is left needs real agents, real v1 workspaces
-and repository settings, so it is done by hand, in this order.
+(`internal/e2e/journey_test.go`: `study setup` with fake agents and the MCP server started
+from what it registered, a Lesson with a failing then passing Check and a rubric item, a
+break and a resume, the Milestone's Assessment, and an imported and adopted v1 workspace).
+What is left needs real agents, real v1 workspaces and repository settings, so it is done
+by hand, in this order. `docs/release.md` (from #34) covers the release pipeline itself.
 
-Until the rename in step 5 the repository is `mordor-forge/study-skill`; the commands use
+Until the rename in step 6 the repository is `mordor-forge/study-skill`; the commands use
 `$REPO` for it:
 
 ```sh
-REPO=mordor-forge/study-skill    # mordor-forge/lamplight after step 5
+REPO=mordor-forge/study-skill        # bash, zsh; in fish: set REPO mordor-forge/study-skill
 ```
 
 ## 1. Before you start
 
 - [ ] Every v2.0 issue except #18, #36 and #37 has landed on `v2`, including #34 (the
-      GoReleaser pipeline) and its secrets (the Homebrew tap and AUR credentials). Issues
-      fixed on `v2` are closed by hand, so this lists only those three:
+      GoReleaser pipeline). Issues fixed on `v2` are closed by hand, so this lists only
+      those three:
 
       ```sh
       gh issue list -R $REPO --milestone v2.0 --state open
       gh pr list -R $REPO --base v2
       ```
 
-- [ ] #18's first half is done: the `v1.0.0` tag points at the last v1 commit, and `main`'s
-      README says v2 is in development on `v2`.
+- [ ] #34's prerequisites, from `docs/release.md`, are done:
+  - a `LICENSE` file at the repository root (the README says MIT), which the archives and
+    packages ship;
+  - the tap repository `mordor-forge/homebrew-tap` (public, with a `Casks/` folder), and a
+    fine-grained token with contents write access to it alone, stored as the Actions
+    secret `HOMEBREW_TAP_TOKEN`;
+  - an AUR account with a password-less SSH key, `lamplight-bin` claimed, and the private
+    key stored as the Actions secret `AUR_KEY`;
+  - the maintainer named in `.goreleaser.yaml` checked.
+
+  ```sh
+  git cat-file -e upstream/v2:LICENSE && echo LICENSE present
+  gh repo view mordor-forge/homebrew-tap
+  gh secret list -R $REPO                 # HOMEBREW_TAP_TOKEN and AUR_KEY, names only
+  ```
+
+  `study man` now writes through the command's output instead of fang's hidden command,
+  so the comment in `scripts/release-assets.sh` saying the man page is captured from the
+  process's stdout is stale. The script still works, since it redirects stdout; fix the
+  comment there.
+
+- [ ] #18's first half is done: the `v1.0.0` tag points at the last v1 commit, `main`'s
+      README says v2 is in development on `v2` (#40), and the five dependabot PRs open
+      against `main` are closed. They bump actions in v1's workflow, which the merge
+      replaces; dependabot opens new ones against v2's workflow once `main` is v2.
+
+      ```sh
+      gh pr close 4 -R $REPO --delete-branch --comment "v1 is frozen at bug fixes, and v2 replaces this workflow."
+      gh pr close 5 -R $REPO --delete-branch --comment "v1 is frozen at bug fixes, and v2 replaces this workflow."
+      gh pr close 6 -R $REPO --delete-branch --comment "v1 is frozen at bug fixes, and v2 replaces this workflow."
+      gh pr close 7 -R $REPO --delete-branch --comment "v1 is frozen at bug fixes, and v2 replaces this workflow."
+      gh pr close 12 -R $REPO --delete-branch --comment "v1 is frozen at bug fixes, and v2 replaces this workflow."
+      gh pr list -R $REPO --base main         # only the v2 merge, later, belongs here
+      ```
+
 - [ ] CI is green on `v2`, and the full suite passes locally:
 
       ```sh
@@ -47,12 +81,12 @@ such as `STUDY_HOME` on to MCP servers, but every `study` reads the config file.
 
 ```sh
 git switch --detach upstream/v2
-go install ./cmd/study                 # into $(go env GOPATH)/bin
-command -v study                       # must be that one
+go install ./cmd/study                 # the trial build, in $(go env GOPATH)/bin
+command -v study                       # must print $(go env GOPATH)/bin/study
 study --version
 mkdir -p ~/.config/lamplight
 printf 'format = 1\nstudy_home = "~/study-v2-trial"\n' > ~/.config/lamplight/config.toml
-study doctor
+"$(go env GOPATH)/bin/study" doctor    # checks the trial build and the trial Study home
 ```
 
 v1 stays installed and working: v2's skill is `lamplight`, and nothing in v2 writes to v1's
@@ -75,7 +109,7 @@ git -C ~/path/to/workspace status --short     # unchanged
       and import again keeping it open:
 
       ```sh
-      study topic remove <topic>              # moves it to ~/study-v2-trial/.lamplight/removed
+      study topic remove <topic>      # prints the mv command that would restore it
       study import ~/path/to/workspace --not-done lesson-NN
       ```
 
@@ -84,13 +118,13 @@ git -C ~/path/to/workspace status --short     # unchanged
 
 ## 4. Manual Sessions in Claude Code and Codex
 
-Register the agents for real, then run the same journey once in each.
+Register the agents for real with the trial build, then run the same journey once in each.
 
 ```sh
 study setup --dry-run      # what it will write: the lamplight skill and the MCP registrations
 study setup
 study setup --check
-study doctor
+"$(go env GOPATH)/bin/study" doctor    # the trial build, now registered with both agents
 ```
 
 In a new Claude Code conversation (`claude`), then again in Codex (`codex`):
@@ -138,15 +172,16 @@ In this order: the v1 branch, the checks `main` requires, the rename, the merge,
 
 - [ ] Change the checks `main` requires. The "main protection" ruleset requires v1's three
       checks, which v2's CI does not have, so the merge would wait for them forever. In
-      Settings → Rules → Rulesets → "main protection", replace them with "Lamplight core",
-      plus #34's snapshot check if it has one.
+      Settings → Rules → Rulesets → "main protection", replace them with "Lamplight core".
+      #34's "Release snapshot" job runs on every pull request too, but it is not a required
+      check, as `docs/release.md` decides: do not add it.
 - [ ] Rename the repository to `lamplight`, before the tag: the module path
       (`github.com/mordor-forge/lamplight/v2`), the packages, the plugin marketplace and the
       README already use the new name, and Go's module proxy remembers the first fetch.
 
       ```sh
       gh repo rename lamplight -R mordor-forge/study-skill
-      REPO=mordor-forge/lamplight
+      REPO=mordor-forge/lamplight      # in fish: set REPO mordor-forge/lamplight
       git remote set-url upstream git@github.com:mordor-forge/lamplight.git
       git ls-remote https://github.com/mordor-forge/study-skill.git HEAD   # the old URL redirects
       ```
@@ -168,7 +203,8 @@ In this order: the v1 branch, the checks `main` requires, the rename, the merge,
       gh pr merge <pr> -R $REPO --merge
       ```
 
-- [ ] Tag `v2.0.0` on `main`. The tag starts #34's release workflow.
+- [ ] Tag `v2.0.0` on `main`. The tag starts #34's release workflow. GitHub runs the
+      workflow file of the tagged commit, so push `v*` tags only on release commits.
 
       ```sh
       git fetch upstream
@@ -180,18 +216,31 @@ In this order: the v1 branch, the checks `main` requires, the rename, the merge,
 
 ## 7. After the release
 
-- [ ] The release has every package, and each one installs and passes `study doctor`:
+- [ ] The release has every package, and each one installs and passes `study doctor`. Run
+      each package's own `study` by its path: the trial build from step 2 may come first on
+      `PATH`.
 
       ```sh
       gh release view v2.0.0 -R $REPO
-      go install github.com/mordor-forge/lamplight/v2/cmd/study@v2.0.0
-      brew install --cask mordor-forge/tap/lamplight   # on a Mac
-      yay -S lamplight-bin                              # on Arch
-      study --version && study doctor
+      go install github.com/mordor-forge/lamplight/v2/cmd/study@v2.0.0   # replaces the trial build
+      "$(go env GOPATH)/bin/study" --version && "$(go env GOPATH)/bin/study" doctor
+      brew install --cask mordor-forge/tap/lamplight                      # on a Mac
+      "$(brew --prefix)/bin/study" --version && "$(brew --prefix)/bin/study" doctor
+      yay -S lamplight-bin                                                # on Arch
+      /usr/bin/study --version && /usr/bin/study doctor
       ```
 
-- [ ] The Claude Code plugin installs, now that `main` holds `.claude-plugin/`:
-      `claude plugin marketplace add mordor-forge/lamplight`.
+- [ ] The Claude Code plugin installs, now that `main` holds `.claude-plugin/`. The plugin
+      and `study setup` never both serve Claude Code, so hand Claude Code over first, and
+      afterwards keep whichever you prefer:
+
+      ```sh
+      study setup --remove --agent claude
+      claude plugin marketplace add mordor-forge/lamplight
+      claude plugin install lamplight@lamplight
+      ```
+
+      Start `claude` and check the agent has the `lamplight` skill and the `study` tools.
 - [ ] Close what the release finished. GitHub closes issues automatically only for merges
       into the default branch, so close the rest by hand: #18 once its checklist is done,
       #36, then #37, then the v2.0 milestone (Issues → Milestones → v2.0 → Close).

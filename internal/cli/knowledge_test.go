@@ -13,8 +13,9 @@ import (
 	"github.com/mordor-forge/lamplight/v2/internal/cli"
 )
 
-// testIDs are the IDs the tests' NewID makes. They number Events across the
-// whole test process, so golden files show them as <id>.
+// testIDs are the IDs the tests' NewID makes, numbered per Study home (see
+// options). runStdin shows them as <id>, so these golden files don't change
+// when a test writes one more Event before the command it checks.
 var testIDs = regexp.MustCompile(`\bid\d+\b`)
 
 // runStdin runs the command line with stdin, like run, and hides IDs.

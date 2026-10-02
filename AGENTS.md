@@ -12,7 +12,10 @@ Read these before changing behaviour:
 
 - `CONTEXT.md`: the glossary. Use its terms in code, comments and docs.
 - `docs/design/lamplight-v2.md`: the design.
-- `docs/adr/`: the decisions behind it (0004 onwards; 0001 and 0002 are superseded).
+- `docs/adr/`: the decisions behind it, 0004 onwards. 0001 and 0002 are superseded by 0004.
+  0003 was written for v1's Python book catalog; the Go Library (`internal/library`), which
+  replaced that catalog, keeps its walk-once and case-insensitive extension rules and
+  replaces its title clean-up with one shared normalizer.
 - `docs/cli.md`: the command-line contract that scripts and agents rely on. A test checks
   that it mentions every command and flag.
 
@@ -104,7 +107,10 @@ GOOS=darwin go vet ./...            # macOS is supported too
 
 - New operation: add it to the core with tests, then expose it in the CLI (with `--json`,
   and `--dry-run` for writes) and the MCP server, document it in `docs/cli.md`, and mention
-  it in the skill if agents should use it.
+  it in the skill if agents should use it. Some operations are CLI-only on purpose and get
+  no MCP tool: `study check`, which runs code (ADR-0009), and what is for the learner or the
+  installation alone, such as `study topic remove`, `study import`, `study setup`,
+  `study doctor`, `study completion`, `study library build` and terminal `study review`.
 - New file or Event format: bump nothing silently; add a `format` field and a test that
   newer formats are refused.
 - Design changes: update `CONTEXT.md`, the design and a new ADR together.
