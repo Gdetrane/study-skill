@@ -18,6 +18,8 @@ import (
 
 	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/fang"
+	mango "github.com/muesli/mango-cobra"
+	"github.com/muesli/roff"
 	"github.com/spf13/cobra"
 
 	"github.com/mordor-forge/lamplight/v2/internal/core"
@@ -69,6 +71,8 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		err = fang.Execute(ctx, root,
 			fang.WithVersion(version()),
 			fang.WithErrorHandler(a.handleError),
+			// study has its own man command, which writes where it is told.
+			fang.WithoutManpage(),
 		)
 	}
 	switch {
@@ -329,8 +333,30 @@ func (a *app) rootCommand() *cobra.Command {
 	root.AddCommand(a.rubricCommand(), a.resultsCommand(), a.lessonCommand(), a.historyCommand())
 	root.AddCommand(a.assessmentCommand(), a.hintCommand(), a.signalsCommand())
 	root.AddCommand(a.setupCommand(), a.claudePluginPathCommand(), a.claudeHookCommand())
+	root.AddCommand(manCommand())
 	a.completionCommands(root)
 	return root
+}
+
+// manCommand prints study's man page in roff, for packages to install as
+// study.1. It replaces fang's own, which writes to the process's stdout
+// rather than the command's.
+func manCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:                   "man",
+		Short:                 "Print the man page, for packagers",
+		Hidden:                true,
+		DisableFlagsInUseLine: true,
+		Args:                  noArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			page, err := mango.NewManPage(1, cmd.Root())
+			if err != nil {
+				return err
+			}
+			_, err = fmt.Fprint(cmd.OutOrStdout(), page.Build(roff.NewDocument()))
+			return err
+		},
+	}
 }
 
 func (a *app) checkpointCommand() *cobra.Command {

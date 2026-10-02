@@ -11,6 +11,16 @@ import (
 	"github.com/mordor-forge/lamplight/v2/internal/cli"
 )
 
+// TestManWritesToItsOutput: study man prints the man page to the writer it
+// is given, so packaging scripts and tests capture it, rather than straight
+// to the process's stdout as fang's own man command did.
+func TestManWritesToItsOutput(t *testing.T) {
+	r := run(t, t.TempDir(), "man")
+	if r.code != cli.ExitOK || !strings.Contains(r.stdout, ".TH ") || !strings.Contains(r.stdout, "study") {
+		t.Errorf("study man: exit %d, stdout %.200q, stderr %q", r.code, r.stdout, r.stderr)
+	}
+}
+
 // TestDocsDescribeEveryCommand keeps docs/cli.md, the contract scripts and
 // agents rely on, in step with the command tree: every visible command and
 // every visible flag of it must be documented.
