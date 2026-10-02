@@ -1,0 +1,35 @@
+Imported $V1 as Topic go-concurrency (Go Concurrency)
+
+Converted:
+  title: from topic: Go Concurrency
+  goal: from end_goal
+  level: from difficulty: beginner
+  approach: from approach: concepts
+  lessons: 2 Lessons kept under their v1 names
+  plan: the v1 plan is kept as notes/v1-plan.md for the adoption Session
+  config: .study-config.json becomes topic.toml; the original is kept as notes/v1-config.json
+  session_state: where v1 stopped, for the Next step
+
+Moved:
+  lessons/01-goroutines.md → lessons/lesson-01.md
+  lessons/02-channels.md → lessons/lesson-02.md
+  lessons/plan.md → notes/v1-plan.md
+  .study-config.json → notes/v1-config.json
+
+Done (proven):
+  lesson-01  Goroutines (commit <hash>: [agent] complete lesson 01)
+
+Open:
+  lesson-02  Channels (v1: in_progress)
+
+Where v1 stopped:
+  review practice/lesson-02 implementation
+  Half way through the channels exercise.
+
+Dropped:
+  .fsrs: v1's lesson-level cards (1) are not carried over: Cards are written again in the adoption Session; they stay in the git history
+  session_state.energy and time_budget_minutes: Energy and time are asked at every Session
+  review: v1's review queue goes with its cards
+  template: v2 has no templates: the agent sets up the Workbench with the language's own tools
+
+Next: open a Session on it with your agent, and adopt it together.

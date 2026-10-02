@@ -323,6 +323,7 @@ func (a *app) rootCommand() *cobra.Command {
 
 	root.AddCommand(status, topic, a.checkpointCommand(), a.checkCommand(), a.libraryCommand(), doctor, serve)
 	root.AddCommand(a.sourceCommand(), a.evidenceCommand(), a.syllabusCommand(), a.revisionCommand(), a.cardCommand(), a.reviewCommand())
+	root.AddCommand(a.importCommand())
 	root.AddCommand(a.sessionCommand())
 	root.AddCommand(a.taskCommand())
 	root.AddCommand(a.rubricCommand(), a.resultsCommand(), a.lessonCommand(), a.historyCommand())

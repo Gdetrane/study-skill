@@ -24,6 +24,7 @@ const (
 	ActionExplore     = FocusExplore
 	ActionResumeTopic = SuggestResumeTopic
 	ActionStop        = SuggestStop
+	ActionAdopt       = SuggestAdopt
 	// ActionAssess: every Lesson of a Milestone is done or skipped, and its
 	// end-of-Milestone Assessment is next (see assessmentDue). It is the
 	// next thing to do, never something late, and it outranks the Next
@@ -38,9 +39,9 @@ const FlagLessonHeader = "lesson_header"
 // Recommendation is the one action status recommends for the Active topic.
 type Recommendation struct {
 	Topic string `json:"topic"`
-	// Action is next_step, plan, learn, practice, feedback, reviews,
-	// explore, resume_topic, assess or stop: an enumeration skills can
-	// rely on.
+	// Action is next_step, plan, adopt, learn, practice, feedback,
+	// reviews, explore, resume_topic, assess or stop: an enumeration
+	// skills can rely on.
 	Action string `json:"action"`
 	// Milestone is the finished Milestone to assess, for assess.
 	Milestone *MilestoneRef `json:"milestone,omitempty"`
@@ -74,6 +75,9 @@ func recommend(t Topic) *Recommendation {
 		m := t.AssessmentDue
 		r.Action, r.Milestone = ActionAssess, m
 		r.Text = fmt.Sprintf("Every Lesson of Milestone %d “%s” is done: its Assessment comes next", m.Number, m.Title)
+	case t.Imported != nil && !t.Imported.Adopted:
+		r.Action, r.Text = ActionAdopt, "This Topic was imported from v1: adopt it together first, "+
+			"starting from the v1 plan in "+v1PlanTarget
 	case resume != nil && resume.NextStep != nil:
 		r.Action, r.Text = ActionNextStep, resume.NextStep.Step
 	case resume == nil || resume.Lesson == "" && !resume.SyllabusDone:

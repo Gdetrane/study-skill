@@ -85,10 +85,11 @@ func addLearnerLoop(server *mcp.Server, c *core.Core) {
 			"out until the learner chooses, then record their choice by calling session_open again with session (this " +
 			"Session's id) and focus, which opens nothing new: suggested.suggest is learn, practice, reviews or explore (a Focus to " +
 			"offer), plan (no Syllabus yet: plan it together), stop (write tomorrow's first step and end here; on a " +
-			"finished Topic, nothing to study now), resume_topic (the Topic is paused) or assess (every Lesson of a " +
-			"Milestone is done: offer its Assessment first; at fumes Energy it waits for another day). Only learn, " +
-			"practice, reviews and explore are Focuses to record; act on plan, stop, resume_topic and assess without " +
-			"recording a Focus (an accepted Assessment is recorded with assessment_record). suggested.reason is English " +
+			"finished Topic, nothing to study now), resume_topic (the Topic is paused), assess (every Lesson of a " +
+			"Milestone is done: offer its Assessment first; at fumes Energy it waits for another day) or adopt (the " +
+			"Topic was imported from v1 and is adopted first, Instruction 13). Only learn, practice, reviews and " +
+			"explore are Focuses to record; act on plan, stop, resume_topic, assess and adopt without recording a " +
+			"Focus (an accepted Assessment is recorded with assessment_record). suggested.reason is English " +
 			"you may rephrase. cards.ready says whether Reviews are possible; never mention how many Cards are due. If " +
 			"long_gap is set, start with a short recap and a two-minute warm-up. unclosed lists the Sessions that ended " +
 			"without a Next step, newest first: show the learner changes (what changed since the last Checkpoint), ask " +

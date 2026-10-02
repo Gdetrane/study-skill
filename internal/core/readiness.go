@@ -93,14 +93,17 @@ const (
 	// end-of-Milestone Assessment comes next. It is suggested at full and
 	// half Energy only: at fumes, an Assessment waits for a better day.
 	SuggestAssess = "assess"
+	// SuggestAdopt: the Topic was imported from a v1 workspace and has no
+	// Syllabus yet; adopt it together first (see study import).
+	SuggestAdopt = "adopt"
 )
 
 // FocusSuggestion is what the learner's Energy suggests for the Session.
 // The learner chooses; a suggestion is never recorded.
 type FocusSuggestion struct {
 	// Suggest is a Focus the learner may choose (learn, practice, reviews
-	// or explore), or plan, stop, resume_topic or assess, which are not
-	// Focuses.
+	// or explore), or plan, adopt, stop, resume_topic or assess, which
+	// are not Focuses.
 	Suggest string `json:"suggest"`
 	// Reason is English prose for the learner; the skill may rephrase it.
 	Reason string `json:"reason"`

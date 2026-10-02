@@ -1,0 +1,110 @@
+{
+  "ok": true,
+  "data": {
+    "topic": {
+      "id": "go-concurrency",
+      "title": "Go Concurrency",
+      "goal": "Write a concurrent web crawler",
+      "path": "$STUDY_HOME/go-concurrency",
+      "created": "2026-10-01T09:30:00Z",
+      "state": "active",
+      "new_cards_per_day": 10
+    },
+    "from": "$V1",
+    "head": "<hash>",
+    "converted": [
+      {
+        "what": "title",
+        "detail": "from topic: Go Concurrency"
+      },
+      {
+        "what": "goal",
+        "detail": "from end_goal"
+      },
+      {
+        "what": "level",
+        "detail": "from difficulty: beginner"
+      },
+      {
+        "what": "approach",
+        "detail": "from approach: concepts"
+      },
+      {
+        "what": "lessons",
+        "detail": "2 Lessons kept under their v1 names"
+      },
+      {
+        "what": "plan",
+        "detail": "the v1 plan is kept as notes/v1-plan.md for the adoption Session"
+      },
+      {
+        "what": "config",
+        "detail": ".study-config.json becomes topic.toml; the original is kept as notes/v1-config.json"
+      },
+      {
+        "what": "session_state",
+        "detail": "where v1 stopped, for the Next step"
+      }
+    ],
+    "moved": [
+      {
+        "from": "lessons/01-goroutines.md",
+        "to": "lessons/lesson-01.md"
+      },
+      {
+        "from": "lessons/02-channels.md",
+        "to": "lessons/lesson-02.md"
+      },
+      {
+        "from": "lessons/plan.md",
+        "to": "notes/v1-plan.md"
+      },
+      {
+        "from": ".study-config.json",
+        "to": "notes/v1-config.json"
+      }
+    ],
+    "completed": [
+      {
+        "lesson": "lesson-01",
+        "title": "Goroutines",
+        "proof": "commit <hash>: [agent] complete lesson 01",
+        "v1_status": "completed"
+      }
+    ],
+    "open": [
+      {
+        "lesson": "lesson-02",
+        "title": "Channels",
+        "v1_status": "in_progress"
+      }
+    ],
+    "sources": [],
+    "level": "beginner",
+    "approach": "concepts",
+    "v1_next_step": {
+      "phase": "practicing",
+      "pending_action": "review practice/lesson-02 implementation",
+      "context": "Half way through the channels exercise."
+    },
+    "dropped": [
+      {
+        "what": ".fsrs",
+        "detail": "v1's lesson-level cards (1) are not carried over: Cards are written again in the adoption Session; they stay in the git history"
+      },
+      {
+        "what": "session_state.energy and time_budget_minutes",
+        "detail": "Energy and time are asked at every Session"
+      },
+      {
+        "what": "review",
+        "detail": "v1's review queue goes with its cards"
+      },
+      {
+        "what": "template",
+        "detail": "v2 has no templates: the agent sets up the Workbench with the language's own tools"
+      }
+    ],
+    "dry_run": true
+  }
+}
