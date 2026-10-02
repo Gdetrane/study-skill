@@ -24,7 +24,7 @@ that scripts and agents can rely on. Terms follow [CONTEXT.md](../CONTEXT.md).
 | `study task remove <topic> <task>... [--dry-run]` | Removes Tasks that no longer matter. A Task removed already changes nothing; one that never existed is `not_found`. |
 | `study task list <topic> [--all]` | Lists the open Tasks, or all with `--all`, and the lines of `tasks.jsonl` that are not Tasks (`problems`). |
 | `study topic dismiss-flag <topic> <flag-id> [--dry-run]` | Dismisses one of the Topic's flags, by the id `status` shows, once the learner has looked at it. It records the decision in the History and never changes content. The result is `{"topic": ..., "flag": {...}, "changed": bool}`; dismissing a flag twice changes nothing. Only `held_event`, `conflict`, `damaged_line`, `clock_ahead` and `card_flagged` flags can be dismissed (see below). |
-| `study import <v1-workspace> [--topic ID] [--dry-run]` | Imports a v1 study workspace as a new Topic, with its history, leaving the original untouched. See [Importing a v1 workspace](#importing-a-v1-workspace). |
+| `study import <v1-workspace> [--topic ID] [--not-done LESSON]... [--dry-run]` | Imports a v1 study workspace as a new Topic, with its history, leaving the original untouched. `--not-done` keeps a Lesson open that v1's records prove done. See [Importing a v1 workspace](#importing-a-v1-workspace). |
 | `study library build <folder>` | Indexes the books in a folder (relative to where you run it) and replaces the Library index in the Study home. |
 | `study library search <query> [--limit N]` | Ranks the books in the Library against the query. `--limit` defaults to 10 and is capped at 100; no matches is a success with an empty list. |
 | `study source add <topic> (--file PATH \| --url URL) [--title T] [--notebooklm-id ID] [--dry-run]` | Adds a file or a web page as a Source of the Topic. A file is hashed, never parsed. Adding a file or URL the Topic already has is `already_exists`, naming the Source. |
@@ -690,8 +690,10 @@ The **Level** (`beginner`, `intermediate`, `advanced` or `expert`) lives in `top
 `level`. An Assessment with a `level` sets it; the learner can change it at any time with
 `study topic update --level` (`level.set`), and that choice holds until the next Assessment
 sets one. Each Topic in `status` carries `level: {level, source, assessment?, at?}`, where
-`source` is `assessment` or `learner`; a Level edited into `topic.toml` by hand is the
-learner's, without `at`, and one that is not a Level is reported in `settings_problems`.
+`source` is `assessment`, `learner` or `import` (taken by `study import` from a v1 workspace's
+difficulty: v1's estimate, until an Assessment or the learner sets the Level); a Level edited
+into `topic.toml` by hand is the learner's, without `at`, and one that is not a Level is
+reported in `settings_problems`.
 
 The Level changed on two machines is flagged as a conflict that can be dismissed: "the
 Level was changed on two machines", naming both Events. That covers two choices made from
@@ -799,63 +801,111 @@ change to it leaves a single line.
 
 `study import <v1-workspace>` turns a workspace of the v1 study skill (`.study-config.json`,
 `lessons/`, `practice/`, `notes/`, `.fsrs/`, in a repository) into a new Topic. Run it with
-`--dry-run` first: the report lists everything that will be converted, moved, proven done,
-left open and dropped, and nothing is written. The workspace itself is only read, never
-changed, and its history is read through the same hardened calls as Checkpoints, which run
-no program its configuration names.
+`--dry-run` first: the report lists the size of the copy, everything that will be converted
+and moved, the Lessons proven done with their proof, those left open, and everything left
+out, and nothing is written. The workspace itself is only read, never changed, and its
+history is read through the same hardened calls as Checkpoints, which run no program its
+configuration names.
 
-The import copies the whole workspace, `.git` included, so every commit is kept. The Topic's
-id is the workspace folder's name unless `--topic` gives another, and v1's names become ids:
+The import copies the workspace, `.git` included, so every commit is kept, and copies every
+file, git-ignored or not, since ignored files can be the learner's data. The Topic's id is
+the workspace folder's name unless `--topic` gives another, and v1's names become ids:
 Lesson 1 is `lesson-01`, as v1 named its practice folder, so paths quoted in Lesson text and
-in `.gitignore` keep working.
+in `.gitignore` keep working. The workspace is recognised by its real path, links resolved.
 
 | v1 | v2 |
 |---|---|
 | `topic`, `end_goal` | the Topic's title and Goal |
-| `difficulty_override`, else `difficulty` | the Level |
+| `difficulty_override`, else `difficulty` | the Level, with `source: import` |
 | `approach` (`concept`, `project`, `challenge`) | the Approach (`concepts`, `project`, `challenges`) |
-| `lessons[]`, numbered | Lessons `lesson-NN`; each file moves to `lessons/lesson-NN.md` |
+| `lessons[]`, numbered | Lessons `lesson-NN`; a file under `lessons/` moves to `lessons/lesson-NN.md` |
 | a Lesson `completed` with proof | done, through the import's Event, with no Attempt |
-| `lessons/plan.md` | `notes/v1-plan.md`, for the adoption Session |
+| `lessons/plan.md` (v1's project approach only) | `notes/v1-plan.md`, for the adoption Session |
 | `.study-config.json` | `topic.toml`; the original is kept as `notes/v1-config.json` |
 | `sources[]` (paths, or objects with `path`, `url`, `title`, `notebook_id`, `source_id`) | Sources: a file inside the workspace by its path there, one outside by its content, URLs as they are |
-| `notebooklm`, or a source's `notebook_id` | a NotebookLM Knowledge base (the first notebook; others are dropped) |
+| `notebooklm` (an id, a NotebookLM address, an object with either, or `{"notebooks": [...]}`), or a source's `notebook_id` | a NotebookLM Knowledge base (the first notebook; others are dropped). A Source keeps the notebook it declared |
 | `session_state` (`pending_action`, `context`, `phase`) | `v1_next_step`, for the adoption Session's Next step |
-| `.gitignore`, `.gitattributes` | kept, with Lamplight's lines added after the learner's |
+| `syllabus.toml`, `cards.jsonl`, `sources.jsonl`, `tasks.jsonl` at the top | `notes/v1-<name>`, so they are not taken for Lamplight's own |
+| `.gitignore`, `.gitattributes` | merged: the learner's lines first, Lamplight's last, so they win |
+
+**Moves** are planned before anything is copied, and the dry run and the import share the
+plan. A Lesson's file moves only if it is a regular file under `lessons/`, where v1 writes
+them; anything else stays where it is and is not the Lesson's file (nothing under `.git`
+ever moves). A file two Lessons share moves with the first. A move whose target exists, or
+whose folder is a file, does not happen; the file stays where it is, with a note.
 
 **Proof.** A Lesson v1 calls `completed` (or `complete`, `done`) counts as done only when its
-Lesson file is there and v1's own records show it: a commit v1 made when it completed the
-Lesson (`[agent] complete lesson 01`), or the card v1 added for it (`lesson-01` in
-`.fsrs/cards.json`). Otherwise it stays open, and the report says it was not proven.
+Lesson file is under `lessons/` and v1's own records show it. v1's Lesson Completion Contract
+(`references/workspace-lifecycle.md` in v1) adds an FSRS card with id `lesson-NN`, then
+commits `[agent] complete lesson NN`. A commit proves a Lesson only when its whole subject is
+that (`completed` is accepted, and `lesson 1` never matches `lesson 10` or `lesson 4.5`), and
+no newer `Revert "..."` of it exists; otherwise the card does. The report shows each proof,
+the commit's hash and subject or the card, and a Lesson without one stays open, saying why.
+`--not-done lesson-NN`, repeatable, keeps a Lesson open whatever its proof: check the dry run
+first, since a Topic imported already must be removed before importing it again.
 
-**Dropped**, each with its reason in the report: v1's lesson-level cards (`.fsrs/`, removed
-from the working tree but kept in the history), templates, calibration rounds, progress
-counters, the review queue, the catalog path, companions' settings, Energy and time budget,
-v1's creation date, keys the importer does not know, and entries that are neither files,
-folders nor links (FIFOs, sockets).
+**The git files.** In a `.gitignore` and a `.gitattributes`, the last matching line wins, so
+the learner's lines come first and Lamplight's last. The `.gitignore` gets Lamplight's
+default lines it lacks, then `!/topic.toml`, `!/history.jsonl`, `!/syllabus.toml`,
+`!/cards.jsonl`, `!/sources.jsonl`, `!/tasks.jsonl`, `!/.gitattributes` and `!/.gitignore`,
+so a v1 line such as `*.jsonl` cannot leave the state out of Checkpoints. The
+`.gitattributes` ends with Lamplight's union merges, and resets `filter`, `text`, `eol`,
+`ident` and `working-tree-encoding` on the state files, so a v1 line such as
+`*.jsonl filter=lfs merge=lfs -text` leaves them alone. The `topic.imported` Event records
+the merged `.gitattributes`.
 
-**Refused:** a folder without `.study-config.json`, one inside the Study home or that is a
-Lamplight Topic already, a config version newer than 3, a link that leads outside the
-workspace (`failed_precondition`, naming it), a linked worktree or submodule (`.git` is a
-file), a repository that borrows objects (alternates), one where a command is running in it
-(`busy`), an id that is taken (`already_exists`), and a workspace imported already with the
-same config and HEAD (`already_exists`, naming the Topic).
+**Left out of the copy**, each listed under `dropped` with its reason: links leading outside
+the workspace, directly or through another link (links inside it are copied as links);
+entries that are neither files, folders nor links (FIFOs, sockets); v1's lesson-level cards
+(`.fsrs/`, kept in the history); and folders the language's tools rebuild, unless the
+history tracks them: `node_modules`, `.venv`, `venv` and any folder holding `pyvenv.cfg`,
+`__pycache__`, `.pytest_cache`, `.mypy_cache`, `.ruff_cache`, `.tox`, and `target` next to a
+`Cargo.toml` or `pom.xml`.
 
-The Topic is assembled under `.lamplight/tmp` and moved into place only when complete, so an
-interrupted import leaves no Topic, and importing again starts over. It records
-`topic.created`, then the settings (`level.set`, `approach.set`, `knowledge_base.set`), one
-`source.added` per Source, and one `topic.imported` Event, whose payload is the report:
-where it came from (`from`, `head`, `config_version`, `config_hash`), what was converted,
-moved and dropped, the Lessons proven done with their proof, the open ones, and where v1
-stopped. A Checkpoint then saves the import; without an identity for commits the result
-carries `checkpoint_error`, and the next Checkpoint saves it.
+**Dropped from the config**, each with its reason: templates, the mode, calibration rounds
+(`next_calibration_at_lesson`, `difficulty_override_at_lesson`), progress counters, the
+review queue, the catalog path, companions' settings, Energy and time budget, v1's creation
+date, each Lesson's `metrics`, keys the importer does not know (they stay in
+`notes/v1-config.json`), and Lesson entries it cannot read. Lessons are read one at a time:
+a `num` written as `"1"` or `1.0` is read as 1, and an entry without a whole number, or that
+is not an object, is dropped alone.
 
-An imported Topic shows `imported` in `status` (`from`, `at`, `adopted`, `v1_next_step`) and
-the recommendation `adopt` until it has a Syllabus. The adoption, with the agent, is a
+**Refused:** a folder without `.study-config.json`; one inside the Study home, or holding it;
+one that is a Lamplight Topic already; a config version newer than 3, or more than 500
+Lessons or 200 sources; a config that is not a regular file or is over 1 MiB; a linked
+worktree or submodule (`.git` is a file); a repository that borrows objects
+(`.git/objects/info/alternates`, `failed_precondition`; run `git repack -a -d` in it, then
+delete that file); one where git is writing (`index.lock`, `HEAD.lock`, `packed-refs.lock`
+or a lock under `refs/`: `busy`, naming the file to delete if no git command is running); a
+`.gitignore` or `.gitattributes` that is a folder; a file named like Lamplight's whose
+`notes/v1-<name>` is taken; a `--not-done` Lesson the config does not list; an id that is
+taken (`already_exists`); and a workspace imported already with the same config and HEAD
+(`already_exists`, naming the Topic). An import stopped by SIGTERM or Ctrl-C reports
+`canceled`, and leaves nothing.
+
+Imports run one at a time, under a lock in `.lamplight/locks/`, so two imports of the same
+workspace cannot both succeed. The Topic is assembled under `.lamplight/tmp` and moved into
+place only when complete, so an interrupted import leaves no Topic, and importing again
+starts over; each import first removes staging folders over an hour old whose Topic no
+process holds the lock of. It records `topic.created`, then the settings (`level.set` with
+`source: import`, `approach.set`, `knowledge_base.set`), one `source.added` per Source, and
+one `topic.imported` Event, which writes the `.gitattributes` and whose payload is the
+report: where it came from (`from`, `head`, `config_version`, `config_hash`), where the plan
+and the config now are (`plan`, `config`), the Lessons kept open with `--not-done`
+(`not_done`), what was converted, moved and dropped, the Lessons proven done with their
+proof, the open ones, and where v1 stopped. A Checkpoint then saves the import; without an
+identity for commits the result carries `checkpoint_error`, and the next Checkpoint saves it.
+
+An imported Topic shows `imported` in `status`: `from`, `at`, `adopted`, `plan` (absent when
+v1 wrote none), `config`, `v1_next_step`, and the report the adoption works from:
+`completed` with their proofs, `open` and `dropped`, each cut to its first 100 entries, with
+`more` counting what was cut (the `topic.imported` Event holds everything). It carries the
+recommendation `adopt` until it has a Syllabus. The adoption, with the agent, is a
 checklist: the Goal and deadline, the Pace, the Syllabus from `notes/v1-plan.md` (v1's three
-tiers become the priorities `must`, `if_time` and `after_deadline`) approved as a Revision
-that keeps every Lesson proven done, Checks for the open Lessons, the Knowledge base, Cards
-for the completed Lessons, and a Next step from where v1 stopped.
+tiers become the priorities `must`, `if_time` and `after_deadline`), or, without a plan,
+from v1's lesson list and the learner's notes, approved as a Revision that keeps every
+Lesson proven done, Checks for the open Lessons, the Knowledge base, Cards for the completed
+Lessons, and a Next step from where v1 stopped.
 
 ## Writes
 
@@ -965,8 +1015,10 @@ Only a failure makes the setup unhealthy; then `ok` is `false`, the error code i
 
 `study_home` is absent when it cannot be resolved. Finding names, in order: `config`,
 `study_home`, `git`, `git_identity` (only when git works), and, when the Study home
-resolves, `local_state`, `topics`, one `topic:<id>` per Topic with a problem, and `library`;
-then `log`, `completion` and `setup`. A Topic folder study cannot read is a failed `topic:<id>`; a
+resolves, `local_state`, `topics`, one `topic:<id>` per Topic with a problem, `staging` (a
+warning, only when an interrupted import or Topic creation left folders in `.lamplight/tmp`
+over an hour ago; the next `study import` removes them), and `library`; then `log`,
+`completion` and `setup`. A Topic folder study cannot read is a failed `topic:<id>`; a
 Topic whose `.git` is missing, or is a file or a symlink (which Checkpoints refuse), is a
 warning.
 

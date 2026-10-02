@@ -714,29 +714,53 @@ v1 stays installed as the `study` skill and keeps working. The LLM data engineer
 stays on v1 until after 13 October. Until the learner switches, v2's skill is installed only
 for testing, against a separate Study home, so "let's study" keeps reaching v1.
 
-1. `study import <v1-dir> [--dry-run]` copies the workspace, git history included, into the
-   Study home and leaves the original untouched. It keeps v1 folder and Lesson names as IDs
-   (`lesson-01`), so paths quoted in Lesson text and in `.gitignore` keep working. It moves
-   `lessons/plan.md` to `notes/v1-plan.md`, converts `.study-config.json` into `topic.toml`,
-   and maps `sources` and `notebooklm` to the Knowledge base. It records one
-   `topic.imported` Event, whose payload is the import's report and carries the Lesson
-   completions it can prove, after the settings and Sources it converts. v1's lesson-level
-   cards are dropped. `--dry-run` lists everything that will be converted and dropped.
-   - Lesson files move to `lessons/lesson-NN.md`, the Lesson file v2 reads, and v1's config
-     is kept as `notes/v1-config.json`.
-   - A Lesson v1 calls completed counts as done only with its file and v1's own record of
-     it: the commit v1 made on completing it, or the card v1 added for it. Anything else
-     stays open, and the report says it was not proven. A completion the import proves has
-     no Attempt; a Revision cannot remove or skip it.
+1. `study import <v1-dir> [--not-done lesson-NN]... [--dry-run]` copies the workspace, git
+   history included, into the Study home and leaves the original untouched. It keeps v1
+   folder and Lesson names as IDs (`lesson-01`), so paths quoted in Lesson text and in
+   `.gitignore` keep working. It moves `lessons/plan.md` to `notes/v1-plan.md`, converts
+   `.study-config.json` into `topic.toml`, and maps `sources` and `notebooklm` to the
+   Knowledge base. It records one `topic.imported` Event, whose payload is the import's
+   report and carries the Lesson completions it can prove, after the settings and Sources it
+   converts. v1's lesson-level cards are dropped. `--dry-run` lists everything that will be
+   copied, converted, moved and dropped, with each proof.
+   - Every move is planned before anything is copied, and the dry run and the import share
+     the plan: a Lesson's file under `lessons/` moves to `lessons/lesson-NN.md`, the Lesson
+     file v2 reads, once, never over another file; v1's config is kept as
+     `notes/v1-config.json`, and v1 files named like Lamplight's state files move to
+     `notes/v1-<name>`. Nothing under `.git` moves.
+   - A Lesson v1 calls completed counts as done only with its file under `lessons/` and v1's
+     own record of it: the commit v1's Lesson Completion Contract makes, `[agent] complete
+     lesson NN`, matched whole and not reverted since, or the card `lesson-NN` the contract
+     adds. Anything else stays open, and the report says it was not proven; the learner keeps
+     any Lesson open with `--not-done`. A completion the import proves has no Attempt; a
+     Revision cannot remove or skip it.
+   - Everything is copied, git-ignored or not, except links leading outside the workspace
+     (resolved through `os.Root`, so a second link cannot lead out either), special files,
+     v1's cards, and folders the language's tools rebuild (`node_modules`, virtual
+     environments, caches, Rust and Maven `target`), unless the history tracks them. Each
+     is listed with why; nothing refuses the import.
+   - The learner's `.gitignore` and `.gitattributes` lines come first and Lamplight's last,
+     so they win: negations keep the state files in Checkpoints, and the state files'
+     attributes are reset to Lamplight's. The Event records the merged `.gitattributes`.
+   - The v1 difficulty becomes the Level with `source: import`, v1's estimate, until an
+     Assessment or the learner sets it.
    - The workspace is copied under `.lamplight/tmp` and moved into place when complete, so
-     an interrupted import leaves no Topic; its history is read only through the hardened
-     checkpoint package, and links leading outside it are refused.
+     an interrupted import leaves no Topic; the next import removes staging folders over an
+     hour old whose Topic is not locked, and `study doctor` reports them. Imports run one at
+     a time under a lock, and a workspace is known by its real path, so the same one cannot
+     be imported twice. Its history is read only through the hardened checkpoint package, in
+     UTF-8 and bounded. A repository borrowing objects (alternates) is refused with the fix,
+     `git repack -a -d` then deleting `objects/info/alternates`; one where git is writing is
+     `busy`.
 2. An adoption Session works through a checklist: Goal and deadline, Pace periods, Syllabus
-   from `notes/v1-plan.md` (the three tiers become three Milestone priorities), a Check for
-   each open Lesson, the Knowledge base, Cards for completed Lessons, and the Next step from
-   v1's `pending_action` and `context`. The learner approves the result as a Revision.
-   Until the Topic has a Syllabus, `status` recommends `adopt` and `session_open` suggests
-   it (Instruction 13); the skill's adoption reference is the checklist.
+   from `notes/v1-plan.md` (the three tiers become three Milestone priorities), or, without
+   one (only v1's project approach wrote it), from v1's lesson list and the learner's notes,
+   a Check for each open Lesson, the Knowledge base, Cards for completed Lessons, and the
+   Next step from v1's `pending_action` and `context`. The learner approves the result as a
+   Revision. A proof the learner disputes is fixed before adoption, by importing again with
+   `--not-done`. Until the Topic has a Syllabus, `status` recommends `adopt` and carries the
+   import's report, and `session_open` suggests it (Instruction 13); the skill's adoption
+   reference is the checklist.
 3. Acceptance test: `~/study-workspaces/c` and `~/study-workspaces/llm-data-engineering`
    import and resume exactly where they stopped. Automated tests use sanitised copies,
    because the real workspaces contain work-related content.

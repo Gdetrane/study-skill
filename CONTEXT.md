@@ -139,6 +139,18 @@ A saved snapshot of a Topic, taken whenever the turn passes between the agent an
 learner, so the learner's own work can be seen on its own.
 _Avoid_: Save, commit (that is how a Checkpoint is stored, not what it is)
 
+**Import**:
+Turning a workspace of the v1 study skill into a new Topic: a copy with its history, v1's
+names kept, the Lessons v1's records prove done marked done, and a report of what was
+converted and dropped. The original is left untouched.
+_Avoid_: Migration (that is the whole move from v1, of which the Import is one step)
+
+**Adoption Session**:
+The first Session on an imported Topic, which works through the import's report with the
+learner and gives the Topic what v1 lacked: Goal and deadline, Pace, a Syllabus approved as
+a Revision, Checks, Cards and a Next step.
+_Avoid_: Onboarding, conversion
+
 ### Records
 
 **History**:
