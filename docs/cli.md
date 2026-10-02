@@ -40,6 +40,8 @@ that scripts and agents can rely on. Terms follow [CONTEXT.md](../CONTEXT.md).
 | `study check <lesson> [--topic ID] [--timeout D]` | Runs a Lesson's Check on the current work and records the Attempt (see "Checks" below). Without `--topic`, it uses the Topic whose folder it runs in. |
 | `study rubric grade <lesson> <criterion> --grade G [...]` | Grades a rubric item of a Lesson's Check (see "Checks"). |
 | `study results <lesson> [--topic ID]` | Shows a Lesson's Check results and whether it can be completed (see "Checks"). |
+| `study lesson <lesson> [--topic ID]` | Shows one Lesson: its number, Milestone, status and Phase, its file, and what its YAML header declares (the Check's criteria with their commands, and the Break points), with the current Check version, whether it is the one shown to the learner (`check_shown`), and whether the header can be read (`header_readable`, `header_error`). Runs nothing and never shows Held-out data. Without `--topic`, it uses the Active topic. The MCP tool is `lesson`. |
+| `study history [topic] [--limit N] [--type T] [--lesson L]` | Shows a Topic's most recent Events, newest first, each as `{id, type, at, summary, lesson?, item?}` with `more` set when older ones match too. `--limit` defaults to 10 and is capped at 100; `--type` keeps the Events whose type starts with T (such as `card.` or `attempt`), `--lesson` those about one Lesson. Summaries never carry an Event's payload: no Held-out results, notes or quotes. It is for understanding what happened, never a tally for the learner. The MCP tool is `history`. |
 | `study review [topic] [--energy E] [--limit N]` | Reviews the due Cards in the terminal, without an agent (see "Cards and Reviews" below). Without a Topic, it reviews the Active topic. Interactive only: with `--json` it is a usage error. |
 | `study card list <topic> [--lesson L]` | Lists the Topic's Cards in the order they were written, with their display numbers and state. `--lesson explore` lists the Explore Cards. |
 | `study card due <topic> [--energy E] [--limit N]` | Lists the Cards to review now, sized to the Energy, never saying how many more are due. A paused Topic lists none, and its result says `"paused": true`. |
@@ -174,6 +176,13 @@ Syllabus yet), `learn`, `practice` or `feedback` (the current Lesson's Phase), `
 (every Lesson done, Cards ready) or `explore` (every Lesson done); or, whatever the Resume
 point says, `resume_topic` (the Topic is paused: resume it or pick another Topic), and for a
 finished Topic `reviews` (Cards ready) or `stop` (no Card ready: nothing to study on it now).
+Before the Next step comes `assess`, with `milestone` (`{number, id, title}`): every Lesson
+of that Milestone is done or skipped, at least one done, and its end-of-Milestone Assessment
+is the next thing to do. It names the Milestone finished most recently, and only while no
+milestone Assessment for it was recorded after its last Lesson was completed and the
+learner has not moved on since (started a Lesson of another Milestone, or recorded a Next
+step). A Topic carries the same Milestone as `assessment_due`. It is a next action, never
+something late.
 The words match the Focuses and the suggestions of `session_open` wherever they mean the same
 thing, and the list is fixed, so skills can rely on it; `text` is English prose a skill may
 rephrase. An active Topic's recommendation always agrees with its Resume point. A Triage is
@@ -593,7 +602,13 @@ needs a grade, but which grade does not matter: `not_met` counts as graded. Held
 results never decide it. A Check edited afterwards is flagged in `status` and must be shown
 again; changing the work after a pass means running the Check, and grading, again.
 `lesson_complete` records the Attempt and the grades it relied on, and a done Lesson is
-never reopened.
+never reopened. When the completion finishes its Milestone (every other Lesson of it is
+done or skipped) and the Milestone's Assessment is not recorded yet, the result has
+`next`, with the Milestone:
+
+```json
+"next": {"code": "assess_milestone", "text": "Milestone 1 “Basics” is finished: assess it together with the learner, then record it with assessment_record", "milestone": {"number": 1, "id": "basics", "title": "Basics"}}
+```
 
 **After a failed Attempt**, one where a run criterion of the Check shown to the learner
 failed, the agent gives feedback, then moves the Lesson to practicing with `phase_set` and

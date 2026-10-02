@@ -267,14 +267,19 @@ hours before any learning happens is exactly what v1 produced.
   one version are flagged, whether by Revisions or by an adopted hand edit, as is a Lesson
   completed on one machine and removed or skipped on the other.
 - An **Assessment** at the end of a Milestone never blocks progress; weak results lead to a
-  proposed Revision (for example a review Lesson).
+  proposed Revision (for example a review Lesson). When a Milestone's last Lesson is done,
+  `lesson_complete` returns `next` with the code `assess_milestone`, and `status`
+  recommends `assess` for that Milestone, ahead of the Next step, until its Assessment is
+  recorded or the learner moves on (starts a Lesson of another Milestone, or records a Next
+  step). It is the next thing to do, never something late.
 
 ### Sessions
 
 1. `status` comes first. It shows the Active topic and why it was chosen, the Resume point
    and its Next step word for word, one recommended action, Cards sized to the Energy
-   (never the total due), Forecasts, and any relevant Tasks. The recommendation is the Next
-   step when there is one, otherwise the next move in the Syllabus (plan it, start, continue,
+   (never the total due), Forecasts, and any relevant Tasks. The recommendation is the
+   Assessment of a Milestone just finished (`assess`), then the Next step when there is one,
+   otherwise the next move in the Syllabus (plan it, start, continue,
    practice or go over feedback on the current Lesson), otherwise Reviews or exploring once
    every Lesson is done. A paused Topic's recommendation is instead to resume it or pick
    another Topic (`resume_topic`), and a finished Topic's is its Reviews, or `stop` when no
