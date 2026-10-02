@@ -181,7 +181,8 @@ func addLearnerLoop(server *mcp.Server, c *core.Core) {
 			"and takes a Checkpoint. Write Cards that state one fact each, with no answer in the prompt, including " +
 			"at least one from the learner's own mistakes. Completing a Lesson twice records nothing, so after an error " +
 			"or an interruption, call it again with the same arguments. If the result has checkpoint_error, call " +
-			"checkpoint with its checkpoint_role once the problem is fixed.",
+			"checkpoint with its checkpoint_role once the problem is fixed. When next has code assess_milestone, this " +
+			"completion finished its Milestone: its Assessment comes next.",
 		Annotations: idempotent,
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in lessonCompleteInput) (*mcp.CallToolResult, core.LessonCompletion, error) {
 		r, err := c.CompleteLesson(ctx, in.Topic, core.CompleteSpec{Lesson: in.Lesson, Cards: in.Cards})

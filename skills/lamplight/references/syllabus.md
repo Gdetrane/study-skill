@@ -39,7 +39,8 @@ Lessons, the Lessons a Revision can't rewrite, and adopting the learner's own ed
 
 ## The end of a Milestone
 
-When the learner completes a Milestone's last Lesson, run its Assessment, as in
+When `lesson_complete` returns `next` with the code `assess_milestone`, or `status`
+recommends `assess`, the Milestone it names is finished: run its Assessment, as in
 [Starting a Topic](starting-a-topic.md) step 5, over the Milestone's outcome. Record it
 with `assessment_record`, kind `milestone` and the Milestone's id. Give `level` only when
 the learner agreed a new Level; it replaces any they chose since the last Assessment.

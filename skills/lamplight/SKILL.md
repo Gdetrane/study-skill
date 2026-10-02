@@ -33,6 +33,8 @@ Everything else in a Topic changes only through the tools (Instruction 3).
 1. Where they are. Call `status` and tell the learner what Instruction 1 lists.
    - When it recommends `resume_topic`, ask first: resume the Topic (`topic_update` with
      state `active`), or pick another one. Open the Session only on the Topic they choose.
+   - When it recommends `assess`, the Milestone it names is finished: offer its Assessment
+     first ([The end of a Milestone](references/syllabus.md#the-end-of-a-milestone)).
    - Tell them about any flags; once they accept one, `flag_dismiss` clears it.
    - When the Topic's Knowledge base is `notebooklm`, make one cheap call to the NotebookLM
      MCP server; when it fails, tell them they may need to log in to NotebookLM again.

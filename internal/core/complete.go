@@ -60,6 +60,9 @@ type LessonCompletion struct {
 	// Warning says when a repeated call passed Cards that differ from those
 	// the completion recorded, which are kept.
 	Warning string `json:"warning,omitempty"`
+	// Next is the Milestone's Assessment when this completion finished the
+	// Milestone and it is not recorded yet.
+	Next *NextAction `json:"next,omitempty"`
 	TurnCheckpoint
 	DryRun bool `json:"dry_run,omitempty"`
 }
@@ -102,6 +105,11 @@ func (c *Core) CompleteLesson(ctx context.Context, topicID string, spec Complete
 	ev, err := c.writeTopic(ctx, topicID, func(s *replayed, view *topicView) (*change, error) {
 		if ls := s.study.lessons[spec.Lesson]; ls != nil && ls.completed != nil {
 			c.describeCompletion(s, view, topicID, spec.Lesson, drafts, &result)
+			if due := s.assessmentDue(); due != nil {
+				if ref, _, ok := s.study.syllabus.milestoneOfLesson(spec.Lesson); ok && ref.ID == due.ID {
+					result.Next = assessNext(due)
+				}
+			}
 			return nil, nil
 		}
 		// Checked under the lock, so a Revision skipping the Lesson in the
@@ -138,6 +146,9 @@ func (c *Core) CompleteLesson(ctx context.Context, topicID string, spec Complete
 				Lesson: line.Lesson, Prompt: line.Prompt, Answer: line.Answer, Evidence: line.Evidence, Draft: true})
 		}
 		result.Attempt, result.Grades = attempt.ID, d.Grades
+		if ref, m, ok := s.study.syllabus.milestoneOfLesson(spec.Lesson); ok && s.study.finishesMilestone(m, spec.Lesson) {
+			result.Next = assessNext(&ref)
+		}
 		return &change{Type: eventLessonCompleted, Data: d, Items: items}, nil
 	}, spec.DryRun)
 	if err != nil {

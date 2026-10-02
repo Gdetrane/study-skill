@@ -63,6 +63,9 @@ type Topic struct {
 	// LearnerAdditions is the path of the Topic's additions to the Learner
 	// profile, when they exist.
 	LearnerAdditions string `json:"learner_additions,omitempty"`
+	// AssessmentDue is the Milestone whose end-of-Milestone Assessment is
+	// the next thing to do, once all its Lessons are done or skipped.
+	AssessmentDue *MilestoneRef `json:"assessment_due,omitempty"`
 
 	// The plan; see plan.go. State is active, paused or finished.
 	State string `json:"state"`
