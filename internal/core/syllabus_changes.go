@@ -3,6 +3,7 @@ package core
 import (
 	"bytes"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -22,6 +23,7 @@ const (
 	ChangeLessonHours      = "lesson_hours"
 	ChangeLessonSkipped    = "lesson_skipped"
 	ChangeLessonUnskipped  = "lesson_unskipped"
+	ChangeLessonsReordered = "lessons_reordered"
 )
 
 // RevisionChanges is what a Revision changes in the Syllabus, computed from
@@ -188,6 +190,29 @@ func revisionChanges(s *replayed, next Syllabus, fromFile bool) RevisionChanges 
 		}
 		if o.number != n.number {
 			out.Renumbered = append(out.Renumbered, Renumbering{Lesson: id, Title: n.lesson.Title, From: o.number, To: n.number})
+		}
+	}
+	// Lessons that stay in a Milestone but change places within it: no
+	// change above names that, and it is what the learner approves.
+	for i, m := range next.Milestones {
+		oi, ok := oldMilestones[m.ID]
+		if !ok {
+			continue
+		}
+		var was, now, titles []string
+		for _, l := range current.Milestones[oi].Lessons {
+			if n, kept := after[l.ID]; kept && n.milestone.ID == m.ID {
+				was = append(was, l.ID)
+			}
+		}
+		for _, l := range m.Lessons {
+			if o, existed := before[l.ID]; existed && o.milestone.ID == m.ID {
+				now = append(now, l.ID)
+				titles = append(titles, strconv.Quote(l.Title))
+			}
+		}
+		if !slices.Equal(was, now) {
+			add(ChangeLessonsReordered, m.ID, "", "Reorders the Lessons of Milestone %d %q: now %s", i+1, m.Title, strings.Join(titles, ", "))
 		}
 	}
 	_, oldOrder := numberLessons(current)

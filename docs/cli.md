@@ -175,6 +175,7 @@ words. A `stale` proposal was based on a Syllabus that has changed since; propos
 | `lesson_added`, `lesson_removed` | A Lesson added or removed. |
 | `lesson_renamed`, `lesson_moved`, `lesson_hours` | A Lesson's title, Milestone or hour estimate changed. |
 | `lesson_skipped`, `lesson_unskipped` | A Lesson skipped, or its skip taken back. |
+| `lessons_reordered` | Lessons that stay in a Milestone change places within it; `milestone` names it. |
 | `settings_changed` | Only settings Lamplight does not know changed. |
 
 Rules a Revision follows:

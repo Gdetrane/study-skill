@@ -545,6 +545,9 @@ func keepsSettledLessons(s *replayed, next Syllabus) error {
 		if l.completed == nil {
 			continue
 		}
+		if nl, ok := next.lesson(id); ok && nl.Skipped {
+			return &Error{Code: CodeFailedPrecondition, Message: fmt.Sprintf("Lesson %s is done, so it cannot be skipped", id)}
+		}
 		if s.study.syllabus != nil {
 			if _, ok := s.study.syllabus.lesson(id); !ok {
 				continue
@@ -552,9 +555,6 @@ func keepsSettledLessons(s *replayed, next Syllabus) error {
 		}
 		if err := keepsLesson(s.study.syllabus, next, id, "done"); err != nil {
 			return err
-		}
-		if nl, ok := next.lesson(id); ok && nl.Skipped {
-			return &Error{Code: CodeFailedPrecondition, Message: fmt.Sprintf("Lesson %s is done, so it cannot be skipped", id)}
 		}
 	}
 	if s.study.syllabus != nil {
@@ -675,9 +675,16 @@ func replayRevisionApplied(s *replayed, ev event) error {
 				"should be proposed again", d.Revision, recorded.event, d.Revision)))
 	}
 	// A Revision never rewrites a done Lesson; one that does was proposed
-	// on another machine before the Lesson was completed here.
+	// on another machine before the Lesson was completed here. A done
+	// Lesson the Syllabus before this Revision no longer held was flagged
+	// when it went, and keepsSettledLessons lets later Revisions leave it
+	// out: flagging it again on every Revision would undo its dismissal.
 	for id, l := range s.study.lessons {
-		if l.completed == nil {
+		if l.completed == nil || s.study.syllabus == nil {
+			continue
+		}
+		ol, om, held := s.study.syllabus.find(id)
+		if !held {
 			continue
 		}
 		problem := ""
@@ -686,10 +693,8 @@ func replayRevisionApplied(s *replayed, ev event) error {
 			problem = "removed"
 		case nl.Skipped:
 			problem = "skipped"
-		case s.study.syllabus != nil:
-			if ol, om, ok := s.study.syllabus.find(id); ok && (ol.Title != nl.Title || ol.Hours != nl.Hours || om.ID != nm.ID) {
-				problem = "rewrote"
-			}
+		case ol.Title != nl.Title || ol.Hours != nl.Hours || om.ID != nm.ID:
+			problem = "rewrote"
 		}
 		if problem != "" {
 			s.flag(newFlag(FlagConflict, syllabusFile, []string{l.completedBy, ev.ID}, id,

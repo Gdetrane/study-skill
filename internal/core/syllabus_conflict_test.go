@@ -137,10 +137,33 @@ func TestARemovedLessonCompletedOnTheOtherMachine(t *testing.T) {
 				}
 			}
 			for _, m := range []*machine{a, b} {
+				// Once the learner dismisses the flag, a later Revision that
+				// still leaves the Lesson out raises no new one.
+				topic, err := m.readTopic("c")
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, f := range topic.Flags {
+					if _, err := m.DismissFlag(ctx, "c", f.ID, false); err != nil {
+						t.Fatal(err)
+					}
+				}
 				next := clone(removed)
 				next.Milestones[0].Lessons = append(next.Milestones[0].Lessons, SyllabusLesson{ID: "extra", Title: "Extra"})
 				if _, err := m.ProposeRevision(ctx, "c", RevisionSpec{Summary: "Add extra", Syllabus: next}); err != nil {
 					t.Errorf("a later Revision is refused: %v", err)
+					continue
+				}
+				revise(t, m, next)
+				if topic, err := m.readTopic("c"); err != nil || len(topic.Flags) != 0 {
+					t.Errorf("flags after a later Revision: %+v, %v; want the dismissal to hold", topic.Flags, err)
+				}
+				// Adding the done Lesson back is how the learner settles it,
+				// but never as skipped.
+				back := clone(next)
+				back.Milestones[0].Lessons = append(back.Milestones[0].Lessons, SyllabusLesson{ID: "answer", Title: "The answer", Hours: 1, Skipped: true})
+				if _, err := m.ProposeRevision(ctx, "c", RevisionSpec{Summary: "Skip the answer", Syllabus: back}); CodeOf(err) != CodeFailedPrecondition {
+					t.Errorf("adding a done Lesson back skipped: err = %v, want failed_precondition", err)
 				}
 			}
 		})

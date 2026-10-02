@@ -203,6 +203,40 @@ func TestARevisionMustChangeSomething(t *testing.T) {
 	}
 }
 
+// TestReorderingLessonsIsAChangeOfItsOwn: Lessons that only change places
+// within a Milestone are named as such, never as unknown settings.
+func TestReorderingLessonsIsAChangeOfItsOwn(t *testing.T) {
+	ctx := context.Background()
+	m := newTopic(t)
+	three := Syllabus{Milestones: []Milestone{{ID: "basics", Title: "Basics", Priority: PriorityMust, Lessons: []SyllabusLesson{
+		{ID: "one", Title: "One"}, {ID: "two", Title: "Two"}, {ID: "three", Title: "Three"}}}}}
+	revise(t, m, three)
+	swapped := clone(three)
+	l := swapped.Milestones[0].Lessons
+	l[0], l[1] = l[1], l[0]
+	p, err := m.ProposeRevision(ctx, "c", RevisionSpec{Summary: "Two first", Syllabus: swapped})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Changes.Changes) != 1 || p.Changes.Changes[0].Kind != ChangeLessonsReordered || p.Changes.Changes[0].Milestone != "basics" ||
+		!strings.Contains(p.Changes.Text, `Reorders the Lessons of Milestone 1 "Basics": now "Two", "One", "Three"`) ||
+		len(p.Changes.Renumbered) != 2 {
+		t.Errorf("a swap of two Lessons: %+v", p.Changes)
+	}
+	// Adding a Lesson in front renumbers the others but reorders nothing.
+	added := clone(three)
+	added.Milestones[0].Lessons = append([]SyllabusLesson{{ID: "zero", Title: "Zero"}}, added.Milestones[0].Lessons...)
+	p, err = m.ProposeRevision(ctx, "c", RevisionSpec{Summary: "Zero first", Syllabus: added})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, ch := range p.Changes.Changes {
+		if ch.Kind == ChangeLessonsReordered || ch.Kind == ChangeSettings {
+			t.Errorf("adding a Lesson in front: %+v", p.Changes.Changes)
+		}
+	}
+}
+
 // TestSettingsLamplightDoesNotKnowKeepTheirTypeAndMerge: a float stays a
 // float through a Revision, and settings an agent's file supplies join
 // those the entity already has.
