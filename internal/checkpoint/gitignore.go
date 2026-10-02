@@ -34,6 +34,9 @@ node_modules/
 
 # Secrets
 .env
+
+# Temporary files Lamplight leaves if a write is interrupted
+.*.lamplight-tmp-*
 `
 
 // DefaultGitignore returns the .gitignore written into a new Topic: data and

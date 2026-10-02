@@ -82,16 +82,10 @@ func (c *Core) Status(ctx context.Context) (Status, error) {
 		if !entry.IsDir() || strings.HasPrefix(name, ".") {
 			continue
 		}
-		if _, err := home.Stat(filepath.Join(name, topicFile)); err != nil {
-			// Only a folder without topic.toml is not a Topic; one whose
-			// settings cannot be checked is reported, never hidden.
-			if !errors.Is(err, fs.ErrNotExist) {
-				status.Problems = append(status.Problems, TopicProblem{ID: name, Code: CodeInternal,
-					Message: internalError("checking "+topicFile+" of "+name, err).Error()})
-			}
+		if !isTopic(home, name) {
 			continue
 		}
-		topic, err := loadTopic(home, c.home, name)
+		topic, err := c.loadTopic(home, name)
 		if err != nil {
 			status.Problems = append(status.Problems, TopicProblem{ID: name, Code: CodeOf(err), Message: err.Error()})
 			continue

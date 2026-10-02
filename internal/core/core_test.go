@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -17,6 +18,10 @@ import (
 
 var fixedNow = time.Date(2026, 10, 1, 9, 30, 0, 0, time.UTC)
 
+// eventIDs numbers Events across the whole test process: like real random
+// IDs, they never repeat between Cores over one Study home.
+var eventIDs atomic.Int64
+
 // testCore returns a Core over a fresh Study home, started in dir (the Study
 // home itself when dir is empty), with a fixed clock and predictable IDs.
 func testCore(t *testing.T, home, dir string) *core.Core {
@@ -24,7 +29,7 @@ func testCore(t *testing.T, home, dir string) *core.Core {
 	if dir == "" {
 		dir = home
 	}
-	var n atomic.Int64
+	n := &eventIDs
 	c, err := core.Open(core.Options{
 		Getenv: envOf(map[string]string{"STUDY_HOME": home, "HOME": t.TempDir()}),
 		Dir:    dir,
@@ -56,7 +61,7 @@ func TestCreateTopicWritesItsFolder(t *testing.T) {
 		Goal: "Solve linear systems by hand", Path: filepath.Join(home, "linear-algebra-calculus"),
 		Created: fixedNow,
 	}
-	if topic != want {
+	if !reflect.DeepEqual(topic, want) {
 		t.Fatalf("topic = %+v, want %+v", topic, want)
 	}
 
@@ -82,7 +87,7 @@ func TestCreateTopicWritesItsFolder(t *testing.T) {
 	if err := json.Unmarshal([]byte(lines[0]), &ev); err != nil {
 		t.Fatalf("history line is not JSON: %v", err)
 	}
-	if ev["type"] != "topic.created" || ev["id"] != "id001" || ev["format"] != float64(1) {
+	if ev["type"] != "topic.created" || !strings.HasPrefix(fmt.Sprint(ev["id"]), "id") || ev["format"] != float64(1) {
 		t.Errorf("unexpected Event: %v", ev)
 	}
 }
@@ -410,6 +415,82 @@ func TestRelativeStudyHomeIsRefused(t *testing.T) {
 	_, err := core.Open(core.Options{Getenv: envOf(map[string]string{"STUDY_HOME": "study", "HOME": t.TempDir()})})
 	if core.CodeOf(err) != core.CodeInvalidArgument {
 		t.Fatalf("err = %v, want invalid_argument for a relative STUDY_HOME", err)
+	}
+}
+
+func TestUpdateTopic(t *testing.T) {
+	ctx := context.Background()
+	home := t.TempDir()
+	c := testCore(t, home, "")
+	for _, title := range []string{"C", "Physics"} {
+		if _, err := c.CreateTopic(ctx, core.TopicSpec{Title: title}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	title, goal := "Systems programming in C", "Write a shell"
+
+	dry, err := c.UpdateTopic(ctx, "c", core.TopicChanges{Title: &title, DryRun: true})
+	if err != nil || !dry.Changed || dry.Topic.Title != title {
+		t.Fatalf("dry run = %+v, %v", dry, err)
+	}
+	if got := readFile(t, filepath.Join(home, "c"), "topic.toml"); strings.Contains(got, title) {
+		t.Errorf("--dry-run changed topic.toml:\n%s", got)
+	}
+
+	updated, err := c.UpdateTopic(ctx, "c", core.TopicChanges{Title: &title, Goal: &goal})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !updated.Changed || updated.Topic.Title != title || updated.Topic.Goal != goal || !updated.Topic.Created.Equal(fixedNow) {
+		t.Errorf("update = %+v", updated)
+	}
+	status, err := c.Status(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.ActiveTopic == nil || status.ActiveTopic.ID != "c" || status.ActiveTopic.ChosenBy != core.ChosenByRecent {
+		t.Errorf("the updated Topic should become the most recent: %+v", status.ActiveTopic)
+	}
+
+	empty := ""
+	cleared, err := c.UpdateTopic(ctx, "c", core.TopicChanges{Goal: &empty})
+	if err != nil || cleared.Topic.Goal != "" {
+		t.Errorf("clearing the goal: %+v, %v", cleared, err)
+	}
+
+	blank, bell := "  ", "bell\a"
+	for name, tc := range map[string]struct {
+		id      string
+		changes core.TopicChanges
+		code    core.ErrorCode
+	}{
+		"nothing to change": {"c", core.TopicChanges{}, core.CodeInvalidArgument},
+		"empty title":       {"c", core.TopicChanges{Title: &blank}, core.CodeInvalidArgument},
+		"control character": {"c", core.TopicChanges{Goal: &bell}, core.CodeInvalidArgument},
+		"invalid id":        {"../c", core.TopicChanges{Title: &title}, core.CodeInvalidArgument},
+		"unknown Topic":     {"biology", core.TopicChanges{Title: &title}, core.CodeNotFound},
+	} {
+		if _, err := c.UpdateTopic(ctx, tc.id, tc.changes); core.CodeOf(err) != tc.code {
+			t.Errorf("%s: err = %v, want %s", name, err, tc.code)
+		}
+	}
+}
+
+func TestStatusReportsATopicWithoutSettings(t *testing.T) {
+	ctx := context.Background()
+	home := t.TempDir()
+	if _, err := testCore(t, home, "").CreateTopic(ctx, core.TopicSpec{Title: "C"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(home, "c", "topic.toml")); err != nil {
+		t.Fatal(err)
+	}
+	status, err := testCore(t, home, "").Status(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(status.Problems) != 1 || status.Problems[0].ID != "c" || status.Problems[0].Code != core.CodeCorrupt {
+		t.Errorf("problems = %+v: a Topic whose settings are missing is damaged, not gone", status.Problems)
 	}
 }
 

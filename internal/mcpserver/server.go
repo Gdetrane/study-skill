@@ -41,6 +41,7 @@ func New(c *core.Core, version string) *mcp.Server {
 		Name:  "status",
 		Title: "Where the learner is",
 		Description: "Show the Study home, the Active topic and why it was chosen, and every Topic. " +
+			"A Topic's flags name anything that needs the learner's attention; tell the learner about them. " +
 			"Call this first in every session.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, OpenWorldHint: &closedWorld},
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, core.Status, error) {
@@ -49,6 +50,21 @@ func New(c *core.Core, version string) *mcp.Server {
 			return nil, core.Status{}, toolError(err)
 		}
 		return nil, status, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:  "flag_dismiss",
+		Title: "Dismiss a flag",
+		Description: "Dismiss one of a Topic's flags, by the id status gives it. Only call this after the learner has " +
+			"seen the flag and accepted it; never dismiss a flag on your own. Dismissing records the decision and never " +
+			"changes content.",
+		Annotations: &mcp.ToolAnnotations{DestructiveHint: &notDestructive, IdempotentHint: true, OpenWorldHint: &closedWorld},
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in flagDismissInput) (*mcp.CallToolResult, core.FlagDismissal, error) {
+		res, err := c.DismissFlag(ctx, in.Topic, in.Flag, false)
+		if err != nil {
+			return nil, core.FlagDismissal{}, toolError(err)
+		}
+		return nil, res, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
@@ -63,6 +79,20 @@ func New(c *core.Core, version string) *mcp.Server {
 			return nil, core.Topic{}, toolError(err)
 		}
 		return nil, topic, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:  "topic_update",
+		Title: "Change a Topic",
+		Description: "Change a Topic's title or goal. Fields left out stay as they are; an empty goal removes it. " +
+			"Asking for the values the Topic already has changes nothing.",
+		Annotations: &mcp.ToolAnnotations{DestructiveHint: &notDestructive, IdempotentHint: true, OpenWorldHint: &closedWorld},
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in topicUpdateInput) (*mcp.CallToolResult, core.TopicUpdate, error) {
+		updated, err := c.UpdateTopic(ctx, in.Topic, core.TopicChanges{Title: in.Title, Goal: in.Goal})
+		if err != nil {
+			return nil, core.TopicUpdate{}, toolError(err)
+		}
+		return nil, updated, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
@@ -159,6 +189,17 @@ func Serve(ctx context.Context, c *core.Core, version string, in io.Reader, out 
 type nopWriteCloser struct{ io.Writer }
 
 func (nopWriteCloser) Close() error { return nil }
+
+type flagDismissInput struct {
+	Topic string `json:"topic" jsonschema:"the id of the Topic the flag belongs to"`
+	Flag  string `json:"flag" jsonschema:"the flag's id, from status"`
+}
+
+type topicUpdateInput struct {
+	Topic string  `json:"topic" jsonschema:"the id of the Topic to change"`
+	Title *string `json:"title,omitempty" jsonschema:"the new title"`
+	Goal  *string `json:"goal,omitempty" jsonschema:"the new goal; an empty string removes it"`
+}
 
 type topicCreateInput struct {
 	Title string `json:"title" jsonschema:"what the learner is studying, for example Linear algebra"`

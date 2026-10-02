@@ -1,0 +1,7 @@
+{
+  "ok": false,
+  "error": {
+    "code": "not_found",
+    "message": "Topic linear-algebra has no flag 0123456789: study status lists its flags"
+  }
+}

@@ -36,7 +36,55 @@ func writeStatus(w io.Writer, s core.Status) error {
 	if err := tw.Flush(); err != nil {
 		return err
 	}
+	writeFlags(w, s.Topics)
 	return writeProblems(w, s.Problems)
+}
+
+// writeFlags lists what replaying each Topic's History found that needs the
+// learner's attention.
+func writeFlags(w io.Writer, topics []core.Topic) {
+	header := false
+	for _, t := range topics {
+		for _, f := range t.Flags {
+			if !header {
+				fmt.Fprintln(w, "\nNeeds attention:")
+				header = true
+			}
+			fmt.Fprintf(w, "  %s: %s (flag %s)\n", t.ID, f.Message, f.ID)
+		}
+	}
+}
+
+func writeFlagDismissal(w io.Writer, d core.FlagDismissal) error {
+	var err error
+	switch {
+	case !d.Changed:
+		_, err = fmt.Fprintf(w, "Flag %s in %s was already dismissed\n", d.Flag.ID, d.Topic)
+	case d.DryRun:
+		_, err = fmt.Fprintf(w, "Would dismiss flag %s in %s: %s\n", d.Flag.ID, d.Topic, d.Flag.Message)
+	default:
+		_, err = fmt.Fprintf(w, "Dismissed flag %s in %s: %s\n", d.Flag.ID, d.Topic, d.Flag.Message)
+	}
+	return err
+}
+
+func writeTopicUpdate(w io.Writer, u core.TopicUpdate, dryRun bool) error {
+	var b strings.Builder
+	t := u.Topic
+	switch {
+	case !u.Changed:
+		fmt.Fprintf(&b, "Topic %s already has that title and goal: nothing changed\n", t.ID)
+	case dryRun:
+		fmt.Fprintf(&b, "Would update Topic %s (%s)\n", t.ID, t.Title)
+	default:
+		fmt.Fprintf(&b, "Updated Topic %s (%s)\n", t.ID, t.Title)
+	}
+	if t.Goal != "" {
+		fmt.Fprintf(&b, "  Goal: %s\n", t.Goal)
+	}
+	writeFlags(&b, []core.Topic{t})
+	_, err := io.WriteString(w, b.String())
+	return err
 }
 
 func writeProblems(w io.Writer, problems []core.TopicProblem) error {

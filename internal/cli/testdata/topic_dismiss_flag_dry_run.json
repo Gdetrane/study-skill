@@ -1,0 +1,16 @@
+{
+  "ok": true,
+  "data": {
+    "topic": "linear-algebra",
+    "flag": {
+      "id": "e9bd1dc27f",
+      "kind": "held_event",
+      "message": "Event zz1 (card.reviewed) was not applied: this version of study doesn't know this type of Event; upgrade study",
+      "events": [
+        "zz1"
+      ]
+    },
+    "changed": true,
+    "dry_run": true
+  }
+}

@@ -3,9 +3,7 @@ package core
 import (
 	"context"
 	"errors"
-	"io/fs"
 	"path/filepath"
-	"strings"
 
 	"github.com/mordor-forge/lamplight/v2/internal/checkpoint"
 )
@@ -50,6 +48,10 @@ type LargeFile struct {
 // Checkpoint commits the learner's or the agent's work in a Topic, without
 // running any program the Topic's git configuration names. See the design's
 // Checkpoints section and ADR-0009.
+//
+// It holds the Topic lock, so it never commits a write half done, and first
+// finishes an interrupted write, so a Checkpoint never carries an Event
+// without its content, or a cut-off line of the History, to another machine.
 func (c *Core) Checkpoint(ctx context.Context, spec CheckpointSpec) (CheckpointResult, error) {
 	role := checkpoint.Role(spec.Role)
 	switch {
@@ -62,10 +64,33 @@ func (c *Core) Checkpoint(ctx context.Context, spec CheckpointSpec) (CheckpointR
 	if err != nil {
 		return CheckpointResult{}, err
 	}
-	path, err := c.topicPath(spec.Topic)
+	home, topic, err := c.openTopicFolder(spec.Topic)
 	if err != nil {
 		return CheckpointResult{}, err
 	}
+	defer home.Close()
+	defer topic.Close()
+	if spec.DryRun {
+		// A dry run writes nothing, so it cannot finish an interrupted
+		// write, and what it would commit is not yet known.
+		if hasIntent(home, spec.Topic) || historyTailPending(topic) {
+			return CheckpointResult{}, &Error{Code: CodeFailedPrecondition, Message: "an interrupted write to " + spec.Topic +
+				" must be finished first: a Checkpoint without --dry-run finishes it, and so does the next change"}
+		}
+	} else {
+		if err := ctx.Err(); err != nil {
+			return CheckpointResult{}, err
+		}
+		unlock, err := lockTopic(ctx, home, spec.Topic)
+		if err != nil {
+			return CheckpointResult{}, err
+		}
+		defer unlock()
+		if err := c.recoverTopic(home, topic, spec.Topic); err != nil {
+			return CheckpointResult{}, err
+		}
+	}
+	path := filepath.Join(c.home, spec.Topic)
 	res, err := checkpoint.Take(ctx, path, checkpoint.Options{
 		Role: role, Message: message, Time: c.now(), DryRun: spec.DryRun,
 	})
@@ -78,36 +103,6 @@ func (c *Core) Checkpoint(ctx context.Context, spec CheckpointSpec) (CheckpointR
 		out.LargeFiles = append(out.LargeFiles, LargeFile{Path: f.Path, Size: f.Size})
 	}
 	return out, nil
-}
-
-// topicPath validates a Topic ID and returns the Topic's folder, refusing
-// anything that is not a real Topic folder in the Study home.
-func (c *Core) topicPath(id string) (string, error) {
-	if strings.TrimSpace(id) == "" {
-		return "", invalidf("name the Topic: run study status to see their ids")
-	}
-	if err := validateTopicID(id); err != nil {
-		return "", err
-	}
-	home, err := c.openHome()
-	if err != nil {
-		return "", err
-	}
-	defer home.Close()
-	info, err := home.Lstat(id)
-	if errors.Is(err, fs.ErrNotExist) {
-		return "", &Error{Code: CodeNotFound, Message: "there is no Topic named " + id + ": run study status to see your Topics"}
-	}
-	if err != nil {
-		return "", internalError("reading Topic "+id, err)
-	}
-	if !info.IsDir() {
-		return "", corruptf("%s in the Study home is not a folder", id)
-	}
-	if _, err := home.Stat(filepath.Join(id, topicFile)); err != nil {
-		return "", &Error{Code: CodeNotFound, Message: id + " is not a Topic: it has no " + topicFile}
-	}
-	return filepath.Join(c.home, id), nil
 }
 
 // checkpointError maps the checkpoint package's errors to core errors with

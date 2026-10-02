@@ -30,8 +30,12 @@ type result struct {
 	stdout, stderr string
 }
 
+// eventIDs numbers Events across the whole test process: like real random
+// IDs, they never repeat between runs against one Study home.
+var eventIDs atomic.Int64
+
 func options(home, dir string) core.Options {
-	var n atomic.Int64
+	n := &eventIDs
 	return core.Options{
 		Getenv: func(key string) string {
 			return map[string]string{"STUDY_HOME": home, "HOME": home}[key]
@@ -95,6 +99,15 @@ func TestJSONOutput(t *testing.T) {
 		{"unknown_flag", emptyHome, []string{"status", "--bogus", "--json"}, cli.ExitUsage},
 		{"unexpected_argument", emptyHome, []string{"--json", "status", "extra"}, cli.ExitUsage},
 		{"unknown_subcommand", emptyHome, []string{"topic", "crate", "--json"}, cli.ExitUsage},
+		{"topic_update", withTopic, []string{"topic", "update", "linear-algebra", "--title", "Linear algebra II", "--goal", "", "--json"}, cli.ExitOK},
+		{"topic_update_unchanged", withTopic, []string{"topic", "update", "linear-algebra", "--title", "Linear algebra", "--json"}, cli.ExitOK},
+		{"topic_update_nothing", withTopic, []string{"topic", "update", "linear-algebra", "--json"}, cli.ExitUsage},
+		{"topic_update_unknown", withTopic, []string{"topic", "update", "biology", "--title", "Biology", "--json"}, cli.ExitError},
+		{"status_with_flags", withFlaggedTopic, []string{"status", "--json"}, cli.ExitOK},
+		{"topic_dismiss_flag", withFlaggedTopic, []string{"topic", "dismiss-flag", "linear-algebra", heldFlag, "--json"}, cli.ExitOK},
+		{"topic_dismiss_flag_dry_run", withFlaggedTopic, []string{"topic", "dismiss-flag", "linear-algebra", heldFlag, "--dry-run", "--json"}, cli.ExitOK},
+		{"topic_dismiss_flag_unknown", withFlaggedTopic, []string{"topic", "dismiss-flag", "linear-algebra", "0123456789", "--json"}, cli.ExitError},
+		{"topic_dismiss_flag_bad_id", withFlaggedTopic, []string{"topic", "dismiss-flag", "linear-algebra", "nope", "--json"}, cli.ExitUsage},
 	} {
 		t.Run(tc.golden, func(t *testing.T) {
 			home := tc.home(t)
@@ -135,6 +148,37 @@ func TestHumanOutput(t *testing.T) {
 	if duplicate.code != cli.ExitError || duplicate.stdout != "" || !strings.Contains(duplicate.stderr, "already exists") {
 		t.Errorf("duplicate: exit %d, stdout %q, stderr %q", duplicate.code, duplicate.stdout, duplicate.stderr)
 	}
+
+	updated := run(t, home, "topic", "update", "linear-algebra", "--goal", "Pass the June exam")
+	if updated.code != cli.ExitOK {
+		t.Fatalf("topic update: exit %d, stderr %s", updated.code, updated.stderr)
+	}
+	golden(t, "topic_update.txt", updated.stdout)
+	golden(t, "status_with_flags.txt", run(t, withFlaggedTopic(t), "status").stdout)
+
+	flagged := withFlaggedTopic(t)
+	golden(t, "topic_dismiss_flag.txt", run(t, flagged, "topic", "dismiss-flag", "linear-algebra", heldFlag).stdout)
+	golden(t, "topic_dismiss_flag_again.txt", run(t, flagged, "topic", "dismiss-flag", "linear-algebra", heldFlag).stdout)
+}
+
+// heldFlag is the ID of the flag withFlaggedTopic's held Event raises. Flag
+// IDs are stable, so it is the same on every run and machine.
+const heldFlag = "e9bd1dc27f"
+
+// withFlaggedTopic returns a Study home whose one Topic has an Event this
+// version of study doesn't know, as a newer version could have written.
+func withFlaggedTopic(t *testing.T) string {
+	t.Helper()
+	home := withTopic(t)
+	f, err := os.OpenFile(filepath.Join(home, "linear-algebra", "history.jsonl"), os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if _, err := f.WriteString(`{"format":1,"id":"zz1","time":"2026-10-01T10:00:00Z","wall":"2026-10-01T10:00:00Z","type":"card.reviewed"}` + "\n"); err != nil {
+		t.Fatal(err)
+	}
+	return home
 }
 
 func TestFlagValuesAreNotMistakenForFlags(t *testing.T) {
@@ -303,5 +347,15 @@ func TestCheckpointCommand(t *testing.T) {
 			t.Errorf("%s: exit %d, want %d", tc.golden, r.code, tc.code)
 		}
 		golden(t, tc.golden+".json", r.stdout)
+	}
+}
+
+func TestTopicUpdateOutputErrorsAreReported(t *testing.T) {
+	home := withTopic(t)
+	var stderr bytes.Buffer
+	code := cli.Run(context.Background(), []string{"topic", "update", "linear-algebra", "--goal", "Pass the exam"},
+		strings.NewReader(""), failingWriter{}, &stderr, options(home, home))
+	if code == cli.ExitOK {
+		t.Error("study topic update exited 0 although writing its output failed")
 	}
 }

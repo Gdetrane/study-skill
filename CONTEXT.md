@@ -140,6 +140,12 @@ _Avoid_: Log, activity log, journal (reserved for learner-written reflections)
 One entry in the History, such as a Session starting, a Lesson finishing or the Syllabus
 changing.
 
+**Flag**:
+Something in a Topic that needs the learner's attention, found while replaying its History,
+such as one Card changed on two machines. Reported in `status`, never resolved
+automatically; once the learner has looked at it, some kinds can be dismissed.
+_Avoid_: Warning, alert (and do not confuse with a command-line option)
+
 **Review**:
 One rating of one Card by the learner; the Event that drives spaced repetition.
 _Avoid_: Rating, recall check
