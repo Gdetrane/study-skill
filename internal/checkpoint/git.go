@@ -76,6 +76,10 @@ type call struct {
 	// learnerScopes keeps the learner's global and system configuration
 	// visible. Only plain `git config --get` reads use it.
 	learnerScopes bool
+	// maxOutput, when set, bounds the standard output kept: the rest is
+	// discarded, and truncated, when given, is set.
+	maxOutput int
+	truncated *bool
 }
 
 // gitError is a failed git invocation with its standard error.
@@ -404,11 +408,35 @@ func (r *repo) git(ctx context.Context, c call, args ...string) (string, error) 
 	cmd.Stdin = c.stdin
 	cmd.ExtraFiles = append(append([]*os.File{}, r.pins...), c.files...)
 	var stdout, stderr bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	out := io.Writer(&stdout)
+	if c.maxOutput > 0 {
+		out = &cappedWriter{buf: &stdout, max: c.maxOutput, truncated: c.truncated}
+	}
+	cmd.Stdout, cmd.Stderr = out, &stderr
 	if err := cmd.Run(); err != nil {
 		return stdout.String(), &gitError{args: args, stderr: strings.TrimSpace(stderr.String()), err: err}
 	}
 	return stdout.String(), nil
+}
+
+// cappedWriter keeps at most max bytes and discards the rest, so a command
+// with a huge output cannot exhaust memory. It never fails a write, so git
+// runs to its end instead of dying of a broken pipe.
+type cappedWriter struct {
+	buf       *bytes.Buffer
+	max       int
+	truncated *bool
+}
+
+func (w *cappedWriter) Write(p []byte) (int, error) {
+	if room := w.max - w.buf.Len(); len(p) > room {
+		w.buf.Write(p[:max(room, 0)])
+		if w.truncated != nil {
+			*w.truncated = true
+		}
+		return len(p), nil
+	}
+	return w.buf.Write(p)
 }
 
 // environ builds a child environment from ours, without any inherited GIT_*
