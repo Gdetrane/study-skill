@@ -107,6 +107,12 @@ results, on the Check shown to the learner and in an Attempt that did not error,
 its measurement. It is always synthetic or public, never personal data.
 _Avoid_: Hidden tests, secret data
 
+**Hint**:
+Help the agent gives while the learner practises a Lesson: a nudge, an explanation of a
+concept again, or a step of the way to a solution. Each one is recorded, as a signal for
+adapting how the Topic is taught.
+_Avoid_: Help request, clue
+
 ### Sessions
 
 **Session**:

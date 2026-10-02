@@ -465,9 +465,28 @@ hours before any learning happens is exactly what v1 produced.
 
 - The Level is set at the Assessment and can be changed by the learner at any time; an
   override holds until the next Assessment.
+  - The Level lives in `topic.toml` (`level`), written by `assessment.recorded` when the
+    Assessment sets one and by `level.set` when the learner chooses; the latest writer wins,
+    which is the override rule. Where it came from is replayed from the History; a Level
+    edited into the file by hand counts as the learner's choice. Two machines changing it
+    from one version are flagged, as any change to `topic.toml` is.
+  - An Assessment records its kind (placement or milestone, naming the Milestone), each item
+    asked with its area and outcome (correct, partly, incorrect, or not reached when time ran
+    out), a summary, the minutes it took and its time box, the Level it suggests, and the
+    path and hash of the notes the agent saved in `notes/`. Weak and unreached areas are
+    derived for the agent, which proposes a Revision for them; nothing blocks. The same
+    Assessment recorded twice is recorded once.
 - v2.0 records every signal a future Level suggestion needs: Checks passed on the first try,
   hints requested, feedback rounds, the gap between dev and Held-out scores, and Review
   results. Suggestions come later, once there is data to tune them.
+  - Only hints (`hint.recorded`: nudge, explanation or step, for a Lesson being studied) and
+    Assessments have Events of their own; the other signals are derived by replay. The first
+    try is the first Attempt measured on the Check shown to the learner (run criteria, not
+    errored, so an agent's try before showing the Check never counts); feedback rounds count
+    the times a Lesson went to feedback; the dev and Held-out gap compares a `held_out`
+    criterion's counted score with the run criteria's mean score in the same Attempt.
+  - The `signals` view is for the agent, to adapt depth, scaffolding and how soon it offers
+    a hint. Its counts and scores are never shown to the learner.
 - Tasks are non-study steps toward the Goal. They appear in `status` when relevant and are
   marked done through the core.
   - The Goal's optional deadline, the Pace as dated periods (`[[pace]]`, each with `from` and
@@ -539,7 +558,8 @@ apply. Search results carry an absolute path. Conversion leaves the Library.
 Every write names its Topic. Tools are named after things that happen in the domain.
 
 - **Read**: `status`, `syllabus`, `lesson`, `due_cards` (sized to Energy), `cards`, `history`,
-  `check_results`, `library_search`, `sources`, `evidence`, `tasks`.
+  `check_results`, `library_search`, `sources`, `evidence`, `tasks`, `signals` (for the
+  agent only).
 - **Topics**: `topic_create`, `topic_update` (Goal, Pace, Level, Approach, Knowledge base,
   Tasks, pause, finish), `task_done`, `assessment_record`, `source_add`, `source_update`,
   `evidence_record`, `evidence_retract`.

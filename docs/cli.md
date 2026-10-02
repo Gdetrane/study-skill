@@ -14,7 +14,11 @@ that scripts and agents can rely on. Terms follow [CONTEXT.md](../CONTEXT.md).
 | `study session close <topic> --next-step S [--context C] [--session ID] [--dry-run]` | Closes the Session with a Next step that starts with a verb (see "Next steps" below). `--session` gives a Session left unclosed the note it never got. |
 | `study session break-point <topic> <lesson> <break-point> --next-step S [--context C] [--dry-run]` | Records a Break point the Lesson's header declares, with a Next step. The Session stays open. Reaching the same Break point with the same Next step again changes nothing. |
 | `study topic create --title T [--id ID] [--goal G] [--dry-run]` | Creates a Topic folder with its settings, History and git repository. `--dry-run` validates and shows the result without writing. |
-| `study topic update <topic> [--title T] [--goal G] [--knowledge-base K [--notebook ID]] [--deadline D] [--pace H[@FROM] ... \| --clear-pace] [--new-cards-per-day N] [--state S] [--dry-run]` | Changes a Topic's title, goal, Knowledge base (`notebooklm` with the notebook's id, or `none`; see [Sources and Evidence](#sources-and-evidence)), the Goal's deadline, the Pace, the daily cap on new Cards, or its state (`active`, `paused` or `finished`); see [Goal, Pace and Forecasts](#goal-pace-and-forecasts). Flags left out stay as they are; `--goal ""` and `--deadline ""` remove them. `--pace` replaces the Pace: `--pace 10` is 10 hours a week from now on, and a further `--pace 3@2026-11-16` starts a period of 3 hours a week that day. Settings in `topic.toml` that this version does not know are kept. The result is `{"topic": ..., "changed": bool}`: asking for the values the Topic already has changes nothing and records nothing. Each kind of change is its own Event; if a later one fails, the error says which were recorded. A dry run shows the Topic as it would be, Forecast included. |
+| `study topic update <topic> [--title T] [--goal G] [--knowledge-base K [--notebook ID]] [--deadline D] [--pace H[@FROM] ... \| --clear-pace] [--new-cards-per-day N] [--level L] [--state S] [--dry-run]` | Changes a Topic's title, goal, Knowledge base (`notebooklm` with the notebook's id, or `none`; see [Sources and Evidence](#sources-and-evidence)), the Goal's deadline, the Pace, the daily cap on new Cards, the Level (the learner's choice, which holds until the next Assessment; see [Assessments, Level and learning signals](#assessments-level-and-learning-signals)), or its state (`active`, `paused` or `finished`); see [Goal, Pace and Forecasts](#goal-pace-and-forecasts). Flags left out stay as they are; `--goal ""` and `--deadline ""` remove them. `--pace` replaces the Pace: `--pace 10` is 10 hours a week from now on, and a further `--pace 3@2026-11-16` starts a period of 3 hours a week that day. Settings in `topic.toml` that this version does not know are kept. The result is `{"topic": ..., "changed": bool}`: asking for the values the Topic already has changes nothing and records nothing. Each kind of change is its own Event; if a later one fails, the error says which were recorded. A dry run shows the Topic as it would be, Forecast included. |
+| `study assessment record <topic> --file F [--dry-run]` | Records an Assessment read from a JSON file (`--file -` reads stdin), in the shape the `assessment_record` tool takes. With a `level`, it sets the Topic's Level. Recording the same Assessment again records nothing. See [Assessments, Level and learning signals](#assessments-level-and-learning-signals). |
+| `study assessment list [topic]` | Lists a Topic's Assessments, newest first, and its Level. |
+| `study hint record <lesson> [--topic ID] [--kind K] [--note N] [--request ID] [--dry-run]` | Records a hint given for a Lesson: `nudge`, `explanation` or `step`. Without `--topic`, it uses the Topic whose folder it runs in. |
+| `study signals [topic]` | Shows the learning signals behind a Topic's Level. Reads only. |
 | `study task add <topic> <title...> [--by D] [--after M] [--dry-run]` | Adds a Task, a step toward the Goal that is not study, to `tasks.jsonl`. `--by` is a date the learner wants it done by, shown as is; `--after` names a Milestone of the Syllabus, and the Task is shown once that Milestone is done. Adding a Task with the title of one already there returns that Task, done or not. The result lists the Tasks with their ids in `added_tasks`; a dry run gives a new Task no id yet. |
 | `study task done <topic> <task> [--undo] [--dry-run]` | Marks a Task done, or not done with `--undo`; marking it as it already is changes nothing. |
 | `study task remove <topic> <task>... [--dry-run]` | Removes Tasks that no longer matter. A Task removed already changes nothing; one that never existed is `not_found`. |
@@ -587,6 +591,69 @@ for again until another Attempt fails. `study results` and `check_results` say s
 ```json
 "next": {"code": "name_the_fix", "text": "give the learner feedback on the failed Attempt, then move the Lesson to practicing with phase_set and a Next step that names the fix"}
 ```
+
+## Assessments, Level and learning signals
+
+An **Assessment** is a short quiz, kept to its time box (15 minutes unless set): the
+placement Assessment when a Topic is created, before its Syllabus, and one at the end of
+each Milestone. It is recorded by an `assessment.recorded` Event:
+
+```json
+{
+  "kind": "placement",
+  "items": [
+    {"area": "variables", "question": "What does x := 1 do?", "outcome": "correct"},
+    {"area": "pointers", "outcome": "incorrect", "note": "confused * and &"},
+    {"area": "goroutines", "outcome": "not_reached"}
+  ],
+  "summary": "Knows variables; pointers need work",
+  "minutes": 13,
+  "time_box": 15,
+  "level": "beginner",
+  "notes": "notes/placement.md"
+}
+```
+
+- `kind` is `placement` or `milestone`; a `milestone` Assessment names its `milestone`,
+  which must be in the Syllabus.
+- Each item has an `area`, an optional `question` and `note`, and an `outcome`: `correct`,
+  `partly`, `incorrect`, or `not_reached` when time ran out before it.
+- The result lists the areas to work on (`weak`: `incorrect` or `partly`) and those to
+  `confirm` during Lessons (`not_reached`). Weak results never block anything: the agent
+  proposes a Revision, such as a review Lesson.
+- `notes` names the file in the Topic's `notes/` folder where the agent saved the
+  Assessment: a regular file, not a link; only its path and hash are recorded.
+- Recording the same Assessment again records nothing.
+
+The **Level** (`beginner`, `intermediate`, `advanced` or `expert`) lives in `topic.toml` as
+`level`. An Assessment with a `level` sets it; the learner can change it at any time with
+`study topic update --level` (`level.set`), and that choice holds until the next Assessment
+sets one. Each Topic in `status` carries `level: {level, source, assessment?, at?}`, where
+`source` is `assessment` or `learner`; a Level edited into `topic.toml` by hand is the
+learner's, and one that is not a Level is reported in `settings_problems`. The Level
+changed on two machines is flagged, like any change to `topic.toml` from one version.
+
+A **hint** (`hint.recorded`) is help given while the learner practises a Lesson that is not
+done or skipped: a `nudge` (a question or a pointer), an `explanation` of a concept again,
+or a `step` of the way to a solution. Every call records a hint, except a retry with the same
+`--request`.
+
+**Learning signals** are what a future Level suggestion will use; v2.0 records them and
+makes no suggestion yet. `study signals` (and the `signals` tool) derives them from the
+History. They are for the agent to adapt how it teaches, never shown to the learner as counts
+or scores.
+
+| Signal | Derived from |
+|---|---|
+| `first_try` | The first Attempt measured on the Check shown to the learner passed. An Attempt is measured when it ran run criteria, was not errored, and used the Check shown; an agent's try before showing the Check is not. |
+| `attempts` | The Attempts measured. |
+| `feedback_rounds` | The times the Lesson went to feedback. |
+| `hints` | The hints recorded, by kind. |
+| `held_out` | For each `held_out` criterion, its counted score against the run criteria's mean score in the same Attempt (each a results score over its max, or 1 for passed and 0 for failed), and the `gap`: dev minus Held-out, positive when the work did better on the learner's own tests. |
+| `reviews` | Review ratings: per Lesson, and for the Topic with Explore Cards. |
+
+`totals` sums them: Lessons passed on the first try out of those measured, feedback rounds
+and hints.
 
 ## Cards and Reviews
 
