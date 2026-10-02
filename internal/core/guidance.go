@@ -76,8 +76,8 @@ func recommend(t Topic) *Recommendation {
 		r.Action, r.Milestone = ActionAssess, m
 		r.Text = fmt.Sprintf("Every Lesson of Milestone %d “%s” is done: its Assessment comes next", m.Number, m.Title)
 	case t.Imported != nil && !t.Imported.Adopted:
-		r.Action, r.Text = ActionAdopt, "This Topic was imported from v1: adopt it together first, "+
-			"starting from the v1 plan in "+v1PlanTarget
+		r.Action, r.Text = ActionAdopt, "This Topic was imported from v1: adopt it together first, starting from "+
+			adoptionSource(t.Imported)
 	case resume != nil && resume.NextStep != nil:
 		r.Action, r.Text = ActionNextStep, resume.NextStep.Step
 	case resume == nil || resume.Lesson == "" && !resume.SyllabusDone:

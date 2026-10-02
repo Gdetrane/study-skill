@@ -57,6 +57,10 @@ const (
 const (
 	LevelFromAssessment = "assessment"
 	LevelFromLearner    = "learner"
+	// LevelFromImport is a Level study import took from a v1 workspace's
+	// difficulty: v1's own estimate, which neither an Assessment nor the
+	// learner has confirmed in v2 yet.
+	LevelFromImport = "import"
 )
 
 // Kinds of Assessment.
@@ -95,7 +99,8 @@ func checkLevel(level string) (string, error) {
 type LevelInfo struct {
 	Level string `json:"level"`
 	// Source is assessment when an Assessment set it, learner when the
-	// learner chose it, through topic_update or by editing topic.toml.
+	// learner chose it, through topic_update or by editing topic.toml, and
+	// import when study import took it from a v1 workspace.
 	Source string `json:"source"`
 	// Assessment is the Assessment that set it, when it did.
 	Assessment string `json:"assessment,omitempty"`
@@ -152,9 +157,11 @@ type assessmentRecordedData struct {
 	Request   string           `json:"request,omitempty"`
 }
 
-// levelSetData is the payload of a level.set Event.
+// levelSetData is the payload of a level.set Event. Source is empty when the
+// learner set the Level, and import when study import did.
 type levelSetData struct {
-	Level string `json:"level"`
+	Level  string `json:"level"`
+	Source string `json:"source,omitempty"`
 }
 
 // Assessment is a recorded Assessment.
@@ -613,8 +620,16 @@ func replayLevelSet(s *replayed, ev event) error {
 	if _, err := checkLevel(d.Level); err != nil {
 		return err
 	}
+	source := LevelFromLearner
+	switch d.Source {
+	case "":
+	case LevelFromImport:
+		source = LevelFromImport
+	default:
+		return fmt.Errorf("its source %q is not one this version knows", clip(d.Source, 40))
+	}
 	st := s.assessing()
-	st.setLevel(ev.ID, LevelInfo{Level: d.Level, Source: LevelFromLearner, At: wallOf(ev)})
+	st.setLevel(ev.ID, LevelInfo{Level: d.Level, Source: source, At: wallOf(ev)})
 	st.levelChangedSince = true
 	return nil
 }
@@ -701,8 +716,11 @@ func levelFlags(topic *os.Root, s *replayed) []Flag {
 	st := s.assessing()
 	last := st.levelWrites[len(st.levelWrites)-1]
 	who := func(w levelWrite) string {
-		if w.info.Source == LevelFromAssessment {
+		switch w.info.Source {
+		case LevelFromAssessment:
 			return "an Assessment"
+		case LevelFromImport:
+			return "the import"
 		}
 		return "the learner"
 	}

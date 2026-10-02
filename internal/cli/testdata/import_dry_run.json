@@ -12,6 +12,10 @@
     },
     "from": "$V1",
     "head": "<hash>",
+    "copy": {
+      "files": <n>,
+      "bytes": <n>
+    },
     "converted": [
       {
         "what": "title",
@@ -23,7 +27,7 @@
       },
       {
         "what": "level",
-        "detail": "from difficulty: beginner"
+        "detail": "from difficulty: beginner, recorded as the import's until an Assessment or the learner confirms it"
       },
       {
         "what": "approach",
@@ -89,10 +93,6 @@
     },
     "dropped": [
       {
-        "what": ".fsrs",
-        "detail": "v1's lesson-level cards (1) are not carried over: Cards are written again in the adoption Session; they stay in the git history"
-      },
-      {
         "what": "session_state.energy and time_budget_minutes",
         "detail": "Energy and time are asked at every Session"
       },
@@ -103,6 +103,10 @@
       {
         "what": "template",
         "detail": "v2 has no templates: the agent sets up the Workbench with the language's own tools"
+      },
+      {
+        "what": ".fsrs",
+        "detail": "v1's lesson-level cards (1): not carried over, and written again in the adoption Session; they stay in the git history"
       }
     ],
     "dry_run": true

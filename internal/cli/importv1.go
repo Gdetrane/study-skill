@@ -16,10 +16,11 @@ func (a *app) importCommand() *cobra.Command {
 		Use:   "import <v1-workspace>",
 		Short: "Import a v1 study workspace as a new Topic",
 		Long: "Import a workspace of the v1 study skill as a new Topic, with its git history. The workspace\n" +
-			"itself is left untouched. Run it with --dry-run first: it lists what will be converted, which\n" +
-			"Lessons are proven done, and everything that will be dropped. Then adopt the Topic with your agent.",
+			"itself is left untouched. Run it with --dry-run first: it lists what will be copied and converted,\n" +
+			"which Lessons are proven done and by what, and everything that will be dropped. If a Lesson shown\n" +
+			"done is not, keep it open with --not-done. Then adopt the Topic with your agent.",
 		Example: `  study import ~/study-workspaces/go-concurrency --dry-run
-  study import ~/study-workspaces/go-concurrency --topic go`,
+  study import ~/study-workspaces/go-concurrency --topic go --not-done lesson-03`,
 		Args: exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := core.Open(a.opts)
@@ -38,6 +39,8 @@ func (a *app) importCommand() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&spec.ID, "topic", "", "the new Topic's id; defaults to the workspace folder's name")
+	cmd.Flags().StringSliceVar(&spec.NotDone, "not-done", nil,
+		"keep this Lesson open even if v1's records prove it done, by its id (lesson-03); repeatable")
 	cmd.Flags().BoolVar(&spec.DryRun, "dry-run", false, "list what the import will do, without writing anything")
 	return cmd
 }
@@ -51,6 +54,7 @@ func writeImport(w io.Writer, r core.TopicImport) error {
 		verb = "Would import"
 	}
 	fmt.Fprintf(&b, "%s %s as Topic %s (%s)\n", verb, printable(r.From), styleAccent.Render(r.Topic.ID), printable(r.Topic.Title))
+	fmt.Fprintf(&b, "%s %d files, %s, git history included\n", styleLabel.Render("Copy:"), r.Copy.Files, humanSize(r.Copy.Bytes))
 	section := func(title string) { fmt.Fprintf(&b, "\n%s\n", styleLabel.Render(title)) }
 	if len(r.Converted) > 0 {
 		section("Converted:")

@@ -1,9 +1,10 @@
 Imported $V1 as Topic go-concurrency (Go Concurrency)
+Copy: <n> files, <size>, git history included
 
 Converted:
   title: from topic: Go Concurrency
   goal: from end_goal
-  level: from difficulty: beginner
+  level: from difficulty: beginner, recorded as the import's until an Assessment or the learner confirms it
   approach: from approach: concepts
   lessons: 2 Lessons kept under their v1 names
   plan: the v1 plan is kept as notes/v1-plan.md for the adoption Session
@@ -27,9 +28,9 @@ Where v1 stopped:
   Half way through the channels exercise.
 
 Dropped:
-  .fsrs: v1's lesson-level cards (1) are not carried over: Cards are written again in the adoption Session; they stay in the git history
   session_state.energy and time_budget_minutes: Energy and time are asked at every Session
   review: v1's review queue goes with its cards
   template: v2 has no templates: the agent sets up the Workbench with the language's own tools
+  .fsrs: v1's lesson-level cards (1): not carried over, and written again in the adoption Session; they stay in the git history
 
 Next: open a Session on it with your agent, and adopt it together.

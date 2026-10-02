@@ -575,13 +575,14 @@ func applyTopicCreated(ev event, item string, _ []byte, _ bool) ([]byte, bool, e
 		data, err := encodeTopicSettings(topicSettings{Title: d.Title, Goal: d.Goal})
 		return data, err == nil, err
 	case gitattributes:
-		// These files hold one record per line, so a union merge keeps both
-		// machines' lines; replay and status flag what conflicts.
-		return []byte(historyFile + " merge=union\n" + cardsFile + " merge=union\n" + sourcesFile + " merge=union\n" +
-			tasksFile + " merge=union\n"), true, nil
+		return []byte(strings.Join(unionFiles, " merge=union\n") + " merge=union\n"), true, nil
 	}
 	return nil, false, corruptf("Event %s (%s) cannot edit %s", ev.ID, ev.Type, item)
 }
+
+// unionFiles hold one record per line, so a union merge keeps both
+// machines' lines; replay and status flag what conflicts.
+var unionFiles = []string{historyFile, cardsFile, sourcesFile, tasksFile}
 
 func applyTopicUpdated(ev event, item string, current []byte, exists bool) ([]byte, bool, error) {
 	if item != topicFile {

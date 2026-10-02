@@ -66,9 +66,19 @@ func TestImportCommand(t *testing.T) {
 	src := v1Workspace(t)
 	home := t.TempDir()
 	hashes := regexp.MustCompile(`\b[0-9a-f]{12,40}\b`)
+	// The copy's size depends on the git version, through .git.
+	sizes := regexp.MustCompile(`("files": |"bytes": )\d+`)
+	copied := regexp.MustCompile(`Copy: \d+ files, [0-9.]+ [KMGTPE]?i?B`)
+	real, err := filepath.EvalSymlinks(src)
+	if err != nil {
+		t.Fatal(err)
+	}
 	norm := func(r result) result {
-		r.stdout = hashes.ReplaceAllString(strings.ReplaceAll(r.stdout, src, "$V1"), "<hash>")
-		r.stderr = strings.ReplaceAll(r.stderr, src, "$V1")
+		for _, s := range []*string{&r.stdout, &r.stderr} {
+			*s = strings.ReplaceAll(strings.ReplaceAll(*s, real, "$V1"), src, "$V1")
+		}
+		r.stdout = sizes.ReplaceAllString(hashes.ReplaceAllString(r.stdout, "<hash>"), "${1}<n>")
+		r.stdout = copied.ReplaceAllString(r.stdout, "Copy: <n> files, <size>")
 		return r
 	}
 
@@ -82,11 +92,16 @@ func TestImportCommand(t *testing.T) {
 		t.Fatalf("the dry run wrote into the Study home: %v", entries)
 	}
 
-	real := norm(run(t, home, "import", src))
-	if real.code != cli.ExitOK {
-		t.Fatalf("import: exit %d %s %s", real.code, real.stdout, real.stderr)
+	kept := run(t, home, "import", src, "--dry-run", "--not-done", "lesson-01")
+	if kept.code != cli.ExitOK || !strings.Contains(kept.stdout, "lesson-01  Goroutines (v1: completed (kept open: --not-done))") {
+		t.Errorf("--not-done: exit %d\n%s%s", kept.code, kept.stdout, kept.stderr)
 	}
-	golden(t, "import.txt", real.stdout)
+
+	imported := norm(run(t, home, "import", src))
+	if imported.code != cli.ExitOK {
+		t.Fatalf("import: exit %d %s %s", imported.code, imported.stdout, imported.stderr)
+	}
+	golden(t, "import.txt", imported.stdout)
 
 	again := norm(run(t, home, "import", src, "--topic", "again", "--json"))
 	if again.code != cli.ExitError {
