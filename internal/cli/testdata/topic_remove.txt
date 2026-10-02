@@ -1,0 +1,2 @@
+Moved Topic linear-algebra out of the Study home, to $STUDY_HOME/.lamplight/removed/20261001-093000-linear-algebra
+Nothing was deleted: move the folder back into the Study home to restore it.

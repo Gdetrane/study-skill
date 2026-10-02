@@ -1,0 +1,1 @@
+Would move Topic linear-algebra out of the Study home, to $STUDY_HOME/.lamplight/removed/20261001-093000-linear-algebra

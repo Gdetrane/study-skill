@@ -314,7 +314,33 @@ func (a *app) rootCommand() *cobra.Command {
 		},
 	}
 	dismiss.Flags().BoolVar(&dismissDryRun, "dry-run", false, "show the flag that would be dismissed without recording anything")
-	topic.AddCommand(create, update, dismiss)
+	var removeDryRun bool
+	remove := &cobra.Command{
+		Use:   "remove <topic>",
+		Short: "Move a Topic out of the Study home, deleting nothing",
+		Long: "Move a Topic's folder, whole, into the Study home's .lamplight/removed folder, named\n" +
+			"with the time and the Topic's id. Nothing is deleted: move the folder back to restore\n" +
+			"the Topic. Use it to import a v1 workspace again, for example with --not-done.\n" +
+			".lamplight is never synced, so other computers see the Topic gone.",
+		Example: "  study topic remove go-concurrency --dry-run\n  study topic remove go-concurrency",
+		Args:    exactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := core.Open(a.opts)
+			if err != nil {
+				return a.fail(err)
+			}
+			res, err := c.RemoveTopic(cmd.Context(), args[0], removeDryRun)
+			if err != nil {
+				return a.fail(err)
+			}
+			if a.json {
+				return a.writeJSON(envelope{OK: true, Data: res})
+			}
+			return writeTopicRemoval(a.out, res)
+		},
+	}
+	remove.Flags().BoolVar(&removeDryRun, "dry-run", false, "show where the Topic would go without moving it")
+	topic.AddCommand(create, update, dismiss, remove)
 
 	doctor := &cobra.Command{
 		Use:   "doctor",

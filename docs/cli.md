@@ -24,6 +24,7 @@ that scripts and agents can rely on. Terms follow [CONTEXT.md](../CONTEXT.md).
 | `study task remove <topic> <task>... [--dry-run]` | Removes Tasks that no longer matter. A Task removed already changes nothing; one that never existed is `not_found`. |
 | `study task list <topic> [--all]` | Lists the open Tasks, or all with `--all`, and the lines of `tasks.jsonl` that are not Tasks (`problems`). |
 | `study topic dismiss-flag <topic> <flag-id> [--dry-run]` | Dismisses one of the Topic's flags, by the id `status` shows, once the learner has looked at it. It records the decision in the History and never changes content. The result is `{"topic": ..., "flag": {...}, "changed": bool}`; dismissing a flag twice changes nothing. Only `held_event`, `conflict`, `damaged_line`, `clock_ahead` and `card_flagged` flags can be dismissed (see below). |
+| `study topic remove <topic> [--dry-run]` | Moves the Topic's folder, whole (git history included), out of the Study home into `.lamplight/removed/<YYYYMMDD-HHMMSS>-<topic>`, and records nothing in the History. Nothing is deleted: moving the folder back restores the Topic. The result is `{"topic": ..., "moved_to": path}`. It takes the Topic's lock, and refuses (`failed_precondition`) while an interrupted write to the Topic waits to be finished. `.lamplight/` is never synced, so on other computers sharing the Study home the Topic disappears; the copy stays on this one. It is for the learner, such as before importing a v1 workspace again with `--not-done`; agents have no tool for it. |
 | `study import <v1-workspace> [--topic ID] [--not-done LESSON]... [--dry-run]` | Imports a v1 study workspace as a new Topic, with its history, leaving the original untouched. `--not-done` keeps a Lesson open that v1's records prove done. See [Importing a v1 workspace](#importing-a-v1-workspace). |
 | `study library build <folder>` | Indexes the books in a folder (relative to where you run it) and replaces the Library index in the Study home. |
 | `study library search <query> [--limit N]` | Ranks the books in the Library against the query. `--limit` defaults to 10 and is capped at 100; no matches is a success with an empty list. |
@@ -844,7 +845,8 @@ that (`completed` is accepted, and `lesson 1` never matches `lesson 10` or `less
 no newer `Revert "..."` of it exists; otherwise the card does. The report shows each proof,
 the commit's hash and subject or the card, and a Lesson without one stays open, saying why.
 `--not-done lesson-NN`, repeatable, keeps a Lesson open whatever its proof: check the dry run
-first, since a Topic imported already must be removed before importing it again.
+first, since a Topic imported already must be removed (`study topic remove <topic>`) before
+importing it again.
 
 **The git files.** In a `.gitignore` and a `.gitattributes`, the last matching line wins, so
 the learner's lines come first and Lamplight's last. The `.gitignore` gets Lamplight's

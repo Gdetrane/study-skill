@@ -60,6 +60,18 @@ func writeFlagDismissal(w io.Writer, d core.FlagDismissal) error {
 	return err
 }
 
+func writeTopicRemoval(w io.Writer, r core.TopicRemoval) error {
+	var err error
+	if r.DryRun {
+		_, err = fmt.Fprintf(w, "Would move Topic %s out of the Study home, to %s\n", styleAccent.Render(r.Topic), printable(r.MovedTo))
+		return err
+	}
+	_, err = fmt.Fprintf(w, "Moved Topic %s out of the Study home, to %s\n"+
+		"Nothing was deleted: move the folder back into the Study home to restore it.\n",
+		styleAccent.Render(r.Topic), printable(r.MovedTo))
+	return err
+}
+
 func writeTopicUpdate(w io.Writer, u core.TopicUpdate, dryRun bool) error {
 	var b strings.Builder
 	t := u.Topic

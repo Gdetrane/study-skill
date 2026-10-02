@@ -111,6 +111,9 @@ func TestJSONOutput(t *testing.T) {
 		{"topic_dismiss_flag_dry_run", withFlaggedTopic, []string{"topic", "dismiss-flag", "linear-algebra", heldFlag, "--dry-run", "--json"}, cli.ExitOK},
 		{"topic_dismiss_flag_unknown", withFlaggedTopic, []string{"topic", "dismiss-flag", "linear-algebra", "0123456789", "--json"}, cli.ExitError},
 		{"topic_dismiss_flag_bad_id", withFlaggedTopic, []string{"topic", "dismiss-flag", "linear-algebra", "nope", "--json"}, cli.ExitUsage},
+		{"topic_remove_dry_run", withTopic, []string{"topic", "remove", "linear-algebra", "--dry-run", "--json"}, cli.ExitOK},
+		{"topic_remove", withTopic, []string{"topic", "remove", "linear-algebra", "--json"}, cli.ExitOK},
+		{"topic_remove_unknown", withTopic, []string{"topic", "remove", "biology", "--json"}, cli.ExitError},
 	} {
 		t.Run(tc.golden, func(t *testing.T) {
 			home := tc.home(t)
@@ -162,6 +165,11 @@ func TestHumanOutput(t *testing.T) {
 	flagged := withFlaggedTopic(t)
 	golden(t, "topic_dismiss_flag.txt", run(t, flagged, "topic", "dismiss-flag", "linear-algebra", heldFlag).stdout)
 	golden(t, "topic_dismiss_flag_again.txt", run(t, flagged, "topic", "dismiss-flag", "linear-algebra", heldFlag).stdout)
+
+	removable := withTopic(t)
+	golden(t, "topic_remove_dry_run.txt", run(t, removable, "topic", "remove", "linear-algebra", "--dry-run").stdout)
+	golden(t, "topic_remove.txt", run(t, removable, "topic", "remove", "linear-algebra").stdout)
+	golden(t, "status_after_topic_remove.txt", run(t, removable, "status").stdout)
 }
 
 // heldFlag is the ID of the flag withFlaggedTopic's held Event raises. Flag
