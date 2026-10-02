@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"maps"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"testing"
@@ -135,6 +136,25 @@ func TestSnapshotWorkHasNoBlindSpots(t *testing.T) {
 			t.Fatal(err)
 		}
 		if err := os.Symlink("/etc/hostname", filepath.Join(dir, practice, "answer.txt")); err != nil {
+			t.Fatal(err)
+		}
+		refused(t, dir, checkpoint.ErrLinkOutside)
+	})
+	t.Run("a chain of links leading outside the folder", func(t *testing.T) {
+		dir := newRepo(t)
+		write(t, dir, path.Dir(practice)+"/x", "the answer outside\n")
+		write(t, dir, practice+"/answer.txt", "42\n")
+		if err := os.MkdirAll(filepath.Join(dir, practice, "sub"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		// sub/d leads back to the practice folder: inside, by text and in fact.
+		if err := os.Symlink("..", filepath.Join(dir, practice, "sub", "d")); err != nil {
+			t.Fatal(err)
+		}
+		work(t, dir)
+		// a reads as practice/<lesson>/sub/x, but the kernel follows d first
+		// and reaches the file next to the practice folder.
+		if err := os.Symlink("sub/d/../x", filepath.Join(dir, practice, "a")); err != nil {
 			t.Fatal(err)
 		}
 		refused(t, dir, checkpoint.ErrLinkOutside)

@@ -143,6 +143,13 @@ func SnapshotWork(ctx context.Context, dir, subpath string) (Work, error) {
 			if !insideFolder(sub, p, target) {
 				return Work{}, fmt.Errorf("%w: %s points to %s", ErrLinkOutside, rel, target)
 			}
+			inside, err := r.resolvesInside(sub, p)
+			if err != nil {
+				return Work{}, fmt.Errorf("%s %w: %v", p, errChanged, err)
+			}
+			if !inside {
+				return Work{}, fmt.Errorf("%w: %s points to %s, which leads elsewhere through other links", ErrLinkOutside, rel, target)
+			}
 		}
 		w.Files[rel] = st.mode + " " + st.oid
 	}
@@ -190,6 +197,26 @@ func insideFolder(sub, link, target string) bool {
 	}
 	resolved := path.Clean(path.Join(path.Dir(link), target))
 	return resolved == sub || strings.HasPrefix(resolved, sub+"/")
+}
+
+// resolvesInside reports whether the link at p, followed through the file
+// system as the kernel follows it, ends inside the folder sub. The text of a
+// link can look inside while a chain of links leads out ("d" -> "..", then
+// "a" -> "d/../x"), so the text check alone is not enough. A dangling link
+// resolves to nothing and is left to the text check.
+func (r *repo) resolvesInside(sub, p string) (bool, error) {
+	folder, err := filepath.EvalSymlinks(filepath.Join(r.dir, filepath.FromSlash(sub)))
+	if err != nil {
+		return false, err
+	}
+	real, err := filepath.EvalSymlinks(filepath.Join(r.dir, filepath.FromSlash(p)))
+	if errors.Is(err, fs.ErrNotExist) {
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return real == folder || strings.HasPrefix(real, folder+string(filepath.Separator)), nil
 }
 
 // holdsFiles reports whether the folder sub holds any file or link, outside
