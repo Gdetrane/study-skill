@@ -130,7 +130,8 @@ the maintainer's answers to the questions they raised.
   | Event | Payload | Items |
   |---|---|---|
   | `revision.proposed` | summary, the Syllabus version the History recorded, the whole new Syllabus; for a hand edit adopted, `from_file` and the file's version | none |
-  | `revision.applied` | Revision, approval (how, and the learner's words), the whole Syllabus | `syllabus.toml` |
+  | `revision.applied` | Revision, approval (how: `chat`, `elicitation` or `terminal`; the learner's words; the question shown when Lamplight asked), the whole Syllabus | `syllabus.toml` |
+  | `revision.declined` | Revision, the learner's answer as for an approval | none |
   | `session.opened` | Energy, Focus | none |
   | `session.closed` | Session, Next step, context | none |
   | `phase.set` | Lesson, Phase, optional Next step, the Check version shown when practicing starts, the turn it ended | none |
@@ -209,12 +210,25 @@ hours before any learning happens is exactly what v1 produced.
   Pace change produces a new Forecast.
 - **Revisions**: the learner asks in plain words; the agent proposes a before/after change
   that names Lessons by title and shows any renumbering; the core applies it after approval.
-  Done and skipped Lessons are never rewritten. Skipping a Lesson in progress offers Cards
-  for what was already covered.
+  The core computes that change from the current Syllabus and the proposed one, so the
+  agent never describes it from memory. Done and skipped Lessons are never rewritten: they
+  keep their title, hours and Milestone, and a done Lesson cannot be skipped. A Lesson is
+  skipped by marking it (`skipped = true`), never by removing it; it keeps its number, and a
+  later Revision can take the skip back. Skipping a Lesson in progress offers Cards for what
+  was already covered. Target dates are written as text, so no time zone can shift them.
+  (Forecasts, the Pace and Triage, which read the target dates and hour estimates, are #29.)
 - **Approvals are tamper-evident, not tamper-proof.** A Revision stores its exact change and
   the Syllabus version it was based on. Where the client supports MCP elicitation, or on a
-  terminal, the core asks the learner directly; the Event records how approval was given.
-  `status` flags Syllabus edits made outside Lamplight.
+  terminal, the core asks the learner directly; the Event records how approval was given and
+  the question shown. Under the 2026-07-28 MCP protocol the question goes back in the tool's
+  result (SEP-2322) with a signed request state that ties the answer to that exact question;
+  under older protocols the server sends an elicitation request. Without either, the agent
+  relays the learner's words (`chat`). A no is recorded too (`revision.declined`), and a
+  declined Revision is never applied. The learner is asked only about a Revision that can
+  be applied as it stands. `status` flags Syllabus edits made outside Lamplight, naming
+  precisely what keeps one from being adopted. Two machines that change the Syllabus from
+  one version are flagged, whether by Revisions or by an adopted hand edit, as is a Lesson
+  completed on one machine and removed or skipped on the other.
 - An **Assessment** at the end of a Milestone never blocks progress; weak results lead to a
   proposed Revision (for example a review Lesson).
 
@@ -366,7 +380,7 @@ Every write names its Topic. Tools are named after things that happen in the dom
 - **Topics**: `topic_create`, `topic_update` (Goal, Pace, Level, Approach, Knowledge base,
   Tasks, pause, finish), `task_done`, `assessment_record`, `source_add`, `source_update`,
   `evidence_record`, `evidence_retract`.
-- **Syllabus**: `revision_propose`, `revision_apply`.
+- **Syllabus**: `revision_propose`, `revision_apply`, `revision_decline`.
 - **Sessions**: `session_open`, `session_close`, `phase_set`, `break_point_reached`,
   `checkpoint`, `hint_record`, `rubric_record`, `lesson_complete`.
 - **Cards**: `card_add`, `card_edit`, `card_suspend`, `card_delete`, `review_record`

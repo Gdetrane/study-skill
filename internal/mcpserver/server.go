@@ -27,7 +27,7 @@ const Instructions = `Lamplight keeps the learner's study state. Follow these ru
 5. Every turn switch gets a Checkpoint: role "learner" when the learner hands their work to you, "agent" when you hand the turn back. phase_set and lesson_complete take these Checkpoints for you; outside them, call checkpoint. When a result has checkpoint_error, tell the learner, and once the problem is fixed call checkpoint with its checkpoint_role. Never run git commit yourself.
 6. Whenever a Session stops, at a Break point or when the learner leaves, record a Next step that starts with a verb with session_close. When a Session opens with an unclosed one, ask the learner for the missing note.
 7. Run a Lesson's Check only with "study check <lesson> --topic <topic>" in your own shell, never any other way; it records the Attempt. Write the Check in the YAML header of lessons/<lesson-id>.md and show it to the learner before practicing starts.
-8. Change the Syllabus only through revision_propose, then revision_apply once the learner has approved it in their own words.`
+8. Change the Syllabus only through Revisions: revision_propose, show the learner the change, then revision_apply, which asks the learner directly when this client can; otherwise call it only after they approved in their own words, and record a no with revision_decline.`
 
 // New returns an MCP server whose tools call c. logger, if not nil, receives
 // the server's Log; it must never write to the transport's stdout.

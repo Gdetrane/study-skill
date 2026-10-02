@@ -1,0 +1,7 @@
+{
+  "ok": false,
+  "error": {
+    "code": "invalid_argument",
+    "message": "syllabus.toml of linear-algebra cannot be adopted as it is: Lesson 2.1 (subspaces): the title is empty"
+  }
+}

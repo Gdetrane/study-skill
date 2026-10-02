@@ -21,6 +21,14 @@ import (
 // connected client session.
 func connect(t *testing.T, home string) *mcp.ClientSession {
 	t.Helper()
+	return connectWith(t, home, nil, nil)
+}
+
+// connectWith connects a client with options, such as an elicitation
+// handler that plays the learner, and session options, such as an older
+// protocol version.
+func connectWith(t *testing.T, home string, opts *mcp.ClientOptions, session *mcp.ClientSessionOptions) *mcp.ClientSession {
+	t.Helper()
 	ctx := context.Background()
 	var n atomic.Int64
 	c, err := core.Open(core.Options{
@@ -36,12 +44,12 @@ func connect(t *testing.T, home string) *mcp.ClientSession {
 	if _, err := mcpserver.New(c, "test", nil).Connect(ctx, serverSide, nil); err != nil {
 		t.Fatal(err)
 	}
-	session, err := mcp.NewClient(&mcp.Implementation{Name: "test-agent", Version: "1"}, nil).Connect(ctx, clientSide, nil)
+	cs, err := mcp.NewClient(&mcp.Implementation{Name: "test-agent", Version: "1"}, opts).Connect(ctx, clientSide, session)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = session.Close() })
-	return session
+	t.Cleanup(func() { _ = cs.Close() })
+	return cs
 }
 
 func TestServerSendsInstructionsAndTools(t *testing.T) {
@@ -61,7 +69,7 @@ func TestServerSendsInstructionsAndTools(t *testing.T) {
 		}
 	}
 	if strings.Join(names, ",") != "check_results,checkpoint,due_cards,evidence,evidence_record,evidence_retract,flag_dismiss,"+
-		"lesson_complete,library_search,phase_set,review_record,revision_apply,revision_propose,session_close,session_open,"+
+		"lesson_complete,library_search,phase_set,review_record,revision_apply,revision_decline,revision_propose,session_close,session_open,"+
 		"source_add,source_update,sources,status,syllabus,topic_create,topic_update" {
 		t.Errorf("tools = %v", names)
 	}

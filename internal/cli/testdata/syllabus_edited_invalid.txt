@@ -1,0 +1,11 @@
+Syllabus of linear-algebra
+
+1 Systems of equations (must, by 2026-12-01)
+  Solve a 3x3 system by hand
+  1.1   Gaussian elimination  not started  2 h
+  1.2   Matrices              not started  1.5 h
+
+2 Vector spaces (if time allows)
+  2.1   Subspaces             not started
+
+syllabus.toml was changed outside Lamplight and cannot be adopted as it is: syllabus.toml of linear-algebra: Lesson 2.1 (subspaces): the title is empty

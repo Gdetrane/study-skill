@@ -497,6 +497,15 @@ func (c *Core) loadTopic(home *os.Root, id string) (Topic, error) {
 		topic.Resume = &r
 	}
 	topic.LessonsWithoutEvidence = s.lessonsWithoutEvidence(s.citingLessons(topic.KnowledgeBase))
+	if unfinished := unfinishedItems(home, id, s); len(unfinished) > 0 {
+		kept := topic.Flags[:0]
+		for _, f := range topic.Flags {
+			if f.Kind != FlagEditedOutside || !unfinished[f.Item] {
+				kept = append(kept, f)
+			}
+		}
+		topic.Flags = kept
+	}
 	// A marker while the lock is held is a write in progress, not an
 	// interrupted one.
 	if hasIntent(home, id) && !lockHeld(home, id) {

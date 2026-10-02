@@ -267,7 +267,7 @@ func (c *Core) SetPhase(ctx context.Context, topicID string, spec PhaseSpec) (Ph
 	}
 	result := PhaseResult{Topic: topicID, Lesson: spec.Lesson, Phase: spec.Phase, DryRun: spec.DryRun}
 	ev, err := c.writeTopic(ctx, topicID, func(s *replayed, view *topicView) (*change, error) {
-		if _, err := requireLesson(s, topicID, spec.Lesson); err != nil {
+		if _, err := requireStudiedLesson(s, topicID, spec.Lesson); err != nil {
 			return nil, err
 		}
 		ls := s.study.lessons[spec.Lesson]
@@ -400,6 +400,9 @@ func (st *studyState) currentLesson() string {
 		return ""
 	}
 	for _, l := range st.syllabus.lessons() {
+		if l.Skipped {
+			continue
+		}
 		if ls := st.lessons[l.ID]; ls == nil || ls.completed == nil {
 			return l.ID
 		}
@@ -417,7 +420,8 @@ type ResumePoint struct {
 	// OpenSession is a Session not closed yet: in progress, or ended
 	// without a Next step.
 	OpenSession *SessionInfo `json:"open_session,omitempty"`
-	// SyllabusDone is true when every Lesson in the Syllabus is done.
+	// SyllabusDone is true when every Lesson in the Syllabus is done or
+	// skipped.
 	SyllabusDone bool `json:"syllabus_done,omitempty"`
 }
 

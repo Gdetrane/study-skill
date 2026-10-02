@@ -33,9 +33,13 @@ func addLearnerLoop(server *mcp.Server, c *core.Core) {
 		Name:  "revision_propose",
 		Title: "Propose a Revision",
 		Description: "Propose a change to a Topic's Syllabus, the first Syllabus included: give the whole Syllabus as it " +
-			"would be afterwards, and a summary in plain words. Nothing changes until the learner approves it and you " +
-			"call revision_apply. Show the learner the change, naming Lessons by title. If status flags syllabus.toml as " +
-			"edited outside Lamplight, set from_file instead to propose the learner's edit as it is.",
+			"would be afterwards, and a summary in plain words. Nothing changes until the learner approves it. Show the " +
+			"learner changes.text, which names Lessons by title and shows any renumbering. Skip a Lesson by setting " +
+			"skipped on it, never by removing it; for each Lesson in changes.skipped_in_progress, go over what was " +
+			"already covered with the learner. Done and skipped Lessons keep their title, hours and Milestone. A " +
+			"Revision must change something. Milestones can carry " +
+			"a target date (YYYY-MM-DD). If status flags syllabus.toml as edited outside Lamplight, set from_file " +
+			"instead to propose the learner's edit as it is.",
 		Annotations: write,
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in revisionProposeInput) (*mcp.CallToolResult, core.RevisionProposal, error) {
 		spec := core.RevisionSpec{Summary: in.Summary, FromFile: in.FromFile}
@@ -49,11 +53,25 @@ func addLearnerLoop(server *mcp.Server, c *core.Core) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:  "revision_apply",
 		Title: "Apply an approved Revision",
-		Description: "Apply a proposed Revision once the learner has approved it. Quote the learner's approval in their " +
-			"own words in learner_said; never apply a Revision the learner has not approved.",
+		Description: "Ask the learner to approve a proposed Revision, and apply it if they do. When this client can ask " +
+			"the learner directly, Lamplight shows them the change and records their answer itself; the result says " +
+			"whether they approved or declined. Otherwise, call it only after the learner approved in the conversation, " +
+			"quoting their words in learner_said. Never apply a Revision the learner has not approved.",
 		Annotations: idempotent,
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in revisionApplyInput) (*mcp.CallToolResult, core.RevisionApplied, error) {
-		r, err := c.ApplyRevision(ctx, in.Topic, in.Revision, core.Approval{Via: "chat", LearnerSaid: in.LearnerSaid}, false)
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in revisionApplyInput) (*mcp.CallToolResult, core.RevisionApplied, error) {
+		res, r, err := applyRevision(ctx, c, req, in)
+		return res, r, toolErr(err)
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:  "revision_decline",
+		Title: "Record that the learner declined a Revision",
+		Description: "Record that the learner said no to a proposed Revision in the conversation, quoting their words. " +
+			"Nothing in the Syllabus changes, and the Revision can no longer be applied; propose a new one if they " +
+			"want something else.",
+		Annotations: idempotent,
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in revisionDeclineInput) (*mcp.CallToolResult, core.RevisionDeclined, error) {
+		r, err := c.DeclineRevision(ctx, in.Topic, in.Revision, core.Approval{Via: core.ViaChat, LearnerSaid: in.LearnerSaid}, false)
 		return nil, r, toolErr(err)
 	})
 
@@ -170,7 +188,13 @@ type revisionProposeInput struct {
 type revisionApplyInput struct {
 	Topic       string `json:"topic" jsonschema:"the Topic's id"`
 	Revision    string `json:"revision" jsonschema:"the Revision's id, from revision_propose"`
-	LearnerSaid string `json:"learner_said" jsonschema:"the learner's approval, quoted in their own words"`
+	LearnerSaid string `json:"learner_said,omitempty" jsonschema:"the learner's approval in the conversation, quoted in their own words; not used when Lamplight can ask them directly"`
+}
+
+type revisionDeclineInput struct {
+	Topic       string `json:"topic" jsonschema:"the Topic's id"`
+	Revision    string `json:"revision" jsonschema:"the Revision's id, from revision_propose"`
+	LearnerSaid string `json:"learner_said" jsonschema:"what the learner said, quoted in their own words"`
 }
 
 type sessionOpenInput struct {

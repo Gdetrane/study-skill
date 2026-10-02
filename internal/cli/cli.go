@@ -265,7 +265,7 @@ func (a *app) rootCommand() *cobra.Command {
 	}
 
 	root.AddCommand(status, topic, a.checkpointCommand(), a.checkCommand(), a.libraryCommand(), doctor, serve)
-	root.AddCommand(a.sourceCommand(), a.evidenceCommand())
+	root.AddCommand(a.sourceCommand(), a.evidenceCommand(), a.syllabusCommand(), a.revisionCommand())
 	a.completionCommands(root)
 	return root
 }
@@ -521,6 +521,15 @@ func exactArgs(n int) cobra.PositionalArgs {
 	return func(cmd *cobra.Command, args []string) error {
 		if len(args) != n {
 			return usageError{fmt.Errorf("%q takes %d argument(s), got %d", cmd.CommandPath(), n, len(args))}
+		}
+		return nil
+	}
+}
+
+func maxArgs(n int) cobra.PositionalArgs {
+	return func(cmd *cobra.Command, args []string) error {
+		if len(args) > n {
+			return usageError{fmt.Errorf("%q takes at most %d argument(s), got %d", cmd.CommandPath(), n, len(args))}
 		}
 		return nil
 	}

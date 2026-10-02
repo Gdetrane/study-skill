@@ -21,6 +21,10 @@ that scripts and agents can rely on. Terms follow [CONTEXT.md](../CONTEXT.md).
 | `study evidence record <topic> --lesson L --source S --quote Q [--location LOC --location-from F] [--dry-run]` | Records an exact quote from a Source that a Lesson cites. `--quote -` reads the quote from stdin. Recording the same Evidence twice changes nothing. |
 | `study evidence retract <topic> <evidence> [--dry-run]` | Takes back Evidence recorded by mistake. The retraction is recorded, never deleted; retracting twice changes nothing. |
 | `study evidence list <topic> [--lesson L] [--all]` | Lists the Evidence recorded in the Topic, or only what one Lesson cites. Retracted Evidence is listed only with `--all`. |
+| `study syllabus [topic]` | Shows a Topic's Syllabus (the Active topic's when none is named): Milestones and Lessons with their display numbers and status, the Revisions waiting for the learner with their change, and a hand edit of `syllabus.toml` (see [The Syllabus](#the-syllabus)). |
+| `study revision propose <topic> --summary S (--syllabus FILE \| --from-file) [--dry-run]` | Proposes a change to the Syllabus, the first one included. `--syllabus` names a file holding the whole Syllabus as it would be afterwards, as TOML like `syllabus.toml` or as JSON; `--from-file` proposes `syllabus.toml` as edited by hand. Nothing changes until the learner approves. |
+| `study revision apply <topic> <revision> [--learner-said S] [--dry-run]` | Applies a proposed Revision once the learner approves. On a terminal, study shows the change and asks the learner directly; an agent relaying their answer from the conversation passes their words with `--learner-said`. Answering no records a decline. |
+| `study revision decline <topic> <revision> [--learner-said S] [--dry-run]` | Records that the learner said no. The Syllabus is unchanged, and the Revision can no longer be applied. The result is `{"topic", "revision", "decision", "changed"}`; `apply` returns `{"topic", "revision", "syllabus", "approval", "changed"}`. Answering again changes nothing and reports the answer recorded the first time, on a terminal too. |
 | `study checkpoint --topic ID --role agent\|learner [-m MESSAGE] [--dry-run]` | Saves the Topic's work as a git commit at a turn switch. Skips when nothing changed, refuses during a merge or rebase, and lists large files it saved. Never runs programs named in the Topic's git configuration. It waits for a write in progress and finishes an interrupted one first; `--dry-run` refuses (`failed_precondition`) while one is pending. |
 | `study check <lesson> [--topic ID] [--timeout D]` | Runs a Lesson's Check on the current work and records the Attempt (see "Checks" below). Without `--topic`, it uses the Topic whose folder it runs in. |
 | `study doctor` | Diagnoses the setup and says how to fix what it finds. It works even when nothing else does. Exits 1 when a Finding failed. |
@@ -127,9 +131,76 @@ human output shows it under the Active topic:
 }
 ```
 
-`lesson` is the first Lesson in Syllabus order that is not done; `syllabus_done` is `true`
-instead once every Lesson is. `next_step` is the latest Next step recorded, word for word.
+`lesson` is the first Lesson in Syllabus order that is neither done nor skipped;
+`syllabus_done` is `true` instead once every Lesson is. `next_step` is the latest Next step recorded, word for word.
 `open_session` is a Session not closed yet: in progress, or ended without a Next step.
+
+## The Syllabus
+
+`syllabus.toml` holds Milestones, each with an `outcome`, a `priority` (`must`, `if_time` or
+`after_deadline`) and an optional `target` date, written as text (`"2026-12-01"`; a native
+TOML date written by hand is read too), and Lessons with an `id`, a `title`, `hours` and
+`skipped = true` for a skipped Lesson. Display numbers ("Lesson 2.3") come from position.
+Lamplight rewrites the file only from approved Revisions, and keeps settings it does not
+know at every level.
+
+`study syllabus --json` returns:
+
+```json
+{
+  "topic": "c",
+  "milestones": [
+    { "number": 1, "id": "basics", "title": "Basics", "priority": "must", "target": "2026-12-01",
+      "lessons": [ { "number": "1.1", "id": "pointers", "title": "Pointers", "hours": 2,
+                     "status": "in_progress", "phase": "practicing", "evidence": 1 } ] }
+  ],
+  "proposals": [ { "revision": "...", "summary": "...", "changes": { ... }, "stale": false } ],
+  "edited_outside": true,
+  "file_error": "syllabus.toml of c: Lesson 2.1 (maps): the title is empty"
+}
+```
+
+A Lesson's `status` is `not_started`, `in_progress`, `done` or `skipped`. A proposal's
+`changes` names Lessons by title: each change with its `kind`, `renumbered`
+(`{lesson, title, from, to}`), `skipped_in_progress` (Lessons skipped while in progress: go
+over what was already covered with the learner) and `text`, the whole change in plain
+words. A `stale` proposal was based on a Syllabus that has changed since; propose it again.
+
+| Change `kind` | Meaning |
+|---|---|
+| `first_syllabus` | The Topic's first Syllabus, followed by each Milestone and Lesson it adds. |
+| `file_adopted` | The Revision adopts `syllabus.toml` as edited by hand (`--from-file`). |
+| `milestone_added`, `milestone_removed` | A Milestone added or removed. |
+| `milestone_changed` | A Milestone's title, outcome, priority, target date or position changed. |
+| `lesson_added`, `lesson_removed` | A Lesson added or removed. |
+| `lesson_renamed`, `lesson_moved`, `lesson_hours` | A Lesson's title, Milestone or hour estimate changed. |
+| `lesson_skipped`, `lesson_unskipped` | A Lesson skipped, or its skip taken back. |
+| `lessons_reordered` | Lessons that stay in a Milestone change places within it; `milestone` names it. |
+| `settings_changed` | Only settings Lamplight does not know changed. |
+
+Rules a Revision follows:
+
+- Done and skipped Lessons keep their title, hours and Milestone, and are never removed; a
+  done Lesson cannot be skipped. A Revision can take a skip back. Skipped Lessons keep
+  their number, are left out of the Resume point, and cannot be studied.
+- A Revision must change something; adopting the file as it is (`--from-file`) is the
+  only Revision that may change nothing.
+- A Revision is based on the Syllabus version the History recorded. While `syllabus.toml`
+  differs from it (flagged `edited_outside`, with what keeps the edit from being adopted),
+  the only Revision allowed adopts the file as it is: `--from-file`. A write interrupted
+  before it rewrote `syllabus.toml` is no edit: the next write finishes it.
+- Before asking the learner directly, study checks that the Revision can be applied as it
+  stands, so an answer is never asked for and then thrown away.
+- Approval records how the learner answered (`via`): `terminal` or `elicitation` when
+  Lamplight asked them directly, with the question it showed (`shown`); `chat` when an agent
+  relays their words (`learner_said`, required). What the learner adds when asked directly
+  is kept on one line, without control characters, cut at 500 characters; it never makes
+  their answer fail. Approvals are tamper-evident, not tamper-proof.
+- A declined Revision is never applied. Changes made on two machines without syncing are
+  flagged, never resolved: two Revisions (or a Revision and an adopted hand edit) approved
+  from one Syllabus version, a Revision applied on one and declined on the other, and a
+  Lesson completed on one and removed, skipped or rewritten on the other, in either order.
+  One Revision approved on both machines is not a conflict.
 
 ## Checks
 

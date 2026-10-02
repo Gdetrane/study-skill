@@ -522,3 +522,22 @@ func hasIntent(home *os.Root, topicID string) bool {
 	_, err := home.Lstat(intentPath(topicID))
 	return err == nil
 }
+
+// unfinishedItems names the items of the Event an intent marker names: a
+// write in progress or interrupted has yet to bring their content up to the
+// History, so a difference there is not an edit made outside Lamplight.
+func unfinishedItems(home *os.Root, topicID string, s *replayed) map[string]bool {
+	m, ok, err := readIntent(home, topicID)
+	if err != nil || !ok {
+		return nil
+	}
+	out := map[string]bool{}
+	for _, ev := range s.applied {
+		if ev.ID == m.Event {
+			for _, it := range ev.Items {
+				out[it.Item] = true
+			}
+		}
+	}
+	return out
+}

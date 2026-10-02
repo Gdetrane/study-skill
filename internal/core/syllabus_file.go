@@ -4,7 +4,12 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"math"
+	"os"
 	"slices"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/BurntSushi/toml"
 )
@@ -15,12 +20,16 @@ import (
 // never appear in Lamplight's own JSON; inside Event payloads they travel
 // with the Syllabus (see syllabusData). Keys are written sorted, so the same
 // Syllabus always gives the same bytes.
+//
+// Dates are written as text ("2026-12-01"): TOML's local dates would go
+// through Go's time.Time, whose time zone can shift them by a day. A native
+// TOML date written by hand is read, and written back as text.
 
 // Known keys at each level.
 var (
 	syllabusKeys  = []string{"format", "milestones"}
-	milestoneKeys = []string{"id", "title", "outcome", "priority", "lessons"}
-	lessonKeys    = []string{"id", "title", "hours"}
+	milestoneKeys = []string{"id", "title", "outcome", "priority", "target", "lessons"}
+	lessonKeys    = []string{"id", "title", "hours", "skipped"}
 )
 
 // extras returns the keys of m that are not known.
@@ -40,10 +49,47 @@ func extras(m map[string]any, known []string) map[string]any {
 func withExtras(m, extra map[string]any) map[string]any {
 	for k, v := range extra {
 		if _, known := m[k]; !known {
-			m[k] = v
+			m[k] = plainValue(v)
 		}
 	}
 	return m
+}
+
+// plainValue turns TOML dates and times among settings this version does
+// not know into their text, which survives a trip through JSON unchanged
+// and is the same on every machine.
+func plainValue(v any) any {
+	switch t := v.(type) {
+	case time.Time:
+		switch t.Location().String() {
+		case "date-local":
+			return t.Format(dateLayout)
+		case "datetime-local":
+			return t.Format("2006-01-02T15:04:05.999999999")
+		case "time-local":
+			return t.Format("15:04:05.999999999")
+		}
+		return t.Format(time.RFC3339Nano)
+	case map[string]any:
+		out := make(map[string]any, len(t))
+		for k, e := range t {
+			out[k] = plainValue(e)
+		}
+		return out
+	case []map[string]any:
+		out := make([]map[string]any, len(t))
+		for i, e := range t {
+			out[i] = plainValue(e).(map[string]any)
+		}
+		return out
+	case []any:
+		out := make([]any, len(t))
+		for i, e := range t {
+			out[i] = plainValue(e)
+		}
+		return out
+	}
+	return v
 }
 
 func (s Syllabus) toMap() map[string]any {
@@ -55,11 +101,17 @@ func (s Syllabus) toMap() map[string]any {
 			if l.Hours != 0 {
 				lm["hours"] = l.Hours
 			}
+			if l.Skipped {
+				lm["skipped"] = true
+			}
 			lessons = append(lessons, withExtras(lm, l.Extra))
 		}
 		mm := map[string]any{"id": m.ID, "title": m.Title, "priority": m.Priority, "lessons": lessons}
 		if m.Outcome != "" {
 			mm["outcome"] = m.Outcome
+		}
+		if m.Target != "" {
+			mm["target"] = m.Target
 		}
 		milestones = append(milestones, withExtras(mm, m.Extra))
 	}
@@ -75,7 +127,7 @@ func syllabusFromMap(doc map[string]any) (Syllabus, error) {
 	}
 	for i, mm := range milestones {
 		m := Milestone{Extra: extras(mm, milestoneKeys)}
-		where := fmt.Sprintf("milestone %d", i+1)
+		where := fmt.Sprintf("Milestone %d", i+1)
 		if m.ID, err = str(mm, "id", where); err != nil {
 			return s, err
 		}
@@ -88,13 +140,16 @@ func syllabusFromMap(doc map[string]any) (Syllabus, error) {
 		if m.Priority, err = str(mm, "priority", where); err != nil {
 			return s, err
 		}
+		if m.Target, err = date(mm, "target", where); err != nil {
+			return s, err
+		}
 		lessons, err := tables(mm["lessons"], where+" lessons")
 		if err != nil {
 			return s, err
 		}
 		for j, lm := range lessons {
 			l := SyllabusLesson{Extra: extras(lm, lessonKeys)}
-			where := fmt.Sprintf("lesson %d of milestone %d", j+1, i+1)
+			where := fmt.Sprintf("Lesson %d.%d", i+1, j+1)
 			if l.ID, err = str(lm, "id", where); err != nil {
 				return s, err
 			}
@@ -102,6 +157,9 @@ func syllabusFromMap(doc map[string]any) (Syllabus, error) {
 				return s, err
 			}
 			if l.Hours, err = number(lm, "hours", where); err != nil {
+				return s, err
+			}
+			if l.Skipped, err = boolean(lm, "skipped", where); err != nil {
 				return s, err
 			}
 			m.Lessons = append(m.Lessons, l)
@@ -140,6 +198,32 @@ func str(m map[string]any, key, where string) (string, error) {
 		return v, nil
 	}
 	return "", fmt.Errorf("%s of %s is not text", key, where)
+}
+
+// date reads a date written as text or as a native TOML date.
+func date(m map[string]any, key, where string) (string, error) {
+	switch v := m[key].(type) {
+	case nil:
+		return "", nil
+	case string:
+		return v, nil
+	case time.Time:
+		if v.Location().String() == "date-local" {
+			return v.Format(dateLayout), nil
+		}
+		return "", fmt.Errorf("%s of %s must be a date such as 2026-12-01, without a time", key, where)
+	}
+	return "", fmt.Errorf("%s of %s is not a date", key, where)
+}
+
+func boolean(m map[string]any, key, where string) (bool, error) {
+	switch v := m[key].(type) {
+	case nil:
+		return false, nil
+	case bool:
+		return v, nil
+	}
+	return false, fmt.Errorf("%s of %s must be true or false", key, where)
 }
 
 func number(m map[string]any, key, where string) (float64, error) {
@@ -226,7 +310,42 @@ func parseSyllabusFile(data []byte, where string) (Syllabus, error) {
 // applied without losing them.
 type syllabusData struct{ Syllabus }
 
-func (d syllabusData) MarshalJSON() ([]byte, error) { return json.Marshal(d.Syllabus.toMap()) }
+func (d syllabusData) MarshalJSON() ([]byte, error) {
+	return json.Marshal(floatsAsFloats(d.Syllabus.toMap()))
+}
+
+// floatsAsFloats writes whole floats with a decimal point (1.0, not 1), so a
+// float setting comes back from the payload as a float and syllabus.toml
+// keeps writing it the way the learner did.
+func floatsAsFloats(v any) any {
+	switch t := v.(type) {
+	case float64:
+		s := strconv.FormatFloat(t, 'f', -1, 64)
+		if !strings.ContainsAny(s, ".eE") && !math.IsInf(t, 0) && !math.IsNaN(t) {
+			s += ".0"
+		}
+		return json.Number(s)
+	case map[string]any:
+		out := make(map[string]any, len(t))
+		for k, e := range t {
+			out[k] = floatsAsFloats(e)
+		}
+		return out
+	case []map[string]any:
+		out := make([]any, len(t))
+		for i, e := range t {
+			out[i] = floatsAsFloats(e)
+		}
+		return out
+	case []any:
+		out := make([]any, len(t))
+		for i, e := range t {
+			out[i] = floatsAsFloats(e)
+		}
+		return out
+	}
+	return v
+}
 
 func (d *syllabusData) UnmarshalJSON(data []byte) error {
 	dec := json.NewDecoder(bytes.NewReader(data))
@@ -255,24 +374,78 @@ func keepExtras(next Syllabus, current *Syllabus) Syllabus {
 			lessons[l.ID] = l
 		}
 	}
-	if next.Extra == nil {
-		next.Extra = current.Extra
-	}
+	next.Extra = mergeExtras(current.Extra, next.Extra)
 	out := next
 	out.Milestones = make([]Milestone, len(next.Milestones))
 	for i, m := range next.Milestones {
-		if m.Extra == nil {
-			m.Extra = milestones[m.ID].Extra
-		}
+		m.Extra = mergeExtras(milestones[m.ID].Extra, m.Extra)
 		ls := make([]SyllabusLesson, len(m.Lessons))
 		for j, l := range m.Lessons {
-			if l.Extra == nil {
-				l.Extra = lessons[l.ID].Extra
-			}
+			l.Extra = mergeExtras(lessons[l.ID].Extra, l.Extra)
 			ls[j] = l
 		}
 		m.Lessons = ls
 		out.Milestones[i] = m
 	}
 	return out
+}
+
+// mergeExtras overlays the settings a proposed entity carries on those it
+// has now, so a proposal that sets one setting keeps the others.
+func mergeExtras(current, next map[string]any) map[string]any {
+	if len(next) == 0 {
+		return current
+	}
+	if len(current) == 0 {
+		return next
+	}
+	out := make(map[string]any, len(current)+len(next))
+	for k, v := range current {
+		out[k] = v
+	}
+	for k, v := range next {
+		out[k] = v
+	}
+	return out
+}
+
+// ReadSyllabusFile reads a Syllabus from a file the learner or agent named;
+// a relative path is relative to the folder study started in.
+func (c *Core) ReadSyllabusFile(path string) (Syllabus, error) {
+	full := c.expandPath(path)
+	data, err := os.ReadFile(full)
+	if err != nil {
+		return Syllabus{}, &Error{Code: CodeNotFound, Message: "cannot read " + full + ": " + err.Error(), Err: err}
+	}
+	return ParseSyllabus(data, path)
+}
+
+// ParseSyllabus reads a Syllabus written in a file, as TOML like
+// syllabus.toml or as JSON like the MCP tools take; name names it in errors.
+// A format number is optional, and a newer one is refused.
+func ParseSyllabus(data []byte, name string) (Syllabus, error) {
+	var doc map[string]any
+	if trimmed := bytes.TrimSpace(data); len(trimmed) > 0 && trimmed[0] == '{' {
+		dec := json.NewDecoder(bytes.NewReader(data))
+		dec.UseNumber()
+		if err := dec.Decode(&doc); err != nil {
+			return Syllabus{}, invalidf("%s is not valid JSON: %v", name, err)
+		}
+	} else if _, err := toml.Decode(string(data), &doc); err != nil {
+		return Syllabus{}, invalidf("%s is not valid TOML: %v", name, err)
+	}
+	if v, ok := doc["format"]; ok {
+		format, err := number(doc, "format", name)
+		if err != nil || format < 1 || format != float64(int(format)) {
+			return Syllabus{}, invalidf("%s has format %v: leave it out, or write format = %d", name, v, FormatVersion)
+		}
+		if int(format) > FormatVersion {
+			return Syllabus{}, newerFormat(name, int(format))
+		}
+	}
+	s, err := syllabusFromMap(doc)
+	if err != nil {
+		return Syllabus{}, invalidf("%s: %v", name, err)
+	}
+	return s, nil
 }

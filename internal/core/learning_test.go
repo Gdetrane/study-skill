@@ -111,7 +111,9 @@ func TestARevisionChangesTheSyllabusOnlyOnceApproved(t *testing.T) {
 	}
 
 	// A Revision proposed from an older Syllabus cannot be applied.
-	stale, err := m.ProposeRevision(ctx, "c", RevisionSpec{Summary: "Rename", Syllabus: oneLessonSyllabus})
+	renamed := clone(oneLessonSyllabus)
+	renamed.Milestones[0].Outcome = "Write a program that answers anything"
+	stale, err := m.ProposeRevision(ctx, "c", RevisionSpec{Summary: "Rename", Syllabus: renamed})
 	if err != nil {
 		t.Fatal(err)
 	}
