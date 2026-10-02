@@ -19,27 +19,23 @@ Done when Session 1 ends at a Break point of Lesson 1, or with a Next step.
    - the Goal: what they want to be able to do at the end, and a deadline if there is one;
    - the Pace: hours a week, as periods if it will change ("10 hours a week until December,
      then 3");
-   - the Approach: standalone concepts, one project built step by step, or a run of
-     challenges;
+   - the Approach: standalone concepts (`concepts`), one project built step by step
+     (`project`), or a run of challenges (`challenges`);
    - the Workbench: code as the subject, code as a tool, or written work.
 
-   Record the Goal, the deadline and the Pace with `topic_update`, and write the Approach
-   and the Workbench kind in `notes/brainstorm.md`.
-   Done when the Goal and the Pace are recorded.
+   Record the Goal, the deadline, the Pace and the Approach with `topic_update`, and write
+   the Workbench kind in `notes/brainstorm.md`.
+   Done when the Goal, the Pace and the Approach are recorded.
 4. Sources: add them and choose the Knowledge base ([Knowledge](knowledge.md)).
    Done when the Sources are added, or the learner chose to start without any.
-5. Assessment, time-boxed to about 15 minutes. Ask short questions across the Goal's areas,
-   from easy to hard, moving on as soon as an area is clear, and mark the areas you didn't
-   reach "confirm during Lessons". Save the result in `notes/assessment-<date>.md`: what
-   they know, what they don't yet, what to confirm, and the Level it suggests (beginner,
-   intermediate, advanced or expert). Agree the Level with the learner.
-   <!-- pending #31 -->
-   Until `assessment_record` exists, write the Level they agreed in the Assessment notes.
-   Once it does, record the Assessment with `assessment_record`, which sets the Level; the
-   learner can change it later with `topic_update` (`level`), and their choice holds until
-   the next Assessment. Record the Approach with `topic_update` (`approach`) as well.
-   <!-- /pending #31 -->
-   Done when the Assessment is saved and the learner agreed the Level.
+5. The placement Assessment, time-boxed to about 15 minutes. Ask short questions across
+   the Goal's areas, from easy to hard, moving on as soon as an area is clear; the areas you
+   didn't reach are `not_reached`, to confirm during Lessons. Save your notes in
+   `notes/assessment-<date>.md`: what they know, what they don't yet, what to confirm, and
+   the Level it suggests. Agree the Level with the learner, then record the Assessment with
+   `assessment_record`: kind `placement`, one item per question, the notes file, and the
+   agreed Level as `level`, which becomes the Topic's Level.
+   Done when `assessment_record` succeeded.
 6. The first Syllabus: draft it and get it approved ([The Syllabus](syllabus.md)).
 7. The Workbench: set it up with the ecosystem's own tools (`go mod init`, `cargo new`,
    `uv init`, `npm create`), or a folder for written work. Ask before installing any

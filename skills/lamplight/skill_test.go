@@ -33,11 +33,7 @@ type pendingName struct {
 }
 
 var pendingNames = map[string]pendingName{
-	"assessment_record": {"#31", "assessment_record"},
-	"hint_record":       {"#31", "hint_record"},
-	"level":             {"#31", "topic_update.level"},
-	"approach":          {"#31", "topic_update.approach"},
-	"study setup":       {"#33", "study setup"},
+	"study setup": {"#33", "study setup"},
 }
 
 // requiredTools are the tools the teaching method cannot do without: the skill
@@ -47,6 +43,7 @@ var requiredTools = []string{
 	"phase_set", "check_results", "rubric_record", "lesson_complete",
 	"due_cards", "review_record", "card_add",
 	"revision_propose", "revision_apply", "revision_decline",
+	"assessment_record", "hint_record", "signals", "topic_update",
 }
 
 // v1Leftovers match commands and files of the v1 study skill, which Lamplight

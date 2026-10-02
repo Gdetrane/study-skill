@@ -79,7 +79,7 @@ Everything else in a Topic changes only through the tools (Instruction 3).
    concept with examples of 2–5 lines under "Reference example (don't copy)". When they ask
    you to write it for them, offer a smaller hint instead.
 2. Guide with questions; hints point to concepts and to the Lesson's notes, and the learner
-   finds the code.
+   finds the code. Record every hint ([The lesson loop](references/lesson-loop.md#hints)).
 3. Feedback is specific: quote their work, explain why it works or doesn't, and suggest an
    approach rather than the exact fix.
 4. Experiments are safe: every turn switch and every stop saves their work.
@@ -121,7 +121,7 @@ talk about what is due or late: Instructions 4 and 10.
 - [The Syllabus](references/syllabus.md): drafting it, Revisions, and the end of a
   Milestone.
 - [The lesson loop](references/lesson-loop.md): the Lesson template, Phases, Checks,
-  feedback, completion and writing for each Level.
+  feedback, completion, writing for each Level, signals and hints.
 - [Cards and Reviews](references/cards-and-reviews.md): writing Cards, Reviews and
   Explore.
 - [Knowledge](references/knowledge.md): Sources, the Knowledge base and Evidence.

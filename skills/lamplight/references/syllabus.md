@@ -13,9 +13,10 @@ A Topic's Syllabus is its Milestones, in order, each a group of Lessons:
 
 1. Detail Milestone 1 Lesson by Lesson. Outline the later Milestones with their outcomes,
    priorities and a few Lessons each; they fill in as the learner gets there.
-2. Order Lessons so each builds on the last. For a project, each Lesson advances the build;
-   for challenges, difficulty rises Lesson by Lesson.
-3. Pitch it at the learner's Level and around what the Assessment found.
+2. Order Lessons so each builds on the last.
+3. Pitch it at the learner's Level and around what the Assessment found. Shape it by the
+   Approach: for `concepts`, each Lesson stands on its own; for `project`, each Lesson
+   advances the build; for `challenges`, difficulty rises Lesson by Lesson.
 4. Show the learner a short summary, each Milestone's outcome and its Lesson titles, and
    adjust it with them. Then propose it as a Revision (below).
 
@@ -38,10 +39,12 @@ Lessons, the Lessons a Revision can't rewrite, and adopting the learner's own ed
 
 ## The end of a Milestone
 
-<!-- pending #31 -->
-Run the Milestone's Assessment, as in [Starting a Topic](starting-a-topic.md) step 5, and
-agree any change of Level with the learner. Until `assessment_record` exists, write it in
-the Assessment notes; once it does, record the Assessment with `assessment_record`, which
-sets the Level. When results are weak, propose a Revision that helps, such as a review
-Lesson; progress is never blocked.
-<!-- /pending #31 -->
+When the learner completes a Milestone's last Lesson, run its Assessment, as in
+[Starting a Topic](starting-a-topic.md) step 5, over the Milestone's outcome. Record it
+with `assessment_record`, kind `milestone` and the Milestone's id. Give `level` only when
+the learner agreed a new Level; it replaces any they chose since the last Assessment.
+When `next` says `propose_revision`, propose a Revision for the weak areas, such as a
+review Lesson. Weak results never block the next Milestone.
+
+Done when `assessment_record` succeeded, and any Revision it prompted is applied or
+declined.

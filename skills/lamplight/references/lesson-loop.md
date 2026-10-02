@@ -26,7 +26,8 @@ practicing at 3, feedback at 4.
    set they won't see. Then call `phase_set` with `practicing`.
    Done when practicing is recorded.
 3. Practice. The learner works in `practice/<lesson-id>/`. Answer questions with hints that
-   point to concepts. When they reach a Break point, record it with `break_point_reached`.
+   point to concepts, and record each hint ([Hints](#hints)). When they reach a Break point,
+   record it with `break_point_reached`.
    Done when the learner hands their work back.
 4. Feedback. Call `phase_set` with `feedback`. When the Check has `run` or `held_out`
    criteria, run it in your own shell:
@@ -140,13 +141,20 @@ Held-out data measures the work on data the learner never sees while they work; 
   that leave design choices to the learner. When they are stuck, offer to step back a Level
   for this concept rather than hint.
 
-Read the Level from the Topic's Assessment notes and the Learner profile; the learner can
-change it at any time.
+`status` gives the Topic's Level and Approach. When the learner wants a different Level,
+record their choice with `topic_update` (`level`); it holds until the next Assessment.
 
-<!-- pending #31 -->
-## Hints and Level signals (pending #31)
+Before writing a Lesson, read `signals` to adapt it: the depth of the notes, how much
+scaffolding, how soon to offer a hint. They are for you alone (Instruction 12): when the
+learner asks how they are doing, answer in words.
 
-Once the tools exist, read the Level from the Topic, and record each hint the learner asks
-for with `hint_record`. Lamplight records the other signals a future Level suggestion needs
-(first-try passes, feedback rounds, Review results) from the tools you already call.
-<!-- /pending #31 -->
+## Hints
+
+Record every hint you give with `hint_record`, in the Lesson being studied:
+
+- `requested_by`: `learner` when they asked for help, `agent` when you offered it unasked;
+- `kind`: `nudge` for a question or a pointer, `explanation` for explaining a concept
+  again, `step` for showing part of the way to a solution.
+
+Hints are how the next Lessons are pitched, so a hint you don't record teaches Lamplight
+the wrong Level.
