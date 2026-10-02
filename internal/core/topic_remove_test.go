@@ -2,10 +2,12 @@ package core
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -142,6 +144,23 @@ func TestRemoveTopicRefusals(t *testing.T) {
 	}
 	if !exists(filepath.Join(home, "rust", "topic.toml")) {
 		t.Fatal("a refused removal moved the Topic")
+	}
+}
+
+// Moves the operating system refuses get advice, not an internal error.
+func TestRemoveTopicExplainsARefusedMove(t *testing.T) {
+	for _, tc := range []struct {
+		errno syscall.Errno
+		code  ErrorCode
+		says  string
+	}{
+		{syscall.EXDEV, CodeFailedPrecondition, "different file systems"},
+		{syscall.EBUSY, CodeBusy, "in use or is a mount point"},
+	} {
+		err := moveError("rust", "/study/.lamplight/removed/x", &os.LinkError{Op: "rename", Old: "rust", New: "x", Err: tc.errno})
+		if CodeOf(err) != tc.code || !strings.Contains(err.Error(), tc.says) || !errors.Is(err, tc.errno) {
+			t.Errorf("%v: %v (%s)", tc.errno, err, CodeOf(err))
+		}
 	}
 }
 
