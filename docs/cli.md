@@ -55,8 +55,8 @@ that scripts and agents can rely on. Terms follow [CONTEXT.md](../CONTEXT.md).
 | `study completion install [--shell S] [--dir D] [--yes] [--force] [--dry-run]` | Installs completions for bash, zsh or fish (default: from `$SHELL`) for your user. |
 | `study completion uninstall [--shell S] [--dry-run]` | Removes what `install` added, for every shell or only `--shell`. |
 | `study completion bash\|zsh\|fish\|powershell` | Prints a completion script, for packagers. |
-| `study setup [--agent claude\|codex\|all] [--dry-run]` | Installs the `lamplight` skill and registers `study mcp` with Claude Code and Codex. See [Setting up agents](#setting-up-agents). |
-| `study setup --check [--agent A]` | Reports what is missing or stale, changing nothing; exits 1 when setup has something to do. |
+| `study setup [--agent claude\|codex\|all] [--dry-run] [--force]` | Installs the `lamplight` skill and registers `study mcp` with Claude Code and Codex. See [Setting up agents](#setting-up-agents). |
+| `study setup --check [--agent A]` | Reports what is missing or stale, changing nothing; exits 1 (`unhealthy`) when setup has something to do. |
 | `study setup --remove [--agent A] [--dry-run]` | Undoes exactly what `study setup` did. |
 | `study claude-plugin-path` | Writes the Claude Code plugin and prints its folder; the plugin marketplace runs it. |
 | `study mcp` | Runs the MCP server over stdin and stdout. On start it refreshes a skill copy that `study setup` installed, when nobody changed it. |
@@ -967,8 +967,14 @@ Packages install the scripts from `study completion <shell>` system-wide instead
 - `<study>` is an absolute path, because GUI editors do not inherit the shell's `PATH`. When
   the `study` on `PATH` is this same program, its `PATH` entry is used as written (Homebrew's
   `bin` link, `~/go/bin/study`, `/usr/bin/study`), because the real file behind it often
-  lives in a versioned folder that the next upgrade removes. Otherwise the running binary's
-  path is used, and `study_note` says it may not survive an upgrade.
+  lives in a versioned folder that the next upgrade removes. When the first `study` on
+  `PATH` is a version manager's shim (a `shims` folder, as mise and asdf use), or the running
+  binary sits in a version manager's `installs` folder next to one, agents run the shim, and
+  `study_note` says so. Otherwise the running binary's path is used, and `study_note` says it
+  may not survive an upgrade.
+- A `study` in a temporary build folder (a `go-build` folder, as `go run` uses, or under
+  `$TMPDIR`, `/tmp` when unset) is refused with `failed_precondition`, because it will soon
+  be gone; `--force` registers it anyway.
 
 What it will and won't touch:
 
@@ -979,29 +985,82 @@ What it will and won't touch:
   not setup's link is left alone (`kept`).
 - A server named `lamplight` that an agent already has, registered by hand, is left alone
   (`kept`), and `--remove` never removes it.
-- It records what it did in `$XDG_STATE_HOME/lamplight/setup.json`: each skill file with the
-  SHA-256 of what it wrote, the folders and the link it created, and each registration.
-  Running setup again updates the skill files it wrote and nobody changed, keeps files
-  changed by hand (listed under `kept`), and re-registers an agent whose registration
-  still runs an older path of `study` (`re-registered`).
+- It records what it does in `$XDG_STATE_HOME/lamplight/setup.json`: each skill file with
+  the SHA-256 of what it wrote, the folders and the link it created with where each led
+  (symlinks resolved), and each registration. It saves the record before each change (the
+  folders it is about to create, a registration it is about to make) or right after it (each
+  file written), and first proves it can write there, so a run that stops part-way, on a
+  full disk or a failing agent, can still be undone exactly by `--remove`, and setup run
+  again finishes the job. A lock (`setup.lock` next to the record) keeps setup, `--remove`
+  and `study mcp`'s refresh from running at once; a setup that waits more than 30 seconds
+  for it fails with `busy`.
+- It acts only on what the record names, and only while it is still what setup made: a
+  regular file with the content setup wrote, a real folder (not a symlink) that still leads
+  where it led, a link with the target setup gave it, in the folder it made it in. Skill
+  files are read and written inside the skill folder through `os.Root`, never through a
+  symlinked folder. So a folder moved into a dotfiles repository and linked back, by hand or
+  by a dotfiles manager, is the learner's: setup and `--remove` leave it and everything
+  behind it alone (`kept`).
+- Running setup again updates the skill files it wrote and nobody changed, restores ones
+  that were deleted, keeps files changed by hand (listed under `kept`), and re-registers an
+  agent whose registration still runs an older path of `study` (`re_registered`).
 - `study mcp` refreshes the skill files setup wrote when it starts, so an upgrade reaches the
-  skill without running setup again. It never touches a file changed by hand.
+  skill without running setup again. It never touches a file changed by hand, and never
+  restores one the learner deleted; `--check` reports those as missing, and `study setup`
+  restores them.
 - `--remove` unregisters each server while it is still the one setup registered, removes
-  the link while it still points at the skill, deletes skill files that are unchanged, and
-  removes the folders it created once they are empty. `--agent` limits it to one agent; the
-  skill folder stays while another agent still uses it.
+  the link while it is still setup's, deletes skill files that are unchanged, and removes
+  the folders it created once they are empty. `--agent` limits it to one agent; the skill
+  folder stays while another agent still uses it.
 - `--check` and `--dry-run` write nothing and run no agent command that changes anything
   (they may run `codex mcp get lamplight --json`, which only reads; Claude Code's
   registration is read from `~/.claude.json`, because `claude mcp get` may start the
-  server). `study doctor` adds a `setup` Finding with the first problem `--check` finds.
-- A damaged `setup.json` is `corrupt` (delete it, then run setup); one from a newer `study`
-  is `newer_format` and is never rewritten.
+  server). A dry run takes every decision the real run would, on a copy of the record, so
+  it reports exactly what the real run will do. `study doctor` adds a `setup` Finding with
+  the first problem `--check` finds.
+- Agent commands run with stdin closed, in a process group of their own: a read
+  (`codex mcp get`) is stopped after 10 seconds, a change (`mcp add`, `mcp remove`) after
+  60, together with anything they started. Only Codex's stdout is parsed; output it cannot
+  read is an error, never taken for a server registered by hand.
+- A `setup.json` study cannot read is `corrupt`, and so is one that names anything setup
+  never creates: a file outside the skill folder, another skill folder or link, a folder
+  other than `~/.agents`, `~/.agents/skills` and Claude Code's folder and its `skills`, or
+  a registration other than `lamplight` running an absolute `study mcp`. Nothing is changed;
+  delete it, then run setup. One from a newer `study` is `newer_format` and is never
+  rewritten.
 
-`--json` data: `study`, `study_note`, `skill` (`dir`, `status`, `written`, `removed`,
-`kept`), `agents` (`agent`, `status`, `note`, and for Claude Code `link` and
-`link_status`), `manual`, `dry_run`, `remove`, and for `--check` the `findings` and
-`up_to_date`. Statuses: `installed`, `updated`, `current`, `registered`, `re-registered`,
-`kept`, `skipped`, `plugin`, `linked`, `removed`, `already_gone`, `not_installed`.
+`--json` data of setup and `--remove`: `study`, `study_note`, `skill` (`dir`, `status`,
+`note`, `written`, `removed`, `kept`), `agents` (`agent`, `status`, `note`, and for Claude
+Code `link` and `link_status`), `manual`, `dry_run`, `remove`, `note`. Statuses:
+`installed`, `updated`, `current`, `registered`, `re_registered`, `kept`, `skipped`,
+`plugin`, `linked`, `removed`, `already_gone`, `not_installed`, `failed`. In a dry run the
+statuses say what the real run would do, and the text output says "would install", "would
+link" and so on.
+
+When setup or `--remove` fails part-way, for example because an agent's command failed,
+the JSON envelope has `ok: false`, the error, and `data` with everything that was done
+before and after it (the failing agent has status `failed`, its `note` says why), and the
+text output prints the same before the error.
+
+`--check --json` data is `study`, `up_to_date` and `findings` (as in `study doctor`). When
+setup has something to do, `--check` exits 1 and, like `study doctor`, `ok` is `false`, the
+error code is `unhealthy`, and `data` is still present:
+
+```json
+{
+  "ok": false,
+  "data": {
+    "study": "/usr/bin/study",
+    "up_to_date": false,
+    "findings": [
+      { "name": "setup:skill", "status": "ok", "message": "the skill is installed in /home/ada/.agents/skills/lamplight" },
+      { "name": "setup:codex", "status": "warn", "message": "study is not registered with codex",
+        "fix": "study setup --agent codex" }
+    ]
+  },
+  "error": { "code": "unhealthy", "message": "study setup has something to do: setup:codex" }
+}
+```
 
 ### The Claude Code plugin
 
@@ -1027,6 +1086,22 @@ Claude Code to an enabled plugin, and undoes what an earlier setup did for it;
 Lamplight to Claude Code, so installing the plugin then fails until you run
 `study setup --remove --agent claude`.
 
+Setup counts the plugin as enabled when `enabledPlugins` has `lamplight@lamplight` set to
+`true` (a plugin of the same name from another marketplace does not count) in Claude Code's
+user settings (`~/.claude/settings.json`, or under `$CLAUDE_CONFIG_DIR`), or in the settings
+of the project setup runs in: the nearest folder above the working folder, short of `HOME`,
+with a `.claude` folder, where `settings.local.json` overrides `settings.json`. A user-scope
+registration reaches every project, so setup leaves Claude Code to the plugin when it is
+enabled in either place. Setup cannot see other projects' settings, nor managed settings:
+enable the plugin there and run `study setup --remove --agent claude` yourself.
+
+The plugin's folder is named after a hash of its content, and is never replaced or
+removed: another session, or another version of `study` during an upgrade, may have just
+printed it for Claude Code to copy. Concurrent runs of the same `study` all print the same
+folder. Folders of earlier versions stay in `$XDG_CACHE_HOME/lamplight/claude-plugin/`,
+which can be deleted at any time; only temporary folders left by interrupted runs are
+removed, after ten minutes.
+
 ### Other agents
 
 Any agent that speaks MCP can run the server. Point it at `study mcp`, by `study`'s absolute
@@ -1040,8 +1115,10 @@ path when the agent is a GUI application:
 }
 ```
 
-Install the skill with `npx skills add mordor-forge/lamplight`, or copy
-`skills/lamplight/` from the repository into the agent's skills folder.
+Install the skill for your user with `npx skills add -g mordor-forge/lamplight`, or copy
+`skills/lamplight/` from the repository into the agent's skills folder. (The
+`mordor-forge/lamplight` repository names here and in the plugin assume the repository
+rename planned in issue #18.)
 
 ## The Log
 

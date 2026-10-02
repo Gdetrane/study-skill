@@ -681,21 +681,31 @@ marketplace plugin, which includes a session-start hook that prints `status` whe
 starts inside the Study home. Other agents use `npx skills add` and a documented MCP snippet.
 
 - `study setup` records each file it writes with its SHA-256, each folder and link it
-  creates, and each registration, in `$XDG_STATE_HOME/lamplight/setup.json`. It replaces or
-  removes only what still matches the record, so files changed by hand are kept; `--check`
-  reports a stale skill, a missing registration or a `study` that moved, and `--dry-run`
-  and `--check` change nothing. `study mcp` refreshes the skill files setup wrote when it
-  starts.
+  creates (with where it led, symlinks resolved), and each registration, in
+  `$XDG_STATE_HOME/lamplight/setup.json`. It saves the record before or as it takes each
+  step, under a lock that `--remove` and `study mcp`'s refresh share, so a run that stops
+  part-way can still be undone exactly. It replaces or removes only what still matches the
+  record: a regular file with the content it wrote, a real folder that still leads where it
+  led, a link with the target it gave it. Files changed by hand, and anything moved behind a
+  symlink (a dotfiles repository), are kept. A record that names anything setup never
+  creates is refused as `corrupt`. `--check` reports a stale skill, a missing registration
+  or a `study` that moved, and `--dry-run` takes every decision the real run would on a copy
+  of the record. `study mcp` refreshes the skill files setup wrote when it starts.
 - Agents run `study` by an absolute path: the `PATH` entry when it is the running binary
-  (it survives upgrades, unlike Homebrew's versioned folders), else the running binary's
-  real path, with a note.
+  (it survives upgrades, unlike Homebrew's versioned folders), a version manager's shim when
+  that is what the shell runs, else the running binary's real path, with a note. A binary in
+  a temporary build folder (`go run`) is refused without `--force`.
 - Claude Code's user-scope registration is read from `~/.claude.json`; Codex's through
-  `codex mcp get --json`. Neither check starts the server.
+  `codex mcp get --json`, whose stdout only is parsed. Neither check starts the server.
+  Agent commands run in their own process group, stopped after 10 seconds for reads and 60
+  for changes.
 - The plugin is generated, not stored: `study claude-plugin-path` (the marketplace entry's
   `command` source) writes the skill, the MCP server and the session-start hook from the
-  binary (`internal/claudeplugin`) and prints the folder. Setup leaves Claude Code to an
-  enabled plugin, and the command refuses while setup provides Lamplight to Claude Code, so
-  the two never both register.
+  binary (`internal/claudeplugin`) into a folder named after its content, which is never
+  replaced or removed, and prints the folder. Setup leaves Claude Code to the plugin when it
+  is enabled in the user's settings or the current project's, and the command refuses while
+  setup provides Lamplight to Claude Code, so the two never both register where setup can
+  see.
 
 ## Migration from v1
 
