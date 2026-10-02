@@ -322,12 +322,18 @@ func TestTheLearnerLoop(t *testing.T) {
 		t.Fatalf("the second Session does not report the first, left unclosed: %+v", opened.Unclosed)
 	}
 	// As the Instructions ask, the agent gets the learner's missing note.
+	// Stopping saves the work, so the note takes the Checkpoint the crash
+	// left owed.
+	var noted core.SessionClosed
 	a.call("session_close", map[string]any{"topic": "c", "session": opened.Unclosed[0].ID,
-		"next_step": "Complete the Lesson again after the crash"}, nil)
+		"next_step": "Complete the Lesson again after the crash"}, &noted)
+	if noted.Checkpoint == nil || !noted.Checkpoint.Committed {
+		t.Fatalf("the late note took no Checkpoint: %+v", noted)
+	}
 	var done core.LessonCompletion
 	a.call("lesson_complete", map[string]any{"topic": "c", "lesson": "answer"}, &done)
-	if done.Changed || done.Attempt != second.ID || len(done.Cards) != 1 || done.Checkpoint == nil {
-		t.Fatalf("completing again = %+v, want the recorded completion and its Checkpoint", done)
+	if done.Changed || done.Attempt != second.ID || len(done.Cards) != 1 || done.Checkpoint != nil {
+		t.Fatalf("completing again = %+v, want the recorded completion, already saved", done)
 	}
 
 	// The draft Card's first Review.
@@ -356,9 +362,9 @@ func TestTheLearnerLoop(t *testing.T) {
 		"phase.set", "phase.set", "checkpoint.taken", "phase.set", "checkpoint.taken", "attempt.recorded",
 		"phase.set", "checkpoint.taken", "phase.set", "checkpoint.taken", "attempt.recorded",
 		// The crash interrupted the completion before its Checkpoint; the
-		// next day's retry takes it.
+		// next day's late note takes it, and the last stop saves the Review.
 		"lesson.completed", "session.opened", "session.closed", "checkpoint.taken",
-		"review.recorded", "session.closed"}
+		"review.recorded", "session.closed", "checkpoint.taken"}
 	if !slices.Equal(types, want) {
 		t.Errorf("History =\n%v\nwant\n%v", types, want)
 	}
@@ -396,11 +402,11 @@ func TestTheLearnerLoop(t *testing.T) {
 	// Checkpoints at every turn switch keep the learner's work apart.
 	log := strings.Split(a.git("log", "--reverse", "--format=%s"), "\n")
 	wantLog := []string{"[agent] answer: practicing", "[learner] answer: feedback", "[agent] answer: practicing",
-		"[learner] answer: feedback", "[agent] answer: completed"}
+		"[learner] answer: feedback", "[agent] answer: completed", "[agent] Session closed"}
 	if !slices.Equal(log, wantLog) {
 		t.Errorf("Checkpoints =\n%v\nwant\n%v", log, wantLog)
 	}
-	learnerFix := a.git("diff", "--name-only", "HEAD~2", "HEAD~1")
+	learnerFix := a.git("diff", "--name-only", "HEAD~3", "HEAD~2")
 	if !strings.Contains(learnerFix, "practice/answer/answer.txt") || strings.Contains(learnerFix, "lessons/") {
 		t.Errorf("the learner's fix Checkpoint changed:\n%s", learnerFix)
 	}

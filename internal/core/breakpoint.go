@@ -20,6 +20,9 @@ type breakPointReachedData struct {
 	BreakPoint string `json:"break_point"`
 	NextStep   string `json:"next_step"`
 	Context    string `json:"context,omitempty"`
+	// TurnEnded is the role whose turn the stop ended, "agent" or "learner";
+	// a Checkpoint is owed for it, so the Break point's work is saved.
+	TurnEnded string `json:"turn_ended,omitempty"`
 }
 
 // BreakPointSpec describes reaching a Break point.
@@ -44,13 +47,17 @@ type BreakPointReached struct {
 	// Changed is false when the Lesson was already at that Break point
 	// with the same Next step: nothing was recorded.
 	Changed bool `json:"changed"`
-	DryRun  bool `json:"dry_run,omitempty"`
+	// The Checkpoint that saved the turn the Break point ended.
+	TurnCheckpoint
+	DryRun bool `json:"dry_run,omitempty"`
 }
 
 // ReachBreakPoint records that the learner reached one of a Lesson's Break
 // points, with a Next step, starting with a verb, and free-text context. The
 // Session can stop there, and the next one resumes from it. The Session stays
-// open: closing it is session_close's job.
+// open: closing it is session_close's job. A Checkpoint saves the turn the
+// Break point ends, as at a turn switch; one still owed from an earlier stop
+// is taken by a repeat call that records nothing.
 func (c *Core) ReachBreakPoint(ctx context.Context, topicID string, spec BreakPointSpec) (BreakPointReached, error) {
 	step, err := checkNextStep(spec.NextStep)
 	if err != nil {
@@ -89,6 +96,7 @@ func (c *Core) ReachBreakPoint(ctx context.Context, topicID string, spec BreakPo
 		}
 		return &change{Type: eventBreakPointReached, Data: breakPointReachedData{
 			Lesson: spec.Lesson, BreakPoint: point.ID, NextStep: step, Context: note,
+			TurnEnded: s.study.currentTurn(),
 		}}, nil
 	}, spec.DryRun)
 	if err != nil {
@@ -96,6 +104,9 @@ func (c *Core) ReachBreakPoint(ctx context.Context, topicID string, spec BreakPo
 	}
 	if result.Changed = ev != nil; result.Changed {
 		result.NextStep.At = ev.Wall
+	}
+	if !spec.DryRun {
+		result.TurnCheckpoint = c.takeOwedCheckpoint(ctx, topicID)
 	}
 	return result, nil
 }
@@ -139,6 +150,7 @@ func replayBreakPointReached(s *replayed, ev event) error {
 	if err := validateEntityID("Break point", d.BreakPoint); err != nil {
 		return err
 	}
+	s.oweStopCheckpoint(ev.ID, d.TurnEnded, stopMessage(d.Lesson, "stopped at "+d.BreakPoint))
 	step := &NextStep{Step: d.NextStep, Context: d.Context, Lesson: d.Lesson, At: wallOf(ev)}
 	if s.staleNextStep(ev, step) {
 		return nil

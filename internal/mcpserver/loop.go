@@ -82,7 +82,8 @@ func addLearnerLoop(server *mcp.Server, c *core.Core) {
 		Description: "Open a Session on a Topic after the Energy check; it also makes the Topic the most recent one. " +
 			"Read the Learner profile and the Topic's additions (paths in status) first. Show the learner the resume " +
 			"point: the Lesson, the last Break point reached and the Next step word for word. Give energy; leave focus " +
-			"out until the learner chooses: suggested.suggest is learn, practice, reviews or explore (a Focus to " +
+			"out until the learner chooses, then record their choice by calling session_open again with session (this " +
+			"Session's id) and focus, which opens nothing new: suggested.suggest is learn, practice, reviews or explore (a Focus to " +
 			"offer), plan (no Syllabus yet: plan it together), stop (write tomorrow's first step and end here; on a " +
 			"finished Topic, nothing to study now) or resume_topic (the Topic is paused); suggested.reason is English " +
 			"you may rephrase. cards.ready says whether Reviews are possible; never mention how many Cards are due. If " +
@@ -92,7 +93,7 @@ func addLearnerLoop(server *mcp.Server, c *core.Core) {
 			"stays paused and its Cards wait: offer to resume it with topic_update or to pick another Topic.",
 		Annotations: write,
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in sessionOpenInput) (*mcp.CallToolResult, core.SessionOpened, error) {
-		r, err := c.OpenSession(ctx, in.Topic, core.SessionSpec{Energy: in.Energy, Focus: in.Focus})
+		r, err := c.OpenSession(ctx, in.Topic, core.SessionSpec{Energy: in.Energy, Focus: in.Focus, Session: in.Session})
 		return nil, r, toolErr(err)
 	})
 
@@ -101,7 +102,9 @@ func addLearnerLoop(server *mcp.Server, c *core.Core) {
 		Title: "Close the Session",
 		Description: "Close the open Session with a Next step that starts with a verb and says what to act on (\"Fix " +
 			"the off-by-one in parse.go\", never \"Continue\" or \"The parser is half done\") and the context needed " +
-			"to take it. The learner sees it first when they come back.",
+			"to take it. The learner sees it first when they come back. Closing saves the work with a Checkpoint of the " +
+			"turn it ends (the learner's while practicing); if the result has checkpoint_error, the Session is closed " +
+			"anyway: tell the learner, and once the problem is fixed call checkpoint with its checkpoint_role.",
 		Annotations: write,
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in sessionCloseInput) (*mcp.CallToolResult, core.SessionClosed, error) {
 		r, err := c.CloseSession(ctx, in.Topic, core.CloseSpec{Session: in.Session, NextStep: in.NextStep, Context: in.Context})
@@ -114,8 +117,9 @@ func addLearnerLoop(server *mcp.Server, c *core.Core) {
 		Description: "Record that the learner reached one of the Break points declared under break_points: in the " +
 			"Lesson's YAML header, with a Next step that starts with a verb and the context needed to take it. Only " +
 			"the current Lesson (the Resume point's) has Break points to reach. The Session can stop there, and the " +
-			"next one resumes from it; the Session stays open until session_close. Reaching the Break point the Lesson " +
-			"is already at, with the same Next step and context, records nothing.",
+			"next one resumes from it; the Session stays open until session_close. Reaching it saves the work with a " +
+			"Checkpoint of the turn it ends; checkpoint_error works as for phase_set. Reaching the Break point the " +
+			"Lesson is already at, with the same Next step and context, records nothing.",
 		Annotations: idempotent,
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in breakPointInput) (*mcp.CallToolResult, core.BreakPointReached, error) {
 		r, err := c.ReachBreakPoint(ctx, in.Topic, core.BreakPointSpec{
@@ -231,9 +235,10 @@ type revisionDeclineInput struct {
 }
 
 type sessionOpenInput struct {
-	Topic  string `json:"topic" jsonschema:"the Topic's id"`
-	Energy string `json:"energy,omitempty" jsonschema:"the learner's Energy: full, half or fumes"`
-	Focus  string `json:"focus,omitempty" jsonschema:"what the Session is for: learn, practice, reviews or explore"`
+	Topic   string `json:"topic" jsonschema:"the Topic's id"`
+	Energy  string `json:"energy,omitempty" jsonschema:"the learner's Energy: full, half or fumes"`
+	Focus   string `json:"focus,omitempty" jsonschema:"what the Session is for: learn, practice, reviews or explore"`
+	Session string `json:"session,omitempty" jsonschema:"with focus, the open Session's id: records the Focus the learner chose for it instead of opening another Session"`
 }
 
 type sessionCloseInput struct {

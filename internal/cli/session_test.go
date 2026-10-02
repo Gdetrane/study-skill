@@ -154,3 +154,47 @@ func setGitIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// The learner chooses a Focus after the suggestion: it is recorded on the
+// open Session, and no other Session opens.
+func TestSessionFocus(t *testing.T) {
+	setGitIdentity(t)
+	home := withLesson(t)
+	var opened struct {
+		Data struct {
+			Session string `json:"session"`
+		} `json:"data"`
+	}
+	r := run(t, home, "session", "open", "c", "--energy", "full", "--json")
+	if err := json.Unmarshal([]byte(r.stdout), &opened); err != nil || opened.Data.Session == "" {
+		t.Fatalf("session open: %v, %s", err, r.stdout)
+	}
+	id := opened.Data.Session
+
+	focused := run(t, home, "session", "open", "c", "--session", id, "--focus", "learn")
+	if focused.code != cli.ExitOK {
+		t.Fatalf("recording the Focus: exit %d, %s", focused.code, focused.stderr)
+	}
+	golden(t, "session_focus.txt", strings.ReplaceAll(focused.stdout, id, "<id>"))
+	history, err := os.ReadFile(filepath.Join(home, "c", "history.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Count(string(history), `"type":"session.opened"`); got != 1 {
+		t.Errorf("%d Sessions opened, want 1: recording the Focus must not open another", got)
+	}
+	if !strings.Contains(string(history), `"type":"session.focused"`) {
+		t.Error("the Focus was not recorded")
+	}
+
+	if r := run(t, home, "session", "open", "c", "--session", id, "--json"); r.code != cli.ExitUsage {
+		t.Errorf("--session without --focus: exit %d, want %d", r.code, cli.ExitUsage)
+	}
+	if r := run(t, home, "session", "close", "c", "--next-step", "Read the question again"); r.code != cli.ExitOK {
+		t.Fatalf("session close: %s", r.stderr)
+	}
+	if r := run(t, home, "session", "open", "c", "--session", id, "--focus", "practice", "--json"); r.code != cli.ExitError ||
+		!strings.Contains(r.stdout, "failed_precondition") {
+		t.Errorf("a closed Session: exit %d, %s", r.code, r.stdout)
+	}
+}

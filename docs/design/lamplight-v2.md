@@ -134,8 +134,9 @@ the maintainer's answers to the questions they raised.
   | `revision.applied` | Revision, approval (how: `chat`, `elicitation` or `terminal`; the learner's words; the question shown when Lamplight asked), the whole Syllabus | `syllabus.toml` |
   | `revision.declined` | Revision, the learner's answer as for an approval | none |
   | `session.opened` | Energy, Focus | none |
-  | `session.closed` | Session, Next step, context, the Lesson it is about | none |
-  | `break_point.reached` | Lesson, Break point, Next step, context | none |
+  | `session.focused` | Session, the Focus the learner chose after the suggestion | none |
+  | `session.closed` | Session, Next step, context, the Lesson it is about, the turn it ended | none |
+  | `break_point.reached` | Lesson, Break point, Next step, context, the turn it ended | none |
   | `phase.set` | Lesson, Phase, optional Next step, the Check version shown when practicing starts, the turn it ended | none |
   | `attempt.recorded` | Lesson, Check version, snapshot, outcome, per criterion its kind, outcome, results file and, for `held_out` criteria, whether it was counted when run and why not (never output) | none |
   | `rubric.graded` | Lesson, rubric item, grade, note, the Check version and snapshot graded, the files of the work it looked at (path and hash), the grade it replaces | none |
@@ -290,7 +291,9 @@ hours before any learning happens is exactly what v1 produced.
    Syllabus, it is to plan one. A paused Topic is never suggested for study, and a finished
    one only for its Reviews. `session_open` returns the suggestion when it gets an Energy
    and no Focus yet, as one value: a Focus, `plan`, `stop` or `resume_topic`, the same words
-   `status` recommends. The suggestion is never recorded, only the Focus the learner chooses.
+   `status` recommends. The suggestion is never recorded, only the Focus the learner chooses:
+   `session_open` again with the open Session's id and that Focus records it on the same
+   Session (`session.focused`) and opens nothing new.
 3. The Learner profile and the Topic's additions are read at the start of every Session;
    `status` gives their paths when the files exist.
 4. A Lesson moves through its Phases: teaching → practicing → feedback. The Check's criteria
@@ -300,7 +303,9 @@ hours before any learning happens is exactly what v1 produced.
    `phase_set` takes the Checkpoint of whoever's turn just ended. The History records that
    it is owed, and a `checkpoint.taken` Event that it was taken; one that failed or was cut
    off by a crash is taken by the next `phase_set`, `lesson_complete` or `checkpoint`.
-5. Reaching a Break point, or ending a Session, records a Next step (starting with a verb)
+5. Reaching a Break point, or ending a Session, saves the work with a Checkpoint of the turn
+   it ends (owed like a turn switch's, never blocking the stop) and records a Next step
+   (starting with a verb)
    and free-text context. Break points are declared in order under `break_points:` in the
    Lesson's YAML header and read apart from the Check, so a wrong type or value there never
    makes the Check unreadable (a YAML syntax error breaks the whole header, and `status`

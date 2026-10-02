@@ -36,6 +36,7 @@ var eventKinds = map[string]eventKind{
 	eventRevisionDeclined: {apply: applyNothing, replay: replayRevisionDeclined},
 	eventSessionOpened:    {apply: applyNothing, replay: replaySessionOpened},
 	eventSessionClosed:    {apply: applyNothing, replay: replaySessionClosed},
+	eventSessionFocused:   {apply: applyNothing, replay: replaySessionFocused},
 	eventPhaseSet:         {apply: applyNothing, replay: replayPhaseSet},
 	eventAttemptRecorded:  {apply: applyNothing, replay: replayAttemptRecorded},
 	eventLessonCompleted:  {apply: applyLessonCompleted, replay: replayLessonCompleted},

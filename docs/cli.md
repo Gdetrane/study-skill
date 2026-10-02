@@ -10,9 +10,9 @@ that scripts and agents can rely on. Terms follow [CONTEXT.md](../CONTEXT.md).
 |---|---|
 | `study` | Same as `study status`. |
 | `study status` | Shows the Study home, the Active topic and why it was chosen, the one action recommended for it (`recommended`), the Learner profile (`learner_profile`), every Topic, and any Topic that could not be read (`problems`). A broken Topic never stops the others from being listed. Each Topic can carry `flags`, its Resume point (`resume`), whether its Cards are ready (`cards`, never a count), its additions to the Learner profile (`learner_additions`) and `lessons_without_evidence`: Lessons started or done that cite no Evidence yet, once the Topic has Sources or a NotebookLM Knowledge base (a reminder, never a block). See "Where the learner stopped" below. It also carries its plan (see [Goal, Pace and Forecasts](#goal-pace-and-forecasts)): `state`, `deadline`, `pace`, `new_cards_per_day`, the `forecast` and the open `tasks` that matter now; human output shows them under the Active topic. |
-| `study session open <topic> [--energy E] [--focus F] [--dry-run]` | Opens a Session and shows where you stopped. With an Energy and no Focus chosen yet, it suggests one (or to plan, or to stop); it lists every Session that ended without a Next step, and what changed since the last Checkpoint. See "Opening a Session" below. |
-| `study session close <topic> --next-step S [--context C] [--session ID] [--dry-run]` | Closes the Session with a Next step that starts with a verb (see "Next steps" below). `--session` gives a Session left unclosed the note it never got. |
-| `study session break-point <topic> <lesson> <break-point> --next-step S [--context C] [--dry-run]` | Records a Break point the Lesson's header declares, with a Next step. The Session stays open. Reaching the same Break point with the same Next step again changes nothing. |
+| `study session open <topic> [--energy E] [--focus F] [--session ID] [--dry-run]` | Opens a Session and shows where you stopped. With an Energy and no Focus chosen yet, it suggests one (or to plan, or to stop); it lists every Session that ended without a Next step, and what changed since the last Checkpoint. With `--session` and `--focus`, it records the Focus chosen for that open Session instead of opening another. See "Opening a Session" below. |
+| `study session close <topic> --next-step S [--context C] [--session ID] [--dry-run]` | Closes the Session with a Next step that starts with a verb (see "Next steps" below), and saves the work with a Checkpoint. `--session` gives a Session left unclosed the note it never got. |
+| `study session break-point <topic> <lesson> <break-point> --next-step S [--context C] [--dry-run]` | Records a Break point the Lesson's header declares, with a Next step, and saves the work with a Checkpoint. The Session stays open. Reaching the same Break point with the same Next step again changes nothing. |
 | `study topic create --title T [--id ID] [--goal G] [--dry-run]` | Creates a Topic folder with its settings, History and git repository. `--dry-run` validates and shows the result without writing. |
 | `study topic update <topic> [--title T] [--goal G] [--knowledge-base K [--notebook ID]] [--deadline D] [--pace H[@FROM] ... \| --clear-pace] [--new-cards-per-day N] [--level L] [--approach A] [--state S] [--dry-run]` | Changes a Topic's title, goal, Knowledge base (`notebooklm` with the notebook's id, or `none`; see [Sources and Evidence](#sources-and-evidence)), the Goal's deadline, the Pace, the daily cap on new Cards, the Level (the learner's choice, which holds until the next Assessment), the Approach (`concepts`, `project` or `challenges`; see [Assessments, Level and learning signals](#assessments-level-and-learning-signals)), or its state (`active`, `paused` or `finished`); see [Goal, Pace and Forecasts](#goal-pace-and-forecasts). Flags left out stay as they are; `--goal ""` and `--deadline ""` remove them. `--pace` replaces the Pace: `--pace 10` is 10 hours a week from now on, and a further `--pace 3@2026-11-16` starts a period of 3 hours a week that day. Settings in `topic.toml` that this version does not know are kept. The result is `{"topic": ..., "changed": bool}`: asking for the values the Topic already has changes nothing and records nothing. Each kind of change is its own Event; if a later one fails, the error says which were recorded. A dry run shows the Topic as it would be, Forecast included. |
 | `study assessment record <topic> --file F [--dry-run]` | Records an Assessment read from a JSON file (`--file -` reads stdin) holding one object in the shape the `assessment_record` tool takes; anything after it is refused. With a `level`, it sets the Topic's Level. A retry records nothing (see below). A dry run shows the Assessment without an id and the Level the Topic would have. See [Assessments, Level and learning signals](#assessments-level-and-learning-signals). |
@@ -257,6 +257,20 @@ override and isolate controls (U+202A–U+202E, U+2066–U+2069).
   `cards.jsonl`, `sources.jsonl`, `tasks.jsonl`) are left out. Listing them writes nothing to `.git` and
   runs nothing the repository names; when git cannot list them, such as during a merge,
   `error` says why and the Session opens anyway.
+
+Once the learner chooses a Focus, record it on the open Session: `session_open` (or `study
+session open`) with `session` (the open Session's id) and `focus` records a `session.focused`
+Event and opens nothing new. Naming a closed or unknown Session is refused, and the same Focus
+again records nothing.
+
+**Stopping saves the work.** `session_close` and `break_point_reached` take a Checkpoint of the
+turn they end, as `phase_set` does at a turn switch: the learner's while a Lesson is practicing,
+the agent's otherwise. The result has `checkpoint`, or `checkpoint_error` and `checkpoint_role`
+when it could not be taken: the stop is recorded anyway, and the Checkpoint stays owed, so
+`checkpoint` with that role, or the next write that takes Checkpoints, saves it. A Checkpoint
+still owed from earlier, such as a completion's, is taken instead and covers the stop. The
+Checkpoint's own `checkpoint.taken` Event names the commit, so it is written after it: right
+after a stop, `history.jsonl` is the only changed file, and the next Checkpoint saves it.
 
 A note given late to an older Session never replaces a Next step recorded in a newer one. A
 Next step that a merge brings in for a Lesson already done, skipped or removed never leads
