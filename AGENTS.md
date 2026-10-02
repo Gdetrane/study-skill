@@ -98,6 +98,7 @@ GOOS=darwin go vet ./...            # macOS is supported too
 - `internal/e2e`: end-to-end tests: the learner loop driven by a scripted agent, and the
   v2.0 acceptance walkthrough from `study setup` to an imported v1 Topic.
 - `skills/lamplight`: the `lamplight` skill, embedded in the binary.
+- `docs/release-checklist.md`: the maintainer's steps to ship v2.0.
 
 ## Patterns
 
