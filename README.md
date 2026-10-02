@@ -81,6 +81,7 @@ Most of the time you talk to your agent. The command line covers the same ground
 | Command | What it does |
 |---|---|
 | `study` | Where you are: the Active topic, the Next step and one recommended action |
+| `study topic create\|update\|remove` | Start a Topic, change it, or move it out of the Study home |
 | `study session open\|close` | Start a Session, or stop with a Next step |
 | `study syllabus`, `study revision …` | See the Syllabus; propose, approve or decline a change |
 | `study check <lesson>` | Run a Lesson's Check on your work (in your own shell) |
