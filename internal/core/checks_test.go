@@ -88,9 +88,9 @@ check:
 		t.Fatal(err)
 	}
 	want := []Criterion{
-		{ID: "tests", Kind: CriterionRun, Describe: "The tests pass", Run: []string{"sleep", "1"}},
+		{ID: "tests", Kind: CriterionRun, Describe: "The tests pass", Command: []string{"sleep", "1"}},
 		{ID: "names", Kind: CriterionRubric, Rubric: "Every name says what it does"},
-		{ID: "accuracy", Kind: CriterionHeldOut, Run: []string{"python3", "eval.py"}},
+		{ID: "accuracy", Kind: CriterionHeldOut, Command: []string{"python3", "eval.py"}},
 	}
 	if fmt.Sprint(check) != fmt.Sprint(want) {
 		t.Errorf("criteria = %+v\nwant %+v", check, want)
@@ -228,8 +228,8 @@ func TestTheHeldOutJourney(t *testing.T) {
 	// step that names the fix.
 	m.setPhase(t, "answer", PhaseFeedback)
 	res, err := m.CheckResultsOf(ctx, "c", "answer")
-	if err != nil || !strings.Contains(res.Next, "Next step that names the fix") {
-		t.Errorf("check results next = %q, %v", res.Next, err)
+	if err != nil || res.Next == nil || res.Next.Code != NextFixStep || !strings.Contains(res.Next.Text, "Next step that names the fix") {
+		t.Errorf("check results next = %+v, %v", res.Next, err)
 	}
 	if _, err := m.SetPhase(ctx, "c", PhaseSpec{Lesson: "answer", Phase: PhasePracticing}); CodeOf(err) != CodeInvalidArgument ||
 		!strings.Contains(err.Error(), "names the fix") {
@@ -303,7 +303,10 @@ func TestEditingTheCheckCannotMakeAFreshFirstRun(t *testing.T) {
 	m := heldOutTopic(t)
 	first := runCheck(t, m)
 	writeFile(t, m, "lessons/answer.md", strings.Replace(heldOutLesson, "on the test set", "on fresh cases", 1))
-	practicing(t, m)
+	if _, err := m.SetPhase(context.Background(), "c", PhaseSpec{Lesson: "answer", Phase: PhasePracticing,
+		NextStep: "Fix the answer in answer.txt"}); err != nil {
+		t.Fatal(err)
+	}
 	if h := criterion(runCheck(t, m), "hidden"); h.Counted == nil || *h.Counted {
 		t.Errorf("after editing the Check: %+v, want not counted", h)
 	}

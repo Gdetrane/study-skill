@@ -3,7 +3,7 @@
   "data": {
     "id": "<id>",
     "lesson": "answer",
-    "check_version": "sha256:682669686936d41efb9c271c7762f82cdd842f1a67f6872a196dae30727024c1",
+    "check_version": "sha256:f755069909f277ef2535f9590aea8ac6d02ca4bda7688df8cf6d876d74c76d82",
     "snapshot": "<snapshot>",
     "outcome": "failed",
     "criteria": [

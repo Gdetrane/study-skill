@@ -95,7 +95,7 @@ func (c *Core) CompleteLesson(ctx context.Context, topicID string, spec Complete
 	// the work runs git.
 	var cur work
 	if ls := s.study.lessons[spec.Lesson]; ls == nil || ls.completed == nil {
-		if cur, err = c.currentWork(ctx, topicID, dir, spec.Lesson); err != nil {
+		if cur, err = c.currentWork(ctx, topicID, dir, spec.Lesson, lookedAtPaths(ls)...); err != nil {
 			return LessonCompletion{}, err
 		}
 	}

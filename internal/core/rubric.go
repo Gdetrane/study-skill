@@ -136,7 +136,11 @@ func (c *Core) RecordRubricGrade(ctx context.Context, topicID string, spec Rubri
 	if err := gradableCriterion(cur.check, spec.Lesson, spec.Criterion); err != nil {
 		return RubricGraded{}, err
 	}
-	files, err := c.workFiles(topicID, spec.Lesson, spec.LookedAt)
+	if len(cur.files) == 0 {
+		return RubricGraded{}, &Error{Code: CodeFailedPrecondition, Message: practiceFolder(spec.Lesson) +
+			"/ holds no work to grade: the learner's work, such as typed final answers or a photo of paper work, goes there"}
+	}
+	files, err := c.workFiles(topicID, spec.Lesson, spec.LookedAt, cur.files)
 	if err != nil {
 		return RubricGraded{}, err
 	}
@@ -197,62 +201,114 @@ func gradableCriterion(check []Criterion, lessonID, criterion string) error {
 	return &Error{Code: CodeNotFound, Message: "the Check of " + lessonID + " has no criterion " + criterion}
 }
 
-// workFiles names files of a Lesson's work by path and content hash. Each
-// must be a regular file in the Lesson's practice folder, named relative to
-// it or to the Topic.
-func (c *Core) workFiles(topicID, lessonID string, names []string) ([]WorkFile, error) {
-	if len(names) == 0 {
-		return nil, nil
+// workFiles names files of a Lesson's work by their path in the Topic and
+// their content hash. Each is named relative to the practice folder or to
+// the Topic, and must be a file the work's snapshot sees (snapshot holds
+// them, relative to the practice folder): never an ignored file, nor a link.
+func (c *Core) workFiles(topicID, lessonID string, names []string, snapshot map[string]string) ([]WorkFile, error) {
+	var files []WorkFile
+	for _, name := range names {
+		p, err := workFilePath(lessonID, name)
+		if err != nil {
+			return nil, err
+		}
+		hash, err := c.hashWorkFile(topicID, lessonID, p, snapshot)
+		if err != nil {
+			return nil, err
+		}
+		files = append(files, WorkFile{Path: p, Hash: hash})
+	}
+	return files, nil
+}
+
+// workFilePath turns a file name given relative to a Lesson's practice
+// folder, or to the Topic, into its path in the Topic, refusing anything
+// outside the practice folder.
+func workFilePath(lessonID, name string) (string, error) {
+	if _, err := cleanText("file name", name, 1024); err != nil {
+		return "", err
+	}
+	practice := practiceFolder(lessonID)
+	clean := path.Clean(strings.ReplaceAll(name, "\\", "/"))
+	rel := strings.TrimPrefix(clean, practice+"/")
+	if name == "" || path.IsAbs(clean) || rel == "." || rel == ".." || strings.HasPrefix(rel, "../") {
+		return "", invalidf("%s is not in %s/: name a file of the work there", name, practice)
+	}
+	return practice + "/" + rel, nil
+}
+
+// hashWorkFile hashes one file of a Lesson's work, named by its path in the
+// Topic. The file is opened inside the practice folder itself, so no link
+// can lead out of it, and it must be one the work's snapshot sees.
+func (c *Core) hashWorkFile(topicID, lessonID, topicPath string, snapshot map[string]string) (string, error) {
+	practice := practiceFolder(lessonID)
+	rel, ok := strings.CutPrefix(topicPath, practice+"/")
+	if !ok {
+		return "", invalidf("%s is not in %s/", topicPath, practice)
+	}
+	if _, seen := snapshot[rel]; !seen {
+		return "", invalidf("%s is ignored, or is not a file of the work: a grade can only look at the files the "+
+			"work's snapshot sees", topicPath)
 	}
 	home, topic, err := c.openTopicFolder(topicID)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	defer home.Close()
 	defer topic.Close()
-	practice := practiceFolder(lessonID)
-	var files []WorkFile
-	for _, name := range names {
-		if _, err := cleanText("file name", name, 1024); err != nil {
-			return nil, err
-		}
-		rel := path.Clean(strings.ReplaceAll(name, "\\", "/"))
-		if !strings.HasPrefix(rel, practice+"/") {
-			rel = path.Join(practice, rel)
-		}
-		if strings.HasPrefix(name, "/") || !strings.HasPrefix(rel, practice+"/") {
-			return nil, invalidf("%s is not in %s/: name a file of the work there", name, practice)
-		}
-		info, err := topic.Lstat(rel)
-		switch {
-		case errors.Is(err, fs.ErrNotExist):
-			return nil, &Error{Code: CodeNotFound, Message: rel + " does not exist"}
-		case err != nil:
-			return nil, internalError("reading "+rel, err)
-		case !info.Mode().IsRegular():
-			return nil, invalidf("%s is not a regular file", rel)
-		case info.Size() > maxWorkFileBytes:
-			return nil, invalidf("%s is larger than %d MiB", rel, maxWorkFileBytes>>20)
-		}
-		f, err := topic.Open(rel)
-		if err != nil {
-			return nil, internalError("reading "+rel, err)
-		}
-		h := sha256.New()
-		_, err = io.Copy(h, io.LimitReader(f, maxWorkFileBytes+1))
-		f.Close()
-		if err != nil {
-			return nil, internalError("reading "+rel, err)
-		}
-		files = append(files, WorkFile{Path: rel, Hash: "sha256:" + hex.EncodeToString(h.Sum(nil))})
+	root, err := topic.OpenRoot(practice)
+	if err != nil {
+		return "", internalError("opening "+practice, err)
 	}
-	return files, nil
+	defer root.Close()
+	info, err := root.Lstat(rel)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return "", &Error{Code: CodeNotFound, Message: topicPath + " does not exist"}
+	case err != nil:
+		return "", invalidf("%s cannot be read inside %s/: %v", topicPath, practice, err)
+	case info.Mode()&fs.ModeSymlink != 0:
+		return "", invalidf("%s is a link: name the file itself", topicPath)
+	case !info.Mode().IsRegular():
+		return "", invalidf("%s is not a regular file", topicPath)
+	case info.Size() > maxWorkFileBytes:
+		return "", invalidf("%s is larger than %d MiB", topicPath, maxWorkFileBytes>>20)
+	}
+	f, err := root.Open(rel)
+	if err != nil {
+		return "", internalError("reading "+topicPath, err)
+	}
+	defer f.Close()
+	if info, err := f.Stat(); err != nil || !info.Mode().IsRegular() {
+		return "", invalidf("%s is not a regular file", topicPath)
+	}
+	h := sha256.New()
+	if _, err := io.Copy(h, io.LimitReader(f, maxWorkFileBytes+1)); err != nil {
+		return "", internalError("reading "+topicPath, err)
+	}
+	return "sha256:" + hex.EncodeToString(h.Sum(nil)), nil
 }
 
 func replayRubricGraded(s *replayed, ev event) error {
 	var d rubricGradedData
 	if err := json.Unmarshal(ev.Data, &d); err != nil {
 		return fmt.Errorf("its payload is unreadable: %v", err)
+	}
+	if err := validateEntityID("Lesson", d.Lesson); err != nil {
+		return err
+	}
+	if err := validateEntityID("criterion", d.Criterion); err != nil {
+		return err
+	}
+	switch d.Grade {
+	case GradeMet, GradePartly, GradeNotMet:
+	default:
+		return fmt.Errorf("its grade %q is not met, partly or not_met", clip(d.Grade, 40))
+	}
+	for _, f := range d.LookedAt {
+		if !strings.HasPrefix(f.Path, practiceFolder(d.Lesson)+"/") {
+			return fmt.Errorf("it names %q, which is not in %s/", clip(f.Path, 200), practiceFolder(d.Lesson))
+		}
 	}
 	l := s.study.lesson(d.Lesson)
 	if l.grades == nil {

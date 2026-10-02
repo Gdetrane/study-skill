@@ -2,16 +2,20 @@ package core
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
+	"syscall"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -51,11 +55,11 @@ type Attempt struct {
 	At     time.Time `json:"at"`
 }
 
-// CriterionResult is the outcome of one run or held-out criterion in an
+// CriterionResult is the outcome of one run or held_out criterion in an
 // Attempt.
 type CriterionResult struct {
 	ID string `json:"id"`
-	// Kind is run or held-out; empty in Attempts recorded before held-out
+	// Kind is run or held_out; empty in Attempts recorded before held_out
 	// criteria existed, which were all runs.
 	Kind     string `json:"kind,omitempty"`
 	Outcome  string `json:"outcome"`
@@ -64,13 +68,14 @@ type CriterionResult struct {
 	Reason string `json:"reason,omitempty"`
 	// Results is what the criterion wrote to its results file, if anything.
 	Results *CriterionScores `json:"results,omitempty"`
-	// Counted, for a held-out criterion that produced results, says whether
-	// this run is its counted measurement: the first run of that criterion
-	// in the Lesson to produce results. Later runs are not counted.
-	Counted *bool `json:"counted,omitempty"`
+	// Counted, for a held_out criterion that produced results, says whether
+	// this run is its counted measurement (see countHeldOut), and
+	// NotCounted why not.
+	Counted    *bool  `json:"counted,omitempty"`
+	NotCounted string `json:"not_counted,omitempty"`
 	// Output is the end of what a run criterion's command printed. It is
 	// shown to the agent running the Check but never recorded in the
-	// History, and never kept for held-out criteria, so Held-out data
+	// History, and never kept for held_out criteria, so Held-out data
 	// cannot leak through it.
 	Output string `json:"output,omitempty"`
 }
@@ -144,13 +149,13 @@ type CheckProgress struct {
 // it is reached only through the CLI, from the agent's own shell, where the
 // agent's sandbox applies; the MCP server never runs a Check (ADR-0009).
 //
-// Each run and held-out criterion's command runs in the practice folder, in
+// Each run and held_out criterion's command runs in the practice folder, in
 // a process group of its own, with STUDY_TOPIC, STUDY_LESSON and
-// STUDY_RESULTS set, and STUDY_HELDOUT_DIR for held-out criteria only. A
+// STUDY_RESULTS set, and STUDY_HELDOUT_DIR for held_out criteria only. A
 // command may write a results file (see CriterionScores) to STUDY_RESULTS;
-// held-out criteria must. A run criterion passes when its command exits
+// held_out criteria must. A run criterion passes when its command exits
 // with 0, leaves nothing running and does not report passed: false. The
-// Attempt's outcome comes from the run criteria alone: held-out results are
+// Attempt's outcome comes from the run criteria alone: held_out results are
 // diagnostic, and rubric items are graded with RecordRubricGrade. The work
 // is snapshotted before and after (see checkpoint.SnapshotWork): work the
 // snapshot cannot fully see, or that changed while the Check ran, makes the
@@ -211,57 +216,145 @@ func (c *Core) RunCheck(ctx context.Context, topicID, lessonID string, opts Chec
 	if every <= 0 {
 		every = DefaultProgressEvery
 	}
+	// Run criteria go first, then held_out criteria, so a held_out command
+	// that changes the work never changes what the run criteria judged.
+	slices.SortStableFunc(runnable, func(a, b Criterion) int {
+		return cmp.Compare(boolInt(a.Kind == CriterionHeldOut), boolInt(b.Kind == CriterionHeldOut))
+	})
+	env := checkEnv(topicID, lessonID)
+	runs := 0
+	var prev checkpoint.Work
 	for i, crit := range runnable {
 		if ctx.Err() != nil {
 			break
 		}
-		env := []string{"STUDY_TOPIC=" + topicID, "STUDY_LESSON=" + lessonID}
-		var r CriterionResult
-		if crit.Kind == CriterionHeldOut {
-			env = append(env, "STUDY_HELDOUT_DIR="+heldOutDir)
-		}
 		report := progressReporter(opts.Progress, crit, i+1, len(runnable), every)
-		if info, err := os.Stat(heldOutDir); crit.Kind == CriterionHeldOut && (err != nil || !info.IsDir()) {
+		if crit.Kind == CriterionRun {
+			runs++
+			stop := report.start()
+			r := runCriterion(ctx, crit, workDir, timeout, env)
+			stop()
+			report.finish(r.Outcome)
+			d.Outcome = worse(d.Outcome, r.Outcome)
+			d.Criteria = append(d.Criteria, r)
+			continue
+		}
+		if prev.Hash == "" {
+			// The run criteria are done: the work must still be the work
+			// they judged.
+			prev, err = c.workAfter(ctx, topicID, dir, practice, before, &d)
+			if err != nil {
+				return Attempt{}, err
+			}
+		}
+		var r CriterionResult
+		if info, err := os.Stat(heldOutDir); err != nil || !info.IsDir() {
 			r = CriterionResult{ID: crit.ID, Kind: crit.Kind, Outcome: OutcomeErrored, ExitCode: -1,
 				Reason: "there is no Held-out data in " + heldOutFolder(lessonID) + "/: write it there before practicing starts"}
 		} else {
 			stop := report.start()
-			r = runCriterion(ctx, crit, workDir, timeout, env)
+			r = runCriterion(ctx, crit, workDir, timeout, append(env, "STUDY_HELDOUT_DIR="+heldOutDir))
 			stop()
-		}
-		report.finish(r.Outcome)
-		if crit.Kind == CriterionRun {
-			switch {
-			case r.Outcome == OutcomeErrored:
-				d.Outcome = OutcomeErrored
-			case r.Outcome == OutcomeFailed && d.Outcome == OutcomePassed:
-				d.Outcome = OutcomeFailed
+			if ctx.Err() == nil {
+				prev = c.heldOutChangedWork(ctx, dir, practice, prev, &r)
 			}
 		}
+		report.finish(r.Outcome)
 		d.Criteria = append(d.Criteria, r)
 	}
 	if ctx.Err() != nil {
 		return Attempt{}, &Error{Code: CodeCanceled, Err: ctx.Err(), Message: "the Check of " + lessonID +
 			" was stopped before it finished, and every program it started was stopped too; no Attempt was recorded"}
 	}
+	if prev.Hash == "" {
+		if _, err := c.workAfter(ctx, topicID, dir, practice, before, &d); err != nil {
+			return Attempt{}, err
+		}
+	}
+	if runs == 0 && d.Outcome != OutcomeErrored {
+		// A Check without run criteria (rubric items and held_out
+		// criteria) never decides anything through an Attempt: its outcome
+		// reports the held_out evaluations, and is never passed when one of
+		// them failed or errored.
+		for _, r := range d.Criteria {
+			d.Outcome = worse(d.Outcome, r.Outcome)
+		}
+	}
+	return c.recordAttempt(ctx, topicID, d, d.Criteria)
+}
+
+// workAfter snapshots the work after the run criteria, and makes the Attempt
+// errored when they changed it or left it with a blind spot.
+func (c *Core) workAfter(ctx context.Context, topicID, dir, practice string, before checkpoint.Work,
+	d *attemptRecordedData) (checkpoint.Work, error) {
 	after, err := checkpoint.SnapshotWork(ctx, dir, practice)
 	switch {
 	case blindSpot(err):
 		d.Outcome, d.Reason = OutcomeErrored, "while the Check ran, "+blindSpotReason(practice, err)
+		return before, nil
 	case err != nil:
-		return Attempt{}, checkpointError(topicID, dir, err)
+		return checkpoint.Work{}, checkpointError(topicID, dir, err)
 	case after.Hash != before.Hash:
 		d.Outcome = OutcomeErrored
 		d.Reason = fmt.Sprintf("the Check changed %s in %s/ while it ran; if a Check writes files, such as "+
 			"build outputs, list them in %s/.gitignore, then run it again", strings.Join(after.Changed(before), ", "),
 			practice, practice)
 	}
-	return c.recordAttempt(ctx, topicID, d, d.Criteria)
+	return after, nil
+}
+
+// heldOutChangedWork makes a held_out criterion errored when its command
+// changed the work, so its run never counts, and returns the work as it is
+// now. The run criteria already judged the work as it was, so the Attempt
+// itself stands.
+func (c *Core) heldOutChangedWork(ctx context.Context, dir, practice string, prev checkpoint.Work, r *CriterionResult) checkpoint.Work {
+	now, err := checkpoint.SnapshotWork(ctx, dir, practice)
+	switch {
+	case err != nil:
+		r.Outcome, r.Reason = OutcomeErrored, "the work could not be snapshotted after it ran: "+clip(err.Error(), 200)
+		r.Results = nil
+		return prev
+	case now.Hash != prev.Hash:
+		r.Outcome = OutcomeErrored
+		r.Reason = fmt.Sprintf("it changed %s in %s/; a held_out command must not write into the work: write "+
+			"elsewhere, such as $TMPDIR, or list those files in %s/.gitignore", clip(strings.Join(now.Changed(prev), ", "), 200),
+			practice, practice)
+		r.Results = nil
+	}
+	return now
+}
+
+// checkEnv is the environment every criterion's command gets: study's own,
+// without any STUDY_ variable it inherited, plus the Topic and the Lesson.
+func checkEnv(topicID, lessonID string) []string {
+	var env []string
+	for _, kv := range os.Environ() {
+		if !strings.HasPrefix(kv, "STUDY_") {
+			env = append(env, kv)
+		}
+	}
+	return append(env, "STUDY_TOPIC="+topicID, "STUDY_LESSON="+lessonID)
+}
+
+// worse is the worse of two outcomes: errored, then failed, then passed.
+func worse(a, b string) string {
+	rank := map[string]int{OutcomePassed: 0, OutcomeFailed: 1, OutcomeErrored: 2}
+	if rank[b] > rank[a] {
+		return b
+	}
+	return a
+}
+
+func boolInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 // recordAttempt records an Attempt and returns it with the output of each
 // run criterion, which is shown but never recorded: it could reveal test
-// data. Whether each held-out result is the counted measurement is decided
+// data. Whether each held_out result is the counted measurement is decided
 // under the Topic's lock, from the History as it stands.
 func (c *Core) recordAttempt(ctx context.Context, topicID string, d attemptRecordedData, shown []CriterionResult) (Attempt, error) {
 	d.Criteria = make([]CriterionResult, len(shown))
@@ -273,12 +366,7 @@ func (c *Core) recordAttempt(ctx context.Context, topicID string, d attemptRecor
 		ls := s.study.lessons[d.Lesson]
 		for i := range d.Criteria {
 			r := &d.Criteria[i]
-			if r.kind() != CriterionHeldOut || r.Results == nil || r.Outcome == OutcomeErrored {
-				r.Counted = nil
-				continue
-			}
-			counted := ls == nil || ls.heldOut[r.ID] == ""
-			r.Counted = &counted
+			r.Counted, r.NotCounted = countHeldOut(ls, d, *r)
 		}
 		return &change{Type: eventAttemptRecorded, Data: d}, nil
 	}, false)
@@ -287,7 +375,7 @@ func (c *Core) recordAttempt(ctx context.Context, topicID string, d attemptRecor
 	}
 	criteria := make([]CriterionResult, len(shown))
 	for i, r := range shown {
-		r.Counted = d.Criteria[i].Counted
+		r.Counted, r.NotCounted = d.Criteria[i].Counted, d.Criteria[i].NotCounted
 		if r.kind() == CriterionHeldOut {
 			r.Output = ""
 		}
@@ -297,12 +385,48 @@ func (c *Core) recordAttempt(ctx context.Context, topicID string, d attemptRecor
 		Criteria: criteria, Reason: d.Reason, At: ev.Wall}, nil
 }
 
+// Why a held_out run is not counted.
+const (
+	notCountedEarlier   = "an earlier run is the counted measurement"
+	notCountedErrored   = "the Attempt errored"
+	notCountedNotShown  = "the Check was not shown to the learner yet"
+	notCountedOtherShow = "this version of the Check is not the one shown to the learner"
+)
+
+// countHeldOut decides whether a held_out result is its criterion's counted
+// measurement, and why not when it is not. The same rule decides when an
+// Attempt is recorded and when it is replayed: the run counts when it
+// produced results without erroring, the Attempt as a whole did not error,
+// the Check was shown to the learner and the run used the shown version,
+// and no earlier run of the criterion in the Lesson counted. Results that
+// are not a measurement, such as an errored run's, get no answer at all.
+// The count is kept per Lesson and criterion id, so renaming a held_out
+// criterion starts a new count; the History shows it.
+func countHeldOut(ls *lessonState, d attemptRecordedData, r CriterionResult) (*bool, string) {
+	if r.kind() != CriterionHeldOut || r.Results == nil || r.Outcome == OutcomeErrored {
+		return nil, ""
+	}
+	no := false
+	switch {
+	case d.Outcome == OutcomeErrored:
+		return &no, notCountedErrored
+	case ls == nil || ls.shownCheck == "":
+		return &no, notCountedNotShown
+	case d.CheckVersion != ls.shownCheck:
+		return &no, notCountedOtherShow
+	case ls.heldOut[r.ID] != "":
+		return &no, notCountedEarlier
+	}
+	yes := true
+	return &yes, ""
+}
+
 func practiceFolder(lessonID string) string { return "practice/" + lessonID }
 
 // heldOutFolder is where a Lesson's Held-out data lives in its Topic. It is
 // committed with the Topic, so every machine measures on the same data, and
 // it is synthetic or public, never personal data. Lamplight never shows its
-// contents, or the raw output of a held-out command.
+// contents, or the raw output of a held_out command.
 func heldOutFolder(lessonID string) string { return ".heldout/" + lessonID }
 
 // progress reports one criterion of a running Check to CheckOptions.Progress.
@@ -410,13 +534,13 @@ func runCriterion(ctx context.Context, crit Criterion, dir string, timeout time.
 
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	name := crit.Run[0]
+	name := crit.Command[0]
 	if strings.Contains(name, "/") && !filepath.IsAbs(name) {
 		name = filepath.Join(dir, name) // a script in the practice folder
 	}
-	cmd := exec.CommandContext(ctx, name, crit.Run[1:]...)
+	cmd := exec.CommandContext(ctx, name, crit.Command[1:]...)
 	cmd.Dir = dir
-	cmd.Env = append(append(os.Environ(), env...), "STUDY_RESULTS="+resultsPath)
+	cmd.Env = append(slices.Clip(env), "STUDY_RESULTS="+resultsPath) // env holds study's own, without STUDY_ variables
 	ownProcessGroup(cmd)
 	out := &tailBuffer{max: maxOutputBytes}
 	cmd.Stdout, cmd.Stderr = out, out
@@ -452,8 +576,11 @@ func runCriterion(ctx context.Context, crit Criterion, dir string, timeout time.
 	case problem != "":
 		r.Outcome, r.Reason = OutcomeErrored, "its results file is not valid: "+problem
 	case !present && crit.Kind == CriterionHeldOut:
-		r.Outcome, r.Reason = OutcomeErrored, "it wrote no results file: a held-out command writes its scores to "+
+		r.Outcome, r.Reason = OutcomeErrored, "it wrote no results file: a held_out command writes its scores to "+
 			"the file named by STUDY_RESULTS"
+	case crit.Kind == CriterionHeldOut && scores.Score == nil:
+		r.Outcome, r.Reason = OutcomeErrored, "its results file has no score: a held_out command's results file "+
+			"needs one, such as {\"score\": 0.87}"
 	case present:
 		r.Results = scores
 		if scores.Passed != nil && !*scores.Passed && r.Outcome == OutcomePassed {
@@ -491,25 +618,50 @@ type resultsFile struct {
 // readResults reads and checks a results file. present is false when the
 // command wrote none; problem explains an invalid one.
 func readResults(path string) (scores *CriterionScores, present bool, problem string) {
-	info, err := os.Lstat(path)
+	// The file is opened without following a link and without blocking on
+	// a FIFO, checked on the open file, and read through a bound, so a file
+	// swapped in after a check is never read whole.
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
 		return nil, false, ""
+	case errors.Is(err, syscall.ELOOP):
+		return nil, true, "it is a link, not a regular file"
 	case err != nil:
-		return nil, true, err.Error()
+		return nil, true, "it cannot be opened: " + clip(err.Error(), maxEchoRunes)
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	switch {
+	case err != nil:
+		return nil, true, "it cannot be read: " + clip(err.Error(), maxEchoRunes)
 	case !info.Mode().IsRegular():
 		return nil, true, "it is not a regular file"
 	case info.Size() > maxResultsBytes:
 		return nil, true, fmt.Sprintf("it is larger than %d KiB", maxResultsBytes>>10)
 	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, true, err.Error()
+	data, err := io.ReadAll(io.LimitReader(f, maxResultsBytes+1))
+	switch {
+	case err != nil:
+		return nil, true, "it cannot be read: " + clip(err.Error(), maxEchoRunes)
+	case len(data) > maxResultsBytes:
+		return nil, true, fmt.Sprintf("it is larger than %d KiB", maxResultsBytes>>10)
+	case !bytes.HasPrefix(bytes.TrimSpace(data), []byte("{")):
+		return nil, true, "it is not a JSON object"
 	}
-	var f resultsFile
-	if err := json.Unmarshal(data, &f); err != nil {
-		return nil, true, "it is not a JSON object with the documented fields: " + err.Error()
+	var rf resultsFile
+	if err := json.Unmarshal(data, &rf); err != nil {
+		return nil, true, "it is not a JSON object with the documented fields: " + clip(err.Error(), maxEchoRunes)
 	}
+	return checkResults(rf)
+}
+
+// maxEchoRunes is how much text from a results file, such as a metric name
+// or a JSON error, a reason may quote.
+const maxEchoRunes = 80
+
+// checkResults validates a decoded results file.
+func checkResults(f resultsFile) (scores *CriterionScores, present bool, problem string) {
 	switch {
 	case f.Format != nil && *f.Format > resultsFormatMax:
 		return nil, true, fmt.Sprintf("it has format %d, but this version of study understands format %d: upgrade study",
@@ -540,8 +692,8 @@ func readResults(path string) (scores *CriterionScores, present bool, problem st
 	}
 	for name := range f.Metrics {
 		if !metricNamePattern.MatchString(name) {
-			return nil, true, fmt.Sprintf("the metric name %q is not a short name of lowercase letters, digits, "+
-				"underscores, dots and hyphens", name)
+			return nil, true, fmt.Sprintf("the metric name %q is not a name of up to 40 lowercase letters, digits, "+
+				"underscores, dots and hyphens, starting with a letter or digit", clip(name, maxEchoRunes))
 		}
 	}
 	if len(f.Metrics) > 0 {
@@ -586,35 +738,96 @@ func replayAttemptRecorded(s *replayed, ev event) error {
 	if err := json.Unmarshal(ev.Data, &d); err != nil {
 		return fmt.Errorf("its payload is unreadable: %v", err)
 	}
+	if err := d.validate(); err != nil {
+		return err
+	}
 	l := s.study.lesson(d.Lesson)
-	// The counted measurement of a held-out criterion is the first run, in
-	// replay order, that produced results; an errored run never uses it up.
-	// A run that claimed to be counted when it was recorded but is not, as
+	// Replay decides which held_out run counts (see countHeldOut). A run
+	// that claimed the count when it was recorded but does not get it, as
 	// when two machines each measured first, is flagged.
 	for i := range d.Criteria {
 		r := &d.Criteria[i]
-		if r.kind() != CriterionHeldOut || r.Results == nil || r.Outcome == OutcomeErrored {
-			r.Counted = nil
-			continue
-		}
 		claimed := r.Counted != nil && *r.Counted
-		counted := l.heldOut[r.ID] == ""
-		if counted {
+		r.Counted, r.NotCounted = countHeldOut(l, d, *r)
+		switch {
+		case r.Counted != nil && *r.Counted:
 			if l.heldOut == nil {
 				l.heldOut = map[string]string{}
 			}
 			l.heldOut[r.ID] = ev.ID
-		} else if claimed {
+		case claimed && r.NotCounted == notCountedEarlier:
 			s.flag(newFlag(FlagConflict, checkItem(d.Lesson), []string{l.heldOut[r.ID], ev.ID}, r.ID,
-				fmt.Sprintf("held-out criterion %s of Lesson %s was measured first twice, by Attempts %s and %s, "+
+				fmt.Sprintf("held_out criterion %s of Lesson %s was measured first twice, by Attempts %s and %s, "+
 					"probably on two machines: the first counts, and the other is recorded as not counted",
 					r.ID, d.Lesson, l.heldOut[r.ID], ev.ID)))
 		}
-		r.Counted = &counted
 	}
-	l.attempts = append(l.attempts, Attempt{ID: ev.ID, Lesson: d.Lesson, CheckVersion: d.CheckVersion,
-		Snapshot: d.Snapshot, Outcome: d.Outcome, Criteria: d.Criteria, Reason: d.Reason, At: wallOf(ev)})
+	a := Attempt{ID: ev.ID, Lesson: d.Lesson, CheckVersion: d.CheckVersion,
+		Snapshot: d.Snapshot, Outcome: d.Outcome, Criteria: d.Criteria, Reason: d.Reason, At: wallOf(ev)}
+	l.attempts = append(l.attempts, a)
+	// A run criterion that failed on the Check shown to the learner calls
+	// for a Next step that names the fix before practicing resumes; a
+	// passed Attempt settles it. The agent trying its Check before showing
+	// it asks for nothing.
+	switch {
+	case failedOnRun(a) && l.shownCheck != "" && a.CheckVersion == l.shownCheck:
+		l.fixPending = true
+	case a.Outcome == OutcomePassed:
+		l.fixPending = false
+	}
 	return nil
+}
+
+// validate checks an attempt.recorded payload read back from the History,
+// which may come from a hand edit or another machine.
+func (d *attemptRecordedData) validate() error {
+	if err := validateEntityID("Lesson", d.Lesson); err != nil {
+		return err
+	}
+	outcomes := map[string]bool{OutcomePassed: true, OutcomeFailed: true, OutcomeErrored: true}
+	if !outcomes[d.Outcome] {
+		return fmt.Errorf("its outcome %q is not passed, failed or errored", clip(d.Outcome, 40))
+	}
+	for i := range d.Criteria {
+		r := &d.Criteria[i]
+		if err := validateEntityID("criterion", r.ID); err != nil {
+			return err
+		}
+		if !outcomes[r.Outcome] {
+			return fmt.Errorf("criterion %s has the outcome %q", r.ID, clip(r.Outcome, 40))
+		}
+		if k := r.kind(); k != CriterionRun && k != CriterionHeldOut {
+			return fmt.Errorf("criterion %s has the kind %q", r.ID, clip(k, 40))
+		}
+		if s := r.Results; s != nil && s.Score != nil && s.Max == nil {
+			one := 1.0
+			s.Max = &one
+		}
+	}
+	return nil
+}
+
+// failedOnRun reports whether an Attempt failed because of a run criterion:
+// a held_out result never asks for a fix.
+func failedOnRun(a Attempt) bool {
+	if a.Outcome != OutcomeFailed {
+		return false
+	}
+	for _, r := range a.Criteria {
+		if r.kind() == CriterionRun && r.Outcome == OutcomeFailed {
+			return true
+		}
+	}
+	return false
+}
+
+// clip shortens text that comes from outside, such as part of a results
+// file, before it goes into a reason or the History.
+func clip(s string, max int) string {
+	if utf8.RuneCountInString(s) <= max {
+		return s
+	}
+	return string([]rune(s)[:max]) + "…"
 }
 
 // CheckResults is a Lesson's Attempts and whether it can be completed now.
@@ -626,7 +839,7 @@ type CheckResults struct {
 	// Rubric is each rubric item's latest grade, if any, in the order of
 	// the Check.
 	Rubric []RubricStatus `json:"rubric"`
-	// HeldOut is each held-out criterion's counted measurement and latest
+	// HeldOut is each held_out criterion's counted measurement and latest
 	// results, in the order of the Check. They never decide completion.
 	HeldOut []HeldOutStatus `json:"held_out"`
 	// CanComplete reports whether the completion rule holds for the
@@ -634,10 +847,25 @@ type CheckResults struct {
 	CanComplete bool   `json:"can_complete"`
 	Reason      string `json:"reason,omitempty"`
 	Done        bool   `json:"done"`
-	// Next says what to do after a failed Attempt during feedback: give
-	// feedback, then go back to practicing with a Next step naming the fix.
-	Next string `json:"next,omitempty"`
+	// Next says what to do now, when the Check calls for something: after
+	// an Attempt that failed on a run criterion, give feedback, then go
+	// back to practicing with a Next step naming the fix.
+	Next *NextAction `json:"next,omitempty"`
 }
+
+// NextAction is something to do, with a code for programs and a text for
+// people.
+type NextAction struct {
+	Code string `json:"code"`
+	Text string `json:"text"`
+}
+
+// Codes of a NextAction.
+const (
+	// NextFixStep: an Attempt failed on a run criterion; give feedback, then
+	// move the Lesson to practicing with a Next step that names the fix.
+	NextFixStep = "name_the_fix"
+)
 
 // RubricStatus is a rubric item and its latest grade.
 type RubricStatus struct {
@@ -649,7 +877,7 @@ type RubricStatus struct {
 	Current bool `json:"current"`
 }
 
-// HeldOutStatus is a held-out criterion's counted measurement, which stays
+// HeldOutStatus is a held_out criterion's counted measurement, which stays
 // as it was, and its latest results.
 type HeldOutStatus struct {
 	Criterion string `json:"criterion"`
@@ -658,9 +886,10 @@ type HeldOutStatus struct {
 	Counted        *CriterionScores `json:"counted,omitempty"`
 	CountedAttempt string           `json:"counted_attempt,omitempty"`
 	// Latest is the latest run's results, when it is not the counted one;
-	// it is recorded as not counted.
-	Latest        *CriterionScores `json:"latest,omitempty"`
-	LatestAttempt string           `json:"latest_attempt,omitempty"`
+	// it is recorded as not counted, and LatestNotCounted says why.
+	Latest           *CriterionScores `json:"latest,omitempty"`
+	LatestAttempt    string           `json:"latest_attempt,omitempty"`
+	LatestNotCounted string           `json:"latest_not_counted,omitempty"`
 }
 
 // CheckResultsOf returns a Lesson's Attempts, oldest first, and whether the
@@ -680,7 +909,7 @@ func (c *Core) CheckResultsOf(ctx context.Context, topicID, lessonID string) (Ch
 		res.Attempts = append(res.Attempts, ls.attempts...)
 		res.Done = ls.completed != nil
 	}
-	cur, err := c.currentWork(ctx, topicID, dir, lessonID)
+	cur, err := c.currentWork(ctx, topicID, dir, lessonID, lookedAtPaths(ls)...)
 	if err != nil {
 		return CheckResults{}, err
 	}
@@ -692,7 +921,7 @@ func (c *Core) CheckResultsOf(ctx context.Context, topicID, lessonID string) (Ch
 			if ls != nil && ls.grades[crit.ID] != nil {
 				g := *ls.grades[crit.ID]
 				st.Grade = &g
-				st.Current = g.CheckVersion == ls.shownCheck && g.CheckVersion == cur.checkVersion && g.Snapshot == cur.snapshot
+				st.Current = staleGrade(ls, crit.ID, cur) == ""
 			}
 			res.Rubric = append(res.Rubric, st)
 		case CriterionHeldOut:
@@ -707,14 +936,14 @@ func (c *Core) CheckResultsOf(ctx context.Context, topicID, lessonID string) (Ch
 			res.Reason = "Lesson " + lessonID + " is done"
 		}
 	}
-	if ls != nil && !res.Done && failedDuringFeedback(ls) {
-		res.Next = "give the learner feedback on the failed Attempt, then move the Lesson back to practicing with " +
-			"phase_set and a Next step that names the fix"
+	if ls != nil && !res.Done && ls.fixPending {
+		res.Next = &NextAction{Code: NextFixStep, Text: "give the learner feedback on the failed Attempt, then move " +
+			"the Lesson to practicing with phase_set and a Next step that names the fix"}
 	}
 	return res, nil
 }
 
-// heldOutStatus finds a held-out criterion's counted measurement and its
+// heldOutStatus finds a held_out criterion's counted measurement and its
 // latest results in a Lesson's Attempts.
 func heldOutStatus(ls *lessonState, criterion string) HeldOutStatus {
 	st := HeldOutStatus{Criterion: criterion}
@@ -728,20 +957,13 @@ func heldOutStatus(ls *lessonState, criterion string) HeldOutStatus {
 			}
 			if r.Counted != nil && *r.Counted {
 				st.Counted, st.CountedAttempt = r.Results, a.ID
-				st.Latest, st.LatestAttempt = nil, ""
+				st.Latest, st.LatestAttempt, st.LatestNotCounted = nil, "", ""
 			} else {
-				st.Latest, st.LatestAttempt = r.Results, a.ID
+				st.Latest, st.LatestAttempt, st.LatestNotCounted = r.Results, a.ID, r.NotCounted
 			}
 		}
 	}
 	return st
-}
-
-// failedDuringFeedback reports whether a Lesson is in feedback and its
-// latest Attempt failed: it goes back to practicing, with a Next step that
-// names the fix.
-func failedDuringFeedback(ls *lessonState) bool {
-	return ls.phase == PhaseFeedback && len(ls.attempts) > 0 && ls.attempts[len(ls.attempts)-1].Outcome == OutcomeFailed
 }
 
 // work is a Lesson's Check and work as they are now.
@@ -749,13 +971,57 @@ type work struct {
 	check        []Criterion
 	checkVersion string
 	snapshot     string
+	// files are the files of the work the snapshot sees, relative to the
+	// practice folder: those not ignored.
+	files map[string]string
+	// lookedAt holds the content hash, now, of each file a rubric grade
+	// looked at, by its path in the Topic; empty for a file that is gone or
+	// no longer part of the work.
+	lookedAt map[string]string
 	// missing explains why the Check or the work cannot be judged.
 	missing error
 }
 
+// lookedAtPaths lists the files a Lesson's rubric grades looked at.
+func lookedAtPaths(ls *lessonState) []string {
+	if ls == nil {
+		return nil
+	}
+	var paths []string
+	for _, g := range ls.grades {
+		for _, f := range g.LookedAt {
+			paths = append(paths, f.Path)
+		}
+	}
+	return paths
+}
+
+// staleGrade explains why a rubric item's latest grade does not count for
+// the Check shown to the learner and the work as it is now; empty when it
+// counts.
+func staleGrade(ls *lessonState, criterion string, w work) string {
+	g := ls.grades[criterion]
+	switch {
+	case g == nil:
+		return "rubric item " + criterion + " has no grade: grade it with rubric_record, after the learner checks " +
+			"their work against it"
+	case g.CheckVersion != ls.shownCheck || g.CheckVersion != w.checkVersion:
+		return "rubric item " + criterion + " was graded for another version of the Check: grade it again"
+	case g.Snapshot != w.snapshot:
+		return "the work changed since rubric item " + criterion + " was graded: grade it again"
+	}
+	for _, f := range g.LookedAt {
+		if w.lookedAt[f.Path] != f.Hash {
+			return "the file " + f.Path + ", which rubric item " + criterion + " was graded on, changed: grade it again"
+		}
+	}
+	return ""
+}
+
 // currentWork reads a Lesson's Check and snapshots its practice folder,
-// writing nothing, not even git objects.
-func (c *Core) currentWork(ctx context.Context, topicID, dir, lessonID string) (work, error) {
+// writing nothing, not even git objects. It also hashes the files named in
+// lookedAt, by their paths in the Topic.
+func (c *Core) currentWork(ctx context.Context, topicID, dir, lessonID string, lookedAt ...string) (work, error) {
 	w := work{check: []Criterion{}}
 	home, topic, err := c.openTopicFolder(topicID)
 	if err != nil {
@@ -785,7 +1051,13 @@ func (c *Core) currentWork(ctx context.Context, topicID, dir, lessonID string) (
 	if err != nil {
 		return w, checkpointError(topicID, dir, err)
 	}
-	w.snapshot = snap.Hash
+	w.snapshot, w.files = snap.Hash, snap.Files
+	if len(lookedAt) > 0 {
+		w.lookedAt = map[string]string{}
+		for _, p := range lookedAt {
+			w.lookedAt[p], _ = c.hashWorkFile(topicID, lessonID, p, w.files)
+		}
+	}
 	return w, nil
 }
 
@@ -800,7 +1072,8 @@ type completion struct {
 // version shown to the learner when practicing last started, which must
 // still be the current one, every run criterion passed on an Attempt of that
 // Check whose snapshot matches the current work, and every rubric item has a
-// grade for that Check and that work. Held-out criteria never decide it.
+// grade for that Check and that work, whose files it looked at are
+// unchanged. Held-out criteria never decide it.
 // Changing the work or the Check after a pass means running the Check, and
 // grading, again, and a changed Check must be shown again through phase_set
 // practicing.
@@ -837,17 +1110,10 @@ func completionRule(s *replayed, lessonID string, w work) (completion, error) {
 		done.attempt = a
 	}
 	for _, crit := range rubric {
-		g := ls.grades[crit.ID]
-		switch {
-		case g == nil:
-			return done, cannot("rubric item " + crit.ID + " has no grade: grade it with rubric_record, after the " +
-				"learner checks their work against it")
-		case g.CheckVersion != ls.shownCheck:
-			return done, cannot("rubric item " + crit.ID + " was graded for another version of the Check: grade it again")
-		case g.Snapshot != w.snapshot:
-			return done, cannot("the work changed since rubric item " + crit.ID + " was graded: grade it again")
+		if why := staleGrade(ls, crit.ID, w); why != "" {
+			return done, cannot(why)
 		}
-		done.grades = append(done.grades, g.Event)
+		done.grades = append(done.grades, ls.grades[crit.ID].Event)
 	}
 	return done, nil
 }

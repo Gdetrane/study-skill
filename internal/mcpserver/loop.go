@@ -142,10 +142,11 @@ func addLearnerLoop(server *mcp.Server, c *core.Core) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:  "check_results",
 		Title: "Check results",
-		Description: "Show a Lesson's Check, its Attempts, each rubric item's grade, each held-out criterion's counted " +
+		Description: "Show a Lesson's Check, its Attempts, each rubric item's grade, each held_out criterion's counted " +
 			"measurement and whether the Lesson can be completed now. Nothing runs: Attempts are recorded by running " +
 			"study check in your shell. Held-out results are diagnostic and never decide completion; show the learner " +
-			"only their scores and summaries, never the Held-out data. When next is set, follow it.",
+			"only their scores and summaries, never the Held-out data. When next is set, follow its text; its code " +
+			"name_the_fix means: give feedback, then phase_set practicing with a Next step that names the fix.",
 		Annotations: read,
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in lessonInput) (*mcp.CallToolResult, core.CheckResults, error) {
 		r, err := c.CheckResultsOf(ctx, in.Topic, in.Lesson)
@@ -157,10 +158,11 @@ func addLearnerLoop(server *mcp.Server, c *core.Core) {
 		Title: "Grade a rubric item",
 		Description: "Grade one rubric item of a Lesson's Check, met, partly or not_met, for the Check shown to the " +
 			"learner and the work as it is now. Ask the learner to check their work against the item first, then " +
-			"grade it and say why in note. For written work, name the files you looked at in looked_at (typed final " +
-			"answers or a photo of paper work, in the Lesson's practice folder); only their paths and hashes are " +
-			"recorded. Completion needs every rubric item graded for the current Check and work, so grade again " +
-			"after the work changes. Grading again with the same values records nothing.",
+			"grade it and say why in note. The practice folder must hold the work. For written work, name the files " +
+			"you looked at in looked_at (typed final answers or a photo of paper work, in the Lesson's practice " +
+			"folder); each must be a file of the work, not ignored and not a link, and only its path and hash are " +
+			"recorded. Every rubric item needs a grade, not_met included, for the current Check and work, so grade " +
+			"again after the work or a file you looked at changes. Grading again with the same values records nothing.",
 		Annotations: idempotent,
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in rubricRecordInput) (*mcp.CallToolResult, core.RubricGraded, error) {
 		r, err := c.RecordRubricGrade(ctx, in.Topic, core.RubricSpec{Lesson: in.Lesson, Criterion: in.Criterion,
@@ -206,7 +208,7 @@ type rubricRecordInput struct {
 	Criterion string   `json:"criterion" jsonschema:"the rubric item's id, from check_results"`
 	Grade     string   `json:"grade" jsonschema:"met, partly or not_met"`
 	Note      string   `json:"note,omitempty" jsonschema:"what the grade is based on, for the learner"`
-	LookedAt  []string `json:"looked_at,omitempty" jsonschema:"files of the work you looked at, in the Lesson's practice folder"`
+	LookedAt  []string `json:"looked_at,omitempty" jsonschema:"files of the work you looked at, in the Lesson's practice folder; never ignored files or links"`
 }
 
 type revisionProposeInput struct {

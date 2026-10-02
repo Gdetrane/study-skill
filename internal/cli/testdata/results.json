@@ -8,7 +8,7 @@
         "id": "answer",
         "kind": "run",
         "describe": "answer.txt holds 42",
-        "run": [
+        "command": [
           "sh",
           "check.sh"
         ]
@@ -20,9 +20,9 @@
       },
       {
         "id": "hidden",
-        "kind": "held-out",
+        "kind": "held_out",
         "describe": "The answer on the test set",
-        "run": [
+        "command": [
           "sh",
           "eval.sh"
         ]
@@ -44,7 +44,7 @@
           },
           {
             "id": "hidden",
-            "kind": "held-out",
+            "kind": "held_out",
             "outcome": "passed",
             "exit_code": 0,
             "results": {
@@ -75,7 +75,7 @@
           },
           {
             "id": "hidden",
-            "kind": "held-out",
+            "kind": "held_out",
             "outcome": "passed",
             "exit_code": 0,
             "results": {
@@ -86,7 +86,8 @@
               },
               "summary": "0 of 1 cases"
             },
-            "counted": false
+            "counted": false,
+            "not_counted": "an earlier run is the counted measurement"
           }
         ],
         "at": "2026-10-01T09:30:00Z"
@@ -133,11 +134,16 @@
           },
           "summary": "0 of 1 cases"
         },
-        "latest_attempt": "<id>"
+        "latest_attempt": "<id>",
+        "latest_not_counted": "an earlier run is the counted measurement"
       }
     ],
     "can_complete": false,
     "reason": "Lesson answer cannot be completed yet: the last Attempt failed; run study check answer in your shell on the current work",
-    "done": false
+    "done": false,
+    "next": {
+      "code": "name_the_fix",
+      "text": "give the learner feedback on the failed Attempt, then move the Lesson to practicing with phase_set and a Next step that names the fix"
+    }
   }
 }

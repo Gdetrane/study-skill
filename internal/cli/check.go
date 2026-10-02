@@ -23,7 +23,7 @@ func (a *app) checkCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "check <lesson>",
 		Short: "Run a Lesson's Check on the current work and record the Attempt",
-		Long: "Run each run and held-out criterion of a Lesson's Check, from the YAML header of lessons/<lesson>.md, in\n" +
+		Long: "Run each run and held_out criterion of a Lesson's Check, from the YAML header of lessons/<lesson>.md, in\n" +
 			"the Lesson's practice folder, and record the Attempt in the Topic's History. A run criterion passes when its\n" +
 			"command exits with 0 and its results file, if any, does not say passed: false. Held-out results are\n" +
 			"diagnostic and never decide the outcome; rubric items are graded with study rubric grade. Progress goes to\n" +
@@ -103,11 +103,12 @@ func writeAttempt(w io.Writer, at core.Attempt) error {
 			line += fmt.Sprintf(" (exit %d)", c.ExitCode)
 		}
 		if c.Kind == core.CriterionHeldOut {
-			line = "held-out, " + line
-			if c.Counted != nil && *c.Counted {
+			line = "held_out, " + line
+			switch {
+			case c.Counted != nil && *c.Counted:
 				line += ", counted"
-			} else if c.Counted != nil {
-				line += ", not counted"
+			case c.Counted != nil:
+				line += ", not counted: " + c.NotCounted
 			}
 		}
 		fmt.Fprintf(&b, "  %s%s\n", styleLabel.Render(pad(c.ID, width)), line)
@@ -144,7 +145,11 @@ func writeScores(b *strings.Builder, s *core.CriterionScores, indent string) {
 	}
 	var parts []string
 	if s.Score != nil {
-		parts = append(parts, "score "+number(*s.Score)+" of "+number(*s.Max))
+		max := 1.0
+		if s.Max != nil {
+			max = *s.Max
+		}
+		parts = append(parts, "score "+number(*s.Score)+" of "+number(max))
 	}
 	names := make([]string, 0, len(s.Metrics))
 	for name := range s.Metrics {
@@ -235,13 +240,13 @@ func writeRubricGraded(w io.Writer, r core.RubricGraded) error {
 }
 
 // resultsCommand is study results: a Lesson's Check, Attempts, rubric
-// grades and held-out results, and whether it can be completed now.
+// grades and held_out results, and whether it can be completed now.
 func (a *app) resultsCommand() *cobra.Command {
 	var topic string
 	cmd := &cobra.Command{
 		Use:   "results <lesson>",
 		Short: "Show a Lesson's Check results and whether it can be completed",
-		Long: "Show a Lesson's Check, its Attempts, the grade of each rubric item, each held-out criterion's counted\n" +
+		Long: "Show a Lesson's Check, its Attempts, the grade of each rubric item, each held_out criterion's counted\n" +
 			"measurement, and whether the Lesson can be completed now. Nothing is run.",
 		Example: `  study results pointers --topic c`,
 		Args:    exactArgs(1),
@@ -309,7 +314,7 @@ func writeCheckResults(w io.Writer, r core.CheckResults) error {
 			writeScores(&b, h.Counted, "  ")
 		}
 		if h.Latest != nil {
-			fmt.Fprintf(&b, "Held-out %s, latest run, not counted (%s):\n", h.Criterion, h.LatestAttempt)
+			fmt.Fprintf(&b, "Held-out %s, latest run, not counted: %s (%s):\n", h.Criterion, h.LatestNotCounted, h.LatestAttempt)
 			writeScores(&b, h.Latest, "  ")
 		}
 	}
@@ -321,8 +326,8 @@ func writeCheckResults(w io.Writer, r core.CheckResults) error {
 	default:
 		fmt.Fprintln(&b, styleWarn.Render(sentence(printable(r.Reason))))
 	}
-	if r.Next != "" {
-		fmt.Fprintln(&b, sentence(r.Next))
+	if r.Next != nil {
+		fmt.Fprintln(&b, sentence(r.Next.Text))
 	}
 	_, err := io.WriteString(w, b.String())
 	return err

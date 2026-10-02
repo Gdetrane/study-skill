@@ -62,8 +62,9 @@ const (
 	// the learner checks themselves first.
 	CriterionRubric = "rubric"
 	// CriterionHeldOut is an evaluation on Held-out data. In v2.0 it is
-	// diagnostic: its results never decide whether the work passes.
-	CriterionHeldOut = "held-out"
+	// diagnostic: its results never decide whether the work passes. The
+	// same spelling is the YAML key, this kind and the JSON field.
+	CriterionHeldOut = "held_out"
 )
 
 // Criterion is one thing a Lesson's Check measures.
@@ -72,9 +73,10 @@ type Criterion struct {
 	Kind string `json:"kind"`
 	// Describe says what the criterion measures, for the learner.
 	Describe string `json:"describe,omitempty"`
-	// Run is the command of a run or held-out criterion, as an argument
-	// list, run in the Lesson's practice folder.
-	Run []string `json:"run,omitempty"`
+	// Command is the command of a run or held_out criterion, as an
+	// argument list, run in the Lesson's practice folder. The YAML header
+	// gives it under run or held_out.
+	Command []string `json:"command,omitempty"`
 	// Rubric is what a rubric item asks of the work.
 	Rubric string `json:"rubric,omitempty"`
 }
@@ -184,6 +186,16 @@ func parseCheck(data []byte) ([]Criterion, error) {
 		crit.Describe = describe
 		out = append(out, crit)
 	}
+	decides := false
+	for _, crit := range out {
+		if crit.Kind != CriterionHeldOut {
+			decides = true
+		}
+	}
+	if !decides {
+		return nil, corruptf("the Check has only held_out criteria, whose results never decide whether a Lesson is " +
+			"done: add a run criterion or a rubric item")
+	}
 	return out, nil
 }
 
@@ -246,7 +258,7 @@ func criterionOf(c criterionYAML) (Criterion, error) {
 	if run[0] == "" {
 		return Criterion{}, corruptf("the command of criterion %s has no program", c.ID)
 	}
-	return Criterion{ID: c.ID, Kind: kind, Run: run}, nil
+	return Criterion{ID: c.ID, Kind: kind, Command: run}, nil
 }
 
 // parseBreakPoints reads the Break points from a Lesson file, in order. It
