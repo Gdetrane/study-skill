@@ -13,7 +13,7 @@ const learnerFile = "learner.md"
 
 // Actions that status recommends. The words match the Focuses where they
 // mean the same thing (learn, practice, reviews, explore) and the
-// suggestions plan, stop and resume_topic.
+// suggestions plan, adopt, stop, resume_topic and assess.
 const (
 	ActionNextStep    = "next_step"
 	ActionPlan        = SuggestPlan

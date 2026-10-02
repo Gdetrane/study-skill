@@ -237,6 +237,11 @@ func summarizeEvent(ev event, cardLesson map[string]string) HistoryEntry {
 		text = "Daily cap on new Cards changed"
 	case eventLevelSet:
 		text = with("Level set", w("level"))
+		if w("source") == LevelFromImport {
+			text += ", from the v1 workspace"
+		}
+	case eventTopicImported:
+		text = "Imported from a v1 workspace"
 	case eventApproachSet:
 		text = with("Approach set", w("approach"))
 	case eventTaskAdded:

@@ -375,6 +375,56 @@ func TestAnImportedTopicIsAdoptedThroughARevision(t *testing.T) {
 	}
 }
 
+// The Lessons an import proved done are v1's work: once adopted, a
+// Milestone made only of them does not cue its Assessment, and the history
+// view names the import.
+func TestAnImportsCompletionsDoNotCueAnAssessment(t *testing.T) {
+	ctx := context.Background()
+	gitIdentity(t)
+	src := v1Workspace(t, v1Options{commits: []string{"[agent] complete lesson 01"},
+		config: map[string]any{"lessons": []any{
+			map[string]any{"num": 1, "title": "Goroutines", "file": "lessons/01-goroutines.md", "status": "completed"},
+			map[string]any{"num": 2, "title": "Channels", "file": "lessons/02-channels.md", "status": "planned"},
+		}}})
+	m := newMachine(t, t.TempDir(), "id", t0)
+	if _, err := m.ImportV1(ctx, ImportSpec{Dir: src}); err != nil {
+		t.Fatal(err)
+	}
+	view, err := m.HistoryOf(ctx, "go-concurrency", HistoryQuery{Limit: MaxHistoryLimit})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var summaries []string
+	for _, e := range view.Entries {
+		summaries = append(summaries, e.Summary)
+	}
+	for _, want := range []string{"Imported from a v1 workspace", "Level set: intermediate, from the v1 workspace"} {
+		if !slices.Contains(summaries, want) {
+			t.Errorf("the history view lacks %q: %q", want, summaries)
+		}
+	}
+
+	syllabus := Syllabus{Milestones: []Milestone{
+		{ID: "basics", Title: "Basics", Priority: "must", Lessons: []SyllabusLesson{{ID: "lesson-01", Title: "Goroutines", Hours: 2}}},
+		{ID: "core", Title: "Core", Priority: "must", Lessons: []SyllabusLesson{{ID: "lesson-02", Title: "Channels", Hours: 2}}},
+	}}
+	p, err := m.ProposeRevision(ctx, "go-concurrency", RevisionSpec{Summary: "From the v1 plan", Syllabus: syllabus})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.ApplyRevision(ctx, "go-concurrency", p.Revision, Approval{Via: ViaChat, LearnerSaid: "yes"}, false); err != nil {
+		t.Fatal(err)
+	}
+	status, err := m.Status(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if topic := status.Topics[0]; topic.AssessmentDue != nil || status.Recommended == nil ||
+		status.Recommended.Action == ActionAssess || status.Recommended.Action == ActionAdopt {
+		t.Errorf("after adoption: assessment due %+v, recommended %+v", topic.AssessmentDue, status.Recommended)
+	}
+}
+
 // Without a v1 plan, which only v1's project approach writes, the adoption
 // starts from v1's lesson list and the learner's notes.
 func TestAnImportWithoutAPlanIsAdoptedFromTheLessonList(t *testing.T) {
