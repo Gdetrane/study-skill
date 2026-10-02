@@ -80,7 +80,7 @@ func TestNextStepsStartWithAVerb(t *testing.T) {
 		// Invisible formatting and bidirectional controls are refused.
 		"Continue ​",
 		"Fix​ the parser",
-		"Fix‮ the parser",
+		"Fix\u202e the parser",
 	} {
 		if _, err := checkNextStep(step); CodeOf(err) != CodeInvalidArgument {
 			t.Errorf("checkNextStep(%q): err = %v, want invalid_argument", step, err)
