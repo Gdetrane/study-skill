@@ -135,6 +135,7 @@ func (a *app) rootCommand() *cobra.Command {
 				return a.fail(err)
 			}
 			a.logs.logger.Debug("serving MCP over stdio", "version", version(), "study_home", c.Home())
+			a.refreshSkill()
 			return mcpserver.Serve(cmd.Context(), c, version(), a.stdin, a.stdout, a.logs.logger)
 		},
 	}
@@ -326,6 +327,7 @@ func (a *app) rootCommand() *cobra.Command {
 	root.AddCommand(a.taskCommand())
 	root.AddCommand(a.rubricCommand(), a.resultsCommand(), a.lessonCommand(), a.historyCommand())
 	root.AddCommand(a.assessmentCommand(), a.hintCommand(), a.signalsCommand())
+	root.AddCommand(a.setupCommand(), a.claudePluginPathCommand(), a.claudeHookCommand())
 	a.completionCommands(root)
 	return root
 }
@@ -368,6 +370,7 @@ func (a *app) runDoctor(cmd *cobra.Command, _ []string) error {
 	d := core.Diagnose(cmd.Context(), a.opts)
 	d.Add(a.diagnoseLogs())
 	d.Add(a.diagnoseCompletion())
+	d.Add(a.diagnoseSetup(cmd.Context()))
 	if !d.Healthy {
 		a.exit = ExitError
 		if a.json {

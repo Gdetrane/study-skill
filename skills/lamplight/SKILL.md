@@ -13,16 +13,11 @@ method around them, and points to those rules by number instead of repeating the
 ## Before you start
 
 When no Lamplight tools are available, the MCP server is not registered with your agent.
-Tell the learner and help them register it, then start a new conversation:
-
-- Claude Code: `claude mcp add --scope user lamplight -- study mcp`
-- Codex: `codex mcp add lamplight -- study mcp`
-- other agents: add an MCP server that runs `study mcp`.
+Tell the learner and help them run `study setup`, which registers it with Claude Code and
+Codex and installs this skill; then start a new conversation. For other agents, add an MCP
+server that runs `study mcp`.
 
 `study doctor` checks the setup, and `study status` shows where they stand meanwhile.
-<!-- pending #33 -->
-Once `study setup` exists, it registers the server and installs this skill in one step.
-<!-- /pending #33 -->
 
 You write teaching material directly: Lesson files, notes, Teacher's notes, Check scripts
 and Held-out data. The learner writes their own work in `practice/<lesson-id>/`.

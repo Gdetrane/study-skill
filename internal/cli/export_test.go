@@ -31,6 +31,14 @@ func RenderHistory(v core.HistoryView) string {
 	return b.String()
 }
 
+// SetExecutable makes study see path as its own binary, as study setup
+// registers it, and returns a function that restores the real one.
+func SetExecutable(path string) func() {
+	old := executable
+	executable = func() (string, error) { return path, nil }
+	return func() { executable = old }
+}
+
 // WriteScores renders a criterion's scores as the check and results
 // commands do.
 func WriteScores(s *core.CriterionScores) string {

@@ -32,9 +32,7 @@ type pendingName struct {
 	lands string
 }
 
-var pendingNames = map[string]pendingName{
-	"study setup": {"#33", "study setup"},
-}
+var pendingNames = map[string]pendingName{}
 
 // requiredTools are the tools the teaching method cannot do without: the skill
 // must mention each one.

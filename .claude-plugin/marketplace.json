@@ -1,0 +1,21 @@
+{
+  "name": "lamplight",
+  "description": "Lamplight: a study companion for learning with an AI agent",
+  "owner": {
+    "name": "mordor-forge",
+    "url": "https://github.com/mordor-forge"
+  },
+  "plugins": [
+    {
+      "name": "lamplight",
+      "displayName": "Lamplight",
+      "description": "The lamplight teaching skill, study's MCP server, and where you stand whenever a session starts in your Study home. Needs study installed on your PATH.",
+      "category": "learning",
+      "source": {
+        "source": "command",
+        "command": "study claude-plugin-path",
+        "timeout": 60
+      }
+    }
+  ]
+}

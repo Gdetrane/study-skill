@@ -71,6 +71,11 @@
         "status": "warn",
         "message": "zsh completions are not installed",
         "fix": "study completion install"
+      },
+      {
+        "name": "setup",
+        "status": "ok",
+        "message": "no Claude Code or Codex found; other agents need an MCP server that runs study mcp"
       }
     ]
   },

@@ -30,6 +30,11 @@
         "name": "completion",
         "status": "ok",
         "message": "skipped: $SHELL is not bash, zsh or fish"
+      },
+      {
+        "name": "setup",
+        "status": "ok",
+        "message": "no Claude Code or Codex found; other agents need an MCP server that runs study mcp"
       }
     ]
   },

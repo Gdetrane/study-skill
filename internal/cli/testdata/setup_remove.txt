@@ -1,0 +1,4 @@
+Removed what study setup did:
+  skill   removed from $HOME/.agents/skills/lamplight (8 files removed)
+  claude  removed; skill link $HOME/.claude/skills/lamplight removed
+  codex   removed
