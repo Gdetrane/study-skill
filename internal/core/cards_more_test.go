@@ -291,3 +291,27 @@ func BenchmarkListCards(b *testing.B) {
 		}
 	}
 }
+
+// A card.added Event with ids study never makes, as a History synced from
+// another machine can hold, is not a Card: it is flagged, and its ids never
+// reach a terminal through the Card list.
+func TestCardEventsWithForeignIDsAreNotCards(t *testing.T) {
+	ctx := context.Background()
+	for name, tc := range map[string]struct{ card, why string }{
+		"a Card id":   {`{"format":1,"id":"x\u001b]0;pwned\u0007.abc","prompt":"P","answer":"A"}`, "not one study makes"},
+		"a Lesson id": {`{"format":1,"id":"lesson-01.abcd1234","lesson":"L\u001b[2J","prompt":"P","answer":"A"}`, "not a valid Lesson id"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			m := newTopic(t)
+			appendToHistory(t, filepath.Join(m.home, "c"), `{"format":1,"id":"zz1","time":"2026-10-01T09:31:00Z",`+
+				`"wall":"2026-10-01T09:31:00Z","type":"card.added","data":{"card":`+tc.card+`}}`+"\n")
+			if list, err := m.ListCards(ctx, "c", CardQuery{}); err != nil || len(list.Cards) != 0 {
+				t.Errorf("ListCards = %+v, %v; want no Cards", list.Cards, err)
+			}
+			topic, err := m.readTopic("c")
+			if err != nil || len(topic.Flags) != 1 || !strings.Contains(topic.Flags[0].Message, tc.why) {
+				t.Errorf("flags = %+v, %v; want one saying the id is %s", topic.Flags, err, tc.why)
+			}
+		})
+	}
+}

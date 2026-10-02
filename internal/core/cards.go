@@ -222,6 +222,9 @@ func cardText(field, s string) (string, error) {
 	return s, nil
 }
 
+// cardIDPattern is the shape of every Card ID newCardID makes.
+var cardIDPattern = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*\.[a-z0-9]{1,26}$`)
+
 // newCardID returns a Card ID that cannot collide across machines:
 // <prefix>.<random suffix>, where prefix is a Lesson's ID or "explore".
 func (c *Core) newCardID(s *replayed, prefix string) string {

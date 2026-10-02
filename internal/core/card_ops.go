@@ -359,6 +359,17 @@ func replayCardAdded(s *replayed, ev event) error {
 	if err := json.Unmarshal(ev.Data, &d); err != nil || d.Card.ID == "" {
 		return fmt.Errorf("its payload names no Card")
 	}
+	// Card and Lesson ids reach terminals as they are, and a History can
+	// arrive from another machine: an Event with ids study never makes is
+	// not a Card.
+	if !cardIDPattern.MatchString(d.Card.ID) {
+		return fmt.Errorf("its Card id %q is not one study makes", d.Card.ID)
+	}
+	if d.Card.Lesson != "" && d.Card.Lesson != exploreLesson {
+		if err := validateEntityID("Lesson", d.Card.Lesson); err != nil {
+			return err
+		}
+	}
 	if _, ok := s.study.cards[d.Card.ID]; ok {
 		// Card IDs carry a random suffix, so this is a forged or repeated
 		// Event rather than a collision; the first Card counts.
