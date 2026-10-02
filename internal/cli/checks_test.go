@@ -97,3 +97,12 @@ func TestChecksWithRubricAndHeldOutCriteria(t *testing.T) {
 	golden(t, "results.json", run("results", "answer", "--json").stdout)
 	golden(t, "results.txt", run("results", "answer").stdout)
 }
+
+// TestScoresWithoutAMax: a score read back from a History written by hand,
+// or by another version, may have no max; it is shown out of 1.
+func TestScoresWithoutAMax(t *testing.T) {
+	score := 0.5
+	if got := cli.WriteScores(&core.CriterionScores{Score: &score}); !strings.Contains(got, "score 0.5 of 1") {
+		t.Errorf("scores = %q", got)
+	}
+}
