@@ -81,6 +81,15 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	}
 }
 
+// CommandTree returns the study command tree without running anything, so
+// tools and tests can check which commands and flags exist, as the lamplight
+// skill's test does for the commands the skill shows.
+func CommandTree() *cobra.Command {
+	a := &app{opts: core.Options{Getenv: os.Getenv}, stdin: strings.NewReader(""),
+		stdout: io.Discard, stderr: io.Discard, out: io.Discard}
+	return a.rootCommand()
+}
+
 type app struct {
 	opts   core.Options
 	stdin  io.Reader
