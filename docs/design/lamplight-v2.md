@@ -428,8 +428,8 @@ hours before any learning happens is exactly what v1 produced.
   an Explore Session, linked to Evidence where possible.
 - **Drafts**: a new Card is a draft until its first Review, where the learner keeps, edits or
   drops it. A daily cap limits how many new Cards appear.
-- The skill's card-writing rules: one fact per Card, no lists, no answer in the prompt, no
-  trivia, at least one Card from the learner's own mistakes.
+- The card-writing rules, in the server's instructions: one fact per Card, no lists, no
+  answer in the prompt, no trivia, at least one Card from the learner's own mistakes.
 - Cards can be added, edited, suspended and deleted; `study review` has a key to flag one.
   A flagged Card shows as a `card_flagged` flag in `status` until it is edited or deleted,
   or the flag is dismissed; flagging it again after a dismissal is a new flag. Adding a Card
@@ -699,14 +699,16 @@ learner's words, the files the agent keeps), and `references/` one file per bran
 starting a Topic (brainstorming and the Assessment), the Syllabus and Revisions, the lesson
 loop (template, Phases, Checks, Held-out data, feedback, Levels), Cards and Reviews,
 Knowledge, Goal, Pace and Forecasts, and optional companions. The skill names tools but
-leaves how to call them to their descriptions and the server's instructions, so nothing is
-said in two places. It is embedded in the binary (`go:embed`, package
-`skills/lamplight`) for `study setup` to install, and a Go test validates it: portable
-frontmatter, links and anchors that resolve, no orphan reference, every tool it names
-listed by the real MCP server, every `study` command it shows known to the CLI, and none of
-v1's commands. Tools still to come are written inside `<!-- pending #N -->` blocks, which
-the test allows only for its listed tools and rejects once the server has them. It carries
-v1's teaching material over explicitly:
+leaves how to call them to their descriptions, and points to the server's instructions by
+number instead of restating them, so each rule is said in one place. It is embedded in the
+binary (`go:embed`, package `skills/lamplight`) for `study setup` to install, and a Go test
+validates it: portable frontmatter, links and anchors that resolve, no orphan reference,
+every tool name and field it writes in backticks known to the real MCP server's tools and
+schemas, every `study` command and flag it shows known to the CLI's command tree, and none
+of v1's commands. Tools and commands still to come are written inside
+`<!-- pending #N -->` blocks, which the test allows only for the names it lists under that
+issue, and rejects once the server or the CLI has them. It carries v1's teaching material
+over explicitly:
 
 - teaching rules, including "never write the learner's implementation";
 - the Lesson template: Concept, Key points, Reference example (don't copy), Common pitfalls,
