@@ -56,6 +56,8 @@ go test ./internal/cli -update      # rewrite CLI golden files, then review the 
 - `internal/library`: building and searching the Library index.
 - `internal/cli`: the `study` command line (cobra and fang).
 - `internal/mcpserver`: the MCP server, its tools and its instructions for agents.
+- `skills/lamplight`: the `lamplight` skill, embedded in the binary; `go test ./skills/...`
+  checks it against the real tools and commands.
 
 ## Patterns
 

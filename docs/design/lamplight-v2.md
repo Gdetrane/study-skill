@@ -688,9 +688,20 @@ for testing, against a separate Study home, so "let's study" keeps reaching v1.
 
 ## The skill
 
-`skills/lamplight/` holds the teaching method, with separate references for: brainstorming
-and Assessment, drafting a Syllabus, the lesson loop and feedback, writing Cards, and Reviews.
-It carries v1's teaching material over explicitly:
+`skills/lamplight/` holds the teaching method: `SKILL.md` carries what every Session needs
+(where the learner is, Energy and Focus, stopping with a Next step, the teaching rules, the
+learner's words, the files the agent keeps), and `references/` one file per branch:
+starting a Topic (brainstorming and the Assessment), the Syllabus and Revisions, the lesson
+loop (template, Phases, Checks, Held-out data, feedback, Levels), Cards and Reviews,
+Knowledge, Goal, Pace and Forecasts, and optional companions. The skill names tools but
+leaves how to call them to their descriptions and the server's instructions, so nothing is
+said in two places. It is embedded in the binary (`go:embed`, package
+`skills/lamplight`) for `study setup` to install, and a Go test validates it: portable
+frontmatter, links and anchors that resolve, no orphan reference, every tool it names
+listed by the real MCP server, every `study` command it shows known to the CLI, and none of
+v1's commands. Tools still to come are written inside `<!-- pending #N -->` blocks, which
+the test allows only for its listed tools and rejects once the server has them. It carries
+v1's teaching material over explicitly:
 
 - teaching rules, including "never write the learner's implementation";
 - the Lesson template: Concept, Key points, Reference example (don't copy), Common pitfalls,
