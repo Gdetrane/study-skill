@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+
 	"github.com/mordor-forge/lamplight/v2/internal/cli"
 	"github.com/mordor-forge/lamplight/v2/internal/core"
 )
@@ -102,15 +104,18 @@ type journey struct {
 	studyHome string
 	studyPATH string // study's own PATH: fake agents and the tools
 	forbidden string // log of calls to the stand-ins on the process's PATH
+	studyBin  string // study, built for the run
 	clock     *clock
 }
 
 func newJourney(t *testing.T) *journey {
 	t.Helper()
 	startPATH := os.Getenv("PATH")
+	// Built before HOME changes, so the go command finds its build cache.
+	studyBin := buildStudy(t)
 	home := t.TempDir()
 	j := &journey{t: t, home: home, studyHome: filepath.Join(home, "study"), forbidden: filepath.Join(home, "forbidden-calls.log"),
-		clock: &clock{at: time.Date(2026, 10, 1, 18, 0, 0, 0, time.UTC)}}
+		studyBin: studyBin, clock: &clock{at: time.Date(2026, 10, 1, 18, 0, 0, 0, time.UTC)}}
 	bin, tools, absent := filepath.Join(home, "bin"), filepath.Join(home, "tools"), filepath.Join(home, "absent")
 	writeExecutable(t, filepath.Join(bin, "claude"), journeyClaude)
 	writeExecutable(t, filepath.Join(bin, "codex"), journeyCodex)
@@ -194,8 +199,139 @@ func lookOn(path, name string) (string, error) {
 	return "", fmt.Errorf("%s is not on PATH", name)
 }
 
-// cli runs the study command line as the learner does in a terminal, with
-// study's own PATH, and decodes the JSON envelope's data into out.
+// buildStudy builds ./cmd/study into a temporary folder, so study setup
+// registers a real study and the MCP client can start exactly what it
+// registered. It builds with -race when the tests run with it, to reuse the
+// packages the test build compiled.
+func buildStudy(t *testing.T) string {
+	t.Helper()
+	goTool, err := exec.LookPath("go")
+	if err != nil {
+		t.Fatalf("the walkthrough builds study with the go command: %v", err)
+	}
+	out := filepath.Join(t.TempDir(), "study")
+	args := []string{"build", "-o", out}
+	if raceEnabled {
+		args = append(args, "-race")
+	}
+	cmd := exec.Command(goTool, append(args, "./cmd/study")...)
+	cmd.Dir = filepath.Join("..", "..")
+	if b, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("building study: %v\n%s", err, b)
+	}
+	return out
+}
+
+// env is the environment study runs in when an agent or the learner's
+// terminal starts it: the test's HOME and folders, and study's own PATH.
+func (j *journey) env() []string {
+	env := []string{"HOME=" + j.home, "PATH=" + j.studyPATH, "STUDY_HOME=" + j.studyHome, "TMPDIR=" + os.TempDir()}
+	for _, key := range []string{"XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME"} {
+		env = append(env, key+"="+os.Getenv(key))
+	}
+	return env
+}
+
+// study runs the built study, as the learner does in a terminal, and
+// decodes the JSON envelope's data into out.
+func (j *journey) study(out any, args ...string) {
+	j.t.Helper()
+	j.guard()
+	cmd := exec.Command(j.studyBin, append(args, "--json")...)
+	cmd.Env, cmd.Dir = j.env(), j.home
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	err := cmd.Run()
+	j.decode(out, args, err == nil, stdout.Bytes(), stderr.String())
+}
+
+func (j *journey) decode(out any, args []string, ran bool, stdout []byte, stderr string) {
+	j.t.Helper()
+	var env struct {
+		OK   bool            `json:"ok"`
+		Data json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(stdout, &env); err != nil || !ran || !env.OK {
+		j.t.Fatalf("study %s failed:\n%s%s", strings.Join(args, " "), stdout, stderr)
+	}
+	if out != nil {
+		if err := json.Unmarshal(env.Data, out); err != nil {
+			j.t.Fatalf("study %s: %s: %v", strings.Join(args, " "), env.Data, err)
+		}
+	}
+}
+
+// registration is how an agent starts an MCP server.
+type registration struct {
+	Type    string   `json:"type"`
+	Command string   `json:"command"`
+	Args    []string `json:"args"`
+}
+
+// registrations reads what study setup registered with the fake Claude Code
+// and the fake Codex.
+func (j *journey) registrations() (claude, codex registration) {
+	j.t.Helper()
+	var claudeConfig struct {
+		Servers map[string]registration `json:"mcpServers"`
+	}
+	var codexConfig struct {
+		Name      string       `json:"name"`
+		Transport registration `json:"transport"`
+	}
+	for file, into := range map[string]any{".claude.json": &claudeConfig, ".codex-fake.json": &codexConfig} {
+		data, err := os.ReadFile(filepath.Join(j.home, file))
+		if err != nil {
+			j.t.Fatal(err)
+		}
+		if err := json.Unmarshal(data, into); err != nil {
+			j.t.Fatalf("%s: %v\n%s", file, err, data)
+		}
+	}
+	if codexConfig.Name != "lamplight" {
+		j.t.Fatalf("Codex's server is named %q", codexConfig.Name)
+	}
+	return claudeConfig.Servers["lamplight"], codexConfig.Transport
+}
+
+// statusThrough starts the MCP server as the agent would, from its
+// registration, and asks it for status.
+func (j *journey) statusThrough(reg registration) core.Status {
+	j.t.Helper()
+	ctx := context.Background()
+	cmd := exec.Command(reg.Command, reg.Args...)
+	cmd.Env, cmd.Dir = j.env(), j.home
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	session, err := mcp.NewClient(&mcp.Implementation{Name: "registered-agent", Version: "1"}, nil).
+		Connect(ctx, &mcp.CommandTransport{Command: cmd}, nil)
+	if err != nil {
+		j.t.Fatalf("starting %s %v: %v\n%s", reg.Command, reg.Args, err, stderr.String())
+	}
+	res, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "status", Arguments: map[string]any{}})
+	if err != nil {
+		j.t.Fatalf("status through %s: %v\n%s", reg.Command, err, stderr.String())
+	}
+	if res.IsError {
+		j.t.Fatalf("status through %s: %s\n%s", reg.Command, text(res), stderr.String())
+	}
+	if err := session.Close(); err != nil {
+		j.t.Fatalf("stopping the MCP server: %v\n%s", err, stderr.String())
+	}
+	data, err := json.Marshal(res.StructuredContent)
+	if err != nil {
+		j.t.Fatal(err)
+	}
+	var status core.Status
+	if err := json.Unmarshal(data, &status); err != nil {
+		j.t.Fatalf("status: %s: %v", data, err)
+	}
+	return status
+}
+
+// cli runs the study command line in this process, as the learner does in a
+// terminal, with study's own PATH and the walkthrough's clock, and decodes
+// the JSON envelope's data into out.
 func (j *journey) cli(out any, args ...string) {
 	j.t.Helper()
 	j.guard()
@@ -214,18 +350,7 @@ func (j *journey) cli(out any, args ...string) {
 	}
 	var stdout, stderr bytes.Buffer
 	code := cli.Run(context.Background(), append(args, "--json"), strings.NewReader(""), &stdout, &stderr, opts)
-	var env struct {
-		OK   bool            `json:"ok"`
-		Data json.RawMessage `json:"data"`
-	}
-	if err := json.Unmarshal(stdout.Bytes(), &env); err != nil || code != cli.ExitOK || !env.OK {
-		j.t.Fatalf("study %s: exit %d\n%s%s", strings.Join(args, " "), code, stdout.String(), stderr.String())
-	}
-	if out != nil {
-		if err := json.Unmarshal(env.Data, out); err != nil {
-			j.t.Fatalf("study %s: %s: %v", strings.Join(args, " "), env.Data, err)
-		}
-	}
+	j.decode(out, args, code == cli.ExitOK, stdout.Bytes(), stderr.String())
 }
 
 // v1Workspace builds a small workspace of the v1 study skill, as v1's
@@ -278,23 +403,31 @@ func (j *journey) v1Workspace() string {
 func TestTheV2Journey(t *testing.T) {
 	j := newJourney(t)
 
-	// 1. study setup installs the skill and registers study mcp with both
-	// agents. The test binary lives in a temporary build folder, which setup
-	// refuses without --force.
-	j.cli(nil, "setup", "--force")
-	if _, err := os.Stat(filepath.Join(j.home, ".agents", "skills", "lamplight", "SKILL.md")); err != nil {
+	// 1. study setup, run from the built binary, installs the skill and
+	// registers that binary's study mcp with both agents. The binary lives in
+	// a temporary folder, which setup refuses without --force.
+	j.study(nil, "setup", "--force")
+	skill := filepath.Join(j.home, ".agents", "skills", "lamplight")
+	if _, err := os.Stat(filepath.Join(skill, "SKILL.md")); err != nil {
 		t.Fatalf("the skill was not installed: %v", err)
 	}
-	if real, err := filepath.EvalSymlinks(filepath.Join(j.home, ".claude", "skills", "lamplight")); err != nil ||
-		real != filepath.Join(j.home, ".agents", "skills", "lamplight") {
-		t.Fatalf("Claude Code's skill link = %q, %v", real, err)
+	link, err := filepath.EvalSymlinks(filepath.Join(j.home, ".claude", "skills", "lamplight"))
+	if want, _ := filepath.EvalSymlinks(skill); err != nil || link != want {
+		t.Fatalf("Claude Code's skill link = %q, %v; want %s", link, err, want)
 	}
-	calls, _ := os.ReadFile(filepath.Join(j.home, "agent-calls.log"))
-	if !bytes.Contains(calls, []byte("claude mcp add --scope user lamplight -- ")) ||
-		!bytes.Contains(calls, []byte("codex mcp add lamplight -- ")) {
-		t.Fatalf("agent calls:\n%s", calls)
+	// Setup registers its own path with links resolved.
+	study, err := filepath.EvalSymlinks(j.studyBin)
+	if err != nil {
+		t.Fatal(err)
 	}
-	j.cli(nil, "setup", "--check")
+	want := registration{Type: "stdio", Command: study, Args: []string{"mcp"}}
+	claudeReg, codexReg := j.registrations()
+	for agent, reg := range map[string]registration{"Claude Code": claudeReg, "Codex": codexReg} {
+		if reg.Type != want.Type || reg.Command != want.Command || !slices.Equal(reg.Args, want.Args) {
+			t.Fatalf("%s's registration = %+v, want %+v", agent, reg, want)
+		}
+	}
+	j.study(nil, "setup", "--check")
 
 	a := &agent{t: t, home: j.studyHome, clock: j.clock}
 	a.connect()
@@ -494,8 +627,18 @@ func TestTheV2Journey(t *testing.T) {
 	}
 	a.disconnect()
 
-	// Setup still holds, and no real agent was ever reached.
-	j.cli(nil, "setup", "--check")
+	// Each agent, starting the MCP server exactly as setup registered it,
+	// sees both Topics. Setup still holds, and no real agent was reached.
+	for agent, reg := range map[string]registration{"Claude Code": claudeReg, "Codex": codexReg} {
+		var ids []string
+		for _, topic := range j.statusThrough(reg).Topics {
+			ids = append(ids, topic.ID)
+		}
+		if slices.Sort(ids); !slices.Equal(ids, []string{"c", "go-concurrency"}) {
+			t.Errorf("status through %s's registration lists %v", agent, ids)
+		}
+	}
+	j.study(nil, "setup", "--check")
 }
 
 // inOrder reports whether want appears in types as a subsequence.
