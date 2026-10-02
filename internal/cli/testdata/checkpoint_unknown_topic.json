@@ -1,0 +1,7 @@
+{
+  "ok": false,
+  "error": {
+    "code": "not_found",
+    "message": "there is no Topic named physics: run study status to see your Topics"
+  }
+}

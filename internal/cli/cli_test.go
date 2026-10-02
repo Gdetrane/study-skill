@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -259,5 +260,48 @@ func TestLibraryOutputErrorsAreReported(t *testing.T) {
 		if code == cli.ExitOK {
 			t.Errorf("study %s exited 0 although writing its output failed", strings.Join(args, " "))
 		}
+	}
+}
+
+func TestCheckpointCommand(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	if err := os.WriteFile(filepath.Join(home, ".gitconfig"), []byte("[user]\n\tname = Ada Learner\n\temail = ada@example.com\n[maintenance]\n\tauto = false\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	study := filepath.Join(home, "study")
+	if r := run(t, study, "topic", "create", "--title", "Linear algebra"); r.code != cli.ExitOK {
+		t.Fatalf("setup: %s", r.stderr)
+	}
+	hashes := regexp.MustCompile(`[0-9a-f]{12,40}`)
+	checkpoint := func(args ...string) result {
+		t.Helper()
+		r := run(t, study, append([]string{"checkpoint"}, args...)...)
+		r.stdout = hashes.ReplaceAllString(r.stdout, "<commit>")
+		return r
+	}
+
+	if r := checkpoint("--topic", "linear-algebra", "--role", "agent", "--dry-run"); r.code != cli.ExitOK {
+		t.Errorf("dry run: exit %d, stderr %s", r.code, r.stderr)
+	} else {
+		golden(t, "checkpoint_dry_run.txt", r.stdout)
+	}
+	golden(t, "checkpoint.json", checkpoint("--topic", "linear-algebra", "--role", "agent", "-m", "Lesson 1 notes", "--json").stdout)
+	golden(t, "checkpoint_unchanged.txt", checkpoint("--topic", "linear-algebra", "--role", "learner").stdout)
+
+	for _, tc := range []struct {
+		golden string
+		args   []string
+		code   int
+	}{
+		{"checkpoint_missing_role", []string{"--topic", "linear-algebra", "--json"}, cli.ExitUsage},
+		{"checkpoint_unknown_topic", []string{"--topic", "physics", "--role", "learner", "--json"}, cli.ExitError},
+	} {
+		r := checkpoint(tc.args...)
+		if r.code != tc.code {
+			t.Errorf("%s: exit %d, want %d", tc.golden, r.code, tc.code)
+		}
+		golden(t, tc.golden+".json", r.stdout)
 	}
 }

@@ -13,6 +13,7 @@ that scripts and agents can rely on. Terms follow [CONTEXT.md](../CONTEXT.md).
 | `study topic create --title T [--id ID] [--goal G] [--dry-run]` | Creates a Topic folder with its settings, History and git repository. `--dry-run` validates and shows the result without writing. |
 | `study library build <folder>` | Indexes the books in a folder (relative to where you run it) and replaces the Library index in the Study home. |
 | `study library search <query> [--limit N]` | Ranks the books in the Library against the query. `--limit` defaults to 10 and is capped at 100; no matches is a success with an empty list. |
+| `study checkpoint --topic ID --role agent\|learner [-m MESSAGE] [--dry-run]` | Saves the Topic's work as a git commit at a turn switch. Skips when nothing changed, refuses during a merge or rebase, and lists large files it saved. Never runs programs named in the Topic's git configuration. |
 | `study mcp` | Runs the MCP server over stdin and stdout. |
 
 The Study home is `STUDY_HOME` if set, otherwise `study_home` in
@@ -56,7 +57,9 @@ Error codes:
 | `already_exists` | The thing to create exists already. |
 | `not_found` | The thing named does not exist. |
 | `newer_format` | A file was written by a newer version of `study`; upgrade to read it. |
-| `corrupt` | A file Lamplight reads is damaged, for example invalid TOML after a hand edit. Fix or restore the file. |
+| `corrupt` | A file Lamplight reads is damaged, for example invalid TOML after a hand edit, or a Topic's git repository is missing, was replaced during a Checkpoint, or leads outside the Topic. Fix or restore it; the message names it. |
+| `failed_precondition` | The request is valid but the Topic is not ready for it, for example a git merge is in progress or git has no identity. The message says what to do. |
+| `busy` | Another program, such as an editor, is using the Topic's git repository, or files kept changing while they were being saved. Try again shortly; the message says what to do if it persists. |
 | `internal` | Anything else, such as a file that cannot be read. |
 
 ## Exit codes
@@ -64,7 +67,7 @@ Error codes:
 | Code | Meaning |
 |---|---|
 | 0 | Success, including empty results. |
-| 1 | The command failed (`already_exists`, `not_found`, `newer_format`, `corrupt`, `internal`). |
+| 1 | The command failed (`already_exists`, `not_found`, `newer_format`, `corrupt`, `failed_precondition`, `busy`, `internal`). |
 | 2 | Usage error (`usage`, `invalid_argument`). |
 
 ## Writes

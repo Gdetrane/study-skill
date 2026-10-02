@@ -1,0 +1,7 @@
+{
+  "ok": false,
+  "error": {
+    "code": "invalid_argument",
+    "message": "say whose turn ended: pass the role \"agent\" or \"learner\""
+  }
+}

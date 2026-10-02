@@ -149,8 +149,40 @@ func (a *app) rootCommand() *cobra.Command {
 		},
 	}
 
-	root.AddCommand(status, topic, a.libraryCommand(), serve)
+	root.AddCommand(status, topic, a.checkpointCommand(), a.libraryCommand(), serve)
 	return root
+}
+
+func (a *app) checkpointCommand() *cobra.Command {
+	var spec core.CheckpointSpec
+	cmd := &cobra.Command{
+		Use:   "checkpoint",
+		Short: "Save the work in a Topic as a git commit",
+		Long: "Save the work in a Topic as a git commit, at the end of a turn: the learner's or the agent's.\n" +
+			"Nothing is committed when nothing changed. Checkpoints never run programs named in the Topic's git configuration.",
+		Example: `  study checkpoint --topic linear-algebra --role learner --message "Gaussian elimination exercise"
+  study checkpoint --topic c --role agent --dry-run`,
+		Args: noArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			c, err := core.Open(a.opts)
+			if err != nil {
+				return a.fail(err)
+			}
+			res, err := c.Checkpoint(cmd.Context(), spec)
+			if err != nil {
+				return a.fail(err)
+			}
+			if a.json {
+				return a.writeJSON(envelope{OK: true, Data: res})
+			}
+			return writeCheckpoint(a.stdout, res)
+		},
+	}
+	cmd.Flags().StringVar(&spec.Topic, "topic", "", "the Topic's id (required)")
+	cmd.Flags().StringVar(&spec.Role, "role", "", "whose turn ended: agent or learner (required)")
+	cmd.Flags().StringVarP(&spec.Message, "message", "m", "", "what happened in the turn")
+	cmd.Flags().BoolVar(&spec.DryRun, "dry-run", false, "show whether a Checkpoint would be made, without committing")
+	return cmd
 }
 
 func (a *app) libraryCommand() *cobra.Command {
