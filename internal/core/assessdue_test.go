@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -68,36 +69,146 @@ func TestTheMilestoneAssessmentIsNextOnceItsLessonsAreDone(t *testing.T) {
 	}
 }
 
-func TestTheAssessmentCueGivesWayWhenTheLearnerMovesOn(t *testing.T) {
+// finishNext writes Lesson next with a Check like answer's, passes it and
+// completes it.
+func finishNext(t *testing.T, m *machine) LessonCompletion {
+	t.Helper()
 	ctx := context.Background()
-	t.Run("a Lesson of the next Milestone starts", func(t *testing.T) {
-		m := learningTopic(t)
-		revise(t, m, answerThenNext)
-		finishAnswer(t, m)
-		if r := recommended(t, m); r == nil || r.Action != ActionAssess {
-			t.Fatalf("after finishing Basics: %+v", r)
-		}
-		if _, err := m.SetPhase(ctx, "c", PhaseSpec{Lesson: "next", Phase: PhaseTeaching}); err != nil {
-			t.Fatal(err)
-		}
-		if r := recommended(t, m); r == nil || r.Action == ActionAssess {
-			t.Errorf("after starting the next Lesson, status still recommends %+v", r)
-		}
-	})
-	t.Run("a Next step is recorded", func(t *testing.T) {
-		m := learningTopic(t)
-		revise(t, m, answerThenNext)
-		finishAnswer(t, m)
-		if _, err := m.OpenSession(ctx, "c", SessionSpec{Energy: EnergyFull}); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := m.CloseSession(ctx, "c", CloseSpec{NextStep: "Start the next Milestone tomorrow"}); err != nil {
-			t.Fatal(err)
-		}
-		if r := recommended(t, m); r == nil || r.Action != ActionNextStep {
-			t.Errorf("after a Next step, status recommends %+v, want the Next step", r)
-		}
-	})
+	writeFile(t, m, "lessons/next.md", strings.Replace(answerLesson, "# The answer", "# The next one", 1))
+	writeFile(t, m, "practice/next/check.sh", answerCheck)
+	writeFile(t, m, "practice/next/answer.txt", "42\n")
+	if _, err := m.SetPhase(ctx, "c", PhaseSpec{Lesson: "next", Phase: PhasePracticing}); err != nil {
+		t.Fatal(err)
+	}
+	if a, err := m.RunCheck(ctx, "c", "next", CheckOptions{}); err != nil || a.Outcome != OutcomePassed {
+		t.Fatalf("RunCheck(next) = %+v, %v", a, err)
+	}
+	done, err := m.CompleteLesson(ctx, "c", CompleteSpec{Lesson: "next"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return done
+}
+
+func recordMilestoneAssessment(t *testing.T, m *machine, milestone string) {
+	t.Helper()
+	end := AssessmentSpec{Kind: AssessmentMilestone, Milestone: milestone, Summary: "Answers well",
+		Items: []AssessmentItem{{Area: "answers", Outcome: AnswerCorrect}}}
+	if _, err := m.RecordAssessment(context.Background(), "c", end); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestTheAssessmentCueSurvivesAStop(t *testing.T) {
+	ctx := context.Background()
+	m := learningTopic(t)
+	revise(t, m, answerThenNext)
+	finishAnswer(t, m)
+	if _, err := m.OpenSession(ctx, "c", SessionSpec{Energy: EnergyFull}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.CloseSession(ctx, "c", CloseSpec{NextStep: "Start the next Lesson by reading its notes"}); err != nil {
+		t.Fatal(err)
+	}
+	status, err := m.Status(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := status.Recommended; r == nil || r.Action != ActionAssess || r.Milestone == nil || r.Milestone.ID != "basics" {
+		t.Fatalf("after a stop, status recommends %+v, want the Assessment of basics", r)
+	}
+	if ns := status.Topics[0].Resume.NextStep; ns == nil || ns.Step != "Start the next Lesson by reading its notes" {
+		t.Errorf("the Resume point no longer shows the Next step word for word: %+v", ns)
+	}
+
+	recordMilestoneAssessment(t, m, "basics")
+	if r := recommended(t, m); r == nil || r.Action != ActionNextStep {
+		t.Errorf("after the Assessment, status recommends %+v, want the Next step again", r)
+	}
+}
+
+func TestTheAssessmentCueEndsWhenAnotherMilestoneStarts(t *testing.T) {
+	ctx := context.Background()
+	m := learningTopic(t)
+	revise(t, m, answerThenNext)
+	finishAnswer(t, m)
+	if _, err := m.SetPhase(ctx, "c", PhaseSpec{Lesson: "next", Phase: PhaseTeaching}); err != nil {
+		t.Fatal(err)
+	}
+	if r := recommended(t, m); r == nil || r.Action == ActionAssess {
+		t.Errorf("after starting a Lesson of the next Milestone, status still recommends %+v", r)
+	}
+}
+
+func TestAPhaseInsideTheFinishedMilestoneKeepsTheCue(t *testing.T) {
+	m := learningTopic(t)
+	revise(t, m, answerThenNext)
+	finishAnswer(t, m)
+	// A Phase for Lesson answer arriving later, from another machine: it is
+	// not a step towards another Milestone.
+	appendLine(t, filepath.Join(m.home, "c", historyFile), `{"format":1,"id":"zz-phase","time":"2026-10-02T09:30:00Z",`+
+		`"wall":"2026-10-02T09:30:00Z","type":"phase.set","data":{"lesson":"answer","phase":"feedback"}}`+"\n")
+	if r := recommended(t, m); r == nil || r.Action != ActionAssess {
+		t.Errorf("a Phase inside the finished Milestone ended the cue: %+v", r)
+	}
+}
+
+func TestTheMostRecentlyFinishedMilestoneIsAssessed(t *testing.T) {
+	ctx := context.Background()
+	m := learningTopic(t)
+	revise(t, m, answerThenNext)
+	if done := finishNext(t, m); done.Next == nil || done.Next.Milestone.ID != "more" {
+		t.Fatalf("finishing Milestone more first: next = %+v", done.Next)
+	}
+	finishAnswer(t, m) // its Phases start a Lesson of another Milestone, so more is left
+	r := recommended(t, m)
+	if r == nil || r.Action != ActionAssess || r.Milestone.ID != "basics" {
+		t.Fatalf("status recommends %+v, want the Assessment of basics, finished last", r)
+	}
+	again, err := m.CompleteLesson(ctx, "c", CompleteSpec{Lesson: "next"})
+	if err != nil || again.Next != nil {
+		t.Errorf("completing next again names another Milestone's Assessment: %+v, %v", again.Next, err)
+	}
+}
+
+func TestTheAssessmentCueNeedsAnActiveTopic(t *testing.T) {
+	ctx := context.Background()
+	m := learningTopic(t)
+	finishAnswer(t, m)
+	paused := TopicPaused
+	if _, err := m.UpdateTopic(ctx, "c", TopicChanges{State: &paused}); err != nil {
+		t.Fatal(err)
+	}
+	status, err := m.Status(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if due := status.Topics[0].AssessmentDue; due != nil {
+		t.Errorf("a paused Topic has assessment_due %+v", due)
+	}
+	if r := status.Recommended; r == nil || r.Action != ActionResumeTopic {
+		t.Errorf("a paused Topic recommends %+v", r)
+	}
+	if again, err := m.CompleteLesson(ctx, "c", CompleteSpec{Lesson: "answer"}); err != nil || again.Next != nil {
+		t.Errorf("a paused Topic's completion returns next = %+v, %v", again.Next, err)
+	}
+
+	// The first completion, on a Topic paused after its Check passed.
+	m = learningTopic(t)
+	practicing(t, m)
+	writeFile(t, m, "practice/answer/answer.txt", "42\n")
+	if a, err := m.RunCheck(ctx, "c", "answer", CheckOptions{}); err != nil || a.Outcome != OutcomePassed {
+		t.Fatalf("RunCheck = %+v, %v", a, err)
+	}
+	if _, err := m.UpdateTopic(ctx, "c", TopicChanges{State: &paused}); err != nil {
+		t.Fatal(err)
+	}
+	if done, err := m.CompleteLesson(ctx, "c", CompleteSpec{Lesson: "answer"}); err != nil || done.Next != nil {
+		t.Errorf("completing a paused Topic's last Lesson returns next = %+v, %v", done.Next, err)
+	}
+}
+
+func TestOnlyAFinishedMilestoneIsAssessed(t *testing.T) {
 	t.Run("a Milestone with a Lesson still to do", func(t *testing.T) {
 		m := learningTopic(t)
 		revise(t, m, twoMilestones) // Basics holds answer and values
@@ -117,4 +228,45 @@ func TestTheAssessmentCueGivesWayWhenTheLearnerMovesOn(t *testing.T) {
 			t.Errorf("a Milestone with every Lesson skipped has nothing to assess: %+v", r)
 		}
 	})
+}
+
+func TestRecommendRanksTheAssessment(t *testing.T) {
+	due := &MilestoneRef{Number: 1, ID: "basics", Title: "Basics"}
+	resume := &ResumePoint{Lesson: "next", NextStep: &NextStep{Step: "Read the notes"}}
+	if r := recommend(Topic{ID: "c", State: TopicPaused, AssessmentDue: due, Resume: resume}); r.Action != ActionResumeTopic {
+		t.Errorf("a paused Topic recommends %s, want resume_topic first", r.Action)
+	}
+	if r := recommend(Topic{ID: "c", State: TopicActive, AssessmentDue: due, Resume: resume}); r.Action != ActionAssess {
+		t.Errorf("with a Next step and an Assessment due, status recommends %s, want assess", r.Action)
+	}
+}
+
+func TestSessionOpenSuggestsTheAssessment(t *testing.T) {
+	ctx := context.Background()
+	m := learningTopic(t)
+	finishAnswer(t, m)
+	for _, tc := range []struct{ energy, want string }{
+		{EnergyFull, SuggestAssess}, {EnergyHalf, SuggestAssess}, {EnergyFumes, SuggestStop},
+	} {
+		opened, err := m.OpenSession(ctx, "c", SessionSpec{Energy: tc.energy, DryRun: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if opened.Suggested == nil || opened.Suggested.Suggest != tc.want {
+			t.Errorf("%s Energy suggests %+v, want %s", tc.energy, opened.Suggested, tc.want)
+		}
+	}
+}
+
+func TestACompletionFromAnotherMachineDoesNotBringTheCueBack(t *testing.T) {
+	a, b := twoMachines(t, oneLessonSyllabus)
+	finishAnswer(t, a)
+	recordMilestoneAssessment(t, a, "basics")
+	takeCheckpoint(t, a)
+	finishAnswer(t, b) // the same Lesson, completed later on the other machine
+	takeCheckpoint(t, b)
+	pull(t, a, b)
+	if r := recommended(t, a); r == nil || r.Action == ActionAssess {
+		t.Errorf("a second completion merged in brought the cue back: %+v", r)
+	}
 }

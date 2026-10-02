@@ -18,13 +18,14 @@ type MilestoneRef struct {
 
 // assessmentDue returns the Milestone whose end-of-Milestone Assessment is
 // the next thing to do, or nil. It is the Milestone finished most recently,
-// in replay order: every Lesson done or skipped, at least one done. It is
-// due while no milestone Assessment for it was recorded after its last
-// Lesson was completed, and nothing since shows the learner chose to move
-// on: no Lesson outside it was started, and no Next step was recorded.
+// in replay order: every Lesson done or skipped, at least one done. It stays
+// due until a milestone Assessment for it is recorded after its last Lesson
+// was completed, or the learner deliberately moves on by starting a Lesson
+// of another Milestone. A Next step does not end it: stopping is normal, and
+// the Assessment is cued on its own. Only an active Topic has one.
 func (s *replayed) assessmentDue() *MilestoneRef {
 	syl := s.study.syllabus
-	if syl == nil {
+	if syl == nil || s.topicState() != TopicActive {
 		return nil
 	}
 	milestoneOf := map[string]int{}
@@ -36,21 +37,27 @@ func (s *replayed) assessmentDue() *MilestoneRef {
 	lastDone, lastAssessed := map[int]int{}, map[int]int{}
 	var phases []struct{ at, milestone int }
 	for at, ev := range s.applied {
+		switch ev.Type {
+		case eventLessonCompleted, eventPhaseSet, eventAssessmentRecorded:
+		default:
+			continue
+		}
 		var d struct {
 			Lesson    string `json:"lesson"`
 			Kind      string `json:"kind"`
 			Milestone string `json:"milestone"`
 		}
-		switch ev.Type {
-		case eventLessonCompleted, eventPhaseSet, eventAssessmentRecorded:
-			if json.Unmarshal(ev.Data, &d) != nil {
-				continue
-			}
-		default:
+		if json.Unmarshal(ev.Data, &d) != nil {
 			continue
 		}
 		switch ev.Type {
 		case eventLessonCompleted:
+			// Only the completion replay kept counts: a second one merged
+			// in from another machine is flagged, and must not bring the
+			// cue back.
+			if ls := s.study.lessons[d.Lesson]; ls == nil || ls.completedBy != ev.ID {
+				continue
+			}
 			if m, ok := milestoneOf[d.Lesson]; ok {
 				lastDone[m] = at
 			}
@@ -85,11 +92,8 @@ func (s *replayed) assessmentDue() *MilestoneRef {
 	}
 	for _, p := range phases {
 		if p.at > dueAt && p.milestone != due {
-			return nil // a Lesson outside it started: the learner moved on
+			return nil // a Lesson of another Milestone started: the learner moved on
 		}
-	}
-	if ns := s.study.nextStep; ns != nil && s.study.staleReason(ns.Lesson) == "" && s.study.nextStepSeq > dueAt {
-		return nil // a Next step was recorded since: it leads
 	}
 	m := syl.Milestones[due]
 	return &MilestoneRef{Number: due + 1, ID: m.ID, Title: m.Title}

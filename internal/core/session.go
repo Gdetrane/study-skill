@@ -210,7 +210,7 @@ func (c *Core) OpenSession(ctx context.Context, topicID string, spec SessionSpec
 			result.LongGap = now.Sub(last) > longGap
 		}
 		if spec.Focus == "" {
-			result.Suggested = suggestFocus(spec.Energy, state, result.Resume, result.Cards)
+			result.Suggested = suggestFocus(spec.Energy, state, result.Resume, result.Cards, s.assessmentDue())
 		}
 		return &change{Type: eventSessionOpened, Data: sessionOpenedData{Energy: spec.Energy, Focus: spec.Focus}}, nil
 	}, spec.DryRun)

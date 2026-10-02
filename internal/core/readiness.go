@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -88,13 +89,18 @@ const (
 	// SuggestResumeTopic: the Topic is paused. It stays paused until the
 	// learner resumes it through topic_update, or picks another Topic.
 	SuggestResumeTopic = "resume_topic"
+	// SuggestAssess: every Lesson of a Milestone is done or skipped, and its
+	// end-of-Milestone Assessment comes next. It is suggested at full and
+	// half Energy only: at fumes, an Assessment waits for a better day.
+	SuggestAssess = "assess"
 )
 
 // FocusSuggestion is what the learner's Energy suggests for the Session.
 // The learner chooses; a suggestion is never recorded.
 type FocusSuggestion struct {
 	// Suggest is a Focus the learner may choose (learn, practice, reviews
-	// or explore), or plan, stop or resume_topic, which are not Focuses.
+	// or explore), or plan, stop, resume_topic or assess, which are not
+	// Focuses.
 	Suggest string `json:"suggest"`
 	// Reason is English prose for the learner; the skill may rephrase it.
 	Reason string `json:"reason"`
@@ -104,7 +110,7 @@ type FocusSuggestion struct {
 // the learner stopped, and whether Cards are ready. Like status's
 // recommendation, it never proposes studying a paused Topic, suggests only
 // Reviews on a finished one, and suggests planning a Syllabus first.
-func suggestFocus(energy, state string, r ResumePoint, cards *CardsReady) *FocusSuggestion {
+func suggestFocus(energy, state string, r ResumePoint, cards *CardsReady, assess *MilestoneRef) *FocusSuggestion {
 	switch energy {
 	case EnergyFull, EnergyHalf, EnergyFumes:
 	default:
@@ -119,6 +125,10 @@ func suggestFocus(energy, state string, r ResumePoint, cards *CardsReady) *Focus
 			return &FocusSuggestion{Suggest: FocusReviews, Reason: "the Topic is finished, and Cards are ready"}
 		}
 		return &FocusSuggestion{Suggest: SuggestStop, Reason: "the Topic is finished, and no Card is ready: nothing to study on it now"}
+	}
+	if assess != nil && (energy == EnergyFull || energy == EnergyHalf) {
+		return &FocusSuggestion{Suggest: SuggestAssess, Reason: fmt.Sprintf("every Lesson of Milestone %d “%s” is "+
+			"done: its Assessment comes next", assess.Number, assess.Title)}
 	}
 	exercise := r.Phase == PhasePracticing || r.Phase == PhaseFeedback
 	noSyllabus := r.Lesson == "" && !r.SyllabusDone

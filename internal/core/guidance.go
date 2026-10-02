@@ -26,8 +26,9 @@ const (
 	ActionStop        = SuggestStop
 	// ActionAssess: every Lesson of a Milestone is done or skipped, and its
 	// end-of-Milestone Assessment is next (see assessmentDue). It is the
-	// next thing to do, never something late.
-	ActionAssess = "assess"
+	// next thing to do, never something late, and it outranks the Next
+	// step, which the Resume point still shows word for word.
+	ActionAssess = SuggestAssess
 )
 
 // FlagLessonHeader: the current Lesson's YAML header cannot be read, so its
@@ -72,7 +73,7 @@ func recommend(t Topic) *Recommendation {
 	case t.AssessmentDue != nil:
 		m := t.AssessmentDue
 		r.Action, r.Milestone = ActionAssess, m
-		r.Text = fmt.Sprintf("Every Lesson of Milestone %d “%s” is done: assess it together, then record it", m.Number, m.Title)
+		r.Text = fmt.Sprintf("Every Lesson of Milestone %d “%s” is done: its Assessment comes next", m.Number, m.Title)
 	case resume != nil && resume.NextStep != nil:
 		r.Action, r.Text = ActionNextStep, resume.NextStep.Step
 	case resume == nil || resume.Lesson == "" && !resume.SyllabusDone:

@@ -146,7 +146,8 @@ func (c *Core) CompleteLesson(ctx context.Context, topicID string, spec Complete
 				Lesson: line.Lesson, Prompt: line.Prompt, Answer: line.Answer, Evidence: line.Evidence, Draft: true})
 		}
 		result.Attempt, result.Grades = attempt.ID, d.Grades
-		if ref, m, ok := s.study.syllabus.milestoneOfLesson(spec.Lesson); ok && s.study.finishesMilestone(m, spec.Lesson) {
+		if ref, m, ok := s.study.syllabus.milestoneOfLesson(spec.Lesson); ok && s.topicState() == TopicActive &&
+			s.study.finishesMilestone(m, spec.Lesson) {
 			result.Next = assessNext(&ref)
 		}
 		return &change{Type: eventLessonCompleted, Data: d, Items: items}, nil
