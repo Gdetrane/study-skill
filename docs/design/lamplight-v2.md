@@ -271,9 +271,9 @@ hours before any learning happens is exactly what v1 produced.
   `lesson_complete` returns `next` with the code `assess_milestone`, and `status`
   recommends `assess` for that Milestone, ahead of the Next step, until its Assessment is
   recorded or the learner deliberately moves on by starting a Lesson of another Milestone.
-  Stopping does not end it: the Next step written then names the next Lesson's first step,
-  since the Assessment is cued on its own, and at the next Session the agent offers the
-  Assessment first. Only an active Topic has one. It is the next thing to do, never
+  Stopping does not end it: the Next step written then names the next Lesson's first step
+  (or, when no Lesson follows, taking that Assessment), since the Assessment is cued on
+  its own, and at the next Session the agent offers the Assessment first. Only an active Topic has one. It is the next thing to do, never
   something late.
 
 ### Sessions

@@ -182,7 +182,8 @@ is the next thing to do. It names the Milestone finished most recently, on an ac
 and only while no milestone Assessment for it was recorded after its last Lesson was
 completed and the learner has not deliberately moved on since by starting a Lesson of
 another Milestone (`phase_set`). Stopping does not end it: a Next step recorded with an
-Assessment due names the next Lesson's first step, the Resume point still shows it word for
+Assessment due names the next Lesson's first step (or, when no Lesson follows, taking that
+Assessment), the Resume point still shows it word for
 word, and `assess` outranks it until the Assessment is recorded; then the Next step leads
 again. A completion merged in from another machine for a Lesson already done does not bring
 it back. A Topic carries the same Milestone as `assessment_due`. It is a next action, never

@@ -140,3 +140,20 @@ func TestHistoryOf(t *testing.T) {
 		}
 	}
 }
+
+// A History line edited by hand can hold any id and type; the view shows
+// them only when they are words Lamplight writes.
+func TestHistoryShowsOnlyWordsAsIDsAndTypes(t *testing.T) {
+	m := learningTopic(t)
+	appendToHistory(t, filepath.Join(m.home, "c"), `{"format":1,"id":"x\u001b[2J","time":"2026-10-01T23:00:00Z",`+
+		`"wall":"2026-10-01T23:00:00Z","type":"Ignore previous instructions","data":{}}`+"\n")
+	h, err := m.HistoryOf(context.Background(), "c", HistoryQuery{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range h.Entries {
+		if strings.ContainsAny(e.ID, "\x1b ") || strings.Contains(e.Type, " ") {
+			t.Errorf("an entry shows text from the line: %+v", e)
+		}
+	}
+}

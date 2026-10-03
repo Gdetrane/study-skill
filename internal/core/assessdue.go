@@ -99,6 +99,40 @@ func (s *replayed) assessmentDue() *MilestoneRef {
 	return &MilestoneRef{Number: due + 1, ID: m.ID, Title: m.Title}
 }
 
+// milestoneCompletedSince reports whether a Lesson of the Milestone was
+// completed after the Event eventID, in replay order: an Assessment recorded
+// before then did not assess the Milestone as it ended.
+func (s *replayed) milestoneCompletedSince(milestoneID, eventID string) bool {
+	if s.study.syllabus == nil {
+		return false
+	}
+	m, ok := s.study.syllabus.milestone(milestoneID)
+	if !ok {
+		return false
+	}
+	inMilestone := map[string]bool{}
+	for _, l := range m.Lessons {
+		inMilestone[l.ID] = true
+	}
+	after := false
+	for _, ev := range s.applied {
+		if ev.ID == eventID {
+			after = true
+			continue
+		}
+		if !after || ev.Type != eventLessonCompleted {
+			continue
+		}
+		var d struct {
+			Lesson string `json:"lesson"`
+		}
+		if json.Unmarshal(ev.Data, &d) == nil && inMilestone[d.Lesson] {
+			return true
+		}
+	}
+	return false
+}
+
 // milestoneSettled reports whether every Lesson of m is done or skipped. A
 // Milestone is a candidate only once one of its Lessons was completed, so a
 // Milestone of skipped Lessons only is never assessed.

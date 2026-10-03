@@ -270,3 +270,35 @@ func TestACompletionFromAnotherMachineDoesNotBringTheCueBack(t *testing.T) {
 		t.Errorf("a second completion merged in brought the cue back: %+v", r)
 	}
 }
+
+// An Assessment recorded before the Milestone's last Lesson was completed did
+// not assess the finished Milestone: the same Assessment recorded after it,
+// without a request id, is recorded, and ends the cue.
+func TestAnEarlyAssessmentIsNoRetryOnceTheMilestoneEnds(t *testing.T) {
+	ctx := context.Background()
+	m := learningTopic(t)
+	both := Syllabus{Milestones: []Milestone{{ID: "basics", Title: "Basics", Outcome: "Write a program that answers",
+		Priority: PriorityMust, Lessons: []SyllabusLesson{{ID: "answer", Title: "The answer", Hours: 1},
+			{ID: "next", Title: "The next one", Hours: 1}}}}}
+	revise(t, m, both)
+	finishAnswer(t, m)
+	end := AssessmentSpec{Kind: AssessmentMilestone, Milestone: "basics", Summary: "Answers well",
+		Items: []AssessmentItem{{Area: "answers", Outcome: AnswerCorrect}}}
+	if r, err := m.RecordAssessment(ctx, "c", end); err != nil || !r.Changed {
+		t.Fatalf("the early Assessment = %+v, %v", r, err)
+	}
+	if again, err := m.RecordAssessment(ctx, "c", end); err != nil || again.Changed {
+		t.Fatalf("a retry before the Milestone ends = %+v, %v; want nothing recorded", again, err)
+	}
+	finishNext(t, m)
+	if r := recommended(t, m); r == nil || r.Action != ActionAssess {
+		t.Fatalf("after the Milestone's last Lesson, status recommends %+v, want assess", r)
+	}
+	after, err := m.RecordAssessment(ctx, "c", end)
+	if err != nil || !after.Changed {
+		t.Fatalf("the same Assessment after the Milestone ended = %+v, %v; want it recorded", after, err)
+	}
+	if r := recommended(t, m); r != nil && r.Action == ActionAssess {
+		t.Errorf("after the Assessment, status still recommends %+v", r)
+	}
+}

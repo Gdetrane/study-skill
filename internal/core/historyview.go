@@ -192,7 +192,15 @@ func summarizeEvent(ev event, cardLesson map[string]string) HistoryEntry {
 			card = id
 		}
 	}
-	entry := HistoryEntry{ID: ev.ID, Type: ev.Type, At: wallOf(ev)}
+	// The id and type are shown only when they are words Lamplight writes:
+	// a line of the History edited by hand can hold any text.
+	entry := HistoryEntry{At: wallOf(ev)}
+	if word.MatchString(ev.ID) {
+		entry.ID = ev.ID
+	}
+	if historyTypePattern.MatchString(ev.Type) {
+		entry.Type = ev.Type
+	}
 	if l, _ := d["lesson"].(string); l != "" && validateEntityID("Lesson", l) == nil {
 		entry.Lesson = l
 	} else if l := cardLesson[card]; card != "" && l != "" && validateEntityID("Lesson", l) == nil {
