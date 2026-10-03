@@ -24,6 +24,7 @@ that scripts and agents can rely on. Terms follow [CONTEXT.md](../CONTEXT.md).
 | `study task remove <topic> <task>... [--dry-run]` | Removes Tasks that no longer matter. A Task removed already changes nothing; one that never existed is `not_found`. |
 | `study task list <topic> [--all]` | Lists the open Tasks, or all with `--all`, and the lines of `tasks.jsonl` that are not Tasks (`problems`). |
 | `study topic dismiss-flag <topic> <flag-id> [--dry-run]` | Dismisses one of the Topic's flags, by the id `status` shows, once the learner has looked at it. It records the decision in the History and never changes content. The result is `{"topic": ..., "flag": {...}, "changed": bool}`; dismissing a flag twice changes nothing. Only `held_event`, `conflict`, `damaged_line`, `clock_ahead` and `card_flagged` flags can be dismissed (see below). |
+| `study topic remove <topic> [--dry-run]` | Moves the Topic's folder, whole (git history included), out of the Study home into `.lamplight/removed/<YYYYMMDD-HHMMSS>-<topic>`, the time in UTC, and records nothing in the History. Nothing is deleted: the result, `{"topic": ..., "moved_to": path, "restore": command}`, carries the exact command that restores the Topic, `mv <moved_to> <Study home>/<topic>`, quoted for a POSIX shell; run it while no other Topic has that id. The removal is local to this computer: the Topic's git remote and other computers' copies are untouched. It waits for a write in progress (a dry run says so in `note`, without waiting), refuses (`failed_precondition`) while an interrupted write waits to be finished, and fails with `not_found` if the Topic is removed or replaced while it waits; every other write that was waiting then fails the same way and writes nothing. It is for the learner, such as before importing a v1 workspace again with `--not-done`; agents have no tool for it. |
 | `study import <v1-workspace> [--topic ID] [--not-done LESSON]... [--dry-run]` | Imports a v1 study workspace as a new Topic, with its history, leaving the original untouched. `--not-done` keeps a Lesson open that v1's records prove done. See [Importing a v1 workspace](#importing-a-v1-workspace). |
 | `study library build <folder>` | Indexes the books in a folder (relative to where you run it) and replaces the Library index in the Study home. |
 | `study library search <query> [--limit N]` | Ranks the books in the Library against the query. `--limit` defaults to 10 and is capped at 100; no matches is a success with an empty list. |
@@ -37,7 +38,7 @@ that scripts and agents can rely on. Terms follow [CONTEXT.md](../CONTEXT.md).
 | `study revision propose <topic> --summary S (--syllabus FILE \| --from-file) [--dry-run]` | Proposes a change to the Syllabus, the first one included. `--syllabus` names a file holding the whole Syllabus as it would be afterwards, as TOML like `syllabus.toml` or as JSON; `--from-file` proposes `syllabus.toml` as edited by hand. Nothing changes until the learner approves. |
 | `study revision apply <topic> <revision> [--learner-said S] [--dry-run]` | Applies a proposed Revision once the learner approves. On a terminal, study shows the change and asks the learner directly; an agent relaying their answer from the conversation passes their words with `--learner-said`. Answering no records a decline. |
 | `study revision decline <topic> <revision> [--learner-said S] [--dry-run]` | Records that the learner said no. The Syllabus is unchanged, and the Revision can no longer be applied. The result is `{"topic", "revision", "decision", "changed"}`; `apply` returns `{"topic", "revision", "syllabus", "approval", "changed"}`. Answering again changes nothing and reports the answer recorded the first time, on a terminal too. |
-| `study checkpoint --topic ID --role agent\|learner [-m MESSAGE] [--dry-run]` | Saves the Topic's work as a git commit at a turn switch. Skips when nothing changed, refuses during a merge or rebase, and lists large files it saved. Never runs programs named in the Topic's git configuration. It waits for a write in progress and finishes an interrupted one first; `--dry-run` refuses (`failed_precondition`) while one is pending. |
+| `study checkpoint --topic ID --role agent\|learner [-m\|--message MESSAGE] [--dry-run]` | Saves the Topic's work as a git commit at a turn switch. Skips when nothing changed, refuses during a merge or rebase, and lists large files it saved. Never runs programs named in the Topic's git configuration. It waits for a write in progress and finishes an interrupted one first; `--dry-run` refuses (`failed_precondition`) while one is pending. |
 | `study check <lesson> [--topic ID] [--timeout D]` | Runs a Lesson's Check on the current work and records the Attempt (see "Checks" below). Without `--topic`, it uses the Topic whose folder it runs in. |
 | `study rubric grade <lesson> <criterion> --grade G [...]` | Grades a rubric item of a Lesson's Check (see "Checks"). |
 | `study results <lesson> [--topic ID]` | Shows a Lesson's Check results and whether it can be completed (see "Checks"). |
@@ -55,7 +56,8 @@ that scripts and agents can rely on. Terms follow [CONTEXT.md](../CONTEXT.md).
 | `study doctor` | Diagnoses the setup and says how to fix what it finds. It works even when nothing else does. Exits 1 when a Finding failed. |
 | `study completion install [--shell S] [--dir D] [--yes] [--force] [--dry-run]` | Installs completions for bash, zsh or fish (default: from `$SHELL`) for your user. |
 | `study completion uninstall [--shell S] [--dry-run]` | Removes what `install` added, for every shell or only `--shell`. |
-| `study completion bash\|zsh\|fish\|powershell` | Prints a completion script, for packagers. |
+| `study completion bash`, `study completion zsh`, `study completion fish`, `study completion powershell` `[--no-descriptions]` | Prints a completion script, for packagers. `--no-descriptions` leaves out the help text shown next to each completion. |
+| `study man` | Prints study's man page in roff, for packagers to install as `study.1` (hidden from help). It has no JSON form: with `--json` it is a usage error. |
 | `study setup [--agent claude\|codex\|all] [--dry-run] [--force]` | Installs the `lamplight` skill and registers `study mcp` with Claude Code and Codex. See [Setting up agents](#setting-up-agents). |
 | `study setup --check [--agent A]` | Reports what is missing or stale, changing nothing; exits 1 (`unhealthy`) when setup has something to do. |
 | `study setup --remove [--agent A] [--dry-run]` | Undoes exactly what `study setup` did. |
@@ -843,7 +845,8 @@ that (`completed` is accepted, and `lesson 1` never matches `lesson 10` or `less
 no newer `Revert "..."` of it exists; otherwise the card does. The report shows each proof,
 the commit's hash and subject or the card, and a Lesson without one stays open, saying why.
 `--not-done lesson-NN`, repeatable, keeps a Lesson open whatever its proof: check the dry run
-first, since a Topic imported already must be removed before importing it again.
+first, since a Topic imported already must be removed (`study topic remove <topic>`) before
+importing it again.
 
 **The git files.** In a `.gitignore` and a `.gitattributes`, the last matching line wins, so
 the learner's lines come first and Lamplight's last. The `.gitignore` gets Lamplight's
@@ -914,11 +917,14 @@ Commands that write accept `--dry-run`, which validates the request and reports 
 change without writing anything.
 
 Every write to a Topic takes the Topic's lock, so the CLI and the MCP server can run at
-the same time. It records its Event in the History before it changes any content, so a
+the same time. Once it holds the lock, it checks that the Topic's folder is still the one it
+opened; if the Topic was removed or replaced meanwhile, it fails with `not_found` and
+writes nothing. It records its Event in the History before it changes any content, so a
 write interrupted by a crash is finished by the next write or Checkpoint. A dry run reports
 what the real run would do after finishing such a write, and writes nothing. Lock and
-intent-marker files live in the Study home's `.lamplight/` folder, are local to the
-machine, and are never synced.
+intent-marker files live in the Study home's `.lamplight/` folder, which holds this
+computer's local state (removed Topics too). Lamplight never syncs it; if a file-sync tool
+syncs the Study home, exclude `.lamplight/` from it. Topics sync through git.
 
 ## Sources and Evidence
 

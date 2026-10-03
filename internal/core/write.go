@@ -79,6 +79,7 @@ func (v *topicView) read(item string) ([]byte, bool, error) {
 
 // Points where a test can interrupt a write, as a crash would. See Core.crash.
 const (
+	crashBeforeLock  = "before-lock"  // the Topic is open, its lock not yet taken: nothing is written
 	crashAfterIntent = "after-intent" // the marker is written, the Event is not
 	crashAfterEvent  = "after-event"  // the Event is written, no content is
 	crashAfterItem   = "after-item"   // after each item is replaced
@@ -91,7 +92,8 @@ const (
 // writeTopic records one change in a Topic, so that a crash at any point
 // leaves something recovery can finish (ADR-0005):
 //
-//  1. take the Topic's lock, so the CLI and the MCP server never interleave;
+//  1. take the Topic's lock, so the CLI and the MCP server never interleave,
+//     and check the Topic was not removed or replaced while waiting for it;
 //  2. finish any interrupted write, then replay the History and plan;
 //  3. leave an intent marker naming the Event;
 //  4. append the Event, with each item's hash before and after;
@@ -114,7 +116,7 @@ func (c *Core) writeTopic(ctx context.Context, topicID string, p plan, dryRun bo
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	unlock, err := lockTopic(ctx, home, topicID)
+	unlock, err := c.lockOpenedTopic(ctx, home, topic, topicID)
 	if err != nil {
 		return nil, err
 	}

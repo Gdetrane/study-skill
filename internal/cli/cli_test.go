@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -30,12 +31,14 @@ type result struct {
 	stdout, stderr string
 }
 
-// eventIDs numbers Events across the whole test process: like real random
-// IDs, they never repeat between runs against one Study home.
-var eventIDs atomic.Int64
+// eventIDs numbers Events per Study home: like real random IDs they never
+// repeat between runs against one home, and because each home counts from
+// id001 the golden files don't depend on which tests ran before.
+var eventIDs sync.Map // Study home → *atomic.Int64
 
 func options(home, dir string) core.Options {
-	n := &eventIDs
+	counter, _ := eventIDs.LoadOrStore(home, new(atomic.Int64))
+	n := counter.(*atomic.Int64)
 	return core.Options{
 		Getenv: func(key string) string {
 			return map[string]string{"STUDY_HOME": home, "HOME": home}[key]
@@ -108,6 +111,9 @@ func TestJSONOutput(t *testing.T) {
 		{"topic_dismiss_flag_dry_run", withFlaggedTopic, []string{"topic", "dismiss-flag", "linear-algebra", heldFlag, "--dry-run", "--json"}, cli.ExitOK},
 		{"topic_dismiss_flag_unknown", withFlaggedTopic, []string{"topic", "dismiss-flag", "linear-algebra", "0123456789", "--json"}, cli.ExitError},
 		{"topic_dismiss_flag_bad_id", withFlaggedTopic, []string{"topic", "dismiss-flag", "linear-algebra", "nope", "--json"}, cli.ExitUsage},
+		{"topic_remove_dry_run", withTopic, []string{"topic", "remove", "linear-algebra", "--dry-run", "--json"}, cli.ExitOK},
+		{"topic_remove", withTopic, []string{"topic", "remove", "linear-algebra", "--json"}, cli.ExitOK},
+		{"topic_remove_unknown", withTopic, []string{"topic", "remove", "biology", "--json"}, cli.ExitError},
 	} {
 		t.Run(tc.golden, func(t *testing.T) {
 			home := tc.home(t)
@@ -159,6 +165,11 @@ func TestHumanOutput(t *testing.T) {
 	flagged := withFlaggedTopic(t)
 	golden(t, "topic_dismiss_flag.txt", run(t, flagged, "topic", "dismiss-flag", "linear-algebra", heldFlag).stdout)
 	golden(t, "topic_dismiss_flag_again.txt", run(t, flagged, "topic", "dismiss-flag", "linear-algebra", heldFlag).stdout)
+
+	removable := withTopic(t)
+	golden(t, "topic_remove_dry_run.txt", run(t, removable, "topic", "remove", "linear-algebra", "--dry-run").stdout)
+	golden(t, "topic_remove.txt", run(t, removable, "topic", "remove", "linear-algebra").stdout)
+	golden(t, "status_after_topic_remove.txt", run(t, removable, "status").stdout)
 }
 
 // heldFlag is the ID of the flag withFlaggedTopic's held Event raises. Flag
@@ -311,6 +322,8 @@ func TestCheckpointCommand(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(home, ".gitconfig"))
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 	if err := os.WriteFile(filepath.Join(home, ".gitconfig"), []byte("[user]\n\tname = Ada Learner\n\temail = ada@example.com\n[maintenance]\n\tauto = false\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}

@@ -21,9 +21,10 @@ Done when the Syllabus is approved and the learner has a Next step.
    among them, to be written again in step 7). Ask whether the Lessons shown done are the
    ones they finished. If one is not, fix it now, before anything else, since a Revision
    cannot drop a done Lesson: the Topic is a copy and the v1 workspace is untouched, so ask
-   the learner to move the Topic's folder out of the Study home, then to import again,
-   keeping that Lesson open: `study import <v1-workspace> --not-done <lesson-id>`, once per
-   Lesson. Then start again here. Done when the learner agrees with the report.
+   the learner to run `study topic remove <topic>` (it moves the Topic out of the way into
+   `.lamplight/removed`, deleting nothing), then to import again, keeping that Lesson
+   open: `study import <v1-workspace> --not-done <lesson-id>`, once per Lesson. Then start
+   again here. Done when the learner agrees with the report.
 2. The Goal and its deadline. v1's goal became the Topic's Goal; confirm it, ask whether
    there is a deadline, and record changes with `topic_update`. The Level came from v1's
    difficulty (`source` is `import`): confirm it the same way, or let the first Assessment

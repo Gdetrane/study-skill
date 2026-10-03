@@ -18,6 +18,8 @@ import (
 
 	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/fang"
+	mango "github.com/muesli/mango-cobra"
+	"github.com/muesli/roff"
 	"github.com/spf13/cobra"
 
 	"github.com/mordor-forge/lamplight/v2/internal/core"
@@ -69,6 +71,8 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		err = fang.Execute(ctx, root,
 			fang.WithVersion(version()),
 			fang.WithErrorHandler(a.handleError),
+			// study has its own man command, which writes where it is told.
+			fang.WithoutManpage(),
 		)
 	}
 	switch {
@@ -168,7 +172,7 @@ func (a *app) rootCommand() *cobra.Command {
 
 	topic := &cobra.Command{
 		Use:   "topic",
-		Short: "Create and inspect Topics",
+		Short: "Create, change and remove Topics, and dismiss their flags",
 		Args:  noArgs,
 		RunE:  a.groupHelp,
 	}
@@ -310,7 +314,36 @@ func (a *app) rootCommand() *cobra.Command {
 		},
 	}
 	dismiss.Flags().BoolVar(&dismissDryRun, "dry-run", false, "show the flag that would be dismissed without recording anything")
-	topic.AddCommand(create, update, dismiss)
+	var removeDryRun bool
+	remove := &cobra.Command{
+		Use:   "remove <topic>",
+		Short: "Move a Topic out of the Study home, deleting nothing",
+		Long: "Move a Topic's folder, whole, into the Study home's .lamplight/removed folder, as\n" +
+			"<YYYYMMDD-HHMMSS>-<topic> in UTC. Nothing is deleted: study prints the exact command\n" +
+			"that restores it, mv <moved to> <Study home>/<topic>, to run while no other Topic has\n" +
+			"that id. Use it to import a v1 workspace again, for example with --not-done.\n\n" +
+			"It acts on this computer only: the Topic's git remote and other computers keep their\n" +
+			"copies. It waits for a write in progress, and refuses while an interrupted one waits\n" +
+			"to be finished.",
+		Example: "  study topic remove go-concurrency --dry-run\n  study topic remove go-concurrency",
+		Args:    exactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := core.Open(a.opts)
+			if err != nil {
+				return a.fail(err)
+			}
+			res, err := c.RemoveTopic(cmd.Context(), args[0], removeDryRun)
+			if err != nil {
+				return a.fail(err)
+			}
+			if a.json {
+				return a.writeJSON(envelope{OK: true, Data: res})
+			}
+			return writeTopicRemoval(a.out, res)
+		},
+	}
+	remove.Flags().BoolVar(&removeDryRun, "dry-run", false, "show where the Topic would go without moving it")
+	topic.AddCommand(create, update, dismiss, remove)
 
 	doctor := &cobra.Command{
 		Use:   "doctor",
@@ -329,8 +362,33 @@ func (a *app) rootCommand() *cobra.Command {
 	root.AddCommand(a.rubricCommand(), a.resultsCommand(), a.lessonCommand(), a.historyCommand())
 	root.AddCommand(a.assessmentCommand(), a.hintCommand(), a.signalsCommand())
 	root.AddCommand(a.setupCommand(), a.claudePluginPathCommand(), a.claudeHookCommand())
+	root.AddCommand(a.manCommand())
 	a.completionCommands(root)
 	return root
+}
+
+// manCommand prints study's man page in roff, for packages to install as
+// study.1. It replaces fang's own, which writes to the process's stdout
+// rather than the command's. The page is roff, so --json is a usage error.
+func (a *app) manCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:                   "man",
+		Short:                 "Print the man page, for packagers",
+		Hidden:                true,
+		DisableFlagsInUseLine: true,
+		Args:                  noArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if a.json {
+				return a.fail(usageError{errors.New("study man prints the man page in roff, never JSON: run it without --json")})
+			}
+			page, err := mango.NewManPage(1, cmd.Root())
+			if err != nil {
+				return err
+			}
+			_, err = fmt.Fprint(cmd.OutOrStdout(), page.Build(roff.NewDocument()))
+			return err
+		},
+	}
 }
 
 func (a *app) checkpointCommand() *cobra.Command {
