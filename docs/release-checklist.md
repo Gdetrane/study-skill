@@ -79,10 +79,17 @@ git switch --detach upstream/v2
 go install ./cmd/study                 # the trial build, in $(go env GOPATH)/bin
 command -v study                       # must print $(go env GOPATH)/bin/study
 study --version
-mkdir -p ~/.config/lamplight
-printf 'format = 1\nstudy_home = "~/study-v2-trial"\n' > ~/.config/lamplight/config.toml
-"$(go env GOPATH)/bin/study" doctor    # checks the trial build and the trial Study home
+# The config file is in $XDG_CONFIG_HOME when that is set, else in ~/.config. Run through sh,
+# so it reads the same in fish; set -C refuses to replace a config you already have.
+sh -c 'config="${XDG_CONFIG_HOME:-$HOME/.config}/lamplight/config.toml"
+mkdir -p "$(dirname "$config")" && set -C &&
+printf "format = 1\nstudy_home = \"~/study-v2-trial\"\n" > "$config" && echo "wrote $config"'
+"$(go env GOPATH)/bin/study" doctor    # checks the trial build; study_home must be ~/study-v2-trial
 ```
+
+If the `sh -c` line fails because the file exists, add the `study_home` line to that file by
+hand. Go on only once `doctor` names the trial Study home: with any other, step 3 would import
+into your real one.
 
 v1 stays installed and working: v2's skill is `lamplight`, and nothing in v2 writes to v1's
 `~/.agents/skills/study`.
@@ -247,8 +254,8 @@ In this order: the v1 branch, the checks `main` requires, the rename, the merge,
 
 - [ ] Refresh the published design page from `docs/design/lamplight-v2.md`, `CONTEXT.md`
       and the ADRs as tagged in `v2.0.0`.
-- [ ] Move to the real Study home when you are ready: remove `study_home` from
-      `~/.config/lamplight/config.toml` (or point it at the real Study home), import your v1
+- [ ] Move to the real Study home when you are ready: remove `study_home` from the config
+      file step 2 wrote (or point it at the real Study home), import your v1
       workspaces there, dry run first, and keep or delete `~/study-v2-trial`.
 - [ ] Keep the `v2` branch until the release has settled. To delete it, first delete the
       "v2 protection" ruleset, which forbids deleting the branch, and drop `v2` from the
