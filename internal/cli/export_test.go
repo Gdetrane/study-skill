@@ -2,6 +2,7 @@ package cli
 
 import (
 	"strings"
+	"time"
 
 	"github.com/mordor-forge/lamplight/v2/internal/core"
 )
@@ -29,6 +30,29 @@ func RenderHistory(v core.HistoryView) string {
 	var b strings.Builder
 	_ = writeHistory(&b, v)
 	return b.String()
+}
+
+// SetExecutable makes study see path as its own binary, as study setup
+// registers it, and returns a function that restores the real one.
+func SetExecutable(path string) func() {
+	old := executable
+	executable = func() (string, error) { return path, nil }
+	return func() { executable = old }
+}
+
+// SetBeforeSkillWrite installs a hook that runs before study setup writes
+// each skill file, and returns a function that removes it.
+func SetBeforeSkillWrite(hook func(rel string)) func() {
+	beforeSkillWrite = hook
+	return func() { beforeSkillWrite = nil }
+}
+
+// SetAgentTimeouts shortens how long agent commands may run, and returns a
+// function that restores the real limits.
+func SetAgentTimeouts(read, write time.Duration) func() {
+	oldRead, oldWrite := agentReadTimeout, agentWriteTimeout
+	agentReadTimeout, agentWriteTimeout = read, write
+	return func() { agentReadTimeout, agentWriteTimeout = oldRead, oldWrite }
 }
 
 // WriteScores renders a criterion's scores as the check and results

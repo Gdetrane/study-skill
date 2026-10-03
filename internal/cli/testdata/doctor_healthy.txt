@@ -7,5 +7,6 @@
 ✓ library       no index yet: study library build <folder> indexes your books
 ✓ log           $HOME/.local/state/lamplight/study.log (level info)
 ✓ completion    fish completions are installed at $HOME/.config/fish/completions/study.fish
+✓ setup         no Claude Code or Codex found; other agents need an MCP server that runs study mcp
 
 Everything looks good.

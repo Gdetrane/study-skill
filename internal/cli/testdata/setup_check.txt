@@ -1,0 +1,6 @@
+✓ setup:skill              the skill is installed in $HOME/.agents/skills/lamplight
+✓ setup:claude             study is registered with claude
+✓ setup:claude_skill_link  $HOME/.claude/skills/lamplight leads to the skill
+✓ setup:codex              study is registered with codex
+
+study setup is up to date.

@@ -48,6 +48,11 @@
         "name": "completion",
         "status": "ok",
         "message": "fish completions are installed at $HOME/.config/fish/completions/study.fish"
+      },
+      {
+        "name": "setup",
+        "status": "ok",
+        "message": "no Claude Code or Codex found; other agents need an MCP server that runs study mcp"
       }
     ]
   }
