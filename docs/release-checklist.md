@@ -42,11 +42,6 @@ REPO=mordor-forge/study-skill        # bash, zsh; in fish: set REPO mordor-forge
   gh secret list -R $REPO                 # HOMEBREW_TAP_TOKEN and AUR_KEY, names only
   ```
 
-  `study man` now writes through the command's output instead of fang's hidden command,
-  so the comment in `scripts/release-assets.sh` saying the man page is captured from the
-  process's stdout is stale. The script still works, since it redirects stdout; fix the
-  comment there.
-
 - [ ] #18's first half is done: the `v1.0.0` tag points at the last v1 commit, `main`'s
       README says v2 is in development on `v2` (#40), and the five dependabot PRs open
       against `main` are closed. They bump actions in v1's workflow, which the merge
