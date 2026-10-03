@@ -12,3 +12,6 @@ func SetTestHook(t *testing.T, f func(point string)) {
 // CanPin reports whether git is pinned to the opened repository through
 // /proc/self/fd on this system.
 func CanPin() bool { return canPin() }
+
+// LogWithin is Log with its output bounded to maxBytes.
+var LogWithin = logWithin

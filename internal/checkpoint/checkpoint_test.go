@@ -737,6 +737,20 @@ func TestSnapshotRejectsPathsOutsideTheTopic(t *testing.T) {
 	}
 }
 
+// TestHeldOutDataIsCommittedWhateverTheLinesAbove: a learner's line such as
+// .* leaves out the .heldout folder, and git never looks inside a folder it
+// leaves out; the default's last lines bring the folder and its files back.
+func TestHeldOutDataIsCommittedWhateverTheLinesAbove(t *testing.T) {
+	dir := newRepo(t)
+	write(t, dir, ".gitignore", ".*\n!.gitignore\n"+checkpoint.DefaultGitignore())
+	write(t, dir, ".heldout/answer/data.parquet", "PAR1")
+	write(t, dir, "scratch.parquet", "PAR1")
+	st := git(t, dir, "status", "--porcelain", "--ignored", "--untracked-files=all")
+	if !strings.Contains(st, "?? .heldout/answer/data.parquet") || !strings.Contains(st, "!! scratch.parquet") {
+		t.Errorf("git status:\n%s", st)
+	}
+}
+
 func TestDefaultGitignoreCoversDataAndModelArtefacts(t *testing.T) {
 	ignore := checkpoint.DefaultGitignore()
 	for _, pattern := range []string{"*.parquet", "*.duckdb", "*.gguf", "*.safetensors", "*.pt", "*.pth", "__pycache__/"} {

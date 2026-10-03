@@ -333,6 +333,31 @@ func (c *Core) diagnoseTopics(ctx context.Context, d *Diagnosis) {
 				Fix:     "move " + t.Path + "/.git away, then run git -C " + t.Path + " init --initial-branch=main"})
 		}
 	}
+	if f, ok := c.diagnoseStaging(home); ok {
+		d.Add(f)
+	}
+}
+
+// diagnoseStaging warns about folders an interrupted import or Topic
+// creation left in .lamplight/tmp, which take space and nothing else.
+func (c *Core) diagnoseStaging(home *os.Root) (Finding, bool) {
+	stale := staleStagingFolders(home)
+	if len(stale) == 0 {
+		return Finding{}, false
+	}
+	dir := filepath.Join(c.home, localDir, "tmp")
+	paths := make([]string, len(stale))
+	for i, s := range stale {
+		paths[i] = strconv.Quote(filepath.Join(dir, s))
+	}
+	what := "1 folder"
+	if len(stale) > 1 {
+		what = fmt.Sprintf("%d folders", len(stale))
+	}
+	return Finding{Name: "staging", Status: FindingWarn,
+		Message: fmt.Sprintf("%s in %s, left over an hour ago by an interrupted import or Topic creation: %s",
+			what, dir, strings.Join(stale, ", ")),
+		Fix: "the next study import removes them, or delete them: rm -rf " + strings.Join(paths, " ")}, true
 }
 
 func (c *Core) diagnoseLibrary() Finding {

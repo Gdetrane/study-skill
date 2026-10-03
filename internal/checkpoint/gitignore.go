@@ -51,7 +51,9 @@ node_modules/
 .*.lamplight-tmp-*
 
 # Held-out data is committed with the Topic, whatever its format, so every
-# machine measures on the same data. Keep this last.
+# machine measures on the same data. The folder itself is re-included first:
+# git never looks inside a folder a line above leaves out. Keep these last.
+!/.heldout/
 !.heldout/**
 `
 

@@ -1,4 +1,4 @@
 study setup would set up Lamplight with study at $HOME/bin/study
-  skill   would install in $HOME/.agents/skills/lamplight (8 files to write)
+  skill   would install in $HOME/.agents/skills/lamplight (9 files to write)
   claude  would register; would link $HOME/.claude/skills/lamplight
   codex   would register

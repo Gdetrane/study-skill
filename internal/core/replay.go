@@ -158,6 +158,8 @@ type replayed struct {
 	plans *planningState
 	// assess is the Topic's Assessments, Level and hints; see assessing().
 	assess *assessmentState
+	// imported is the Topic's import from a v1 workspace, if any.
+	imported *importState
 
 	// repeat is set by an Event's replay when the Event repeats a change
 	// already replayed, such as one Revision approved on two machines: its

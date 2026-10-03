@@ -285,7 +285,8 @@ hours before any learning happens is exactly what v1 produced.
    otherwise the next move in the Syllabus (plan it, start, continue,
    practice or go over feedback on the current Lesson), otherwise Reviews or exploring once
    every Lesson is done. A paused Topic's recommendation is instead to resume it or pick
-   another Topic (`resume_topic`), and a finished Topic's is its Reviews, or `stop` when no
+   another Topic (`resume_topic`), an imported Topic's is to adopt it (`adopt`, see
+   Migration from v1) until it has a Syllabus, and a finished Topic's is its Reviews, or `stop` when no
    Card is ready. A Triage is never the recommendation. For Cards, `status` says only whether
    Reviews are possible now, under the Topic's daily cap on new Cards, or when the next Card
    falls due; a paused Topic's Cards are never ready. How many is decided when a Session's
@@ -298,12 +299,12 @@ hours before any learning happens is exactly what v1 produced.
    With nothing due at fumes, the offer is "write tomorrow's first step"; without a
    Syllabus, it is to plan one. A paused Topic is never suggested for study, and a finished
    one only for its Reviews. `session_open` returns the suggestion when it gets an Energy
-   and no Focus yet, as one value: a Focus, `plan`, `stop`, `resume_topic` or `assess`, the
-   same words `status` recommends. `assess` is suggested at full and half Energy; at fumes
-   the Assessment waits, and the suggestion is Reviews or `stop`. The suggestion is never
-   recorded, only the Focus the learner chooses: `session_open` again with the open
-   Session's id and that Focus records it on the same Session (`session.focused`) and opens
-   nothing new.
+   and no Focus yet, as one value: a Focus, `plan`, `adopt`, `stop`, `resume_topic` or
+   `assess`, the same words `status` recommends. `assess` is suggested at full and half
+   Energy; at fumes the Assessment waits, and the suggestion is Reviews or `stop`. The
+   suggestion is never recorded, only the Focus the learner chooses: `session_open` again
+   with the open Session's id and that Focus records it on the same Session
+   (`session.focused`) and opens nothing new.
 3. The Learner profile and the Topic's additions are read at the start of every Session;
    `status` gives their paths when the files exist.
 4. A Lesson moves through its Phases: teaching → practicing → feedback. The Check's criteria
@@ -413,7 +414,8 @@ hours before any learning happens is exactly what v1 produced.
   machines measured first.
 - **Held-out data** lives in `.heldout/<lesson-id>/`, committed with the Topic so every
   machine measures on the same data; it is synthetic or public, never personal data. The
-  default `.gitignore` ends with `!.heldout/**`, so data formats it ignores elsewhere
+  default `.gitignore` ends with `!/.heldout/` and `!.heldout/**` (git never looks inside
+  a folder a line above leaves out), so data formats it ignores elsewhere
   (Parquet, `build/`) are committed there. "Out of the learner's sight" is a convention the
   agent keeps, not a lock: the agent writes the data before practicing starts and never
   shows it, and Lamplight never prints it, never lists its file names among an unclosed
@@ -668,7 +670,7 @@ more; files that vanish count as deleted. A dry run reports whether a Checkpoint
 made, and its large files, without writing anything to `.git` or waiting for the lock. The
 default `.gitignore` covers data and model artefacts (Parquet, DuckDB, GGUF, safetensors,
 PyTorch checkpoints), build outputs, test coverage files (`.coverage`, `coverage.out`) and
-caches, and ends with `!.heldout/**`, so Held-out data is always committed. Held-out files
+caches, and ends with `!/.heldout/` and `!.heldout/**`, so Held-out data is always committed. Held-out files
 never appear among the large files a Checkpoint reports.
 
 ## Distribution and setup
@@ -713,17 +715,53 @@ v1 stays installed as the `study` skill and keeps working. The LLM data engineer
 stays on v1 until after 13 October. Until the learner switches, v2's skill is installed only
 for testing, against a separate Study home, so "let's study" keeps reaching v1.
 
-1. `study import <v1-dir> [--dry-run]` copies the workspace, git history included, into the
-   Study home and leaves the original untouched. It keeps v1 folder and Lesson names as IDs
-   (`lesson-01`), so paths quoted in Lesson text and in `.gitignore` keep working. It moves
-   `lessons/plan.md` to `notes/v1-plan.md`, converts `.study-config.json` into `topic.toml`,
-   and maps `sources` and `notebooklm` to the Knowledge base. It records one `imported` Event
-   plus the Lesson completions it can prove. v1's lesson-level cards are dropped.
-   `--dry-run` lists everything that will be dropped.
+1. `study import <v1-dir> [--not-done lesson-NN]... [--dry-run]` copies the workspace, git
+   history included, into the Study home and leaves the original untouched. It keeps v1
+   folder and Lesson names as IDs (`lesson-01`), so paths quoted in Lesson text and in
+   `.gitignore` keep working. It moves `lessons/plan.md` to `notes/v1-plan.md`, converts
+   `.study-config.json` into `topic.toml`, and maps `sources` and `notebooklm` to the
+   Knowledge base. It records one `topic.imported` Event, whose payload is the import's
+   report and carries the Lesson completions it can prove, after the settings and Sources it
+   converts. v1's lesson-level cards are dropped. `--dry-run` lists everything that will be
+   copied, converted, moved and dropped, with each proof.
+   - Every move is planned before anything is copied, and the dry run and the import share
+     the plan: a Lesson's file under `lessons/` moves to `lessons/lesson-NN.md`, the Lesson
+     file v2 reads, once, never over another file; v1's config is kept as
+     `notes/v1-config.json`, and v1 files named like Lamplight's state files move to
+     `notes/v1-<name>`. Nothing under `.git` moves.
+   - A Lesson v1 calls completed counts as done only with its file under `lessons/` and v1's
+     own record of it: the commit v1's Lesson Completion Contract makes, `[agent] complete
+     lesson NN`, matched whole and not reverted since, or the card `lesson-NN` the contract
+     adds. Anything else stays open, and the report says it was not proven; the learner keeps
+     any Lesson open with `--not-done`. A completion the import proves has no Attempt; a
+     Revision cannot remove or skip it.
+   - Everything is copied, git-ignored or not, except links leading outside the workspace
+     (resolved through `os.Root`, so a second link cannot lead out either), special files,
+     v1's cards, and folders the language's tools rebuild (`node_modules`, virtual
+     environments, caches, Rust and Maven `target`), unless the history tracks them. Each
+     is listed with why; nothing refuses the import.
+   - The learner's `.gitignore` and `.gitattributes` lines come first and Lamplight's last,
+     so they win: negations keep the state files in Checkpoints, and the state files'
+     attributes are reset to Lamplight's. The Event records the merged `.gitattributes`.
+   - The v1 difficulty becomes the Level with `source: import`, v1's estimate, until an
+     Assessment or the learner sets it.
+   - The workspace is copied under `.lamplight/tmp` and moved into place when complete, so
+     an interrupted import leaves no Topic; the next import removes staging folders over an
+     hour old whose Topic is not locked, and `study doctor` reports them. Imports run one at
+     a time under a lock, and a workspace is known by its real path, so the same one cannot
+     be imported twice. Its history is read only through the hardened checkpoint package, in
+     UTF-8 and bounded. A repository borrowing objects (alternates) is refused with the fix,
+     `git repack -a -d` then deleting `objects/info/alternates`; one where git is writing is
+     `busy`.
 2. An adoption Session works through a checklist: Goal and deadline, Pace periods, Syllabus
-   from `notes/v1-plan.md` (the three tiers become three Milestone priorities), a Check for
-   each open Lesson, the Knowledge base, Cards for completed Lessons, and the Next step from
-   v1's `pending_action` and `context`. The learner approves the result as a Revision.
+   from `notes/v1-plan.md` (the three tiers become three Milestone priorities), or, without
+   one (only v1's project approach wrote it), from v1's lesson list and the learner's notes,
+   a Check for each open Lesson, the Knowledge base, Cards for completed Lessons, and the
+   Next step from v1's `pending_action` and `context`. The learner approves the result as a
+   Revision. A proof the learner disputes is fixed before adoption, by importing again with
+   `--not-done`. Until the Topic has a Syllabus, `status` recommends `adopt` and carries the
+   import's report, and `session_open` suggests it (Instruction 13); the skill's adoption
+   reference is the checklist.
 3. Acceptance test: `~/study-workspaces/c` and `~/study-workspaces/llm-data-engineering`
    import and resume exactly where they stopped. Automated tests use sanitised copies,
    because the real workspaces contain work-related content.

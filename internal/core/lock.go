@@ -16,13 +16,24 @@ const lockWait = 30 * time.Second
 // an advisory lock on .lamplight/locks/<topic>.lock in the Study home, local
 // and never synced, which the operating system releases if the process dies.
 func lockTopic(ctx context.Context, home *os.Root, topicID string) (unlock func(), err error) {
-	dir := filepath.Dir(lockPath(topicID))
+	return lockFile(ctx, home, lockPath(topicID), "Topic "+topicID, "writing to Topic "+topicID)
+}
+
+// importLock serialises imports: two of the same v1 workspace must not both
+// succeed. Its name cannot be a Topic id's.
+const importLock = ".import"
+
+// lockFile takes the advisory lock at rel in the Study home, waiting up to
+// lockWait for another process to release it. what names the lock in
+// errors, and doing what its holder is doing.
+func lockFile(ctx context.Context, home *os.Root, rel, what, doing string) (unlock func(), err error) {
+	dir := filepath.Dir(rel)
 	if err := home.MkdirAll(dir, 0o755); err != nil {
 		return nil, internalError("creating "+dir, err)
 	}
-	f, err := home.OpenFile(lockPath(topicID), os.O_RDWR|os.O_CREATE, 0o644)
+	f, err := home.OpenFile(rel, os.O_RDWR|os.O_CREATE, 0o644)
 	if err != nil {
-		return nil, internalError("opening the lock of Topic "+topicID, err)
+		return nil, internalError("opening the lock of "+what, err)
 	}
 	deadline := time.Now().Add(lockWait)
 	wait := time.Millisecond
@@ -30,7 +41,7 @@ func lockTopic(ctx context.Context, home *os.Root, topicID string) (unlock func(
 		locked, err := tryLock(f)
 		if err != nil {
 			_ = f.Close()
-			return nil, internalError("locking Topic "+topicID, err)
+			return nil, internalError("locking "+what, err)
 		}
 		if locked {
 			return func() {
@@ -41,7 +52,7 @@ func lockTopic(ctx context.Context, home *os.Root, topicID string) (unlock func(
 		if time.Now().After(deadline) {
 			_ = f.Close()
 			return nil, &Error{Code: CodeBusy,
-				Message: "another study process has been writing to Topic " + topicID + " for over " + lockWait.String() + ": try again"}
+				Message: "another study process has been " + doing + " for over " + lockWait.String() + ": try again"}
 		}
 		select {
 		case <-ctx.Done():

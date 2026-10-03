@@ -37,6 +37,9 @@ Everything else in a Topic changes only through the tools (Instruction 3).
    - When the Topic's Knowledge base is `notebooklm`, make one cheap call to the NotebookLM
      MCP server; when it fails, tell them they may need to log in to NotebookLM again.
    - No Topic yet, or a new subject: [Starting a Topic](references/starting-a-topic.md).
+   - When it recommends `adopt`, the Topic came from v1 with
+     `study import <v1-workspace>`: open the Session on it, then follow
+     [Adopting a Topic from v1](references/adopting-v1.md) (Instruction 13).
 
    Done when the learner has seen where they are and chosen the Topic.
 2. Energy and time. Ask how much energy they have and how long they have today, or whether
@@ -57,6 +60,8 @@ Everything else in a Topic changes only through the tools (Instruction 3).
    are not Focuses and record nothing there. Then follow the choice:
    - Learn or Practice: [The lesson loop](references/lesson-loop.md).
    - Reviews or Explore: [Cards and Reviews](references/cards-and-reviews.md).
+   - `adopt`: resume [Adopting a Topic from v1](references/adopting-v1.md) at the first
+     step not done.
    - `plan`: resume [Starting a Topic](references/starting-a-topic.md) at the first step
      not done.
    - `assess`: offer the Milestone's Assessment first

@@ -53,6 +53,9 @@ type Topic struct {
 	// Resume is where the learner stopped, once the Topic has a Syllabus
 	// or a Session: show its Next step first.
 	Resume *ResumePoint `json:"resume,omitempty"`
+	// Imported is where the Topic was imported from, for a Topic imported
+	// from a v1 workspace, and whether it has been adopted yet.
+	Imported *TopicImported `json:"imported,omitempty"`
 	// LessonsWithoutEvidence are the Lessons started or done that cite no
 	// Evidence, once the Topic has Sources or a NotebookLM Knowledge base.
 	// They are marked, never blocked.
@@ -572,13 +575,14 @@ func applyTopicCreated(ev event, item string, _ []byte, _ bool) ([]byte, bool, e
 		data, err := encodeTopicSettings(topicSettings{Title: d.Title, Goal: d.Goal})
 		return data, err == nil, err
 	case gitattributes:
-		// These files hold one record per line, so a union merge keeps both
-		// machines' lines; replay and status flag what conflicts.
-		return []byte(historyFile + " merge=union\n" + cardsFile + " merge=union\n" + sourcesFile + " merge=union\n" +
-			tasksFile + " merge=union\n"), true, nil
+		return []byte(strings.Join(unionFiles, " merge=union\n") + " merge=union\n"), true, nil
 	}
 	return nil, false, corruptf("Event %s (%s) cannot edit %s", ev.ID, ev.Type, item)
 }
+
+// unionFiles hold one record per line, so a union merge keeps both
+// machines' lines; replay and status flag what conflicts.
+var unionFiles = []string{historyFile, cardsFile, sourcesFile, tasksFile}
 
 func applyTopicUpdated(ev event, item string, current []byte, exists bool) ([]byte, bool, error) {
 	if item != topicFile {
@@ -743,6 +747,7 @@ func (c *Core) loadTopic(home *os.Root, id string) (Topic, error) {
 	c.addPlan(&topic, s, settings, newView(root, s))
 	addLevel(&topic, s, settings, data)
 	addApproach(&topic, settings)
+	addImported(&topic, s)
 	c.addTopicGuidance(root, s, &topic)
 	if unfinished := unfinishedItems(home, id, s); len(unfinished) > 0 {
 		kept := topic.Flags[:0]

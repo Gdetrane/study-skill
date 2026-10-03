@@ -211,6 +211,11 @@ func (c *Core) OpenSession(ctx context.Context, topicID string, spec SessionSpec
 		}
 		if spec.Focus == "" {
 			result.Suggested = suggestFocus(spec.Energy, state, result.Resume, result.Cards, s.assessmentDue())
+			// An imported Topic is adopted before its Syllabus is planned.
+			if sg := result.Suggested; sg != nil && sg.Suggest == SuggestPlan && s.imported != nil {
+				result.Suggested = &FocusSuggestion{Suggest: SuggestAdopt,
+					Reason: "the Topic was imported from v1: adopt it together first"}
+			}
 		}
 		return &change{Type: eventSessionOpened, Data: sessionOpenedData{Energy: spec.Energy, Focus: spec.Focus}}, nil
 	}, spec.DryRun)
