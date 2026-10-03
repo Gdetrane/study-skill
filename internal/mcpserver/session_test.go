@@ -39,12 +39,22 @@ func TestSessionsAndBreakPoints(t *testing.T) {
 	if opened.Suggested == nil || opened.Suggested.Suggest != core.FocusLearn || len(opened.Unclosed) != 0 {
 		t.Errorf("first Session = %+v", opened)
 	}
+	// The learner chooses the suggested Focus: it is recorded on this
+	// Session, and no other opens.
+	var focused core.SessionOpened
+	decode(t, call(t, session, "session_open", map[string]any{"topic": "c", "session": opened.Session, "focus": "learn"}), &focused)
+	if focused.Session != opened.Session || focused.Focus != core.FocusLearn {
+		t.Errorf("recording the Focus = %+v", focused)
+	}
 	var reached core.BreakPointReached
 	decode(t, call(t, session, "break_point_reached", map[string]any{
 		"topic": "c", "lesson": "answer", "break_point": "read", "next_step": "Write a first answer",
 	}), &reached)
 	if !reached.Changed || reached.BreakPoint.Describe != "The question is understood" {
 		t.Errorf("break_point_reached = %+v", reached)
+	}
+	if reached.Checkpoint == nil || !reached.Checkpoint.Committed {
+		t.Errorf("the Break point saved nothing: %+v", reached.TurnCheckpoint)
 	}
 	if msg := toolError(t, session, "session_close", map[string]any{"topic": "c", "next_step": "Continue"}); !strings.Contains(msg, "invalid_argument") {
 		t.Errorf("a Next step that is not an action: %q", msg)

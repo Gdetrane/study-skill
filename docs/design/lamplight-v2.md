@@ -134,8 +134,9 @@ the maintainer's answers to the questions they raised.
   | `revision.applied` | Revision, approval (how: `chat`, `elicitation` or `terminal`; the learner's words; the question shown when Lamplight asked), the whole Syllabus | `syllabus.toml` |
   | `revision.declined` | Revision, the learner's answer as for an approval | none |
   | `session.opened` | Energy, Focus | none |
-  | `session.closed` | Session, Next step, context, the Lesson it is about | none |
-  | `break_point.reached` | Lesson, Break point, Next step, context | none |
+  | `session.focused` | Session, the Focus the learner chose after the suggestion | none |
+  | `session.closed` | Session, Next step, context, the Lesson it is about, the turn it ended | none |
+  | `break_point.reached` | Lesson, Break point, Next step, context, the turn it ended | none |
   | `phase.set` | Lesson, Phase, optional Next step, the Check version shown when practicing starts, the turn it ended | none |
   | `attempt.recorded` | Lesson, Check version, snapshot, outcome, per criterion its kind, outcome, results file and, for `held_out` criteria, whether it was counted when run and why not (never output) | none |
   | `rubric.graded` | Lesson, rubric item, grade, note, the Check version and snapshot graded, the files of the work it looked at (path and hash), the grade it replaces | none |
@@ -290,7 +291,9 @@ hours before any learning happens is exactly what v1 produced.
    Syllabus, it is to plan one. A paused Topic is never suggested for study, and a finished
    one only for its Reviews. `session_open` returns the suggestion when it gets an Energy
    and no Focus yet, as one value: a Focus, `plan`, `stop` or `resume_topic`, the same words
-   `status` recommends. The suggestion is never recorded, only the Focus the learner chooses.
+   `status` recommends. The suggestion is never recorded, only the Focus the learner chooses:
+   `session_open` again with the open Session's id and that Focus records it on the same
+   Session (`session.focused`) and opens nothing new.
 3. The Learner profile and the Topic's additions are read at the start of every Session;
    `status` gives their paths when the files exist.
 4. A Lesson moves through its Phases: teaching → practicing → feedback. The Check's criteria
@@ -300,7 +303,9 @@ hours before any learning happens is exactly what v1 produced.
    `phase_set` takes the Checkpoint of whoever's turn just ended. The History records that
    it is owed, and a `checkpoint.taken` Event that it was taken; one that failed or was cut
    off by a crash is taken by the next `phase_set`, `lesson_complete` or `checkpoint`.
-5. Reaching a Break point, or ending a Session, records a Next step (starting with a verb)
+5. Reaching a Break point, or ending a Session, saves the work with a Checkpoint of the turn
+   it ends (owed like a turn switch's, never blocking the stop) and records a Next step
+   (starting with a verb)
    and free-text context. Break points are declared in order under `break_points:` in the
    Lesson's YAML header and read apart from the Check, so a wrong type or value there never
    makes the Check unreadable (a YAML syntax error breaks the whole header, and `status`
@@ -423,8 +428,8 @@ hours before any learning happens is exactly what v1 produced.
   an Explore Session, linked to Evidence where possible.
 - **Drafts**: a new Card is a draft until its first Review, where the learner keeps, edits or
   drops it. A daily cap limits how many new Cards appear.
-- The skill's card-writing rules: one fact per Card, no lists, no answer in the prompt, no
-  trivia, at least one Card from the learner's own mistakes.
+- The card-writing rules, in the server's instructions: one fact per Card, no lists, no
+  answer in the prompt, no trivia, at least one Card from the learner's own mistakes.
 - Cards can be added, edited, suspended and deleted; `study review` has a key to flag one.
   A flagged Card shows as a `card_flagged` flag in `status` until it is edited or deleted,
   or the flag is dismissed; flagging it again after a dismissal is a new flag. Adding a Card
@@ -688,9 +693,22 @@ for testing, against a separate Study home, so "let's study" keeps reaching v1.
 
 ## The skill
 
-`skills/lamplight/` holds the teaching method, with separate references for: brainstorming
-and Assessment, drafting a Syllabus, the lesson loop and feedback, writing Cards, and Reviews.
-It carries v1's teaching material over explicitly:
+`skills/lamplight/` holds the teaching method: `SKILL.md` carries what every Session needs
+(where the learner is, Energy and Focus, stopping with a Next step, the teaching rules, the
+learner's words, the files the agent keeps), and `references/` one file per branch:
+starting a Topic (brainstorming and the Assessment), the Syllabus and Revisions, the lesson
+loop (template, Phases, Checks, Held-out data, feedback, Levels), Cards and Reviews,
+Knowledge, Goal, Pace and Forecasts, and optional companions. The skill names tools but
+leaves how to call them to their descriptions, and points to the server's instructions by
+number instead of restating them, so each rule is said in one place. It is embedded in the
+binary (`go:embed`, package `skills/lamplight`) for `study setup` to install, and a Go test
+validates it: portable frontmatter, links and anchors that resolve, no orphan reference,
+every tool name and field it writes in backticks known to the real MCP server's tools and
+schemas, every `study` command and flag it shows known to the CLI's command tree, and none
+of v1's commands. Tools and commands still to come are written inside
+`<!-- pending #N -->` blocks, which the test allows only for the names it lists under that
+issue, and rejects once the server or the CLI has them. It carries v1's teaching material
+over explicitly:
 
 - teaching rules, including "never write the learner's implementation";
 - the Lesson template: Concept, Key points, Reference example (don't copy), Common pitfalls,

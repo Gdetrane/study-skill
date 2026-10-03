@@ -27,9 +27,11 @@ func (a *app) sessionCommand() *cobra.Command {
 		Short: "Open a Session and show where you stopped",
 		Long: "Open a Session on a Topic, which also makes it the most recent Topic. It shows where you stopped,\n" +
 			"suggests a Focus from your Energy when you have not chosen one, and, when the last Session ended\n" +
-			"without a Next step, what changed since the last Checkpoint.",
-		Example: "  study session open c --energy half\n  study session open c --energy full --focus learn",
-		Args:    exactArgs(1),
+			"without a Next step, what changed since the last Checkpoint. With --session and --focus, it records\n" +
+			"the Focus you chose for that open Session instead of opening another.",
+		Example: "  study session open c --energy half\n  study session open c --energy full --focus learn\n" +
+			"  study session open c --session <id> --focus practice",
+		Args: exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := core.Open(a.opts)
 			if err != nil {
@@ -42,11 +44,15 @@ func (a *app) sessionCommand() *cobra.Command {
 			if a.json {
 				return a.writeJSON(envelope{OK: true, Data: res})
 			}
+			if open.Session != "" {
+				return writeSessionFocused(a.out, res)
+			}
 			return writeSessionOpened(a.out, res, c.Now())
 		},
 	}
 	openCmd.Flags().StringVar(&open.Energy, "energy", "", "your Energy: full, half or fumes")
 	openCmd.Flags().StringVar(&open.Focus, "focus", "", "what the Session is for: learn, practice, reviews or explore")
+	openCmd.Flags().StringVar(&open.Session, "session", "", "with --focus, the open Session to record the chosen Focus for")
 	openCmd.Flags().BoolVar(&open.DryRun, "dry-run", false, "show the result without recording the Session")
 
 	var closeSpec core.CloseSpec
@@ -55,7 +61,7 @@ func (a *app) sessionCommand() *cobra.Command {
 		Short: "Close the Session with a Next step",
 		Long: "Close the open Session with a Next step that starts with a verb and says what to act on, and the\n" +
 			"context needed to take it. You see it first when you come back. --session gives a Session that was\n" +
-			"left unclosed the note it never got.",
+			"left unclosed the note it never got. Closing saves the work with a Checkpoint.",
 		Example: "  study session close c --next-step \"Fix the off-by-one in parse.go\" --context \"Line 42\"",
 		Args:    exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -74,8 +80,10 @@ func (a *app) sessionCommand() *cobra.Command {
 			if res.DryRun {
 				verb = "Would close"
 			}
-			_, err = fmt.Fprintf(a.out, "%s the Session. Next step: %s\n", verb, styleAccent.Render(printable(res.NextStep.Step)))
-			return err
+			if _, err := fmt.Fprintf(a.out, "%s the Session. Next step: %s\n", verb, styleAccent.Render(printable(res.NextStep.Step))); err != nil {
+				return err
+			}
+			return writeTurnCheckpoint(a.out, res.Topic, res.TurnCheckpoint)
 		},
 	}
 	closeCmd.Flags().StringVar(&closeSpec.NextStep, "next-step", "", "the next action, starting with a verb (required)")
@@ -89,7 +97,7 @@ func (a *app) sessionCommand() *cobra.Command {
 		Short: "Record a Break point reached, with a Next step",
 		Long: "Record that you reached one of the Break points a Lesson declares under break_points: in its YAML\n" +
 			"header, with a Next step that starts with a verb. The Session can stop there, and the next one\n" +
-			"resumes from it.",
+			"resumes from it. Reaching it saves the work with a Checkpoint.",
 		Example: "  study session break-point c pointers arrays --next-step \"Write the swap function\"",
 		Args:    exactArgs(3),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -198,7 +206,34 @@ func writeBreakPointReached(w io.Writer, res core.BreakPointReached) error {
 	if res.BreakPoint.Describe != "" {
 		text += " (" + printable(res.BreakPoint.Describe) + ")"
 	}
-	_, err := fmt.Fprintf(w, "%s Break point %s of %s. Next step: %s\n", verb, text, printable(res.Lesson),
-		styleAccent.Render(printable(res.NextStep.Step)))
+	if _, err := fmt.Fprintf(w, "%s Break point %s of %s. Next step: %s\n", verb, text, printable(res.Lesson),
+		styleAccent.Render(printable(res.NextStep.Step))); err != nil {
+		return err
+	}
+	return writeTurnCheckpoint(w, res.Topic, res.TurnCheckpoint)
+}
+
+// writeSessionFocused confirms the Focus recorded for an open Session.
+func writeSessionFocused(w io.Writer, res core.SessionOpened) error {
+	verb := "Recorded"
+	if res.DryRun {
+		verb = "Would record"
+	}
+	_, err := fmt.Fprintf(w, "%s the Focus %s for Session %s of %s.\n", verb, styleAccent.Render(res.Focus),
+		printable(res.Session), styleAccent.Render(res.Topic))
+	return err
+}
+
+// writeTurnCheckpoint says whether a stop saved the work, and how to save it
+// when the Checkpoint could not be taken.
+func writeTurnCheckpoint(w io.Writer, topic string, tc core.TurnCheckpoint) error {
+	var err error
+	switch {
+	case tc.CheckpointError != "":
+		_, err = fmt.Fprintf(w, "%s\n", styleWarn.Render("Not saved: "+printable(tc.CheckpointError)+
+			". Once that is fixed, run: study checkpoint --topic "+topic+" --role "+tc.CheckpointRole))
+	case tc.Checkpoint != nil && tc.Checkpoint.Committed:
+		_, err = fmt.Fprintf(w, "%s\n", styleDim.Render("Saved."))
+	}
 	return err
 }

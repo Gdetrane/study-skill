@@ -9,9 +9,10 @@ import (
 
 // Event types of Sessions and Phases.
 const (
-	eventSessionOpened = "session.opened"
-	eventSessionClosed = "session.closed"
-	eventPhaseSet      = "phase.set"
+	eventSessionOpened  = "session.opened"
+	eventSessionClosed  = "session.closed"
+	eventSessionFocused = "session.focused"
+	eventPhaseSet       = "phase.set"
 )
 
 // Energy levels, checked at the start of a Session.
@@ -80,6 +81,16 @@ type sessionClosedData struct {
 	// it was written, so replay can tell a Next step that a merge made
 	// stale.
 	Lesson string `json:"lesson,omitempty"`
+	// TurnEnded is the role whose turn the stop ended, "agent" or "learner";
+	// a Checkpoint is owed for it, so stopping saves the work.
+	TurnEnded string `json:"turn_ended,omitempty"`
+}
+
+// sessionFocusedData is the payload of a session.focused Event: the Focus the
+// learner chose for an open Session.
+type sessionFocusedData struct {
+	Session string `json:"session"`
+	Focus   string `json:"focus"`
 }
 
 // phaseSetData is the payload of a phase.set Event.
@@ -97,19 +108,25 @@ type phaseSetData struct {
 	TurnEnded string `json:"turn_ended,omitempty"`
 }
 
-// SessionSpec describes a Session to open.
+// SessionSpec describes a Session to open, or the Focus the learner chose
+// for one already open.
 type SessionSpec struct {
 	// Energy is full, half or fumes. Optional.
 	Energy string
 	// Focus is learn, practice, reviews or explore. Optional.
-	Focus  string
-	DryRun bool
+	Focus string
+	// Session, with Focus, records the Focus the learner chose for that
+	// open Session instead of opening another one.
+	Session string
+	DryRun  bool
 }
 
 // SessionOpened is the result of OpenSession.
 type SessionOpened struct {
 	Topic   string `json:"topic"`
 	Session string `json:"session"`
+	// Focus is the Focus recorded for the Session, when one was given.
+	Focus string `json:"focus,omitempty"`
 	// Resume is where the learner stopped, to show first.
 	Resume ResumePoint `json:"resume"`
 	// Unclosed are the Sessions that ended without a Next step, newest
@@ -149,13 +166,18 @@ type SessionClosed struct {
 	Topic    string   `json:"topic"`
 	Session  string   `json:"session"`
 	NextStep NextStep `json:"next_step"`
-	DryRun   bool     `json:"dry_run,omitempty"`
+	// The Checkpoint that saved the turn the stop ended.
+	TurnCheckpoint
+	DryRun bool `json:"dry_run,omitempty"`
 }
 
 // OpenSession opens a Session on a Topic, which also makes it the most
 // recent Topic, and returns where the learner stopped: the Resume point, a
 // Session left unclosed with what changed since the last Checkpoint, the
 // Focus the Energy suggests, and whether Cards are ready.
+//
+// With spec.Session and spec.Focus, it instead records the Focus the learner
+// chose for that open Session, after the suggestion, and opens nothing.
 func (c *Core) OpenSession(ctx context.Context, topicID string, spec SessionSpec) (SessionOpened, error) {
 	switch spec.Energy {
 	case "", EnergyFull, EnergyHalf, EnergyFumes:
@@ -167,7 +189,10 @@ func (c *Core) OpenSession(ctx context.Context, topicID string, spec SessionSpec
 	default:
 		return SessionOpened{}, invalidf("focus must be learn, practice, reviews or explore, not %q", spec.Focus)
 	}
-	result := SessionOpened{Topic: topicID, DryRun: spec.DryRun}
+	if spec.Session != "" {
+		return c.focusSession(ctx, topicID, spec)
+	}
+	result := SessionOpened{Topic: topicID, Focus: spec.Focus, DryRun: spec.DryRun}
 	now := c.now()
 	ev, err := c.writeTopic(ctx, topicID, func(s *replayed, view *topicView) (*change, error) {
 		result.Resume = s.study.resume()
@@ -195,6 +220,45 @@ func (c *Core) OpenSession(ctx context.Context, topicID string, spec SessionSpec
 	result.Session = ev.ID
 	if len(result.Unclosed) > 0 {
 		result.Changes = c.workChanges(ctx, topicID)
+	}
+	return result, nil
+}
+
+// focusSession records the Focus the learner chose for an open Session:
+// session_open suggests one, and the learner's choice is recorded on the same
+// Session rather than by opening another.
+func (c *Core) focusSession(ctx context.Context, topicID string, spec SessionSpec) (SessionOpened, error) {
+	switch {
+	case spec.Focus == "":
+		return SessionOpened{}, invalidf("name the Focus the learner chose for Session %s: learn, practice, reviews or explore", spec.Session)
+	case spec.Energy != "":
+		return SessionOpened{}, invalidf("the Energy is given when a Session opens; to record the Focus of Session %s, give only the Focus", spec.Session)
+	}
+	if err := validateEntityID("Session", spec.Session); err != nil {
+		return SessionOpened{}, err
+	}
+	result := SessionOpened{Topic: topicID, Session: spec.Session, Focus: spec.Focus, DryRun: spec.DryRun}
+	now := c.now()
+	_, err := c.writeTopic(ctx, topicID, func(s *replayed, view *topicView) (*change, error) {
+		session := s.study.session(spec.Session)
+		switch {
+		case session == nil:
+			return nil, &Error{Code: CodeNotFound, Message: "Topic " + topicID + " has no Session " + spec.Session}
+		case session.closed:
+			return nil, &Error{Code: CodeFailedPrecondition, Message: "Session " + spec.Session + " of " + topicID +
+				" is closed: open a new one, with the Energy, to choose a Focus"}
+		}
+		result.Resume = s.study.resume()
+		result.Paused = s.topicState() == TopicPaused
+		describeBreakPoint(view.root, &result.Resume)
+		result.Cards = cardsReady(s, view, topicID, now)
+		if session.focus == spec.Focus {
+			return nil, nil
+		}
+		return &change{Type: eventSessionFocused, Data: sessionFocusedData{Session: spec.Session, Focus: spec.Focus}}, nil
+	}, spec.DryRun)
+	if err != nil {
+		return SessionOpened{}, err
 	}
 	return result, nil
 }
@@ -246,12 +310,16 @@ func (c *Core) CloseSession(ctx context.Context, topicID string, spec CloseSpec)
 		result.NextStep = NextStep{Step: step, Context: note, Lesson: lesson}
 		return &change{Type: eventSessionClosed, Data: sessionClosedData{
 			Session: session.id, NextStep: step, Context: note, Lesson: lesson,
+			TurnEnded: s.study.currentTurn(),
 		}}, nil
 	}, spec.DryRun)
 	if err != nil {
 		return SessionClosed{}, err
 	}
 	result.NextStep.At = ev.Wall
+	if !spec.DryRun {
+		result.TurnCheckpoint = c.takeOwedCheckpoint(ctx, topicID)
+	}
 	return result, nil
 }
 
@@ -417,12 +485,50 @@ func replaySessionClosed(s *replayed, ev event) error {
 	if lesson == "" {
 		lesson = s.study.currentLesson()
 	}
+	s.oweStopCheckpoint(ev.ID, d.TurnEnded, stopMessage(lesson, "Session closed"))
 	step := &NextStep{Step: d.NextStep, Context: d.Context, Lesson: lesson, At: wallOf(ev)}
 	if s.staleNextStep(ev, step) || s.study.superseded(session) {
 		return nil
 	}
 	s.setNextStep(step)
 	return nil
+}
+
+func replaySessionFocused(s *replayed, ev event) error {
+	var d sessionFocusedData
+	if err := json.Unmarshal(ev.Data, &d); err != nil {
+		return fmt.Errorf("its payload is unreadable: %v", err)
+	}
+	switch d.Focus {
+	case FocusLearn, FocusPractice, FocusReviews, FocusExplore:
+	default:
+		return fmt.Errorf("its Focus %q is not learn, practice, reviews or explore", d.Focus)
+	}
+	session := s.study.session(d.Session)
+	if session == nil {
+		return fmt.Errorf("%w: Session %s", errUnknownItem, d.Session)
+	}
+	session.focus = d.Focus
+	return nil
+}
+
+// stopMessage is the message of the Checkpoint a stop takes.
+func stopMessage(lesson, what string) string {
+	if lesson == "" {
+		return what
+	}
+	return lesson + ": " + what
+}
+
+// oweStopCheckpoint records that a stop (a Session closed, a Break point
+// reached) owes a Checkpoint of the turn it ended, so stopping saves the
+// work. A Checkpoint still owed from earlier, such as a completion's, is
+// kept instead: it is taken right after the stop and covers its work too.
+func (s *replayed) oweStopCheckpoint(eventID, role, message string) {
+	if role == "" || s.study.owed != nil {
+		return
+	}
+	s.study.owed = &owedCheckpoint{event: eventID, role: role, message: message}
 }
 
 // setNextStep makes step the latest Next step, noting where in replay order
