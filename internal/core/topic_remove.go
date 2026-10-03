@@ -50,12 +50,12 @@ func (c *Core) RemoveTopic(ctx context.Context, topicID string, dryRun bool) (To
 	if dryRun {
 		out := c.removal(home, topicID)
 		out.DryRun = true
+		if wasInterrupted(home, topicID) {
+			return TopicRemoval{}, interruptedWrite(topicID)
+		}
 		if hasIntent(home, topicID) {
 			// A writer holding the lock is still at work; the real run
-			// waits for it. Without one, the write was interrupted.
-			if !lockHeld(home, topicID) {
-				return TopicRemoval{}, interruptedWrite(topicID)
-			}
+			// waits for it.
 			out.Note = "a write to " + topicID + " is in progress: the removal waits for it to finish"
 		}
 		return out, nil
