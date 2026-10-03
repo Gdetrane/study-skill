@@ -114,9 +114,11 @@ type breakPointYAML struct {
 type criterionYAML struct {
 	ID       string `yaml:"id"`
 	Describe string `yaml:"describe"`
-	Run      any    `yaml:"run"`
-	Rubric   any    `yaml:"rubric"`
-	HeldOut  any    `yaml:"held_out"`
+	// The kinds are read as nodes, so a command's arguments keep the text
+	// written: YAML would read [git, checkout, 1.10] as a number, 1.1.
+	Run     yaml.Node `yaml:"run"`
+	Rubric  yaml.Node `yaml:"rubric"`
+	HeldOut yaml.Node `yaml:"held_out"`
 }
 
 const (
@@ -202,13 +204,13 @@ func parseCheck(data []byte) ([]Criterion, error) {
 // criterionOf reads the one key that gives a criterion its kind: run,
 // rubric or held_out.
 func criterionOf(c criterionYAML) (Criterion, error) {
-	given := 0
-	for _, v := range []any{c.Run, c.Rubric, c.HeldOut} {
-		if v != nil {
-			given++
+	kinds := 0
+	for _, v := range []*yaml.Node{&c.Run, &c.Rubric, &c.HeldOut} {
+		if given(v) {
+			kinds++
 		}
 	}
-	switch given {
+	switch kinds {
 	case 0:
 		return Criterion{}, corruptf("criterion %s of the Check needs one of run (a command, such as [go, test, ./...]), "+
 			"rubric (what to grade) or held_out (a command run on the Held-out data)", c.ID)
@@ -217,8 +219,9 @@ func criterionOf(c criterionYAML) (Criterion, error) {
 		return Criterion{}, corruptf("criterion %s of the Check has more than one of run, rubric and held_out; "+
 			"give each its own criterion", c.ID)
 	}
-	if c.Rubric != nil {
-		text, ok := c.Rubric.(string)
+	if given(&c.Rubric) {
+		r := resolveAlias(&c.Rubric)
+		text, ok := r.Value, r.Kind == yaml.ScalarNode && r.ShortTag() == "!!str"
 		if !ok {
 			return Criterion{}, corruptf("the rubric of criterion %s is not text: write what to grade, "+
 				"such as \"Every function name says what it does\"", c.ID)
@@ -229,12 +232,13 @@ func criterionOf(c criterionYAML) (Criterion, error) {
 		}
 		return Criterion{ID: c.ID, Kind: CriterionRubric, Rubric: item}, nil
 	}
-	kind, key, raw := CriterionRun, "run", c.Run
-	if c.HeldOut != nil {
-		kind, key, raw = CriterionHeldOut, "held_out", c.HeldOut
+	kind, key, raw := CriterionRun, "run", &c.Run
+	if given(&c.HeldOut) {
+		kind, key, raw = CriterionHeldOut, "held_out", &c.HeldOut
 	}
-	args, ok := raw.([]any)
-	if !ok || len(args) == 0 {
+	seq := resolveAlias(raw)
+	args := seq.Content
+	if seq.Kind != yaml.SequenceNode || len(args) == 0 {
 		return Criterion{}, corruptf("%s of criterion %s is not a command: give it as an argument list, "+
 			"such as [go, test, ./...], never as one string for a shell", key, c.ID)
 	}
@@ -243,14 +247,13 @@ func criterionOf(c criterionYAML) (Criterion, error) {
 	}
 	run := make([]string, len(args))
 	for i, a := range args {
-		switch v := a.(type) {
-		case string:
-			run[i] = v
-		case int, int64, uint64, float64, bool:
-			run[i] = fmt.Sprint(v)
-		default:
+		// An argument is the text as written, whatever YAML would read it
+		// as: 1.10 stays 1.10 and 0x1F stays 0x1F.
+		a = resolveAlias(a)
+		if a.Kind != yaml.ScalarNode || a.ShortTag() == "!!null" {
 			return Criterion{}, corruptf("argument %d of the command of criterion %s is not text", i+1, c.ID)
 		}
+		run[i] = a.Value
 		if _, err := cleanText("command of criterion "+c.ID, run[i], maxArgumentRunes); err != nil {
 			return Criterion{}, corruptf("%v", err)
 		}
@@ -259,6 +262,21 @@ func criterionOf(c criterionYAML) (Criterion, error) {
 		return Criterion{}, corruptf("the command of criterion %s has no program", c.ID)
 	}
 	return Criterion{ID: c.ID, Kind: kind, Command: run}, nil
+}
+
+// given reports whether a criterion's key was written with a value: an
+// absent key leaves the node empty, and null counts as not given.
+func given(n *yaml.Node) bool {
+	n = resolveAlias(n)
+	return n.Kind != 0 && !(n.Kind == yaml.ScalarNode && n.ShortTag() == "!!null")
+}
+
+// resolveAlias follows a YAML alias to the node it names.
+func resolveAlias(n *yaml.Node) *yaml.Node {
+	for n.Kind == yaml.AliasNode && n.Alias != nil {
+		n = n.Alias
+	}
+	return n
 }
 
 // parseBreakPoints reads the Break points from a Lesson file, in order. It

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -111,9 +112,31 @@ check:
 		"no program":         "  - id: a\n    run: [\"\", x]\n",
 		"control character":  "  - id: a\n    rubric: \"bell\\a\"\n",
 		"duplicate criteria": "  - id: a\n    run: [true]\n  - id: a\n    run: [true]\n",
+		"null argument":      "  - id: a\n    run: [echo, ~]\n",
+		"argument as a list": "  - id: a\n    run: [echo, [x]]\n",
+		"rubric as a number": "  - id: a\n    rubric: 42\n",
 	} {
 		if _, err := parseCheck([]byte("---\ncheck:\n" + header + "---\n")); CodeOf(err) != CodeCorrupt {
 			t.Errorf("%s: err = %v, want corrupt", name, err)
+		}
+	}
+}
+
+// TestCommandArgumentsKeepTheirText: YAML reads unquoted 1.10, 0x1F and
+// 1e6 as numbers; the command runs them as written.
+func TestCommandArgumentsKeepTheirText(t *testing.T) {
+	check, err := parseCheck([]byte("---\ncheck:\n" +
+		"  - id: checkout\n    run: [git, checkout, 1.10]\n" +
+		"  - id: numbers\n    run: [cmd, 0x1F, 1e6, 1.50, true, 007, \"1.10\"]\n" +
+		"  - id: alias\n    run: [echo, &v 2.0, *v]\n" +
+		"---\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := [][]string{{"git", "checkout", "1.10"}, {"cmd", "0x1F", "1e6", "1.50", "true", "007", "1.10"}, {"echo", "2.0", "2.0"}}
+	for i, c := range check {
+		if !slices.Equal(c.Command, want[i]) {
+			t.Errorf("criterion %s runs %q, want %q", c.ID, c.Command, want[i])
 		}
 	}
 }
