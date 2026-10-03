@@ -1129,6 +1129,11 @@ func (a *app) diagnoseSetup(ctx context.Context) core.Finding {
 		return f
 	}
 	for _, g := range res.Findings {
+		// The Claude Code plugin carries its own copy of the skill: without
+		// Codex, nothing needs the one study setup would install.
+		if g.Name == "setup:skill" && plugin.enabled && rec.Skill == nil && !slices.Contains(found, agentCodex) {
+			continue
+		}
 		if g.Status != core.FindingOK {
 			f.Status, f.Message, f.Fix = core.FindingWarn, g.Message, g.Fix
 			return f

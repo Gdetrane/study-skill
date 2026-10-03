@@ -1199,3 +1199,14 @@ func TestSetupHumanOutput(t *testing.T) {
 	golden(t, "setup_check.txt", h.run(t, "setup", "--check").stdout)
 	golden(t, "setup_remove.txt", h.run(t, "setup", "--remove").stdout)
 }
+
+// A learner who relies on the Claude Code plugin alone, without Codex, is
+// set up: doctor says the plugin provides Lamplight, and asks for nothing.
+func TestDoctorAcceptsThePluginAlone(t *testing.T) {
+	h := newSetupHome(t, "claude")
+	writeFile(t, h.path(".claude", "settings.json"), `{"enabledPlugins": {"lamplight@lamplight": true}}`)
+	got := finding(t, decodeData(t, h.run(t, "doctor", "--json")), "setup")
+	if got["status"] != "ok" || got["message"] != "the Claude Code plugin provides Lamplight" {
+		t.Errorf("doctor's setup Finding with the plugin alone = %v", got)
+	}
+}
