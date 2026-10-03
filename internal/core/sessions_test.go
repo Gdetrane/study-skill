@@ -449,30 +449,30 @@ func TestSuggestFocus(t *testing.T) {
 		{EnergyFumes, noSyllabus, ready, FocusReviews},
 		{EnergyFumes, noSyllabus, none, SuggestStop},
 	} {
-		got := suggestFocus(tc.energy, TopicActive, tc.resume, tc.cards)
+		got := suggestFocus(tc.energy, TopicActive, tc.resume, tc.cards, nil)
 		if got == nil || got.Suggest != tc.want || got.Reason == "" {
 			t.Errorf("suggestFocus(%s, %+v, %+v) = %+v, want %q", tc.energy, tc.resume, tc.cards, got, tc.want)
 		}
 	}
-	if got := suggestFocus("", TopicActive, learning, ready); got != nil {
+	if got := suggestFocus("", TopicActive, learning, ready, nil); got != nil {
 		t.Errorf("no Energy: %+v, want no suggestion", got)
 	}
 	// A paused Topic is never proposed for study, whatever the Energy; a
 	// finished one only for its Reviews.
 	for _, energy := range []string{EnergyFull, EnergyHalf, EnergyFumes} {
 		for _, resume := range []ResumePoint{learning, practicing, done, noSyllabus} {
-			if got := suggestFocus(energy, TopicPaused, resume, none); got == nil || got.Suggest != SuggestResumeTopic {
+			if got := suggestFocus(energy, TopicPaused, resume, none, nil); got == nil || got.Suggest != SuggestResumeTopic {
 				t.Errorf("paused, %s, %+v: %+v, want %q", energy, resume, got, SuggestResumeTopic)
 			}
-			if got := suggestFocus(energy, TopicFinished, resume, ready); got == nil || got.Suggest != FocusReviews {
+			if got := suggestFocus(energy, TopicFinished, resume, ready, nil); got == nil || got.Suggest != FocusReviews {
 				t.Errorf("finished with Cards ready, %s, %+v: %+v, want %q", energy, resume, got, FocusReviews)
 			}
-			if got := suggestFocus(energy, TopicFinished, resume, none); got == nil || got.Suggest != SuggestStop {
+			if got := suggestFocus(energy, TopicFinished, resume, none, nil); got == nil || got.Suggest != SuggestStop {
 				t.Errorf("finished with no Card ready, %s, %+v: %+v, want %q", energy, resume, got, SuggestStop)
 			}
 		}
 	}
-	if got := suggestFocus("", TopicPaused, learning, none); got != nil {
+	if got := suggestFocus("", TopicPaused, learning, none, nil); got != nil {
 		t.Errorf("paused with no Energy: %+v, want no suggestion", got)
 	}
 }

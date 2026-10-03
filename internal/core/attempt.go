@@ -875,6 +875,8 @@ type CheckResults struct {
 type NextAction struct {
 	Code string `json:"code"`
 	Text string `json:"text"`
+	// Milestone is the Milestone to assess, for assess_milestone.
+	Milestone *MilestoneRef `json:"milestone,omitempty"`
 }
 
 // Codes of a NextAction.

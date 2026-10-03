@@ -210,7 +210,7 @@ func (c *Core) OpenSession(ctx context.Context, topicID string, spec SessionSpec
 			result.LongGap = now.Sub(last) > longGap
 		}
 		if spec.Focus == "" {
-			result.Suggested = suggestFocus(spec.Energy, state, result.Resume, result.Cards)
+			result.Suggested = suggestFocus(spec.Energy, state, result.Resume, result.Cards, s.assessmentDue())
 		}
 		return &change{Type: eventSessionOpened, Data: sessionOpenedData{Energy: spec.Energy, Focus: spec.Focus}}, nil
 	}, spec.DryRun)
@@ -596,6 +596,14 @@ func replayPhaseSet(s *replayed, ev event) error {
 	var d phaseSetData
 	if err := json.Unmarshal(ev.Data, &d); err != nil {
 		return fmt.Errorf("its payload is unreadable: %v", err)
+	}
+	if err := validateEntityID("Lesson", d.Lesson); err != nil {
+		return err
+	}
+	switch d.Phase {
+	case PhaseTeaching, PhasePracticing, PhaseFeedback:
+	default:
+		return fmt.Errorf("its Phase must be teaching, practicing or feedback, not %q", clip(d.Phase, 40))
 	}
 	l := s.study.lesson(d.Lesson)
 	if d.Phase == PhaseFeedback && l.phase != PhaseFeedback {

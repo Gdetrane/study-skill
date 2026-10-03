@@ -40,6 +40,8 @@ that scripts and agents can rely on. Terms follow [CONTEXT.md](../CONTEXT.md).
 | `study check <lesson> [--topic ID] [--timeout D]` | Runs a Lesson's Check on the current work and records the Attempt (see "Checks" below). Without `--topic`, it uses the Topic whose folder it runs in. |
 | `study rubric grade <lesson> <criterion> --grade G [...]` | Grades a rubric item of a Lesson's Check (see "Checks"). |
 | `study results <lesson> [--topic ID]` | Shows a Lesson's Check results and whether it can be completed (see "Checks"). |
+| `study lesson <lesson> [--topic ID]` | Shows one Lesson: its number, Milestone, status and Phase, its file, and what its YAML header declares (the Check's criteria with their commands, and the Break points), with the current Check version, whether it is the one shown to the learner (`check_shown`), and whether the header can be read (`header_readable`, `header_error`). Runs nothing and never shows Held-out data. Without `--topic`, it uses the Active topic. The MCP tool is `lesson`. |
+| `study history [topic] [--limit N] [--type T] [--lesson L]` | Shows a Topic's most recent Events, newest first, each as `{id, type, at, clock_behind?, summary, lesson?, item?, held?}` with `more` set when older ones match too. `--limit` defaults to 10 and is capped at 100; `--type` keeps the Events whose type starts with T (such as `card.` or `attempt`), `--lesson` those about one Lesson, its Card Events and Reviews included. Each Event appears once, as replay applied it. Entries are ordered by the History's clock (`time`) but show the writer's wall clock (`at`), so an Event from a machine whose clock was behind can look older than the one before it: `clock_behind` marks it ("clock behind" in the text). `held` marks an Event replay did not apply (`status` flags it), and Events written by a newer version of study are not shown. Entries never carry an Event's full payload: summaries are built from the kind of Event and ids only, so no Held-out results, notes, quotes, titles or Next steps. It is for understanding what happened, never a tally for the learner. The MCP tool is `history`. |
 | `study review [topic] [--energy E] [--limit N]` | Reviews the due Cards in the terminal, without an agent (see "Cards and Reviews" below). Without a Topic, it reviews the Active topic. Interactive only: with `--json` it is a usage error. |
 | `study card list <topic> [--lesson L]` | Lists the Topic's Cards in the order they were written, with their display numbers and state. `--lesson explore` lists the Explore Cards. |
 | `study card due <topic> [--energy E] [--limit N]` | Lists the Cards to review now, sized to the Energy, never saying how many more are due. A paused Topic lists none, and its result says `"paused": true`. |
@@ -174,6 +176,19 @@ Syllabus yet), `learn`, `practice` or `feedback` (the current Lesson's Phase), `
 (every Lesson done, Cards ready) or `explore` (every Lesson done); or, whatever the Resume
 point says, `resume_topic` (the Topic is paused: resume it or pick another Topic), and for a
 finished Topic `reviews` (Cards ready) or `stop` (no Card ready: nothing to study on it now).
+Before the Next step comes `assess`, with `milestone` (`{number, id, title}`): every Lesson
+of that Milestone is done or skipped, at least one done, and its end-of-Milestone Assessment
+is the next thing to do. It names the Milestone finished most recently, on an active Topic,
+and only while no milestone Assessment for it was recorded after its last Lesson was
+completed and the learner has not deliberately moved on since by starting a Lesson of
+another Milestone (`phase_set`). Stopping does not end it: a Next step recorded with an
+Assessment due names the next Lesson's first step (or, when no Lesson follows, taking that
+Assessment), the Resume point still shows it word for
+word, and `assess` outranks it until the Assessment is recorded; then the Next step leads
+again. A completion merged in from another machine for a Lesson already done does not bring
+it back. A Topic carries the same Milestone as `assessment_due`. It is a next action, never
+something late. The text of `study status` asks a learner without an agent to ask theirs
+for it, or to record one with `study assessment record`.
 The words match the Focuses and the suggestions of `session_open` wherever they mean the same
 thing, and the list is fixed, so skills can rely on it; `text` is English prose a skill may
 rephrase. An active Topic's recommendation always agrees with its Resume point. A Triage is
@@ -239,7 +254,10 @@ override and isolate controls (U+202A–U+202E, U+2066–U+2069).
 - `suggested`, when an Energy is given and no Focus chosen yet: `suggest` is a Focus to offer
   (`learn`, `practice`, `reviews`, `explore`), `plan` (no Syllabus yet: plan it together),
   `stop` (fumes with nothing due: write tomorrow's first step and end here; or a finished
-  Topic with no Card ready) or `resume_topic` (the Topic is paused); `reason` is English
+  Topic with no Card ready), `resume_topic` (the Topic is paused) or `assess` (at full or
+  half Energy, when `status` would recommend `assess`: offer the Milestone's Assessment
+  first). At fumes an Assessment waits for another day, and the suggestion is what it would
+  be without one: `reviews` when Cards are ready, otherwise `stop`; `reason` is English
   prose a skill may rephrase. A paused Topic is never suggested for study, and a finished one
   only for its Reviews. A suggestion is never recorded.
 - `paused`, when the Topic is paused. The Session opens anyway; the Topic stays paused until
@@ -262,6 +280,10 @@ Once the learner chooses a Focus, record it on the open Session: `session_open` 
 session open`) with `session` (the open Session's id) and `focus` records a `session.focused`
 Event and opens nothing new. Naming a closed or unknown Session is refused, and the same Focus
 again records nothing.
+
+A `phase.set` Event whose Phase is not `teaching`, `practicing` or `feedback`, or whose Lesson
+is not a valid id, as a hand edit or another version could write, is held and flagged at
+replay; it never reaches the Resume point.
 
 **Stopping saves the work.** `session_close` and `break_point_reached` take a Checkpoint of the
 turn they end, as `phase_set` does at a turn switch: the learner's while a Lesson is practicing,
@@ -593,7 +615,13 @@ needs a grade, but which grade does not matter: `not_met` counts as graded. Held
 results never decide it. A Check edited afterwards is flagged in `status` and must be shown
 again; changing the work after a pass means running the Check, and grading, again.
 `lesson_complete` records the Attempt and the grades it relied on, and a done Lesson is
-never reopened.
+never reopened. When the completion finishes its Milestone of an active Topic (every
+other Lesson of it is done or skipped), the result has `next`, with the Milestone; calling
+it again returns the same `next` while that Milestone's Assessment is still due:
+
+```json
+"next": {"code": "assess_milestone", "text": "Milestone 1 “Basics” is finished: assess it together with the learner, then record it with assessment_record", "milestone": {"number": 1, "id": "basics", "title": "Basics"}}
+```
 
 **After a failed Attempt**, one where a run criterion of the Check shown to the learner
 failed, the agent gives feedback, then moves the Lesson to practicing with `phase_set` and

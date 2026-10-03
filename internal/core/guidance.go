@@ -1,6 +1,7 @@
 package core
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 )
@@ -23,6 +24,11 @@ const (
 	ActionExplore     = FocusExplore
 	ActionResumeTopic = SuggestResumeTopic
 	ActionStop        = SuggestStop
+	// ActionAssess: every Lesson of a Milestone is done or skipped, and its
+	// end-of-Milestone Assessment is next (see assessmentDue). It is the
+	// next thing to do, never something late, and it outranks the Next
+	// step, which the Resume point still shows word for word.
+	ActionAssess = SuggestAssess
 )
 
 // FlagLessonHeader: the current Lesson's YAML header cannot be read, so its
@@ -33,8 +39,11 @@ const FlagLessonHeader = "lesson_header"
 type Recommendation struct {
 	Topic string `json:"topic"`
 	// Action is next_step, plan, learn, practice, feedback, reviews,
-	// explore, resume_topic or stop: an enumeration skills can rely on.
+	// explore, resume_topic, assess or stop: an enumeration skills can
+	// rely on.
 	Action string `json:"action"`
+	// Milestone is the finished Milestone to assess, for assess.
+	Milestone *MilestoneRef `json:"milestone,omitempty"`
 	// Text says what to do in English prose, which the skill may rephrase;
 	// for next_step it is the Next step word for word.
 	Text string `json:"text"`
@@ -42,9 +51,9 @@ type Recommendation struct {
 
 // recommend picks the one action to take next on a Topic. A paused Topic
 // is resumed or left for another; a finished one offers only its Reviews.
-// Otherwise it is the Topic's Next step when there is one, then the next
-// move in its Syllabus, then Reviews or exploring once every Lesson is
-// done. A Triage is never the recommended action: it is something to
+// Otherwise it is the Assessment of a Milestone just finished, then the
+// Topic's Next step when there is one, then the next move in its Syllabus,
+// then Reviews or exploring once every Lesson is done. A Triage is never the recommended action: it is something to
 // consider. It never counts anything.
 func recommend(t Topic) *Recommendation {
 	r := &Recommendation{Topic: t.ID}
@@ -61,6 +70,10 @@ func recommend(t Topic) *Recommendation {
 		r.Action, r.Text = ActionReviews, "This Topic is finished: review the Cards that are ready"
 	case t.State == TopicFinished:
 		r.Action, r.Text = ActionStop, "This Topic is finished, and no Card is ready: nothing to study on it now"
+	case t.AssessmentDue != nil:
+		m := t.AssessmentDue
+		r.Action, r.Milestone = ActionAssess, m
+		r.Text = fmt.Sprintf("Every Lesson of Milestone %d “%s” is done: its Assessment comes next", m.Number, m.Title)
 	case resume != nil && resume.NextStep != nil:
 		r.Action, r.Text = ActionNextStep, resume.NextStep.Step
 	case resume == nil || resume.Lesson == "" && !resume.SyllabusDone:
@@ -86,6 +99,7 @@ func recommend(t Topic) *Recommendation {
 // are, and a flag when the current Lesson's Break points cannot be read.
 func (c *Core) addTopicGuidance(topic *os.Root, s *replayed, t *Topic) {
 	t.Cards = cardsReady(s, newView(topic, s), t.ID, c.now())
+	t.AssessmentDue = s.assessmentDue()
 	if isRegularFile(topic, learnerFile) {
 		t.LearnerAdditions = filepath.Join(t.Path, learnerFile)
 	}

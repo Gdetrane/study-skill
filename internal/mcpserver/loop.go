@@ -85,7 +85,10 @@ func addLearnerLoop(server *mcp.Server, c *core.Core) {
 			"out until the learner chooses, then record their choice by calling session_open again with session (this " +
 			"Session's id) and focus, which opens nothing new: suggested.suggest is learn, practice, reviews or explore (a Focus to " +
 			"offer), plan (no Syllabus yet: plan it together), stop (write tomorrow's first step and end here; on a " +
-			"finished Topic, nothing to study now) or resume_topic (the Topic is paused); suggested.reason is English " +
+			"finished Topic, nothing to study now), resume_topic (the Topic is paused) or assess (every Lesson of a " +
+			"Milestone is done: offer its Assessment first; at fumes Energy it waits for another day). Only learn, " +
+			"practice, reviews and explore are Focuses to record; act on plan, stop, resume_topic and assess without " +
+			"recording a Focus (an accepted Assessment is recorded with assessment_record). suggested.reason is English " +
 			"you may rephrase. cards.ready says whether Reviews are possible; never mention how many Cards are due. If " +
 			"long_gap is set, start with a short recap and a two-minute warm-up. unclosed lists the Sessions that ended " +
 			"without a Next step, newest first: show the learner changes (what changed since the last Checkpoint), ask " +
@@ -181,7 +184,8 @@ func addLearnerLoop(server *mcp.Server, c *core.Core) {
 			"and takes a Checkpoint. Write Cards that state one fact each, with no answer in the prompt, including " +
 			"at least one from the learner's own mistakes. Completing a Lesson twice records nothing, so after an error " +
 			"or an interruption, call it again with the same arguments. If the result has checkpoint_error, call " +
-			"checkpoint with its checkpoint_role once the problem is fixed.",
+			"checkpoint with its checkpoint_role once the problem is fixed. When next has code assess_milestone, this " +
+			"completion finished its Milestone: its Assessment comes next.",
 		Annotations: idempotent,
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in lessonCompleteInput) (*mcp.CallToolResult, core.LessonCompletion, error) {
 		r, err := c.CompleteLesson(ctx, in.Topic, core.CompleteSpec{Lesson: in.Lesson, Cards: in.Cards})

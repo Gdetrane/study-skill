@@ -239,7 +239,8 @@ func (s *replayed) assessing() *assessmentState {
 //
 // A retry records nothing: one with the same request id, or, without one,
 // the same content as the latest Assessment while nothing changed the Level
-// since. A retake after the learner changed the Level is recorded, and sets
+// since, and, for a milestone Assessment, no Lesson of its Milestone was
+// completed since: that one assesses the finished Milestone. A retake after the learner changed the Level is recorded, and sets
 // the Level again.
 func (c *Core) RecordAssessment(ctx context.Context, topicID string, spec AssessmentSpec) (AssessmentRecorded, error) {
 	if err := checkTopicID(topicID); err != nil {
@@ -278,7 +279,8 @@ func (c *Core) RecordAssessment(ctx context.Context, topicID string, spec Assess
 				existing = r.id
 				return nil, nil
 			}
-		} else if st.latestKey == key && !st.levelChangedSince {
+		} else if st.latestKey == key && !st.levelChangedSince &&
+			!(d.Kind == AssessmentMilestone && s.milestoneCompletedSince(d.Milestone, st.latestID)) {
 			// A Level edited into topic.toml since is a change too.
 			settings, err := viewSettings(view, topicID)
 			if err != nil {

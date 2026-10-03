@@ -267,14 +267,22 @@ hours before any learning happens is exactly what v1 produced.
   one version are flagged, whether by Revisions or by an adopted hand edit, as is a Lesson
   completed on one machine and removed or skipped on the other.
 - An **Assessment** at the end of a Milestone never blocks progress; weak results lead to a
-  proposed Revision (for example a review Lesson).
+  proposed Revision (for example a review Lesson). When a Milestone's last Lesson is done,
+  `lesson_complete` returns `next` with the code `assess_milestone`, and `status`
+  recommends `assess` for that Milestone, ahead of the Next step, until its Assessment is
+  recorded or the learner deliberately moves on by starting a Lesson of another Milestone.
+  Stopping does not end it: the Next step written then names the next Lesson's first step
+  (or, when no Lesson follows, taking that Assessment), since the Assessment is cued on
+  its own, and at the next Session the agent offers the Assessment first. Only an active Topic has one. It is the next thing to do, never
+  something late.
 
 ### Sessions
 
 1. `status` comes first. It shows the Active topic and why it was chosen, the Resume point
    and its Next step word for word, one recommended action, Cards sized to the Energy
-   (never the total due), Forecasts, and any relevant Tasks. The recommendation is the Next
-   step when there is one, otherwise the next move in the Syllabus (plan it, start, continue,
+   (never the total due), Forecasts, and any relevant Tasks. The recommendation is the
+   Assessment of a Milestone just finished (`assess`), then the Next step when there is one,
+   otherwise the next move in the Syllabus (plan it, start, continue,
    practice or go over feedback on the current Lesson), otherwise Reviews or exploring once
    every Lesson is done. A paused Topic's recommendation is instead to resume it or pick
    another Topic (`resume_topic`), and a finished Topic's is its Reviews, or `stop` when no
@@ -290,10 +298,12 @@ hours before any learning happens is exactly what v1 produced.
    With nothing due at fumes, the offer is "write tomorrow's first step"; without a
    Syllabus, it is to plan one. A paused Topic is never suggested for study, and a finished
    one only for its Reviews. `session_open` returns the suggestion when it gets an Energy
-   and no Focus yet, as one value: a Focus, `plan`, `stop` or `resume_topic`, the same words
-   `status` recommends. The suggestion is never recorded, only the Focus the learner chooses:
-   `session_open` again with the open Session's id and that Focus records it on the same
-   Session (`session.focused`) and opens nothing new.
+   and no Focus yet, as one value: a Focus, `plan`, `stop`, `resume_topic` or `assess`, the
+   same words `status` recommends. `assess` is suggested at full and half Energy; at fumes
+   the Assessment waits, and the suggestion is Reviews or `stop`. The suggestion is never
+   recorded, only the Focus the learner chooses: `session_open` again with the open
+   Session's id and that Focus records it on the same Session (`session.focused`) and opens
+   nothing new.
 3. The Learner profile and the Topic's additions are read at the start of every Session;
    `status` gives their paths when the files exist.
 4. A Lesson moves through its Phases: teaching → practicing → feedback. The Check's criteria

@@ -53,8 +53,10 @@ practicing at 3, feedback at 4.
    numbers as they are. After a failed Attempt, follow `next` in `check_results`.
    Done when the learner chose what's next.
 5. Complete. Call `lesson_complete` with the Lesson's draft Cards
-   ([Cards and Reviews](cards-and-reviews.md#writing-cards)), then offer the next Lesson,
-   Reviews, or a break.
+   ([Cards and Reviews](cards-and-reviews.md#writing-cards)). When its `next` has the code
+   `assess_milestone`, this Lesson finished its Milestone: its Assessment comes next
+   ([The end of a Milestone](syllabus.md#the-end-of-a-milestone)). Otherwise offer the next
+   Lesson, Reviews, or a break.
    Done when `lesson_complete` succeeded and the learner chose what comes next.
 
 ## The Lesson template

@@ -1,0 +1,8 @@
+Study home:    $STUDY_HOME
+Active topic:  c (C): it is the Topic you worked on most recently
+Lesson:        every Lesson in the Syllabus is done
+Do next:       Take the Assessment of Milestone 1 “Basics”: ask your agent for it, or record one with study assessment record
+Forecast:      Set a Pace to see when each Milestone ends: study topic update c --pace 10
+
+Topics:
+  c  C

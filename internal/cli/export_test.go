@@ -17,6 +17,20 @@ func SetBeforeRCReplace(hook func(path string)) func() {
 	return func() { beforeRCReplace = nil }
 }
 
+// RenderLessonDetail renders a Lesson as study lesson does.
+func RenderLessonDetail(d core.LessonDetail) string {
+	var b strings.Builder
+	_ = writeLessonDetail(&b, d)
+	return b.String()
+}
+
+// RenderHistory renders a History view as study history does.
+func RenderHistory(v core.HistoryView) string {
+	var b strings.Builder
+	_ = writeHistory(&b, v)
+	return b.String()
+}
+
 // WriteScores renders a criterion's scores as the check and results
 // commands do.
 func WriteScores(s *core.CriterionScores) string {

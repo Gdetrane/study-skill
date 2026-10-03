@@ -1,0 +1,42 @@
+{
+  "ok": true,
+  "data": {
+    "topic": "c",
+    "entries": [
+      {
+        "id": "<id>",
+        "type": "checkpoint.taken",
+        "at": "2026-10-01T09:30:00Z",
+        "summary": "Checkpoint saved for the agent’s turn"
+      },
+      {
+        "id": "<id>",
+        "type": "phase.set",
+        "at": "2026-10-01T09:30:00Z",
+        "summary": "Phase set: practicing",
+        "lesson": "answer"
+      },
+      {
+        "id": "<id>",
+        "type": "revision.applied",
+        "at": "2026-10-01T09:30:00Z",
+        "summary": "Revision applied, approved by chat",
+        "item": "syllabus.toml"
+      },
+      {
+        "id": "<id>",
+        "type": "revision.proposed",
+        "at": "2026-10-01T09:30:00Z",
+        "summary": "Revision proposed"
+      },
+      {
+        "id": "<id>",
+        "type": "topic.created",
+        "at": "2026-10-01T09:30:00Z",
+        "summary": "Topic created",
+        "item": "topic.toml"
+      }
+    ],
+    "more": false
+  }
+}

@@ -33,6 +33,11 @@ Everything else in a Topic changes only through the tools (Instruction 3).
 1. Where they are. Call `status` and tell the learner what Instruction 1 lists.
    - When it recommends `resume_topic`, ask first: resume the Topic (`topic_update` with
      state `active`), or pick another one. Open the Session only on the Topic they choose.
+   - When it recommends `assess`, the Milestone it names is finished: offer its Assessment
+     first, before the Next step
+     ([The end of a Milestone](references/syllabus.md#the-end-of-a-milestone)). It stays
+     recommended until the Assessment is recorded or the learner starts a Lesson of another
+     Milestone; it is never late, and never a reason for guilt.
    - Tell them about any flags; once they accept one, `flag_dismiss` clears it.
    - When the Topic's Knowledge base is `notebooklm`, make one cheap call to the NotebookLM
      MCP server; when it fails, tell them they may need to log in to NotebookLM again.
@@ -52,22 +57,28 @@ Everything else in a Topic changes only through the tools (Instruction 3).
    4. Explore: ask me anything; useful answers can become flashcards
    ```
 
-   Record their choice with `session_open` again, giving the open Session's `session` id
-   and the `focus`. Then follow it:
+   When they choose Learn, Practice, Reviews or Explore, record it with `session_open`
+   again, giving the open Session's `session` id and the `focus`; the other suggestions
+   are not Focuses and record nothing there. Then follow the choice:
    - Learn or Practice: [The lesson loop](references/lesson-loop.md).
    - Reviews or Explore: [Cards and Reviews](references/cards-and-reviews.md).
    - `plan`: resume [Starting a Topic](references/starting-a-topic.md) at the first step
      not done.
+   - `assess`: offer the Milestone's Assessment first
+     ([The end of a Milestone](references/syllabus.md#the-end-of-a-milestone)) and record it
+     with `assessment_record`; the learner may choose a Focus instead.
    - `stop` at fumes: write tomorrow's first step together, as the Next step, and stop
      (step 4).
    - `stop` on a finished Topic: there is nothing to study on it now; offer another Topic,
      or end here.
 
-   Done when the Focus is recorded.
+   Done when the Focus is recorded, or the learner took up another suggestion.
 4. Stopping. When the learner wants a break or to stop, their time is up, or they reach a
    Break point:
    - at a Break point of the current Lesson, record it with `break_point_reached`;
-   - close with `session_close` and a Next step (Instruction 6).
+   - close with `session_close` and a Next step (Instruction 6). With an Assessment due,
+     the Next step names the next Lesson's first step, or, after the last Milestone, taking
+     its Assessment: the Assessment is cued on its own.
 
    Both save the work; on `checkpoint_error`, follow Instruction 5. To switch Topics in the
    middle of a Session, close this one first, then start again at step 1.
