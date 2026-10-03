@@ -1,0 +1,14 @@
+{
+  "ok": true,
+  "data": {
+    "topic": "c",
+    "hint": {
+      "id": "id013",
+      "lesson": "answer",
+      "kind": "nudge",
+      "requested_by": "learner",
+      "at": "2026-10-01T09:30:00Z"
+    },
+    "changed": true
+  }
+}

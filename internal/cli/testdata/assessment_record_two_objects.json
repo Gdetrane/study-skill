@@ -1,0 +1,7 @@
+{
+  "ok": false,
+  "error": {
+    "code": "invalid_argument",
+    "message": "stdin holds more than one Assessment: give one JSON object"
+  }
+}

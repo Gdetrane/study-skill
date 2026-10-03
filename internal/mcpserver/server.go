@@ -30,7 +30,8 @@ const Instructions = `Lamplight keeps the learner's study state. Follow these ru
 8. Change the Syllabus only through Revisions: revision_propose, show the learner the change, then revision_apply, which asks the learner directly when this client can; otherwise call it only after they approved in their own words, and record a no with revision_decline.
 9. Review only the Cards due_cards returns: it follows the Session's Energy and a daily cap on new Cards. At a draft's first Review, the learner keeps, edits or drops it. Write Cards with one fact each, no lists, no answer in the prompt, no trivia, and at least one from the learner's own mistakes.
 10. Show Forecasts as they are given, when a Milestone ends at the learner's Pace, never how far behind anything is. A Triage is something to consider, never the one next action: offer its options and change nothing until the learner chooses, a Revision to move Lessons, trim Stretch goals or change a target date, or topic_update for the Pace or the Goal's deadline.
-11. A paused Topic stays paused until the learner resumes it with topic_update (state active); never resume it yourself. When status recommends resume_topic or session_open says paused, offer to resume it or to pick another Topic, and teach nothing from it until it is resumed. A finished Topic offers only its Reviews.`
+11. A paused Topic stays paused until the learner resumes it with topic_update (state active); never resume it yourself. When status recommends resume_topic or session_open says paused, offer to resume it or to pick another Topic, and teach nothing from it until it is resumed. A finished Topic offers only its Reviews.
+12. Run the placement Assessment when a Topic is created, before drafting its Syllabus, and one at the end of each Milestone, each kept to about 15 minutes; record them with assessment_record. Weak results never block anything: when next says propose_revision, propose a Revision for the weak areas. The Level is set at an Assessment; the learner can change it at any time with topic_update, and their choice holds until the next Assessment. Teach at the Topic's Level and in its Approach. Record every hint you give with hint_record, saying whether the learner asked for it or you offered it. Read signals to adapt how you teach, never to show the learner counts or scores.`
 
 // New returns an MCP server whose tools call c. logger, if not nil, receives
 // the server's Log; it must never write to the transport's stdout.
@@ -93,16 +94,19 @@ func New(c *core.Core, version string, logger *slog.Logger) *mcp.Server {
 		Name:  "topic_update",
 		Title: "Change a Topic",
 		Description: "Change a Topic's settings: title, goal, Knowledge base, the Goal's deadline, the Pace, the daily " +
-			"cap on new Cards, Tasks, or its state (paused, finished or active again). Fields left out stay as they " +
+			"cap on new Cards, Tasks, the Level, the Approach, or its state (paused, finished or active again). Fields left out stay as they " +
 			"are; an empty goal or deadline removes it, and an empty pace removes the Pace. The Knowledge base is kind " +
 			"notebooklm, with the notebook's id, or none; choose it with the learner when creating the Topic. A Pace is " +
 			"dated periods of hours a week, such as 10 until a deadline and then 3; it gives each Milestone a Forecast. " +
-			"A paused Topic offers no Cards and no Forecasts. remove_tasks deletes Tasks for good. Asking for the values " +
+			"A paused Topic offers no Cards and no Forecasts. remove_tasks deletes Tasks for good. level is the " +
+			"learner's choice of Level, which holds until the next Assessment; set it only when they ask. The Approach " +
+			"(concepts, project or challenges) is chosen with the learner when creating the Topic. Asking for the values " +
 			"the Topic already has changes nothing.",
 		Annotations: &mcp.ToolAnnotations{DestructiveHint: &destructive, IdempotentHint: true, OpenWorldHint: &closedWorld},
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in topicUpdateInput) (*mcp.CallToolResult, core.TopicUpdate, error) {
 		changes := core.TopicChanges{Title: in.Title, Goal: in.Goal, Deadline: in.Deadline, Pace: in.Pace,
-			NewCardsPerDay: in.NewCardsPerDay, State: in.State, AddTasks: in.AddTasks, RemoveTasks: in.RemoveTasks}
+			NewCardsPerDay: in.NewCardsPerDay, State: in.State, AddTasks: in.AddTasks, RemoveTasks: in.RemoveTasks,
+			Level: in.Level, Approach: in.Approach}
 		if in.KnowledgeBase != nil {
 			changes.KnowledgeBase = &core.KnowledgeBase{Kind: in.KnowledgeBase.Kind, Notebook: in.KnowledgeBase.Notebook}
 		}
@@ -147,6 +151,7 @@ func New(c *core.Core, version string, logger *slog.Logger) *mcp.Server {
 
 	addKnowledgeTools(server, c)
 	addPlanTools(server, c)
+	addAssessmentTools(server, c)
 	return server
 }
 
@@ -229,6 +234,8 @@ type topicUpdateInput struct {
 	Pace           *[]core.PacePeriod `json:"pace,omitempty" jsonschema:"the Pace as dated periods, replacing the current ones; an empty list removes the Pace"`
 	NewCardsPerDay *int               `json:"new_cards_per_day,omitempty" jsonschema:"the daily cap on new Cards decided; 10 unless set"`
 	State          *string            `json:"state,omitempty" jsonschema:"active, paused or finished"`
+	Level          *string            `json:"level,omitempty" jsonschema:"the learner's choice of Level: beginner, intermediate, advanced or expert; it holds until the next Assessment"`
+	Approach       *string            `json:"approach,omitempty" jsonschema:"how the Lessons relate: concepts (standalone concepts), project (one project built step by step) or challenges (a run of challenges)"`
 	AddTasks       []core.TaskSpec    `json:"add_tasks,omitempty" jsonschema:"Tasks to add: steps toward the Goal that are not study"`
 	RemoveTasks    []string           `json:"remove_tasks,omitempty" jsonschema:"ids of Tasks to remove"`
 }

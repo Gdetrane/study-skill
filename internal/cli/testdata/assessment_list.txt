@@ -1,0 +1,10 @@
+Level: advanced (your choice)
+
+Milestone basics 1 Oct 2026
+  Pointers still need work
+  To work on: pointers
+
+Placement 1 Oct 2026, Level beginner
+  Knows variables; pointers need work
+  To work on: pointers
+  To confirm during Lessons: goroutines

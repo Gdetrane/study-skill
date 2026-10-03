@@ -201,7 +201,11 @@ Topic creation can stop and resume at any step, because a first session that run
 hours before any learning happens is exactly what v1 produced.
 
 1. Energy check. At fumes, suggest coming back later.
-2. Brainstorm the Goal (deadline optional), Pace periods, Approach and Workbench kind.
+2. Brainstorm the Goal (deadline optional), Pace periods, Approach and Workbench kind. The
+   Approach is how the Lessons relate: `concepts` (standalone concepts, each with its own
+   exercises), `project` (one project built step by step) or `challenges` (a run of
+   challenges of growing difficulty). It lives in `topic.toml` as `approach`, set through
+   `topic_update` (`approach.set`).
 3. Add Sources: files from the Library or URLs. Choose the Knowledge base: `notebooklm` or
    `none`.
 4. Assessment, time-boxed to about 15 minutes. Areas not reached are marked "confirm during
@@ -465,9 +469,39 @@ hours before any learning happens is exactly what v1 produced.
 
 - The Level is set at the Assessment and can be changed by the learner at any time; an
   override holds until the next Assessment.
+  - The Level lives in `topic.toml` (`level`), written by `assessment.recorded` when the
+    Assessment sets one and by `level.set` when the learner chooses; the latest writer wins,
+    which is the override rule. Where it came from is replayed from the History; a Level
+    edited into the file by hand counts as the learner's choice.
+  - A Level changed on two machines is flagged as a dismissible conflict naming both
+    Events. That includes a later Assessment on one machine that kept the Level the file
+    already held there while the learner chose another on the other: the merged file keeps
+    the learner's choice, although the History's last writer is the Assessment. When the
+    file is a version an Event recorded, the Level is reported with the Event that set it,
+    never as a hand edit; choosing a Level, even the one the file holds, records it and
+    settles the conflict.
+  - An Assessment records its kind (placement or milestone, naming the Milestone), each item
+    asked with its area and outcome (correct, partly, incorrect, or not reached when time ran
+    out), a summary, the minutes it took and its time box, the Level it suggests, and the
+    path and hash of the notes the agent saved in `notes/`. Weak and unreached areas are
+    derived for the agent; after a milestone Assessment with weak areas the result's
+    `next` is `propose_revision`, and nothing blocks. A client's `request` id makes a retry
+    record nothing; without one, the same Assessment as the latest is a retry only while
+    nothing changed the Level since, so a retake after an override sets the Level again.
 - v2.0 records every signal a future Level suggestion needs: Checks passed on the first try,
   hints requested, feedback rounds, the gap between dev and Held-out scores, and Review
   results. Suggestions come later, once there is data to tune them.
+  - Only hints (`hint.recorded`: nudge, explanation or step, for a Lesson being studied,
+    with `requested_by` the learner who asked or the agent who offered it unasked) and
+    Assessments have Events of their own; the other signals are derived by replay. The first
+    try is the first Attempt measured on the Check shown to the learner (run criteria, not
+    errored, so an agent's try before showing the Check never counts, and a Check with only
+    rubric items or `held_out` criteria has none); feedback rounds count
+    the times a Lesson went to feedback; the dev and Held-out gap compares a `held_out`
+    criterion's counted score with the run criteria's mean score in the same Attempt.
+  - The `signals` view is for the agent, to adapt depth, scaffolding and how soon it offers
+    a hint. Its counts and scores are never shown to the learner: the `study signals`
+    command is hidden from help and answers in JSON only.
 - Tasks are non-study steps toward the Goal. They appear in `status` when relevant and are
   marked done through the core.
   - The Goal's optional deadline, the Pace as dated periods (`[[pace]]`, each with `from` and
@@ -539,7 +573,8 @@ apply. Search results carry an absolute path. Conversion leaves the Library.
 Every write names its Topic. Tools are named after things that happen in the domain.
 
 - **Read**: `status`, `syllabus`, `lesson`, `due_cards` (sized to Energy), `cards`, `history`,
-  `check_results`, `library_search`, `sources`, `evidence`, `tasks`.
+  `check_results`, `library_search`, `sources`, `evidence`, `tasks`, `signals` (for the
+  agent only).
 - **Topics**: `topic_create`, `topic_update` (Goal, Pace, Level, Approach, Knowledge base,
   Tasks, pause, finish), `task_done`, `assessment_record`, `source_add`, `source_update`,
   `evidence_record`, `evidence_retract`.

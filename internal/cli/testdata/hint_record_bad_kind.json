@@ -1,0 +1,7 @@
+{
+  "ok": false,
+  "error": {
+    "code": "invalid_argument",
+    "message": "a hint's kind is nudge, explanation or step, not \"answer\""
+  }
+}

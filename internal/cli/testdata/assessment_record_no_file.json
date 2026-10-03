@@ -1,0 +1,7 @@
+{
+  "ok": false,
+  "error": {
+    "code": "usage",
+    "message": "give the Assessment with --file, or --file - for stdin"
+  }
+}

@@ -1,0 +1,66 @@
+{
+  "ok": true,
+  "data": {
+    "topic": "c",
+    "assessments": [
+      {
+        "id": "id008",
+        "kind": "milestone",
+        "milestone": "basics",
+        "items": [
+          {
+            "area": "pointers",
+            "outcome": "partly",
+            "note": "reads *p, not &x"
+          },
+          {
+            "area": "slices",
+            "outcome": "correct"
+          }
+        ],
+        "summary": "Pointers still need work",
+        "time_box": 15,
+        "at": "2026-10-01T09:30:00Z",
+        "weak": [
+          "pointers"
+        ]
+      },
+      {
+        "id": "id005",
+        "kind": "placement",
+        "items": [
+          {
+            "area": "variables",
+            "question": "What does x := 1 do?",
+            "outcome": "correct"
+          },
+          {
+            "area": "pointers",
+            "outcome": "incorrect",
+            "note": "confused * and &"
+          },
+          {
+            "area": "goroutines",
+            "outcome": "not_reached"
+          }
+        ],
+        "summary": "Knows variables; pointers need work",
+        "minutes": 13,
+        "time_box": 15,
+        "level": "beginner",
+        "at": "2026-10-01T09:30:00Z",
+        "weak": [
+          "pointers"
+        ],
+        "confirm": [
+          "goroutines"
+        ]
+      }
+    ],
+    "level": {
+      "level": "advanced",
+      "source": "learner",
+      "at": "2026-10-01T09:30:00Z"
+    }
+  }
+}

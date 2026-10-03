@@ -1,0 +1,1 @@
+study signals is for agents, which read it with --json to adapt how they teach.

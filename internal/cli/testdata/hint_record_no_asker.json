@@ -1,0 +1,7 @@
+{
+  "ok": false,
+  "error": {
+    "code": "invalid_argument",
+    "message": "say who asked for the hint (requested_by): learner, when the learner asked for help, or agent, when it was offered unasked"
+  }
+}

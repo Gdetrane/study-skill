@@ -155,6 +155,8 @@ type replayed struct {
 	know *knowledgeState
 	// plans is the Topic's state and its Tasks done; see planning().
 	plans *planningState
+	// assess is the Topic's Assessments, Level and hints; see assessing().
+	assess *assessmentState
 
 	// repeat is set by an Event's replay when the Event repeats a change
 	// already replayed, such as one Revision approved on two machines: its
@@ -348,6 +350,7 @@ func (c *Core) topicFlags(topic *os.Root, s *replayed) []Flag {
 	all := append(append([]Flag{}, s.flags...), c.gatingFlags(topic, s)...)
 	all = append(all, s.study.cardFlags()...)
 	all = append(all, entityConflicts(topic, s)...)
+	all = append(all, levelFlags(topic, s)...)
 	if ahead := s.latest.Sub(c.now()); ahead > clockAheadLimit {
 		// The flag is named after the earliest Event dated ahead, which
 		// later Events, the dismissal included, never change.

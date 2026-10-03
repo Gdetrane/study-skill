@@ -94,6 +94,14 @@ type lessonState struct {
 	heldOut map[string]string
 	// grades is each rubric item's latest grade.
 	grades map[string]*RubricGrade
+	// firstTry is whether the first Attempt measured on the Check shown to
+	// the learner passed: an Attempt that is not errored, with run
+	// criteria. measured counts those Attempts, and feedbackRounds the
+	// times the Lesson went to feedback. They are signals for a future
+	// Level suggestion.
+	firstTry       *bool
+	measured       int
+	feedbackRounds int
 	// fixPending is set when an Attempt failed on a run criterion and no
 	// Next step was recorded for the Lesson since: practicing resumes only
 	// with a Next step that names the fix.

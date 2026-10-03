@@ -1,0 +1,5 @@
+This placement Assessment was already recorded.
+  Knows variables; pointers need work
+  To work on: pointers
+  To confirm during Lessons: goroutines
+  Level: beginner (set by an Assessment)
