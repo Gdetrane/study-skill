@@ -9,7 +9,10 @@ that scripts and agents can rely on. Terms follow [CONTEXT.md](../CONTEXT.md).
 | Command | What it does |
 |---|---|
 | `study` | Same as `study status`. |
-| `study status` | Shows the Study home, the Active topic and why it was chosen, every Topic, and any Topic that could not be read (`problems`). A broken Topic never stops the others from being listed. Each Topic can carry `flags`, its Resume point (`resume`) and `lessons_without_evidence`: Lessons started or done that cite no Evidence yet, once the Topic has Sources or a NotebookLM Knowledge base (a reminder, never a block). |
+| `study status` | Shows the Study home, the Active topic and why it was chosen, the one action recommended for it (`recommended`), the Learner profile (`learner_profile`), every Topic, and any Topic that could not be read (`problems`). A broken Topic never stops the others from being listed. Each Topic can carry `flags`, its Resume point (`resume`), whether its Cards are ready (`cards`, never a count), its additions to the Learner profile (`learner_additions`) and `lessons_without_evidence`: Lessons started or done that cite no Evidence yet, once the Topic has Sources or a NotebookLM Knowledge base (a reminder, never a block). See "Where the learner stopped" below. |
+| `study session open <topic> [--energy E] [--focus F] [--dry-run]` | Opens a Session and shows where you stopped. With an Energy and no Focus chosen yet, it suggests one (or to plan, or to stop); it lists every Session that ended without a Next step, and what changed since the last Checkpoint. See "Opening a Session" below. |
+| `study session close <topic> --next-step S [--context C] [--session ID] [--dry-run]` | Closes the Session with a Next step that starts with a verb (see "Next steps" below). `--session` gives a Session left unclosed the note it never got. |
+| `study session break-point <topic> <lesson> <break-point> --next-step S [--context C] [--dry-run]` | Records a Break point the Lesson's header declares, with a Next step. The Session stays open. Reaching the same Break point with the same Next step again changes nothing. |
 | `study topic create --title T [--id ID] [--goal G] [--dry-run]` | Creates a Topic folder with its settings, History and git repository. `--dry-run` validates and shows the result without writing. |
 | `study topic update <topic> [--title T] [--goal G] [--knowledge-base K [--notebook ID]] [--dry-run]` | Changes a Topic's title, goal or Knowledge base (`notebooklm` with the notebook's id, or `none`; see [Sources and Evidence](#sources-and-evidence)); flags left out stay as they are, and `--goal ""` removes the goal. Settings in `topic.toml` that this version does not know are kept. The result is `{"topic": ..., "changed": bool}`: asking for the values the Topic already has changes nothing and records nothing. |
 | `study topic dismiss-flag <topic> <flag-id> [--dry-run]` | Dismisses one of the Topic's flags, by the id `status` shows, once the learner has looked at it. It records the decision in the History and never changes content. The result is `{"topic": ..., "flag": {...}, "changed": bool}`; dismissing a flag twice changes nothing. Only `held_event`, `conflict`, `damaged_line`, `clock_ahead` and `card_flagged` flags can be dismissed (see below). |
@@ -117,12 +120,13 @@ that need the learner's attention. Flags are reported, never resolved automatica
 | Kind | Meaning | Goes away |
 |---|---|---|
 | `held_event` | An Event could not be applied: it refers to something the History doesn't contain (yet), or a newer version of `study` wrote it. While a Topic holds Events from a newer version, it can be read but not changed (`newer_format`). | when the Event becomes applicable, or when dismissed |
-| `conflict` | Two Events changed one item from the same version, or two different Events share an ID: usually changes made on two machines without syncing in between. | when dismissed, after checking the item by hand |
+| `conflict` | Two Events changed one item from the same version, or two different Events share an ID: usually changes made on two machines without syncing in between. Also a Next step recorded for a Lesson the other machine completed, skipped or removed, and one Session closed on two machines with different notes. | when dismissed, after checking the item by hand |
 | `damaged_line` | A line of `history.jsonl` is not an Event, such as a line cut off by an interrupted write that a merge moved into the middle of the file. It is skipped, never deleted. | when the line is fixed or deleted by hand, or when dismissed |
 | `clock_ahead` | The History holds an Event dated more than a day after this computer's clock, so some machine's clock was wrong. New Events still sort after it. | when the clock catches up, or when dismissed |
 | `edited_outside` | Content that approves or gates progress differs from the version its last Event recorded. | when Lamplight next records that item, or the content is restored |
 | `interrupted_write` | A write to the Topic was interrupted; the next write to it finishes the job. | with the next write or Checkpoint |
 | `card_flagged` | The learner flagged a Card during a Review as wrong or unclear, with their note if any. | when the Card is edited or deleted, or when dismissed |
+| `lesson_header` | The current Lesson's YAML header cannot be read, so its Break points are unknown. | when the header is fixed |
 
 `id` is stable across runs and machines, so a dismissal recorded on one machine applies on
 every other. `item` and `events` are present when the flag concerns a particular item or
@@ -136,14 +140,108 @@ human output shows it under the Active topic:
 ```json
 {
   "lesson": "pointers", "lesson_title": "Pointers", "phase": "practicing",
+  "break_point": { "id": "swap", "describe": "swap() works on two ints" },
   "next_step": { "step": "Fix the off-by-one in parse.c", "context": "...", "lesson": "pointers", "at": "..." },
   "open_session": { "id": "...", "opened": "..." }
 }
 ```
 
 `lesson` is the first Lesson in Syllabus order that is neither done nor skipped;
-`syllabus_done` is `true` instead once every Lesson is. `next_step` is the latest Next step recorded, word for word.
-`open_session` is a Session not closed yet: in progress, or ended without a Next step.
+`syllabus_done` is `true` instead once every Lesson is. `break_point` is the last Break point
+reached in that Lesson, with its description from the Lesson's header. `next_step` is the
+latest Next step recorded, word for word, unless its Lesson is done, skipped or no longer in
+the Syllabus. `open_session` is the newest Session not closed yet: in progress, or ended
+without a Next step.
+
+`status` also recommends one action for the Active topic, never counting anything:
+
+```json
+"recommended": { "topic": "c", "action": "next_step", "text": "Fix the off-by-one in parse.c" }
+```
+
+`action` is one of `next_step` (the text is the Next step word for word), `plan` (no
+Syllabus yet), `learn`, `practice` or `feedback` (the current Lesson's Phase), `reviews`
+(every Lesson done, Cards ready) or `explore` (every Lesson done). The words match the
+Focuses and the suggestions of `session_open` wherever they mean the same thing, and the
+list is fixed, so skills can rely on it; `text` is English prose a skill may rephrase. The
+recommendation always agrees with the Resume point. Each Topic's `cards` is
+`{"ready": true}`, or `{"ready": false, "next_due": "..."}`: whether Reviews are possible
+now, never how many Cards are due. `learner_profile` is the Study home's `learner.md` and a
+Topic's `learner_additions` its own `learner.md`, when they exist as regular files (a
+symbolic link is not followed); agents read both before teaching.
+
+### Break points
+
+A Lesson declares its Break points, in order, in its YAML header next to the Check:
+
+```yaml
+---
+check:
+  - id: tests
+    run: [go, test, ./...]
+break_points:
+  - id: swap
+    describe: swap() works on two ints
+  - id: arrays
+    describe: The same for arrays
+---
+```
+
+Ids are slugs, unique within the Lesson. The Check and the Break points are read apart, so
+a wrong type or an invalid value in `break_points` never makes the Check unreadable; a YAML
+syntax error breaks the whole header, as it would any header. When the current Lesson's
+header cannot be read, `status` flags it (`lesson_header`) instead of hiding its Break
+points. `break_point_reached` (or `study session break-point`) records one, with a Next
+step, in the current Lesson only: the Resume point's Lesson, Break point and Next step
+always belong together. The next Session resumes from it. A Lesson removed by a Revision
+loses its Break point, even if a later Revision adds it back.
+
+### Next steps
+
+A Next step is an action that starts with a verb and says what to act on: "Fix the
+off-by-one in parse.go". `session_close`, `break_point_reached` and a `phase_set` that
+gives one check it, without a language model, and refuse with `invalid_argument` a Next
+step that:
+
+- after any opening punctuation or symbols (quotes, `¿`, `**`, a backtick), does not start
+  with a letter;
+- is too short to say what to do: fewer than two words, or, in scripts written without
+  spaces between words (Chinese, Japanese, Thai and the like), fewer than four characters;
+- starts with a word that introduces a description rather than an action ("The parser is
+  half done", "I'm on Lesson 3", "Done with the parser"); the first word is its leading run
+  of letters, so contractions count by their first part. This word list is English; steps
+  in other languages pass on the other rules;
+- contains an invisible formatting character, such as a zero-width space.
+
+All text Lamplight records also refuses control characters and bidirectional embedding,
+override and isolate controls (U+202A–U+202E, U+2066–U+2069).
+
+### Opening a Session
+
+`session_open` (or `study session open`) returns, besides the Resume point:
+
+- `suggested`, when an Energy is given and no Focus chosen yet: `suggest` is a Focus to offer
+  (`learn`, `practice`, `reviews`, `explore`), `plan` (no Syllabus yet: plan it together)
+  or `stop` (fumes with nothing due: write tomorrow's first step and end here); `reason` is
+  English prose a skill may rephrase. A suggestion is never recorded.
+- `cards`, as in `status`.
+- `long_gap`, when the Topic was last worked on, by any Event, more than a week ago: start
+  with a short recap and a warm-up, never with the size of a backlog.
+- `unclosed`, every Session that ended without a Next step, newest first, each with its id
+  and when it opened; a merge can leave one from each machine. Give each its note with
+  `session_close` naming it.
+- `changes`, when a Session was left unclosed: what changed since the last Checkpoint
+  (`since`; absent before the first Checkpoint, when every file counts as added). `files`
+  lists at most 50, each `added`, `modified` or `deleted`, and `more` counts the rest.
+  Lamplight's own state files (`topic.toml`, `syllabus.toml`, `history.jsonl`,
+  `cards.jsonl`, `sources.jsonl`) are left out. Listing them writes nothing to `.git` and
+  runs nothing the repository names; when git cannot list them, such as during a merge,
+  `error` says why and the Session opens anyway.
+
+A note given late to an older Session never replaces a Next step recorded in a newer one. A
+Next step that a merge brings in for a Lesson already done, skipped or removed never leads
+the Resume point, and is flagged as a `conflict`; so is one Session closed on two machines
+with different notes (the first note counts).
 
 ## The Syllabus
 

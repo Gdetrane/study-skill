@@ -896,7 +896,7 @@ func TestURLsAreNormalised(t *testing.T) {
 		"http://example.com:8080/x?y=1#part":                      "http://example.com:8080/x?y=1#part",
 		"https://[::1]:443/":                                      "https://[::1]/",
 		"http://例え.JP/パス":                                         "http://例え.jp/%E3%83%91%E3%82%B9",
-		"https://example.com/\u202egnp.exe":                       "https://example.com/%E2%80%AEgnp.exe",
+		"https://example.com/\u202egnp.exe":                       "",
 		"https://user:secret@example.com/x":                       "",
 		"https://exa\u202emple.com/":                              "",
 		"javascript:alert(1)":                                     "",

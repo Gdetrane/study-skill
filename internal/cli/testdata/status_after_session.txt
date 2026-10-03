@@ -1,0 +1,8 @@
+Study home:    $STUDY_HOME
+Active topic:  c (C): you started inside its folder
+Lesson:        answer (The answer)
+Break point:   read: The question is understood
+Next step:     Run the Check on 42
+
+Topics:
+  c  C

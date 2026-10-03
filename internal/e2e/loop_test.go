@@ -318,9 +318,12 @@ func TestTheLearnerLoop(t *testing.T) {
 		t.Fatalf("resume after the crash = %+v", topic.Resume)
 	}
 	a.call("session_open", map[string]any{"topic": "c", "energy": "half", "focus": "reviews"}, &opened)
-	if opened.Unclosed == nil {
-		t.Errorf("the second Session does not report the first, left unclosed")
+	if len(opened.Unclosed) != 1 {
+		t.Fatalf("the second Session does not report the first, left unclosed: %+v", opened.Unclosed)
 	}
+	// As the Instructions ask, the agent gets the learner's missing note.
+	a.call("session_close", map[string]any{"topic": "c", "session": opened.Unclosed[0].ID,
+		"next_step": "Complete the Lesson again after the crash"}, nil)
 	var done core.LessonCompletion
 	a.call("lesson_complete", map[string]any{"topic": "c", "lesson": "answer"}, &done)
 	if done.Changed || done.Attempt != second.ID || len(done.Cards) != 1 || done.Checkpoint == nil {
@@ -354,7 +357,7 @@ func TestTheLearnerLoop(t *testing.T) {
 		"phase.set", "checkpoint.taken", "phase.set", "checkpoint.taken", "attempt.recorded",
 		// The crash interrupted the completion before its Checkpoint; the
 		// next day's retry takes it.
-		"lesson.completed", "session.opened", "checkpoint.taken",
+		"lesson.completed", "session.opened", "session.closed", "checkpoint.taken",
 		"review.recorded", "session.closed"}
 	if !slices.Equal(types, want) {
 		t.Errorf("History =\n%v\nwant\n%v", types, want)
@@ -592,8 +595,8 @@ func assertTwoMachinesMerge(t *testing.T, a *agent) {
 			closed++
 		}
 	}
-	if closed != 3 || len(typesA) != len(typesB) {
-		t.Errorf("the merged History has %d session.closed Events (want both machines', 3 in all), "+
+	if closed != 4 || len(typesA) != len(typesB) {
+		t.Errorf("the merged History has %d session.closed Events (want both machines', 4 in all), "+
 			"and %d lines on A, %d on B", closed, len(typesA), len(typesB))
 	}
 }

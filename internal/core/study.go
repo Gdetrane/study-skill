@@ -29,9 +29,10 @@ type studyState struct {
 	// sessions are the Sessions opened, in order.
 	sessions []*sessionState
 	// nextStep is the latest Next step recorded, cleared when its Lesson
-	// is completed.
-	nextStep *NextStep
-	cards    map[string]*cardState
+	// is completed, and nextStepSeq where in replay order it was recorded.
+	nextStep    *NextStep
+	nextStepSeq int
+	cards       map[string]*cardState
 	// cardOrder lists Card IDs in the order they were created.
 	cardOrder []string
 	// numbers caches the Cards' display numbers; see cardNumber.
@@ -82,6 +83,8 @@ func newStudyState() studyState {
 type lessonState struct {
 	// phase is the Lesson's Phase: teaching, practicing or feedback.
 	phase string
+	// breakPoint is the id of the last Break point reached in it.
+	breakPoint string
 	// shownCheck is the version of the Check shown to the learner when
 	// practicing last started: the one completion counts.
 	shownCheck string

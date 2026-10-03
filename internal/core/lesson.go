@@ -10,13 +10,18 @@ import (
 )
 
 // A Lesson's text lives in lessons/<lesson-id>.md, which the agent writes.
-// Its YAML header holds the Check:
+// Its YAML header holds the Check and the Break points:
 //
 //	---
 //	check:
 //	  - id: tests
 //	    describe: The tests pass
 //	    run: [go, test, ./...]
+//	break_points:
+//	  - id: parser
+//	    describe: The parser reads every token
+//	  - id: errors
+//	    describe: Errors name the line they come from
 //	---
 //	# Pointers
 //	...
@@ -26,8 +31,11 @@ import (
 // canonical form. Lamplight records that version when practicing starts and
 // with every Attempt, and status flags a Check changed since.
 //
-// TODO(#30): rubric and held-out criteria, Break points in the header, and
-// per-criterion results files.
+// Break points are named steps, in order, where a Session can stop and a
+// later one resume. They gate nothing, so they are not an item: reaching one
+// records its id, and its description is read back from the file.
+//
+// TODO(#30): rubric and held-out criteria, and per-criterion results files.
 
 const checkKey = "check"
 
@@ -44,10 +52,32 @@ type Criterion struct {
 	Run      []string `json:"run" yaml:"run"`
 }
 
-// lessonHeader is the YAML header of a Lesson file. Settings Lamplight does
-// not know, such as Break points for now, are ignored.
+// lessonHeader is the part of a Lesson file's YAML header that holds the
+// Check. It is read on its own, so a wrong type or invalid value elsewhere
+// in the header, such as in the Break points, never makes the Check
+// unreadable; a YAML syntax error breaks the whole header, as it would any
+// header. Settings
+// Lamplight does not know are ignored.
 type lessonHeader struct {
 	Check []criterionYAML `yaml:"check"`
+}
+
+// breakPointHeader is the part of a Lesson file's YAML header that holds the
+// Break points.
+type breakPointHeader struct {
+	BreakPoints []breakPointYAML `yaml:"break_points"`
+}
+
+// BreakPoint is a named step in a Lesson where a Session can stop and a
+// later one resume.
+type BreakPoint struct {
+	ID       string `json:"id"`
+	Describe string `json:"describe,omitempty"`
+}
+
+type breakPointYAML struct {
+	ID       string `yaml:"id"`
+	Describe string `yaml:"describe"`
 }
 
 // criterionYAML accepts any criterion so an unsupported kind gets a clear
@@ -126,6 +156,50 @@ func parseCheck(data []byte) ([]Criterion, error) {
 		out = append(out, Criterion{ID: c.ID, Describe: describe, Run: c.Run})
 	}
 	return out, nil
+}
+
+// parseBreakPoints reads the Break points from a Lesson file, in order. It
+// returns nil when the Lesson declares none.
+func parseBreakPoints(data []byte) ([]BreakPoint, error) {
+	header, err := splitFrontMatter(data)
+	if err != nil || header == nil {
+		return nil, err
+	}
+	var h breakPointHeader
+	if err := yaml.Unmarshal(header, &h); err != nil {
+		return nil, corruptf("the Break points in the YAML header are not valid: %v", err)
+	}
+	seen := map[string]bool{}
+	var out []BreakPoint
+	for i, b := range h.BreakPoints {
+		if err := validateEntityID("Break point", b.ID); err != nil {
+			return nil, corruptf("Break point %d: %v", i+1, err)
+		}
+		if seen[b.ID] {
+			return nil, corruptf("two Break points have the id %s", b.ID)
+		}
+		seen[b.ID] = true
+		describe, err := cleanText("description of Break point "+b.ID, b.Describe, maxGoalRunes)
+		if err != nil {
+			return nil, corruptf("%v", err)
+		}
+		out = append(out, BreakPoint{ID: b.ID, Describe: describe})
+	}
+	return out, nil
+}
+
+// readBreakPoints reads a Lesson's Break points from the Topic. A Lesson
+// file that does not exist yet declares none.
+func readBreakPoints(topic *os.Root, lessonID string) ([]BreakPoint, error) {
+	data, exists, err := readFile(topic, lessonFile(lessonID))
+	if err != nil || !exists {
+		return nil, err
+	}
+	points, err := parseBreakPoints(data)
+	if err != nil {
+		return nil, corruptf("%s: %v", lessonFile(lessonID), err)
+	}
+	return points, nil
 }
 
 // lessonCodec reads the Check of a Lesson file as an item. Its canonical

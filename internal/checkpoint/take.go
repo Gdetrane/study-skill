@@ -146,22 +146,54 @@ func Take(ctx context.Context, dir string, opts Options) (Result, error) {
 // it is: git replaces the index by renaming, so the read is consistent even
 // while an editor works.
 func (r *repo) preview(ctx context.Context, threshold int64) (Result, error) {
-	if _, err := r.checkState(ctx); err != nil {
+	cmp, err := r.compareWithHead(ctx)
+	if err != nil {
 		return Result{}, err
+	}
+	changed := len(cmp.next) != len(cmp.current)
+	var large []LargeFile
+	for p, e := range cmp.next {
+		if c, ok := cmp.current[p]; ok && c == e {
+			continue
+		}
+		changed = true
+		if st, ok := cmp.states[p]; ok && threshold >= 0 && st.mode != modeSymlink && st.size >= threshold {
+			large = append(large, LargeFile{Path: p, Size: st.size})
+		}
+	}
+	if !changed {
+		return Result{Commit: cmp.head, Tree: cmp.headTree}, nil
+	}
+	sort.Slice(large, func(i, j int) bool { return large[i].Path < large[j].Path })
+	return Result{Committed: true, LargeFiles: large}, nil
+}
+
+// comparison is what a Checkpoint would hold, next to what HEAD holds.
+type comparison struct {
+	head, headTree string
+	next, current  map[string]treeEntry
+	states         map[string]fileState
+}
+
+// compareWithHead lists the files a Checkpoint would hold, hashed but not
+// written, and the files of HEAD. It writes nothing and takes no lock.
+func (r *repo) compareWithHead(ctx context.Context) (comparison, error) {
+	if _, err := r.checkState(ctx); err != nil {
+		return comparison{}, err
 	}
 	head, headTree, err := r.head(ctx)
 	if err != nil {
-		return Result{}, err
+		return comparison{}, err
 	}
 	entries, err := r.listIndex(ctx, "", "")
 	if err != nil {
-		return Result{}, err
+		return comparison{}, err
 	}
 	next := map[string]treeEntry{}
 	var candidates []string
 	for _, e := range entries {
 		if e.stage != "0" {
-			return Result{}, fmt.Errorf("%w (%s)", ErrUnmergedPaths, e.path)
+			return comparison{}, fmt.Errorf("%w (%s)", ErrUnmergedPaths, e.path)
 		}
 		if e.skipWorktree || e.mode == modeGitlink {
 			next[e.path] = treeEntry{mode: e.mode, oid: e.oid}
@@ -171,36 +203,75 @@ func (r *repo) preview(ctx context.Context, threshold int64) (Result, error) {
 	}
 	untracked, err := r.listUntracked(ctx, "", "")
 	if err != nil {
-		return Result{}, err
+		return comparison{}, err
 	}
 	states, err := r.hashWorktree(ctx, append(candidates, untracked...), false)
 	if err != nil {
-		return Result{}, err
+		return comparison{}, err
 	}
 	for p, st := range states {
 		next[p] = treeEntry{mode: st.mode, oid: st.oid}
 	}
 	current, err := r.lsTree(ctx, head)
 	if err != nil {
-		return Result{}, err
+		return comparison{}, err
 	}
+	return comparison{head: head, headTree: headTree, next: next, current: current, states: states}, nil
+}
 
-	changed := len(next) != len(current)
-	var large []LargeFile
-	for p, e := range next {
-		if c, ok := current[p]; ok && c == e {
-			continue
-		}
-		changed = true
-		if st, ok := states[p]; ok && threshold >= 0 && st.mode != modeSymlink && st.size >= threshold {
-			large = append(large, LargeFile{Path: p, Size: st.size})
+// Kinds of change that ChangesSince reports.
+const (
+	Added    = "added"
+	Modified = "modified"
+	Deleted  = "deleted"
+)
+
+// Change is one file that differs from the last Checkpoint.
+type Change struct {
+	Path string
+	Kind string
+}
+
+// Changes is what differs between a Topic's working tree and its last
+// Checkpoint.
+type Changes struct {
+	// Since is the last Checkpoint's commit, "" before the first.
+	Since string
+	// Files are the files added, modified or deleted since, by path.
+	Files []Change
+}
+
+// ChangesSince reports what changed in the Topic's working tree in dir since
+// its last Checkpoint, by the rules a Checkpoint follows: tracked and
+// untracked files that are not ignored, compared as raw bytes. Like a dry
+// run of Take, it writes nothing to .git, takes no lock and needs no git
+// identity.
+func ChangesSince(ctx context.Context, dir string) (Changes, error) {
+	r, err := open(ctx, dir)
+	if err != nil {
+		return Changes{}, err
+	}
+	defer r.close()
+	cmp, err := r.compareWithHead(ctx)
+	if err != nil {
+		return Changes{}, err
+	}
+	out := Changes{Since: cmp.head, Files: []Change{}}
+	for p, e := range cmp.next {
+		switch c, ok := cmp.current[p]; {
+		case !ok:
+			out.Files = append(out.Files, Change{Path: p, Kind: Added})
+		case c != e:
+			out.Files = append(out.Files, Change{Path: p, Kind: Modified})
 		}
 	}
-	if !changed {
-		return Result{Commit: head, Tree: headTree}, nil
+	for p := range cmp.current {
+		if _, ok := cmp.next[p]; !ok {
+			out.Files = append(out.Files, Change{Path: p, Kind: Deleted})
+		}
 	}
-	sort.Slice(large, func(i, j int) bool { return large[i].Path < large[j].Path })
-	return Result{Committed: true, LargeFiles: large}, nil
+	sort.Slice(out.Files, func(i, j int) bool { return out.Files[i].Path < out.Files[j].Path })
+	return out, nil
 }
 
 // treeEntry is one file of a tree, flattened.

@@ -57,6 +57,12 @@ type Topic struct {
 	// Evidence, once the Topic has Sources or a NotebookLM Knowledge base.
 	// They are marked, never blocked.
 	LessonsWithoutEvidence []string `json:"lessons_without_evidence,omitempty"`
+	// Cards says whether Cards are ready to review, never how many; absent
+	// for a Topic without Cards.
+	Cards *CardsReady `json:"cards,omitempty"`
+	// LearnerAdditions is the path of the Topic's additions to the Learner
+	// profile, when they exist.
+	LearnerAdditions string `json:"learner_additions,omitempty"`
 }
 
 // TopicSpec describes a Topic to create.
@@ -494,9 +500,11 @@ func (c *Core) loadTopic(home *os.Root, id string) (Topic, error) {
 	topic.Created = s.created
 	topic.Flags = c.topicFlags(root, s)
 	if r := s.study.resume(); !r.empty() {
+		describeBreakPoint(root, &r)
 		topic.Resume = &r
 	}
 	topic.LessonsWithoutEvidence = s.lessonsWithoutEvidence(s.citingLessons(topic.KnowledgeBase))
+	c.addTopicGuidance(root, s, &topic)
 	if unfinished := unfinishedItems(home, id, s); len(unfinished) > 0 {
 		kept := topic.Flags[:0]
 		for _, f := range topic.Flags {
@@ -533,11 +541,22 @@ func cleanText(field, s string, maxRunes int) (string, error) {
 		if unicode.IsControl(r) {
 			return "", invalidf("the %s contains a control character", field)
 		}
+		if isBidiControl(r) {
+			return "", invalidf("the %s contains a bidirectional control character (U+%04X), which can make text "+
+				"display differently from what it says", field, r)
+		}
 	}
 	if utf8.RuneCountInString(s) > maxRunes {
 		return "", invalidf("the %s is longer than %d characters", field, maxRunes)
 	}
 	return s, nil
+}
+
+// isBidiControl reports whether r is a bidirectional embedding, override or
+// isolate control (U+202A–U+202E, U+2066–U+2069), which can reorder how text
+// is displayed in a terminal.
+func isBidiControl(r rune) bool {
+	return r >= 0x202A && r <= 0x202E || r >= 0x2066 && r <= 0x2069
 }
 
 // slugify turns a title into a Topic id: "Lineare Algebra für Anfänger"

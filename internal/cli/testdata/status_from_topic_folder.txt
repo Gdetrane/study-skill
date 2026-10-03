@@ -1,5 +1,6 @@
 Study home:    $STUDY_HOME
 Active topic:  linear-algebra (Linear algebra): you started inside its folder
+Do next:       Plan the Syllabus together, and approve it
 
 Topics:
   linear-algebra  Linear algebra

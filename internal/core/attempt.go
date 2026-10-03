@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/mordor-forge/lamplight/v2/internal/checkpoint"
 )
@@ -431,10 +432,17 @@ func completionRule(s *replayed, lessonID string, w work) (Attempt, error) {
 // cleanTextBlock is cleanText for multi-line text: line breaks and tabs are
 // allowed, other control characters are not.
 func cleanTextBlock(field, s string, maxRunes int) (string, error) {
+	if !utf8.ValidString(s) {
+		return "", invalidf("the %s is not valid UTF-8 text", field)
+	}
 	s = strings.TrimSpace(s)
 	for _, r := range s {
 		if unicode.IsControl(r) && r != '\n' && r != '\t' {
 			return "", invalidf("the %s contains a control character", field)
+		}
+		if isBidiControl(r) {
+			return "", invalidf("the %s contains a bidirectional control character (U+%04X), which can make text "+
+				"display differently from what it says", field, r)
 		}
 	}
 	if n := len([]rune(s)); n > maxRunes {

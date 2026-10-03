@@ -715,6 +715,13 @@ func replayRevisionApplied(s *replayed, ev event) error {
 			s.study.nextStep = nil
 		}
 	}
+	// Nor does the Break point of a removed Lesson come back if a later
+	// Revision adds the Lesson again.
+	for id, ls := range s.study.lessons {
+		if _, ok := syllabus.lesson(id); !ok {
+			ls.breakPoint = ""
+		}
+	}
 	return nil
 }
 
