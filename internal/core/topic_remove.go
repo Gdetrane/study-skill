@@ -21,8 +21,8 @@ type TopicRemoval struct {
 	// included: .lamplight/removed/<UTC time>-<topic>.
 	MovedTo string `json:"moved_to"`
 	// Restore is the shell command that moves the folder back, restoring
-	// the Topic under its id. It moves nothing while another Topic has
-	// that id.
+	// the Topic under its id. It checks first that no Topic has that id,
+	// and moves nothing if one has.
 	Restore string `json:"restore"`
 	// Note says, in a dry run, that a write to the Topic is in progress:
 	// the removal waits for it to finish.
@@ -107,6 +107,11 @@ func (c *Core) removal(home *os.Root, topicID string) TopicRemoval {
 // folder back to to. It moves nothing when something is at to already: mv
 // alone would put the removed Topic inside the Topic that took its id, and
 // succeed.
+//
+// The check comes before the move, not with it: the systems study runs on
+// share no mv that refuses an existing destination (-T is GNU's). A Topic
+// created under the id between the two would still get the removed one
+// inside it; nothing is lost then, and it can be moved back out.
 func restoreCommand(from, to string) string {
 	return "test ! -e " + shellWord(to) + " && mv " + shellWord(from) + " " + shellWord(to)
 }
