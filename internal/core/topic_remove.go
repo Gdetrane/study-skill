@@ -6,7 +6,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"syscall"
 )
@@ -22,7 +21,8 @@ type TopicRemoval struct {
 	// included: .lamplight/removed/<UTC time>-<topic>.
 	MovedTo string `json:"moved_to"`
 	// Restore is the shell command that moves the folder back, restoring
-	// the Topic under its id while no other Topic has that id.
+	// the Topic under its id. It moves nothing while another Topic has
+	// that id.
 	Restore string `json:"restore"`
 	// Note says, in a dry run, that a write to the Topic is in progress:
 	// the removal waits for it to finish.
@@ -100,8 +100,15 @@ func (c *Core) removal(home *os.Root, topicID string) TopicRemoval {
 		name += "-" + randomID()[:6]
 	}
 	movedTo := filepath.Join(c.home, localDir, removedDir, name)
-	return TopicRemoval{Topic: topicID, MovedTo: movedTo,
-		Restore: "mv " + shellWord(movedTo) + " " + shellWord(filepath.Join(c.home, topicID))}
+	return TopicRemoval{Topic: topicID, MovedTo: movedTo, Restore: restoreCommand(movedTo, filepath.Join(c.home, topicID))}
+}
+
+// restoreCommand is the shell command that moves a removed Topic from its
+// folder back to to. It moves nothing when something is at to already: mv
+// alone would put the removed Topic inside the Topic that took its id, and
+// succeed.
+func restoreCommand(from, to string) string {
+	return "test ! -e " + shellWord(to) + " && mv " + shellWord(from) + " " + shellWord(to)
 }
 
 func interruptedWrite(topicID string) error {
@@ -126,13 +133,8 @@ func moveError(topicID, to string, err error) error {
 	return internalError("moving Topic "+topicID+" to "+to, err)
 }
 
-// plainWord matches what a POSIX shell reads as one word without quotes.
-var plainWord = regexp.MustCompile(`^[A-Za-z0-9_./@%+=:,-]+$`)
-
-// shellWord quotes s for a POSIX shell, only when it needs quotes.
+// shellWord quotes s as one word of a POSIX shell. It always quotes, so a
+// command reads the same whatever the paths in it.
 func shellWord(s string) string {
-	if plainWord.MatchString(s) {
-		return s
-	}
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
