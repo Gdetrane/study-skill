@@ -1,0 +1,1 @@
+Topic linear-algebra is paused: its Cards wait until you resume it with study topic update linear-algebra --state active.

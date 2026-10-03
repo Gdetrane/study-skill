@@ -153,6 +153,8 @@ type replayed struct {
 	study studyState
 	// know is the Topic's Sources and Evidence; see knowledge().
 	know *knowledgeState
+	// plans is the Topic's state and its Tasks done; see planning().
+	plans *planningState
 
 	// repeat is set by an Event's replay when the Event repeats a change
 	// already replayed, such as one Revision approved on two machines: its

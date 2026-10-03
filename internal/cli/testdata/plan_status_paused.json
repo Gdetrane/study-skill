@@ -1,0 +1,43 @@
+{
+  "ok": true,
+  "data": {
+    "study_home": "$STUDY_HOME",
+    "active_topic": {
+      "id": "linear-algebra",
+      "title": "Linear algebra",
+      "chosen_by": "recent",
+      "reason": "it is the Topic you worked on most recently"
+    },
+    "recommended": {
+      "topic": "linear-algebra",
+      "action": "resume_topic",
+      "text": "This Topic is paused: resume it, or pick another Topic"
+    },
+    "topics": [
+      {
+        "id": "linear-algebra",
+        "title": "Linear algebra",
+        "goal": "Solve systems by hand",
+        "path": "$STUDY_HOME/linear-algebra",
+        "created": "2026-10-01T09:30:00Z",
+        "resume": {
+          "lesson": "elimination",
+          "lesson_title": "Gaussian elimination"
+        },
+        "cards": {
+          "ready": false,
+          "paused": true
+        },
+        "state": "paused",
+        "deadline": "2026-12-15",
+        "pace": [
+          {
+            "hours_per_week": 0.25
+          }
+        ],
+        "new_cards_per_day": 5
+      }
+    ],
+    "problems": []
+  }
+}

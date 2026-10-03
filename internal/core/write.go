@@ -154,18 +154,18 @@ func (c *Core) writeTopic(ctx context.Context, topicID string, p plan, dryRun bo
 		return nil, err
 	}
 	if err := c.crashAt(crashAfterEvent); err != nil {
-		return nil, err
+		return nil, recordedButUnfinished(topicID, err)
 	}
 	for i, it := range ev.Items {
 		if err := writeItem(topic, it.Item, contents[i]); err != nil {
 			return nil, recordedButUnfinished(topicID, err)
 		}
 		if err := c.crashAt(crashAfterItem); err != nil {
-			return nil, err
+			return nil, recordedButUnfinished(topicID, err)
 		}
 	}
 	if err := c.crashAt(crashBeforeClear); err != nil {
-		return nil, err
+		return nil, recordedButUnfinished(topicID, err)
 	}
 	if err := clearIntent(home, topicID); err != nil {
 		return nil, recordedButUnfinished(topicID, err)
@@ -179,23 +179,12 @@ func (c *Core) writeTopic(ctx context.Context, topicID string, p plan, dryRun bo
 // planDryRun plans a write without writing anything, not even the lock:
 // against the Topic as recovery would leave it.
 func (c *Core) planDryRun(home, topic *os.Root, topicID string, p plan) (*event, error) {
-	h, err := readHistory(topic, topicID)
+	s, view, err := c.recoveredView(home, topic, topicID)
 	if err != nil {
 		return nil, err
 	}
-	s := replayHistory(h)
 	if err := refuseNewer(topicID, s); err != nil {
 		return nil, err
-	}
-	view := newView(topic, s)
-	view.pending = map[string]itemContent{}
-	// A dry run decides nothing, so it logs nothing.
-	steps, err := c.recoverySteps(slog.New(slog.DiscardHandler), home, topic, topicID, h, s)
-	if err != nil {
-		return nil, err
-	}
-	for _, st := range steps {
-		view.pending[st.item] = st.content
 	}
 	ch, err := p(s, view)
 	if err != nil || ch == nil {
@@ -207,6 +196,27 @@ func (c *Core) planDryRun(home, topic *os.Root, topicID string, p plan) (*event,
 		return nil, err
 	}
 	return &ev, nil
+}
+
+// recoveredView replays a Topic and views its items as they would be once
+// recovery had finished an interrupted write, without writing anything.
+func (c *Core) recoveredView(home, topic *os.Root, topicID string) (*replayed, *topicView, error) {
+	h, err := readHistory(topic, topicID)
+	if err != nil {
+		return nil, nil, err
+	}
+	s := replayHistory(h)
+	view := newView(topic, s)
+	view.pending = map[string]itemContent{}
+	// A dry run decides nothing, so it logs nothing.
+	steps, err := c.recoverySteps(slog.New(slog.DiscardHandler), home, topic, topicID, h, s)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, st := range steps {
+		view.pending[st.item] = st.content
+	}
+	return s, view, nil
 }
 
 // refuseNewer refuses to write a Topic whose History holds Events written by
@@ -223,9 +233,33 @@ func refuseNewer(topicID string, s *replayed) error {
 // recordedButUnfinished explains a write that failed after its Event was
 // recorded: the change is not lost, and the next write finishes it.
 func recordedButUnfinished(topicID string, err error) error {
-	return &Error{Code: CodeOf(err), Err: err,
+	return &Error{Code: CodeOf(err), Err: unfinished{err},
 		Message: fmt.Sprintf("the change is recorded in the History of %s, but it could not be finished (%v); "+
 			"the next change to %s finishes it once that is fixed", topicID, err, topicID)}
+}
+
+// unfinished marks the cause of a write that failed after its Event was
+// recorded.
+type unfinished struct{ err error }
+
+func (u unfinished) Error() string { return u.err.Error() }
+func (u unfinished) Unwrap() error { return u.err }
+
+// wasRecorded reports whether a failed write recorded its Event anyway, so
+// recovery will finish it.
+func wasRecorded(err error) bool {
+	var u unfinished
+	return errors.As(err, &u)
+}
+
+// cause is the error behind a write's failure, without the explanation
+// recordedButUnfinished added.
+func cause(err error) error {
+	var u unfinished
+	if errors.As(err, &u) {
+		return u.err
+	}
+	return err
 }
 
 // itemContent is an item's content after an Event, or its absence.

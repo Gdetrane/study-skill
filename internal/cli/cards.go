@@ -76,6 +76,10 @@ func (a *app) cardCommand() *cobra.Command {
 			if a.json {
 				return a.writeJSON(envelope{OK: true, Data: res})
 			}
+			if res.Paused {
+				_, err := fmt.Fprintln(a.out, pausedText(res.Topic))
+				return err
+			}
 			if len(res.Cards) == 0 {
 				_, err := fmt.Fprintln(a.out, "Nothing to review now.")
 				return err

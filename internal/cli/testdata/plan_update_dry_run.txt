@@ -1,0 +1,6 @@
+Would update Topic linear-algebra (Linear algebra)
+  Goal: Solve systems by hand
+  Deadline: 2026-12-15
+  Pace: 1 h/week
+  At 1 h/week, Systems of equations ends 25 Oct 2026; its target is 1 Dec 2026.
+  Vector spaces needs hour estimates for "Subspaces" before it can be forecast.

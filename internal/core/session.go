@@ -129,7 +129,11 @@ type SessionOpened struct {
 	// ago: start with a short recap of where the Topic stands and a
 	// two-minute warm-up, never with the size of any backlog.
 	LongGap bool `json:"long_gap,omitempty"`
-	DryRun  bool `json:"dry_run,omitempty"`
+	// Paused is set when the Topic is paused. The Session opens anyway,
+	// and the Topic stays paused until the learner resumes it through
+	// topic_update: offer to resume it or to pick another Topic.
+	Paused bool `json:"paused,omitempty"`
+	DryRun bool `json:"dry_run,omitempty"`
 }
 
 // SessionInfo describes a Session.
@@ -167,8 +171,10 @@ func (c *Core) OpenSession(ctx context.Context, topicID string, spec SessionSpec
 	now := c.now()
 	ev, err := c.writeTopic(ctx, topicID, func(s *replayed, view *topicView) (*change, error) {
 		result.Resume = s.study.resume()
+		state := s.topicState()
+		result.Paused = state == TopicPaused
 		describeBreakPoint(view.root, &result.Resume)
-		result.Cards = s.study.cardsReady(now)
+		result.Cards = cardsReady(s, view, topicID, now)
 		if open := s.study.unclosedSessions(); len(open) > 0 {
 			result.Unclosed = open
 			// Unclosed reports them, with what changed; this Session is
@@ -179,7 +185,7 @@ func (c *Core) OpenSession(ctx context.Context, topicID string, spec SessionSpec
 			result.LongGap = now.Sub(last) > longGap
 		}
 		if spec.Focus == "" {
-			result.Suggested = suggestFocus(spec.Energy, result.Resume, result.Cards)
+			result.Suggested = suggestFocus(spec.Energy, state, result.Resume, result.Cards)
 		}
 		return &change{Type: eventSessionOpened, Data: sessionOpenedData{Energy: spec.Energy, Focus: spec.Focus}}, nil
 	}, spec.DryRun)

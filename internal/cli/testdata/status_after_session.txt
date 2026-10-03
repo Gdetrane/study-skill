@@ -3,6 +3,8 @@ Active topic:  c (C): you started inside its folder
 Lesson:        answer (The answer)
 Break point:   read: The question is understood
 Next step:     Run the Check on 42
+Forecast:      Basics needs hour estimates for "The answer" before it can be forecast.
+               Set a Pace to see when each Milestone ends: study topic update c --pace 10
 
 Topics:
   c  C

@@ -3,6 +3,8 @@ Active topic:     c (C): you started inside its folder
 Lesson:           answer (The answer)
 Do next:          Start Lesson “The answer”
 Cards:            ready to review
+Forecast:         Basics needs hour estimates for "The answer" before it can be forecast.
+                  Set a Pace to see when each Milestone ends: study topic update c --pace 10
 Additions:        $STUDY_HOME/c/learner.md
 Learner profile:  $STUDY_HOME/learner.md
 

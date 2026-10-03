@@ -357,6 +357,95 @@ var jsonlCodec = fileCodec{get: jsonlGet, put: jsonlPut, index: jsonlIndex}
 // such as sources.jsonl.
 var jsonlHistoryCodec = fileCodec{get: jsonlGet, put: jsonlPut, index: jsonlIndex, historyText: true}
 
+// jsonlTolerantCodec is jsonlCodec for a file the learner is invited to edit
+// by hand, such as tasks.jsonl: a line that is not a JSON object with an id
+// is skipped when reading and kept as it is when writing, so one bad line
+// never makes the others unusable. Readers report such lines.
+var jsonlTolerantCodec = fileCodec{get: jsonlTolerantGet, put: jsonlTolerantPut, index: jsonlTolerantIndex}
+
+// jsonlLine is one non-blank line of a JSONL file, with its id; the id is
+// empty for a line that is not a JSON object with one.
+type jsonlLine struct {
+	text []byte
+	id   string
+}
+
+func jsonlLines(file []byte) []jsonlLine {
+	var out []jsonlLine
+	for _, line := range bytes.Split(file, []byte{'\n'}) {
+		if len(bytes.TrimSpace(line)) == 0 {
+			continue
+		}
+		var head struct {
+			ID string `json:"id"`
+		}
+		id := ""
+		if json.Unmarshal(line, &head) == nil {
+			id = head.ID
+		}
+		out = append(out, jsonlLine{text: line, id: id})
+	}
+	return out
+}
+
+func jsonlTolerantIndex(file []byte) (map[string][][]byte, error) {
+	idx := map[string][][]byte{}
+	for _, l := range jsonlLines(file) {
+		if l.id == "" {
+			continue
+		}
+		var canonical bytes.Buffer
+		if json.Compact(&canonical, l.text) != nil {
+			continue
+		}
+		if !slices.ContainsFunc(idx[l.id], func(c []byte) bool { return bytes.Equal(c, canonical.Bytes()) }) {
+			idx[l.id] = append(idx[l.id], canonical.Bytes())
+		}
+	}
+	return idx, nil
+}
+
+func jsonlTolerantGet(file []byte, key string) ([]byte, bool, error) {
+	idx, _ := jsonlTolerantIndex(file)
+	var entry []byte
+	for _, c := range idx[key] {
+		if entry == nil || bytes.Compare(c, entry) < 0 {
+			entry = c
+		}
+	}
+	return entry, entry != nil, nil
+}
+
+func jsonlTolerantPut(file []byte, key string, content []byte, exists bool) ([]byte, error) {
+	if exists {
+		var compact bytes.Buffer
+		if err := json.Compact(&compact, content); err != nil {
+			return nil, internalError("writing an entry", err)
+		}
+		content = compact.Bytes()
+	}
+	var out bytes.Buffer
+	found := false
+	for _, l := range jsonlLines(file) {
+		line := l.text
+		if l.id == key {
+			if found || !exists {
+				found = true
+				continue
+			}
+			found = true
+			line = content
+		}
+		out.Write(line)
+		out.WriteByte('\n')
+	}
+	if exists && !found {
+		out.Write(content)
+		out.WriteByte('\n')
+	}
+	return out.Bytes(), nil
+}
+
 // jsonlIndex maps each id to the distinct canonical contents of its lines,
 // in file order.
 func jsonlIndex(file []byte) (map[string][][]byte, error) {

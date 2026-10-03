@@ -59,7 +59,7 @@ func TestCreateTopicWritesItsFolder(t *testing.T) {
 	want := core.Topic{
 		ID: "linear-algebra-calculus", Title: "Linear Algebra & Calculus",
 		Goal: "Solve linear systems by hand", Path: filepath.Join(home, "linear-algebra-calculus"),
-		Created: fixedNow,
+		Created: fixedNow, State: core.TopicActive, NewCardsPerDay: core.NewCardsPerDay,
 	}
 	if !reflect.DeepEqual(topic, want) {
 		t.Fatalf("topic = %+v, want %+v", topic, want)
@@ -71,7 +71,7 @@ func TestCreateTopicWritesItsFolder(t *testing.T) {
 			t.Errorf("topic.toml lacks %q:\n%s", line, settings)
 		}
 	}
-	if got := readFile(t, topic.Path, ".gitattributes"); got != "history.jsonl merge=union\ncards.jsonl merge=union\nsources.jsonl merge=union\n" {
+	if got := readFile(t, topic.Path, ".gitattributes"); got != "history.jsonl merge=union\ncards.jsonl merge=union\nsources.jsonl merge=union\ntasks.jsonl merge=union\n" {
 		t.Errorf(".gitattributes = %q", got)
 	}
 	if _, err := os.Stat(filepath.Join(topic.Path, ".git")); err != nil {

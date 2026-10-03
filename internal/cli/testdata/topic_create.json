@@ -5,6 +5,8 @@
     "title": "Linear algebra",
     "goal": "Solve systems by hand",
     "path": "$STUDY_HOME/linear-algebra",
-    "created": "2026-10-01T09:30:00Z"
+    "created": "2026-10-01T09:30:00Z",
+    "state": "active",
+    "new_cards_per_day": 10
   }
 }

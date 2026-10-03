@@ -293,6 +293,9 @@ func writeSyllabus(w io.Writer, v core.SyllabusView) error {
 		if m.Outcome != "" {
 			fmt.Fprintf(&b, "  %s\n", styleDim.Render(m.Outcome))
 		}
+		if mf := milestoneForecast(v.Forecast, m.ID); mf != nil && !mf.Done {
+			fmt.Fprintf(&b, "  %s\n", styleAccent.Render(printable(mf.Text)))
+		}
 		for _, l := range m.Lessons {
 			status := strings.ReplaceAll(l.Status, "_", " ")
 			if l.Phase != "" && l.Status == core.LessonInProgress {
@@ -305,6 +308,7 @@ func writeSyllabus(w io.Writer, v core.SyllabusView) error {
 			fmt.Fprintf(&b, "  %s %s%s%s\n", pad(l.Number, 5), pad(l.Title, width), styleStatus(l.Status).Render(status), styleDim.Render(hours))
 		}
 	}
+	writeForecastNotes(&b, v.Topic, v.Forecast)
 	if len(v.Proposals) > 0 {
 		fmt.Fprintf(&b, "\n%s\n", styleWarn.Render("Waiting for the learner:"))
 		for _, p := range v.Proposals {

@@ -118,8 +118,9 @@ func (a *app) sessionCommand() *cobra.Command {
 
 // suggestionWords are how human output names a suggestion.
 var suggestionWords = map[string]string{
-	core.SuggestPlan: "plan the Syllabus",
-	core.SuggestStop: "stop here",
+	core.SuggestPlan:        "plan the Syllabus",
+	core.SuggestStop:        "stop here",
+	core.SuggestResumeTopic: "resume the Topic, or pick another",
 }
 
 // writeSessionOpened shows where the learner stopped, what their Energy
@@ -132,6 +133,9 @@ func writeSessionOpened(w io.Writer, res core.SessionOpened, now time.Time) erro
 		verb = "Would open"
 	}
 	fmt.Fprintf(&b, "%s a Session on %s.\n", verb, styleAccent.Render(res.Topic))
+	if res.Paused {
+		fmt.Fprintf(&b, "%s\n", styleWarn.Render(pausedText(res.Topic)))
+	}
 	if res.LongGap {
 		fmt.Fprintf(&b, "%s\n", styleDim.Render("Welcome back: start with a short recap and a two-minute warm-up."))
 	}

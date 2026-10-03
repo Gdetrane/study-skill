@@ -1,0 +1,6 @@
+Updated Topic linear-algebra (Linear algebra)
+  Goal: Solve systems by hand
+  State: paused
+  Deadline: 2026-12-15
+  Pace: 0.25 h/week
+  New Cards a day: 5

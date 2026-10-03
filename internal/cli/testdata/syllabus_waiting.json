@@ -122,6 +122,30 @@
           "text": "Adds Lesson 1.1 \"Vectors\" to Milestone 1 \"Systems of equations\", 1 h\nSkips Lesson 1.3 \"Matrices\"\nRenumbers: \"Gaussian elimination\" 1.1 → 1.2, \"Matrices\" 1.2 → 1.3"
         }
       }
-    ]
+    ],
+    "forecast": {
+      "needs_pace": true,
+      "milestones": [
+        {
+          "milestone": "systems",
+          "title": "Systems of equations",
+          "priority": "must",
+          "deadline": "2026-12-01",
+          "deadline_from": "target",
+          "remaining_hours": 3.5,
+          "text": "Systems of equations has about 3.5 h of work left; set a Pace to see when it ends."
+        },
+        {
+          "milestone": "spaces",
+          "title": "Vector spaces",
+          "priority": "if_time",
+          "remaining_hours": 0,
+          "unestimated": [
+            "subspaces"
+          ],
+          "text": "Vector spaces needs hour estimates for \"Subspaces\" before it can be forecast."
+        }
+      ]
+    }
   }
 }

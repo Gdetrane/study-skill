@@ -1,0 +1,4 @@
+Would open a Session on linear-algebra.
+Topic linear-algebra is paused: its Cards wait until you resume it with study topic update linear-algebra --state active.
+Lesson:       elimination (Gaussian elimination)
+Suggested:    resume the Topic, or pick another (the Topic is paused, and stays paused until you resume it)

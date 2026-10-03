@@ -1,0 +1,13 @@
+Study home:    $STUDY_HOME
+Active topic:  linear-algebra (Linear algebra): it is the Topic you worked on most recently
+Lesson:        elimination (Gaussian elimination)
+Do next:       Start Lesson “Gaussian elimination”
+Deadline:      2026-12-15
+Pace:          1 h/week, then 0.5 h/week from 15 Oct 2026
+Forecast:      At your Pace, Systems of equations ends 4 Nov 2026; its target is 1 Dec 2026.
+               Vector spaces needs hour estimates for "Subspaces" before it can be forecast.
+Tasks:
+  book-the-exam.<id> Book the exam (by 2026-11-20)
+
+Topics:
+  linear-algebra  Linear algebra

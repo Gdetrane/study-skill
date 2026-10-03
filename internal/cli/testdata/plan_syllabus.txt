@@ -1,0 +1,11 @@
+Syllabus of linear-algebra
+
+1 Systems of equations (must, by 2026-12-01)
+  Solve a 3x3 system by hand
+  At your Pace, Systems of equations ends 4 Nov 2026; its target is 1 Dec 2026.
+  1.1   Gaussian elimination  not started  2 h
+  1.2   Matrices              not started  1.5 h
+
+2 Vector spaces (if time allows)
+  Vector spaces needs hour estimates for "Subspaces" before it can be forecast.
+  2.1   Subspaces             not started

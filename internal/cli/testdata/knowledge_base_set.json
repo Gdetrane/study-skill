@@ -10,7 +10,9 @@
       "knowledge_base": {
         "kind": "notebooklm",
         "notebook": "nb-42"
-      }
+      },
+      "state": "active",
+      "new_cards_per_day": 10
     },
     "changed": true
   }

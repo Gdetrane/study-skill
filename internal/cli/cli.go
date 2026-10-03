@@ -189,14 +189,19 @@ func (a *app) rootCommand() *cobra.Command {
 	create.Flags().StringVar(&spec.Goal, "goal", "", "what you want to be able to do at the end")
 	create.Flags().BoolVar(&spec.DryRun, "dry-run", false, "show what would be created without writing anything")
 	var changes core.TopicChanges
-	var newTitle, newGoal string
+	var newTitle, newGoal, deadline, state string
+	var pace []string
+	var clearPace bool
+	var newCards int
 	var kb core.KnowledgeBase
 	update := &cobra.Command{
 		Use:   "update <topic>",
-		Short: "Change a Topic's title, goal or Knowledge base",
-		Example: `  study topic update linear-algebra --goal "Pass the June exam"
+		Short: "Change a Topic's title, goal, Knowledge base, deadline, Pace or state",
+		Example: `  study topic update linear-algebra --goal "Pass the June exam" --deadline 2027-06-01
   study topic update c --title "Systems programming in C" --dry-run
-  study topic update c --knowledge-base notebooklm --notebook 4f2a9c1e`,
+  study topic update c --knowledge-base notebooklm --notebook 4f2a9c1e
+  study topic update c --pace 10 --pace 3@2026-11-16
+  study topic update c --state paused`,
 		Args: exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if cmd.Flags().Changed("title") {
@@ -207,6 +212,25 @@ func (a *app) rootCommand() *cobra.Command {
 			}
 			if cmd.Flags().Changed("knowledge-base") || cmd.Flags().Changed("notebook") {
 				changes.KnowledgeBase = &kb
+			}
+			if cmd.Flags().Changed("deadline") {
+				changes.Deadline = &deadline
+			}
+			if clearPace && len(pace) > 0 {
+				return a.fail(usageError{fmt.Errorf("give --pace or --clear-pace, not both")})
+			}
+			if len(pace) > 0 || clearPace {
+				periods, err := parsePace(pace)
+				if err != nil {
+					return a.fail(err)
+				}
+				changes.Pace = &periods
+			}
+			if cmd.Flags().Changed("new-cards-per-day") {
+				changes.NewCardsPerDay = &newCards
+			}
+			if cmd.Flags().Changed("state") {
+				changes.State = &state
 			}
 			c, err := core.Open(a.opts)
 			if err != nil {
@@ -228,6 +252,14 @@ func (a *app) rootCommand() *cobra.Command {
 	update.Flags().StringVar(&kb.Notebook, "notebook", "", "the NotebookLM notebook's id, with --knowledge-base notebooklm")
 	_ = update.RegisterFlagCompletionFunc("knowledge-base", cobra.FixedCompletions(
 		[]string{core.KnowledgeBaseNotebookLM, core.KnowledgeBaseNone}, cobra.ShellCompDirectiveNoFileComp))
+	update.Flags().StringVar(&deadline, "deadline", "", "the Goal's deadline, YYYY-MM-DD; an empty value removes it")
+	update.Flags().StringArrayVar(&pace, "pace", nil,
+		"hours a week, such as 10; repeat with HOURS@YYYY-MM-DD for a period starting that day; replaces the Pace")
+	update.Flags().BoolVar(&clearPace, "clear-pace", false, "remove the Pace")
+	update.Flags().IntVar(&newCards, "new-cards-per-day", core.NewCardsPerDay, "the daily cap on new Cards decided")
+	update.Flags().StringVar(&state, "state", "", "active, paused or finished")
+	_ = update.RegisterFlagCompletionFunc("state", cobra.FixedCompletions(
+		[]string{core.TopicActive, core.TopicPaused, core.TopicFinished}, cobra.ShellCompDirectiveNoFileComp))
 	update.Flags().BoolVar(&changes.DryRun, "dry-run", false, "show the result without writing anything")
 	var dismissDryRun bool
 	dismiss := &cobra.Command{
@@ -267,6 +299,7 @@ func (a *app) rootCommand() *cobra.Command {
 	root.AddCommand(status, topic, a.checkpointCommand(), a.checkCommand(), a.libraryCommand(), doctor, serve)
 	root.AddCommand(a.sourceCommand(), a.evidenceCommand(), a.syllabusCommand(), a.revisionCommand(), a.cardCommand(), a.reviewCommand())
 	root.AddCommand(a.sessionCommand())
+	root.AddCommand(a.taskCommand())
 	a.completionCommands(root)
 	return root
 }

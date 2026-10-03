@@ -77,6 +77,7 @@ func writeTopicUpdate(w io.Writer, u core.TopicUpdate, dryRun bool) error {
 	if t.KnowledgeBase != nil {
 		fmt.Fprintf(&b, "  Knowledge base: %s\n", describeKnowledgeBase(t.KnowledgeBase))
 	}
+	writePlanSettings(&b, t)
 	writeFlags(&b, []core.Topic{t})
 	_, err := io.WriteString(w, b.String())
 	return err
@@ -146,8 +147,8 @@ func writeStatus(w io.Writer, s core.Status, now time.Time) error {
 }
 
 // writeActiveTopic shows the Active topic's Resume point, the one action
-// recommended next, whether Cards are ready (never how many), and the
-// Topic's additions to the Learner profile.
+// recommended next, whether Cards are ready (never how many), its plan, and
+// the Topic's additions to the Learner profile.
 func writeActiveTopic(b *strings.Builder, t core.Topic, rec *core.Recommendation, labels int, now time.Time) {
 	if t.Resume != nil {
 		writeResume(b, *t.Resume, labels, now)
@@ -156,6 +157,7 @@ func writeActiveTopic(b *strings.Builder, t core.Topic, rec *core.Recommendation
 		fmt.Fprintf(b, "%s%s\n", styleLabel.Render(pad("Do next:", labels)), styleAccent.Render(printable(rec.Text)))
 	}
 	writeCardsReady(b, t.Cards, labels, now)
+	writePlan(b, t, labels)
 	if t.LearnerAdditions != "" {
 		fmt.Fprintf(b, "%s%s\n", styleLabel.Render(pad("Additions:", labels)), styleDim.Render(printable(t.LearnerAdditions)))
 	}
