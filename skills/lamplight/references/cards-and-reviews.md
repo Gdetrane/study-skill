@@ -14,8 +14,9 @@ Draw them from three places:
   `card_add` with the Lesson;
 - free questions in an Explore Session: `card_add` without a Lesson.
 
-Fix a Card with `card_edit`. When the learner wants to stop seeing one, `card_suspend` it;
-`card_delete` removes it for good.
+Fix a Card with `card_edit`. When the learner finds one wrong or unclear and it cannot be
+fixed now, `card_flag` it with their words, so `status` shows it until it is fixed. When the
+learner wants to stop seeing one, `card_suspend` it; `card_delete` removes it for good.
 
 ## Reviews
 
