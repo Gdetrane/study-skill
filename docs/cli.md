@@ -921,7 +921,8 @@ the same time. Once it holds the lock, it checks that the Topic's folder is stil
 opened; if the Topic was removed or replaced meanwhile, it fails with `not_found` and
 writes nothing. `study check` and `study checkpoint` open the folder once, before the Check
 runs or the commit is made, so a Topic removed or replaced while its Check ran gets no
-Attempt. A write records its Event in the History before it changes any content, so one
+Attempt, and a Checkpoint never commits in a folder that another program put in the
+Topic's place. A write records its Event in the History before it changes any content, so one
 interrupted by a crash is finished by the next write or Checkpoint. A dry run reports
 what the real run would do after finishing such a write, and writes nothing. Lock and
 intent-marker files live in the Study home's `.lamplight/` folder, which holds this

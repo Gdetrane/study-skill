@@ -153,10 +153,22 @@ func (c *Core) takeCheckpoint(ctx context.Context, home, topic *os.Root, spec Ch
 			return CheckpointResult{}, err
 		}
 	}
+	// git works on the folder by its path. The lock keeps study from moving
+	// it, but not other programs: the Checkpoint is told which folder was
+	// opened, and commits in no other.
+	folder, err := topic.Stat(".")
+	if err != nil {
+		return CheckpointResult{}, internalError("reading Topic "+spec.Topic, err)
+	}
 	path := filepath.Join(c.home, spec.Topic)
 	res, err := checkpoint.Take(ctx, path, checkpoint.Options{
-		Role: role, Message: message, Time: c.now(), DryRun: spec.DryRun,
+		Role: role, Message: message, Time: c.now(), DryRun: spec.DryRun, Folder: folder,
 	})
+	if errors.Is(err, checkpoint.ErrRepositoryChanged) {
+		if gone := stillTheTopic(home, topic, spec.Topic); gone != nil {
+			return CheckpointResult{}, gone
+		}
+	}
 	if err != nil {
 		return CheckpointResult{}, checkpointError(spec.Topic, path, err)
 	}
