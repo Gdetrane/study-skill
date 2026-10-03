@@ -72,6 +72,24 @@ func TestDocsCheckCatchesGaps(t *testing.T) {
 	}
 }
 
+// TestADocsRowDescribesOnlyItsOwnCommand: a parent's flag written only in a
+// child's row is not documented for the parent.
+func TestADocsRowDescribesOnlyItsOwnCommand(t *testing.T) {
+	root := &cobra.Command{Use: "study"}
+	topic := &cobra.Command{Use: "topic"}
+	topic.Flags().Bool("deep", false, "")
+	topic.AddCommand(&cobra.Command{Use: "remove", Run: func(*cobra.Command, []string) {}})
+	root.AddCommand(topic)
+	doc := "| Command | What it does |\n|---|---|\n| `study topic remove [--deep]` | Removes. |\n"
+	if problems := undocumented(doc, root); !strings.Contains(strings.Join(problems, "\n"), "study topic's flag --deep") {
+		t.Errorf("a flag only in the child's row counted for the parent: %q", problems)
+	}
+	doc += "| `study topic [--deep]` | The topic commands. |\n"
+	if problems := undocumented(doc, root); len(problems) != 0 {
+		t.Errorf("documented in its own row: %q", problems)
+	}
+}
+
 // undocumented lists what the command tree has and the doc does not
 // describe. A command must appear followed by a space or a backtick, so
 // study checkpoint does not count for study check. Each flag must appear,
@@ -93,7 +111,7 @@ func undocumented(doc string, root *cobra.Command) []string {
 			if !named.MatchString(doc) {
 				problems = append(problems, "docs/cli.md never mentions \""+path+"\"")
 			}
-			own = ownText(lines, named)
+			own = ownText(lines, describes(c))
 		}
 		visit := func(f *pflag.Flag) {
 			if f.Hidden || f.Name == "help" {
@@ -115,16 +133,40 @@ func undocumented(doc string, root *cobra.Command) []string {
 	return problems
 }
 
+// describes reports whether a first cell or a heading names the command c
+// itself: its path followed by a space or a backtick, and not by one of its
+// subcommands, so the row of study topic remove does not describe study
+// topic.
+func describes(c *cobra.Command) func(string) bool {
+	at := regexp.MustCompile(regexp.QuoteMeta(c.CommandPath()) + "[ `]")
+	var subs []string
+	for _, s := range c.Commands() {
+		subs = append(subs, regexp.QuoteMeta(s.Name()))
+		for _, a := range s.Aliases {
+			subs = append(subs, regexp.QuoteMeta(a))
+		}
+	}
+	child := regexp.MustCompile(`^(?:` + strings.Join(subs, "|") + `)(?:[ ` + "`" + `]|$)`)
+	return func(text string) bool {
+		for _, m := range at.FindAllStringIndex(text, -1) {
+			if len(subs) == 0 || text[m[1]-1] == '`' || !child.MatchString(text[m[1]:]) {
+				return true
+			}
+		}
+		return false
+	}
+}
+
 // ownText is the text describing one command: the table rows whose first
 // cell names it, and the sections whose heading does.
-func ownText(lines []string, named *regexp.Regexp) string {
+func ownText(lines []string, names func(string) bool) string {
 	var b strings.Builder
 	inSection := false
 	for _, line := range lines {
 		if strings.HasPrefix(line, "#") {
-			inSection = named.MatchString(line + " ")
+			inSection = names(line + " ")
 		}
-		if inSection || strings.HasPrefix(line, "|") && named.MatchString(firstCell(line)+" ") {
+		if inSection || strings.HasPrefix(line, "|") && names(firstCell(line)+" ") {
 			b.WriteString(line)
 			b.WriteByte('\n')
 		}

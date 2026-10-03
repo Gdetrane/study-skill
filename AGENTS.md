@@ -80,7 +80,9 @@ GOOS=darwin go vet ./...            # macOS is supported too
   Never run the real agents with commands that change anything.
 - Every git configuration a test writes includes `[maintenance]` `auto = false`: git's
   background maintenance would otherwise still be writing to `.git` while the test removes
-  its folder.
+  its folder. A test that writes a `.gitconfig` also points `GIT_CONFIG_GLOBAL` at it and
+  sets `GIT_CONFIG_NOSYSTEM=1`, so git run by the test reads that file whatever the
+  caller's environment says (the core strips `GIT_*` on its own).
 - Tests must pass with no git identity configured (CI has none), and in any order.
 
 ## Important Paths

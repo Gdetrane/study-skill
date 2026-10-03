@@ -22,6 +22,8 @@ func TestSessionCommands(t *testing.T) {
 	gitHome := t.TempDir()
 	t.Setenv("HOME", gitHome)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(gitHome, ".config"))
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(gitHome, ".gitconfig"))
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 	if err := os.WriteFile(filepath.Join(gitHome, ".gitconfig"), []byte("[user]\n\tname = Ada Learner\n\temail = ada@example.com\n[maintenance]\n\tauto = false\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -149,6 +151,8 @@ func setGitIdentity(t *testing.T) {
 	gitHome := t.TempDir()
 	t.Setenv("HOME", gitHome)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(gitHome, ".config"))
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(gitHome, ".gitconfig"))
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 	config := "[user]\n\tname = Ada Learner\n\temail = ada@example.com\n[maintenance]\n\tauto = false\n"
 	if err := os.WriteFile(filepath.Join(gitHome, ".gitconfig"), []byte(config), 0o644); err != nil {
 		t.Fatal(err)

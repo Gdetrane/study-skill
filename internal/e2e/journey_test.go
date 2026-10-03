@@ -141,6 +141,10 @@ func newJourney(t *testing.T) *journey {
 	// background maintenance off so nothing writes to .git after a test.
 	t.Setenv("PATH", absent+string(os.PathListSeparator)+tools)
 	t.Setenv("HOME", home)
+	// git run by the test itself reads the identity below whatever the
+	// parent's GIT_CONFIG_GLOBAL; the core strips GIT_* on its own.
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(home, ".gitconfig"))
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 	for key, rel := range map[string]string{"XDG_CONFIG_HOME": ".config", "XDG_STATE_HOME": ".local/state",
 		"XDG_CACHE_HOME": ".cache", "XDG_DATA_HOME": ".local/share"} {
 		t.Setenv(key, filepath.Join(home, rel))
