@@ -288,8 +288,9 @@ func writePlan(b *strings.Builder, t core.Topic, labels int) {
 			fmt.Fprintf(b, "  %s %s\n", styleAccent.Render(task.ID), taskLine(task))
 		}
 	}
+	// Each problem names its file: topic.toml or tasks.jsonl.
 	for _, p := range t.SettingsProblems {
-		fmt.Fprintf(b, "%s\n", styleWarn.Render("topic.toml: "+printable(p)))
+		fmt.Fprintf(b, "%s\n", styleWarn.Render(printable(p)))
 	}
 }
 

@@ -2,7 +2,9 @@ package cli_test
 
 import (
 	"encoding/json"
+	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/mordor-forge/lamplight/v2/internal/cli"
@@ -86,4 +88,15 @@ func TestPlanCommands(t *testing.T) {
 	check("plan_session_open_paused.txt", cli.ExitOK, "session", "open", "linear-algebra", "--energy", "full", "--dry-run")
 	check("plan_card_due_paused.txt", cli.ExitOK, "card", "due", "linear-algebra")
 	check("plan_task_remove.txt", cli.ExitOK, "task", "remove", "linear-algebra", task)
+}
+
+// A problem in tasks.jsonl is shown as it is, naming tasks.jsonl, never
+// under topic.toml.
+func TestPlanProblemsNameTheirFile(t *testing.T) {
+	home := withPlannedTopic(t)
+	writeFile(t, filepath.Join(home, "linear-algebra", "tasks.jsonl"), "not a Task\n")
+	r := run(t, home, "status")
+	if r.code != cli.ExitOK || !strings.Contains(r.stdout, "line 1 of tasks.jsonl is not a Task") || strings.Contains(r.stdout, "topic.toml: line") {
+		t.Errorf("status: exit %d\n%s", r.code, r.stdout)
+	}
 }

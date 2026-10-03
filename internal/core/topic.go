@@ -76,8 +76,9 @@ type Topic struct {
 	Forecast *Forecast `json:"forecast,omitempty"`
 	// Tasks are the open Tasks relevant now.
 	Tasks []Task `json:"tasks,omitempty"`
-	// SettingsProblems says what in topic.toml could not be read, such as
-	// a hand-edited Pace; the rest of the Topic stands.
+	// SettingsProblems says what in topic.toml or tasks.jsonl could not be
+	// read, such as a hand-edited Pace or a line that is not a Task, each
+	// naming its file; the rest of the Topic stands.
 	SettingsProblems []string `json:"settings_problems,omitempty"`
 }
 
