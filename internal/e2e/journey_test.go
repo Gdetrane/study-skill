@@ -206,7 +206,9 @@ func lookOn(path, name string) (string, error) {
 // buildStudy builds ./cmd/study into a temporary folder, so study setup
 // registers a real study and the MCP client can start exactly what it
 // registered. It builds with -race when the tests run with it, to reuse the
-// packages the test build compiled.
+// packages the test build compiled, and without a version stamp: the build
+// must not need git to report on the checkout, which it refuses to in one
+// owned by another user.
 func buildStudy(t *testing.T) string {
 	t.Helper()
 	goTool, err := exec.LookPath("go")
@@ -214,7 +216,7 @@ func buildStudy(t *testing.T) string {
 		t.Fatalf("the walkthrough builds study with the go command: %v", err)
 	}
 	out := filepath.Join(t.TempDir(), "study")
-	args := []string{"build", "-o", out}
+	args := []string{"build", "-buildvcs=false", "-o", out}
 	if raceEnabled {
 		args = append(args, "-race")
 	}
