@@ -11,6 +11,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -480,8 +481,10 @@ func (c *Core) stagedWrite(root *os.Root, topicID string, p plan) (*event, error
 var lamplightStateFiles = []string{topicFile, historyFile, syllabusFile, cardsFile, sourcesFile, tasksFile,
 	gitattributes, gitignore}
 
-// heldOutLine is the last line of Lamplight's default .gitignore.
-const heldOutLine = "!.heldout/**"
+// heldOutLines are the last lines of Lamplight's default .gitignore: the
+// .heldout folder itself, which a learner's line such as .* may leave out
+// (and git never looks inside a folder it leaves out), then what it holds.
+var heldOutLines = []string{"!/.heldout/", "!.heldout/**"}
 
 // mergeGitignore merges the workspace's .gitignore with Lamplight's: the
 // learner's lines first, then the default lines they lack, then lines that
@@ -503,7 +506,7 @@ func mergeGitignore(root *os.Root) error {
 	var add []string
 	for _, line := range strings.Split(checkpoint.DefaultGitignore(), "\n") {
 		t := strings.TrimSpace(line)
-		if t != "" && !strings.HasPrefix(t, "#") && t != heldOutLine && !have[t] {
+		if t != "" && !strings.HasPrefix(t, "#") && !slices.Contains(heldOutLines, t) && !have[t] {
 			add = append(add, t)
 		}
 	}
@@ -515,7 +518,7 @@ func mergeGitignore(root *os.Root) error {
 	if len(add) > 0 {
 		out += strings.Join(add, "\n") + "\n"
 	}
-	out += heldOutLine + "\n# Lamplight's state files are always saved by Checkpoints.\n"
+	out += strings.Join(heldOutLines, "\n") + "\n# Lamplight's state files are always saved by Checkpoints.\n"
 	for _, f := range lamplightStateFiles {
 		out += "!/" + f + "\n"
 	}

@@ -414,7 +414,8 @@ hours before any learning happens is exactly what v1 produced.
   machines measured first.
 - **Held-out data** lives in `.heldout/<lesson-id>/`, committed with the Topic so every
   machine measures on the same data; it is synthetic or public, never personal data. The
-  default `.gitignore` ends with `!.heldout/**`, so data formats it ignores elsewhere
+  default `.gitignore` ends with `!/.heldout/` and `!.heldout/**` (git never looks inside
+  a folder a line above leaves out), so data formats it ignores elsewhere
   (Parquet, `build/`) are committed there. "Out of the learner's sight" is a convention the
   agent keeps, not a lock: the agent writes the data before practicing starts and never
   shows it, and Lamplight never prints it, never lists its file names among an unclosed
@@ -669,7 +670,7 @@ more; files that vanish count as deleted. A dry run reports whether a Checkpoint
 made, and its large files, without writing anything to `.git` or waiting for the lock. The
 default `.gitignore` covers data and model artefacts (Parquet, DuckDB, GGUF, safetensors,
 PyTorch checkpoints), build outputs, test coverage files (`.coverage`, `coverage.out`) and
-caches, and ends with `!.heldout/**`, so Held-out data is always committed. Held-out files
+caches, and ends with `!/.heldout/` and `!.heldout/**`, so Held-out data is always committed. Held-out files
 never appear among the large files a Checkpoint reports.
 
 ## Distribution and setup

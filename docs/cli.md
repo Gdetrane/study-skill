@@ -581,8 +581,9 @@ only through the command line, from the agent's own shell, so the agent's sandbo
 (ADR-0009); the MCP server reads Attempts (`check_results`) but never runs a Check.
 
 **Held-out data** lives in `.heldout/<lesson-id>/`, which is committed with the Topic so
-every machine measures on the same data: the default `.gitignore` ends with `!.heldout/**`,
-so its files are committed whatever their format. It is synthetic or public, never
+every machine measures on the same data: the default `.gitignore` ends with `!/.heldout/`
+and `!.heldout/**`, so the folder and its files are committed whatever their format, even
+when a line above, such as `.*`, would leave the folder out. It is synthetic or public, never
 personal data. Lamplight never shows its contents, the files' names (they are left out of
 the changes an unclosed Session lists and of a Checkpoint's `large_files`) or a `held_out`
 command's output, only its results.

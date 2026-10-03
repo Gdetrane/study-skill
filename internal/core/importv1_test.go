@@ -1166,6 +1166,17 @@ func TestImportMergesTheGitFilesWithLamplightsLast(t *testing.T) {
 	if !strings.HasPrefix(string(ignore), "*.jsonl\n") || !strings.HasSuffix(string(ignore), "!/"+gitignore+"\n") {
 		t.Errorf(".gitignore:\n%s", ignore)
 	}
+	// The learner's .* leaves out the .heldout folder; Lamplight's lines
+	// bring it back, so Held-out data is committed.
+	if err := os.MkdirAll(filepath.Join(topic, ".heldout", "lesson-01"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(topic, ".heldout", "lesson-01", "data.parquet"), []byte("PAR1"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if st := git(t, topic, "status", "--porcelain", "--ignored", "--untracked-files=all", "--", ".heldout"); !strings.Contains(st, "?? .heldout/lesson-01/data.parquet") {
+		t.Errorf("Held-out data is ignored after the import:\n%s", st)
+	}
 
 	// The History recorded the .gitattributes as it is.
 	f, err := os.Open(filepath.Join(topic, historyFile))
