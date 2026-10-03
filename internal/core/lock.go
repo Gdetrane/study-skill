@@ -22,10 +22,10 @@ func lockTopic(ctx context.Context, home *os.Root, topicID string) (unlock func(
 }
 
 // lockOpenedTopic takes the lock of a Topic whose folder the caller opened
-// before waiting, then checks that the folder is still the Topic: one
-// removed (study topic remove) or replaced while the caller waited would
-// otherwise receive a write meant for the Topic. On any error the lock is
-// not held.
+// earlier, then checks that the folder is still the Topic: one removed
+// (study topic remove) or replaced since, while the caller waited for the
+// lock or did its work, would otherwise receive a write meant for the
+// Topic. On any error the lock is not held.
 func (c *Core) lockOpenedTopic(ctx context.Context, home, topic *os.Root, topicID string) (unlock func(), err error) {
 	if err := c.crashAt(crashBeforeLock); err != nil {
 		return nil, err
@@ -55,8 +55,8 @@ func stillTheTopic(home, topic *os.Root, topicID string) error {
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return internalError("reading Topic "+topicID, err)
 	}
-	return &Error{Code: CodeNotFound, Message: "Topic " + topicID + " was removed or replaced while this change waited " +
-		"for another one to finish, so nothing was written: run study status to see your Topics"}
+	return &Error{Code: CodeNotFound, Message: "Topic " + topicID + " was removed or replaced while this change was " +
+		"under way, so nothing was written: run study status to see your Topics"}
 }
 
 // importLock serialises imports: two of the same v1 workspace must not both

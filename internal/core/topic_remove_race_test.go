@@ -220,3 +220,39 @@ func hasIntentIn(t *testing.T, home, topicID string) bool {
 	defer root.Close()
 	return hasIntent(root, topicID)
 }
+
+// A Check runs for as long as its commands do. When the Topic is removed
+// meanwhile and another takes its id, the Attempt is recorded in neither: it
+// judged work in a Topic that is no longer the one named.
+func TestACheckThatOutlivesItsTopicRecordsNothing(t *testing.T) {
+	ctx := context.Background()
+	m := learningTopic(t)
+	var removed TopicRemoval
+	swap := func(CheckProgress) {
+		if removed.MovedTo != "" {
+			return
+		}
+		var err error
+		if removed, err = m.RemoveTopic(ctx, "c", false); err != nil {
+			t.Errorf("RemoveTopic: %v", err)
+			return
+		}
+		// The same Topic, started again from a copy: another folder.
+		if err := os.CopyFS(filepath.Join(m.home, "c"), os.DirFS(removed.MovedTo)); err != nil {
+			t.Error(err)
+		}
+	}
+	a, err := m.RunCheck(ctx, "c", "answer", CheckOptions{Progress: swap})
+	if CodeOf(err) != CodeNotFound || !strings.Contains(err.Error(), "removed or replaced") {
+		t.Errorf("RunCheck = %+v, %v; want not_found", a, err)
+	}
+	for _, dir := range []string{filepath.Join(m.home, "c"), removed.MovedTo} {
+		history, err := os.ReadFile(filepath.Join(dir, historyFile))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(history), eventAttemptRecorded) {
+			t.Errorf("an Attempt was recorded in %s", dir)
+		}
+	}
+}

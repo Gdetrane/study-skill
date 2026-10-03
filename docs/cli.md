@@ -919,8 +919,10 @@ change without writing anything.
 Every write to a Topic takes the Topic's lock, so the CLI and the MCP server can run at
 the same time. Once it holds the lock, it checks that the Topic's folder is still the one it
 opened; if the Topic was removed or replaced meanwhile, it fails with `not_found` and
-writes nothing. It records its Event in the History before it changes any content, so a
-write interrupted by a crash is finished by the next write or Checkpoint. A dry run reports
+writes nothing. `study check` and `study checkpoint` open the folder once, before the Check
+runs or the commit is made, so a Topic removed or replaced while its Check ran gets no
+Attempt. A write records its Event in the History before it changes any content, so one
+interrupted by a crash is finished by the next write or Checkpoint. A dry run reports
 what the real run would do after finishing such a write, and writes nothing. Lock and
 intent-marker files live in the Study home's `.lamplight/` folder, which holds this
 computer's local state (removed Topics too). Lamplight never syncs it; if a file-sync tool
