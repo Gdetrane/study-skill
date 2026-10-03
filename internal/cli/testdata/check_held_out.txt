@@ -1,0 +1,7 @@
+Check of answer: failed
+  answer  failed (exit 1)
+    answer.txt holds 41
+  hidden  held_out, passed, counted
+    score 0 of 1, cases 1
+    0 of 1 cases
+Recorded as Attempt <id>.

@@ -1,0 +1,14 @@
+Check of answer in c
+  answer     run: answer.txt holds 42
+  explained  rubric: The notes say why the answer is 42
+  hidden     held_out: The answer on the test set
+Last Attempt: failed (<id>)
+Rubric explained: partly
+Held-out hidden, counted measurement (<id>):
+  score 0 of 1, cases 1
+  0 of 1 cases
+Held-out hidden, latest run, not counted: an earlier run is the counted measurement (<id>):
+  score 0 of 1, cases 1
+  0 of 1 cases
+Lesson answer cannot be completed yet: the last Attempt failed; run study check answer in your shell on the current work.
+Give the learner feedback on the failed Attempt, then move the Lesson to practicing with phase_set and a Next step that names the fix.

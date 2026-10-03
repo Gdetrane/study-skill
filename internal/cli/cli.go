@@ -300,6 +300,7 @@ func (a *app) rootCommand() *cobra.Command {
 	root.AddCommand(a.sourceCommand(), a.evidenceCommand(), a.syllabusCommand(), a.revisionCommand(), a.cardCommand(), a.reviewCommand())
 	root.AddCommand(a.sessionCommand())
 	root.AddCommand(a.taskCommand())
+	root.AddCommand(a.rubricCommand(), a.resultsCommand())
 	a.completionCommands(root)
 	return root
 }

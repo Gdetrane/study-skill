@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	"github.com/mordor-forge/lamplight/v2/internal/checkpoint"
 )
@@ -149,6 +150,11 @@ func (c *Core) takeCheckpoint(ctx context.Context, spec CheckpointSpec) (Checkpo
 	out := CheckpointResult{Topic: spec.Topic, Committed: res.Committed, Commit: res.Commit,
 		LargeFiles: []LargeFile{}, DryRun: spec.DryRun}
 	for _, f := range res.LargeFiles {
+		// Held-out data is kept out of the learner's sight, names included,
+		// and belongs in the Topic however large it is.
+		if strings.HasPrefix(f.Path, ".heldout/") {
+			continue
+		}
 		out.LargeFiles = append(out.LargeFiles, LargeFile{Path: f.Path, Size: f.Size})
 	}
 	return out, nil

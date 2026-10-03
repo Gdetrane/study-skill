@@ -1,0 +1,23 @@
+{
+  "ok": true,
+  "data": {
+    "topic": "c",
+    "lesson": "answer",
+    "criterion": "explained",
+    "grade": {
+      "event": "<id>",
+      "grade": "partly",
+      "note": "Says what, not why",
+      "check_version": "sha256:<hash>",
+      "snapshot": "sha256:<hash>",
+      "looked_at": [
+        {
+          "path": "practice/answer/page1.jpg",
+          "hash": "sha256:<hash>"
+        }
+      ],
+      "at": "2026-10-01T09:30:00Z"
+    },
+    "changed": true
+  }
+}

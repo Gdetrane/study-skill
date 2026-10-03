@@ -311,8 +311,9 @@ func TestAnAttemptErrorsWhenTheCheckCannotRun(t *testing.T) {
 		t.Errorf("work changed by the Check: %+v, %v", a, err)
 	}
 	writeFile(t, m, "lessons/answer.md", "---\ncheck:\n  - id: style\n    rubric: Names are clear\n---\n")
-	if _, err := m.RunCheck(ctx, "c", "answer", CheckOptions{}); CodeOf(err) != CodeCorrupt || !strings.Contains(err.Error(), "rubric") {
-		t.Errorf("a rubric criterion: err = %v, want a clear corrupt error", err)
+	if _, err := m.RunCheck(ctx, "c", "answer", CheckOptions{}); CodeOf(err) != CodeFailedPrecondition ||
+		!strings.Contains(err.Error(), "only rubric items") {
+		t.Errorf("a Check with only rubric items: err = %v, want failed_precondition saying there is nothing to run", err)
 	}
 }
 

@@ -14,8 +14,13 @@ const eventLessonCompleted = "lesson.completed"
 // to shared code or to the Lesson never reopen it, and the draft Cards it
 // saved, in full.
 type lessonCompletedData struct {
-	Lesson  string `json:"lesson"`
+	Lesson string `json:"lesson"`
+	// Attempt is the passing Attempt completion relied on; empty for a
+	// Check without run criteria.
 	Attempt string `json:"attempt"`
+	// Grades are the rubric.graded Events completion relied on, one per
+	// rubric item.
+	Grades []string `json:"grades,omitempty"`
 	// CheckVersion is the version of the Check the passing Attempt ran,
 	// and ShownCheck the version shown to the learner when practicing
 	// started; completion requires them to be equal.
@@ -41,8 +46,11 @@ type CompleteSpec struct {
 type LessonCompletion struct {
 	Topic  string `json:"topic"`
 	Lesson string `json:"lesson"`
-	// Attempt is the passing Attempt completion relied on.
+	// Attempt is the passing Attempt completion relied on; empty for a
+	// Check without run criteria.
 	Attempt string `json:"attempt"`
+	// Grades are the rubric grades completion relied on.
+	Grades []string `json:"grades,omitempty"`
 	// Cards are the Cards the completion saved, as they are now: their
 	// current content, and whether each is still a draft. Dropped Cards
 	// are left out.
@@ -87,7 +95,7 @@ func (c *Core) CompleteLesson(ctx context.Context, topicID string, spec Complete
 	// the work runs git.
 	var cur work
 	if ls := s.study.lessons[spec.Lesson]; ls == nil || ls.completed == nil {
-		if cur, err = c.currentWork(ctx, topicID, dir, spec.Lesson); err != nil {
+		if cur, err = c.currentWork(ctx, topicID, dir, spec.Lesson, lookedAtPaths(ls)...); err != nil {
 			return LessonCompletion{}, err
 		}
 	}
@@ -104,13 +112,18 @@ func (c *Core) CompleteLesson(ctx context.Context, topicID string, spec Complete
 		if cur.check == nil {
 			return nil, &Error{Code: CodeBusy, Message: "Lesson " + spec.Lesson + " changed while it was being completed: try again"}
 		}
-		attempt, err := completionRule(s, spec.Lesson, cur)
+		done, err := completionRule(s, spec.Lesson, cur)
 		if err != nil {
 			return nil, err
 		}
-		d := lessonCompletedData{Lesson: spec.Lesson, Attempt: attempt.ID, CheckVersion: attempt.CheckVersion,
-			ShownCheck: s.study.lessons[spec.Lesson].shownCheck, Snapshot: cur.snapshot,
-			TurnEnded: s.study.currentTurn()}
+		shown := s.study.lessons[spec.Lesson].shownCheck
+		checkVersion := done.attempt.CheckVersion
+		if checkVersion == "" {
+			checkVersion = shown // a Check without run criteria: its grades are for the shown Check
+		}
+		d := lessonCompletedData{Lesson: spec.Lesson, Attempt: done.attempt.ID, Grades: done.grades,
+			CheckVersion: checkVersion, ShownCheck: shown, Snapshot: cur.snapshot, TurnEnded: s.study.currentTurn()}
+		attempt := done.attempt
 		var items []string
 		for _, draft := range drafts {
 			evidence, err := checkCardEvidence(s, topicID, draft.Evidence)
@@ -124,7 +137,7 @@ func (c *Core) CompleteLesson(ctx context.Context, topicID string, spec Complete
 			result.Cards = append(result.Cards, Card{ID: line.ID, Number: liveCards(&s.study) + len(result.Cards) + 1,
 				Lesson: line.Lesson, Prompt: line.Prompt, Answer: line.Answer, Evidence: line.Evidence, Draft: true})
 		}
-		result.Attempt = attempt.ID
+		result.Attempt, result.Grades = attempt.ID, d.Grades
 		return &change{Type: eventLessonCompleted, Data: d, Items: items}, nil
 	}, spec.DryRun)
 	if err != nil {
@@ -143,7 +156,7 @@ func (c *Core) CompleteLesson(ctx context.Context, topicID string, spec Complete
 // Cards the completion recorded.
 func (c *Core) describeCompletion(s *replayed, view *topicView, topicID, lessonID string, drafts []CardDraft, result *LessonCompletion) {
 	done := s.study.lessons[lessonID].completed
-	result.Attempt = done.Attempt
+	result.Attempt, result.Grades = done.Attempt, done.Grades
 	for _, id := range s.study.cardOrder {
 		cs := s.study.cards[id]
 		if cs.lesson != lessonID || cs.gone() {

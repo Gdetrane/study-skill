@@ -35,7 +35,17 @@ import (
 // later one resume. They gate nothing, so they are not an item: reaching one
 // records its id, and its description is read back from the file.
 //
-// TODO(#30): rubric and held-out criteria, and per-criterion results files.
+// Each criterion of a Check has exactly one of run, rubric or held_out:
+//
+//	check:
+//	  - id: tests
+//	    describe: The tests pass
+//	    run: [go, test, ./...]
+//	  - id: names
+//	    rubric: Every function name says what it does
+//	  - id: accuracy
+//	    describe: Accuracy on the test set
+//	    held_out: [python3, eval.py]
 
 const checkKey = "check"
 
@@ -43,13 +53,32 @@ func lessonFile(lessonID string) string { return "lessons/" + lessonID + ".md" }
 
 func checkItem(lessonID string) string { return lessonFile(lessonID) + "#" + checkKey }
 
-// Criterion is one thing a Lesson's Check measures. In v2.0's first cut,
-// every criterion is a run: a command, as an argument list, run in the
-// Lesson's practice folder, that passes when it exits with status 0.
+// Criterion kinds.
+const (
+	// CriterionRun is a command that can be repeated, such as tests or a
+	// build; it decides whether the work passes.
+	CriterionRun = "run"
+	// CriterionRubric is an item the agent grades with rubric_record, after
+	// the learner checks themselves first.
+	CriterionRubric = "rubric"
+	// CriterionHeldOut is an evaluation on Held-out data. In v2.0 it is
+	// diagnostic: its results never decide whether the work passes. The
+	// same spelling is the YAML key, this kind and the JSON field.
+	CriterionHeldOut = "held_out"
+)
+
+// Criterion is one thing a Lesson's Check measures.
 type Criterion struct {
-	ID       string   `json:"id" yaml:"id"`
-	Describe string   `json:"describe,omitempty" yaml:"describe,omitempty"`
-	Run      []string `json:"run" yaml:"run"`
+	ID   string `json:"id"`
+	Kind string `json:"kind"`
+	// Describe says what the criterion measures, for the learner.
+	Describe string `json:"describe,omitempty"`
+	// Command is the command of a run or held_out criterion, as an
+	// argument list, run in the Lesson's practice folder. The YAML header
+	// gives it under run or held_out.
+	Command []string `json:"command,omitempty"`
+	// Rubric is what a rubric item asks of the work.
+	Rubric string `json:"rubric,omitempty"`
 }
 
 // lessonHeader is the part of a Lesson file's YAML header that holds the
@@ -80,15 +109,24 @@ type breakPointYAML struct {
 	Describe string `yaml:"describe"`
 }
 
-// criterionYAML accepts any criterion so an unsupported kind gets a clear
-// error rather than being silently dropped.
+// criterionYAML accepts any value for each kind's key, so a mistake gets a
+// precise error rather than a YAML type error for the whole header.
 type criterionYAML struct {
-	ID       string   `yaml:"id"`
-	Describe string   `yaml:"describe"`
-	Run      []string `yaml:"run"`
-	Rubric   any      `yaml:"rubric"`
-	HeldOut  any      `yaml:"held_out"`
+	ID       string `yaml:"id"`
+	Describe string `yaml:"describe"`
+	// The kinds are read as nodes, so a command's arguments keep the text
+	// written: YAML would read [git, checkout, 1.10] as a number, 1.1.
+	Run     yaml.Node `yaml:"run"`
+	Rubric  yaml.Node `yaml:"rubric"`
+	HeldOut yaml.Node `yaml:"held_out"`
 }
+
+const (
+	maxCriteria       = 30
+	maxRubricRunes    = 500
+	maxArgumentRunes  = 4096
+	maxArgumentsInRun = 100
+)
 
 // splitFrontMatter returns the YAML header of a Markdown file, or nil when it
 // has none.
@@ -126,13 +164,12 @@ func parseCheck(data []byte) ([]Criterion, error) {
 	if len(h.Check) == 0 {
 		return nil, nil
 	}
+	if len(h.Check) > maxCriteria {
+		return nil, corruptf("the Check has %d criteria; keep it to %d at most", len(h.Check), maxCriteria)
+	}
 	seen := map[string]bool{}
 	out := make([]Criterion, 0, len(h.Check))
 	for i, c := range h.Check {
-		if c.Rubric != nil || c.HeldOut != nil {
-			return nil, corruptf("criterion %d of the Check is a rubric or held-out criterion, which arrive with "+
-				"a later version of study: use run criteria for now", i+1)
-		}
 		if err := validateEntityID("criterion", c.ID); err != nil {
 			return nil, corruptf("criterion %d of the Check: %v", i+1, err)
 		}
@@ -140,22 +177,106 @@ func parseCheck(data []byte) ([]Criterion, error) {
 			return nil, corruptf("the Check has two criteria with the id %s", c.ID)
 		}
 		seen[c.ID] = true
-		if len(c.Run) == 0 || c.Run[0] == "" {
-			return nil, corruptf("criterion %s of the Check has no command: give run as an argument list, "+
-				"such as [go, test, ./...]", c.ID)
-		}
 		describe, err := cleanText("description of criterion "+c.ID, c.Describe, maxGoalRunes)
 		if err != nil {
 			return nil, corruptf("%v", err)
 		}
-		for _, arg := range c.Run {
-			if _, err := cleanText("command of criterion "+c.ID, arg, 4096); err != nil {
-				return nil, corruptf("%v", err)
-			}
+		crit, err := criterionOf(c)
+		if err != nil {
+			return nil, err
 		}
-		out = append(out, Criterion{ID: c.ID, Describe: describe, Run: c.Run})
+		crit.Describe = describe
+		out = append(out, crit)
+	}
+	decides := false
+	for _, crit := range out {
+		if crit.Kind != CriterionHeldOut {
+			decides = true
+		}
+	}
+	if !decides {
+		return nil, corruptf("the Check has only held_out criteria, whose results never decide whether a Lesson is " +
+			"done: add a run criterion or a rubric item")
 	}
 	return out, nil
+}
+
+// criterionOf reads the one key that gives a criterion its kind: run,
+// rubric or held_out.
+func criterionOf(c criterionYAML) (Criterion, error) {
+	kinds := 0
+	for _, v := range []*yaml.Node{&c.Run, &c.Rubric, &c.HeldOut} {
+		if given(v) {
+			kinds++
+		}
+	}
+	switch kinds {
+	case 0:
+		return Criterion{}, corruptf("criterion %s of the Check needs one of run (a command, such as [go, test, ./...]), "+
+			"rubric (what to grade) or held_out (a command run on the Held-out data)", c.ID)
+	case 1:
+	default:
+		return Criterion{}, corruptf("criterion %s of the Check has more than one of run, rubric and held_out; "+
+			"give each its own criterion", c.ID)
+	}
+	if given(&c.Rubric) {
+		r := resolveAlias(&c.Rubric)
+		text, ok := r.Value, r.Kind == yaml.ScalarNode && r.ShortTag() == "!!str"
+		if !ok {
+			return Criterion{}, corruptf("the rubric of criterion %s is not text: write what to grade, "+
+				"such as \"Every function name says what it does\"", c.ID)
+		}
+		item, err := requiredText("rubric of criterion "+c.ID, text, maxRubricRunes)
+		if err != nil {
+			return Criterion{}, corruptf("%v", err)
+		}
+		return Criterion{ID: c.ID, Kind: CriterionRubric, Rubric: item}, nil
+	}
+	kind, key, raw := CriterionRun, "run", &c.Run
+	if given(&c.HeldOut) {
+		kind, key, raw = CriterionHeldOut, "held_out", &c.HeldOut
+	}
+	seq := resolveAlias(raw)
+	args := seq.Content
+	if seq.Kind != yaml.SequenceNode || len(args) == 0 {
+		return Criterion{}, corruptf("%s of criterion %s is not a command: give it as an argument list, "+
+			"such as [go, test, ./...], never as one string for a shell", key, c.ID)
+	}
+	if len(args) > maxArgumentsInRun {
+		return Criterion{}, corruptf("the command of criterion %s has more than %d arguments", c.ID, maxArgumentsInRun)
+	}
+	run := make([]string, len(args))
+	for i, a := range args {
+		// An argument is the text as written, whatever YAML would read it
+		// as: 1.10 stays 1.10 and 0x1F stays 0x1F.
+		a = resolveAlias(a)
+		if a.Kind != yaml.ScalarNode || a.ShortTag() == "!!null" {
+			return Criterion{}, corruptf("argument %d of the command of criterion %s is not text", i+1, c.ID)
+		}
+		run[i] = a.Value
+		if _, err := cleanText("command of criterion "+c.ID, run[i], maxArgumentRunes); err != nil {
+			return Criterion{}, corruptf("%v", err)
+		}
+	}
+	if run[0] == "" {
+		return Criterion{}, corruptf("the command of criterion %s has no program", c.ID)
+	}
+	return Criterion{ID: c.ID, Kind: kind, Command: run}, nil
+}
+
+// given reports whether a criterion's key was written with a value: an
+// absent key leaves the node empty, and null counts as not given.
+func given(n *yaml.Node) bool {
+	n = resolveAlias(n)
+	return n.Kind != 0 && !(n.Kind == yaml.ScalarNode && n.ShortTag() == "!!null")
+}
+
+// resolveAlias follows a YAML alias to the node it names.
+func resolveAlias(n *yaml.Node) *yaml.Node {
+	for n.Kind == yaml.AliasNode && n.Alias != nil {
+		n = n.Alias
+	}
+	return n
 }
 
 // parseBreakPoints reads the Break points from a Lesson file, in order. It

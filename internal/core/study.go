@@ -89,6 +89,15 @@ type lessonState struct {
 	// practicing last started: the one completion counts.
 	shownCheck string
 	attempts   []Attempt
+	// heldOut maps each held_out criterion to the Attempt holding its
+	// counted measurement: the first run that produced results.
+	heldOut map[string]string
+	// grades is each rubric item's latest grade.
+	grades map[string]*RubricGrade
+	// fixPending is set when an Attempt failed on a run criterion and no
+	// Next step was recorded for the Lesson since: practicing resumes only
+	// with a Next step that names the fix.
+	fixPending bool
 	// completed is the completion, once the Lesson is done, and
 	// completedBy the Event that recorded it.
 	completed   *lessonCompletedData

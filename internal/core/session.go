@@ -330,6 +330,14 @@ func (c *Core) SetPhase(ctx context.Context, topicID string, spec PhaseSpec) (Ph
 		if ls != nil && ls.completed != nil {
 			return nil, &Error{Code: CodeFailedPrecondition, Message: "Lesson " + spec.Lesson + " is done"}
 		}
+		// A failed Attempt sends the Lesson back to practicing with a Next
+		// step that names the fix, whatever Phases it went through; once
+		// one is recorded, no other is asked for until an Attempt fails
+		// again.
+		if spec.Phase == PhasePracticing && step == "" && ls != nil && ls.fixPending {
+			return nil, invalidf("the last Attempt of %s failed, so going back to practicing needs a Next step that "+
+				"names the fix, starting with a verb, such as \"Fix the off-by-one in count()\"", spec.Lesson)
+		}
 		d := phaseSetData{Lesson: spec.Lesson, Phase: spec.Phase, NextStep: step}
 		if spec.Phase == PhasePracticing {
 			_, version, err := readCheck(view.root, spec.Lesson)
@@ -421,6 +429,9 @@ func replaySessionClosed(s *replayed, ev event) error {
 // it was recorded.
 func (s *replayed) setNextStep(step *NextStep) {
 	s.study.nextStep, s.study.nextStepSeq = step, len(s.applied)
+	if ls := s.study.lessons[step.Lesson]; step.Lesson != "" && ls != nil {
+		ls.fixPending = false // the Next step names what to do now
+	}
 }
 
 // superseded reports whether a late note for session must leave the current
