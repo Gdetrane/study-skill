@@ -2,7 +2,7 @@
 
 `study` is Lamplight's command line for learners and for agents with a shell. Agents
 without a shell use the same operations through `study mcp`. This page is the contract
-that scripts and agents can rely on. Terms follow [CONTEXT.md](../CONTEXT.md).
+that scripts and agents can rely on. Terms follow [GLOSSARY.md](../GLOSSARY.md).
 
 ## Commands
 

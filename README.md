@@ -120,7 +120,7 @@ make lint       # gofmt and go vet
 
 ## Design
 
-- [CONTEXT.md](CONTEXT.md): the words Lamplight uses, and what they mean.
+- [GLOSSARY.md](GLOSSARY.md): the words Lamplight uses, and what they mean.
 - [docs/design/lamplight-v2.md](docs/design/lamplight-v2.md): the design.
 - [docs/adr](docs/adr): the decisions behind it.
 - [AGENTS.md](AGENTS.md): how to work on the code.

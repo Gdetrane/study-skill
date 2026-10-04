@@ -10,7 +10,7 @@ is released it lives on the `v2` branch, and `main` keeps v1, the Markdown study
 
 Read these before changing behaviour:
 
-- `CONTEXT.md`: the glossary. Use its terms in code, comments and docs.
+- `GLOSSARY.md`: the glossary. Use its terms in code, comments and docs.
 - `docs/design/lamplight-v2.md`: the design.
 - `docs/adr/`: the decisions behind it, 0004 onwards. 0001 and 0002 are superseded by 0004.
   0003 was written for v1's Python book catalog; the Go Library (`internal/library`), which
@@ -120,4 +120,11 @@ GOOS=darwin go vet ./...            # macOS is supported too
   `study doctor`, `study completion`, `study library build` and terminal `study review`.
 - New file or Event format: bump nothing silently; add a `format` field and a test that
   newer formats are refused.
-- Design changes: update `CONTEXT.md`, the design and a new ADR together.
+- Design changes: update `GLOSSARY.md`, the design and a new ADR together.
+
+## Agent skills
+
+- **Issue tracker:** GitHub `mordor-forge/study-skill`. See `docs/agents/issue-tracker.md`.
+- **Triage labels:** the five canonical roles. See `docs/agents/triage-labels.md`.
+- **Domain docs:** single root glossary and ADRs. See `docs/agents/domain.md`.
+- **Specs, reviews and PRs:** see `docs/agents/workflow.md` when using Matt's engineering workflow.
