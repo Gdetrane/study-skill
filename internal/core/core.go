@@ -2,7 +2,7 @@
 //
 // The CLI and the MCP server are thin adapters over this package: every domain
 // operation lives here, and tests exercise it in process with a fixed clock and
-// a temporary Study home. Terms follow CONTEXT.md.
+// a temporary Study home. Terms follow GLOSSARY.md.
 package core
 
 import (

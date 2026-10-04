@@ -252,7 +252,7 @@ In this order: the v1 branch, the checks `main` requires, the rename, the merge,
       gh issue close <n> -R $REPO --comment "Released in v2.0.0."
       ```
 
-- [ ] Refresh the published design page from `docs/design/lamplight-v2.md`, `CONTEXT.md`
+- [ ] Refresh the published design page from `docs/design/lamplight-v2.md`, `GLOSSARY.md`
       and the ADRs as tagged in `v2.0.0`.
 - [ ] Move to the real Study home when you are ready: remove `study_home` from the config
       file step 2 wrote (or point it at the real Study home), import your v1
