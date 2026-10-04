@@ -47,6 +47,6 @@ Used by `wayfinder`. The map is one issue; its tickets are that issue's sub-issu
 - Map: `gh issue create --repo mordor-forge/study-skill --title TITLE --body-file BODY.md --label wayfinder:map`.
 - Child ticket: create it with its `wayfinder:<type>` label, then link it with `gh api --method POST repos/mordor-forge/study-skill/issues/MAP/sub_issues -F sub_issue_id=ID`, where `ID` is the child's database ID, fetched as for a blocker.
 - Blocking: native issue dependencies, as in "Dependencies and close-out".
-- Frontier: the map's open sub-issues (`gh api repos/mordor-forge/study-skill/issues/MAP/sub_issues`) that have no assignee and no open blocker (`issue_dependencies_summary.blocked_by` is 0). The first in map order wins.
+- Frontier: the map's open sub-issues (`gh api repos/mordor-forge/study-skill/issues/MAP/sub_issues`) that have no assignee and no open blocker: `issue_dependencies_summary.blocked_by` is 0, and every `Blocked by: #N` in the ticket body names a closed issue. The first in map order wins.
 - Claim: `gh issue edit NUMBER --repo mordor-forge/study-skill --add-assignee @me`, as the session's first write.
 - Resolve: comment the answer, close the ticket, then add its gist and link to the map's Decisions-so-far.
