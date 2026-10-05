@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted
+Accepted. ADR-0010 replaces its packaging channels: the Homebrew cask and the AUR package
+are not published, and an install script takes their place. The rest stands.
 
 ## Context
 

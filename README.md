@@ -22,25 +22,30 @@ Forecasts when you have a deadline.
 
 Lamplight runs on Linux and macOS and needs git.
 
-From the first v2.0 release, install a package:
+From the first v2.0 release:
 
 ```bash
-brew install --cask mordor-forge/tap/lamplight   # macOS and Linux, Homebrew
-yay -S lamplight-bin                            # Arch Linux (AUR)
+curl -fsSL https://raw.githubusercontent.com/mordor-forge/lamplight/main/install.sh | sh
 ```
 
-or download a `.deb`, `.rpm` or archive from the
-[releases](https://github.com/mordor-forge/lamplight/releases). With Go 1.26 or later:
+The script downloads the latest release for your machine, checks it against the release's
+checksums, puts `study` in `~/.local/bin` without sudo, and installs completions for your
+shell. Run it again to upgrade. `STUDY_VERSION` and `STUDY_INSTALL_DIR` choose another
+release or folder, set for `sh`: `curl ... | STUDY_VERSION=v2.0.0 sh`.
+
+You can also download an archive, a `.deb` or an `.rpm` from the
+[releases](https://github.com/mordor-forge/lamplight/releases), or build `study` with Go
+1.26 or later:
 
 ```bash
 go install github.com/mordor-forge/lamplight/v2/cmd/study@latest
 ```
 
-Then make Lamplight available to your agents and your shell:
+Then make Lamplight available to your agents:
 
 ```bash
 study setup                # installs the skill and registers `study mcp` with Claude Code and Codex
-study completion install   # shell completions for bash, zsh or fish
+study completion install   # shell completions, if you did not use the install script
 study doctor               # checks that everything is in place
 ```
 
