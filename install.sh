@@ -89,13 +89,23 @@ sha256() {
 	fi
 }
 
-# put copies file $1 to $2 with mode $3. It writes beside $2 and renames, so
-# $2 is never half-written, and a study that is running is replaced, not
-# written into.
-put() {
+# stage copies file $1 beside $2 with mode $3, as $staged, and place renames
+# that copy to $1. So the file is never half-written, and a study that is
+# running is replaced, not written into. Between the two, the copy can be
+# tried in the folder it will live in.
+stage() {
 	staged=${2%/*}/.${2##*/}.install.$$
-	if cp "$1" "$staged" && chmod "$3" "$staged" && mv -f "$staged" "$2"; then
-		staged=
+	cp "$1" "$staged" && chmod "$3" "$staged"
+}
+
+place() {
+	mv -f "$staged" "$1" && staged=
+}
+
+# put copies file $1 to $2 with mode $3, and leaves nothing behind when it
+# cannot.
+put() {
+	if stage "$1" "$2" "$3" && place "$2"; then
 		return 0
 	fi
 	rm -f "$staged"
@@ -181,8 +191,13 @@ main() {
 	dir=$(CDPATH='' cd -- "$dir" && pwd) || fail "could not open $dir; nothing was installed"
 	dest=$dir/study
 	[ ! -d "$dest" ] || fail "$dest is a folder; nothing was installed"
-	put "$tmp/files/study" "$dest" 755 || fail "could not write $dest; nothing was installed"
-	installed=$("$dest" --version 2>&1) || fail "installed $dest, but it does not run: $installed"
+	# The new study must run before it takes the place of the one that is
+	# there. It is tried in the install folder, since a temporary folder may
+	# not allow running programs.
+	stage "$tmp/files/study" "$dest" 755 || fail "could not write $dest; nothing was installed"
+	installed=$("$staged" --version 2>&1) ||
+		fail "the study in $archive does not run on this machine ($installed); nothing was installed"
+	place "$dest" || fail "could not write $dest; nothing was installed"
 	say "Installed $dest ($installed)"
 
 	# man looks beside each folder on PATH: for <prefix>/bin, in <prefix>/share/man.

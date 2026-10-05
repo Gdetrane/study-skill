@@ -57,8 +57,8 @@ It needs `curl`, `tar` and `sha256sum` or `shasum`, and no sudo. It:
    command;
 2. downloads the archive and `checksums.txt`, and installs nothing unless the archive's
    SHA-256 is the one listed;
-3. puts `study` in `~/.local/bin`, replacing an earlier one by renaming, and the man page in
-   `~/.local/share/man/man1`;
+3. puts `study` in `~/.local/bin`, replacing an earlier one by renaming, and only once the
+   new one has run `--version`, and puts the man page in `~/.local/share/man/man1`;
 4. runs `study completion install` for the learner's shell, and goes on when that fails;
 5. says when `~/.local/bin` is not on the `PATH`, or when another `study` comes first there,
    and prints `study setup` as the next step. It never runs `study setup`.

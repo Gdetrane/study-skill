@@ -213,6 +213,33 @@ func TestTheInstallScript(t *testing.T) {
 		}
 	})
 
+	t.Run("installs nothing when the new study does not run, and keeps the one that is there", func(t *testing.T) {
+		broken := newRelease(t, []byte("#!/bin/sh\necho cannot start >&2\nexit 1\n"), "none")
+		in := newInstall(t, broken.folder(t, host))
+		dest := filepath.Join(in.home, ".local", "bin", "study")
+		refused := func() {
+			t.Helper()
+			out := in.mustFail()
+			for _, want := range []string{"does not run", "cannot start", "nothing was installed"} {
+				if !strings.Contains(out, want) {
+					t.Errorf("the refusal lacks %q:\n%s", want, out)
+				}
+			}
+		}
+
+		refused()
+		if got := names(t, filepath.Dir(dest)); len(got) != 0 {
+			t.Errorf("the install folder holds %v after a study that does not run, want nothing", got)
+		}
+
+		writeExecutable(t, dest, "#!/bin/sh\necho study version v0.0.1\n")
+		refused()
+		in.wantStudy(dest, "v0.0.1")
+		if got := names(t, filepath.Dir(dest)); len(got) != 1 {
+			t.Errorf("the install folder holds %v, want the study that was there alone", got)
+		}
+	})
+
 	t.Run("installs into the folder STUDY_INSTALL_DIR names", func(t *testing.T) {
 		in := newInstall(t, rel.folder(t, host))
 		dir := filepath.Join(in.home, "tools")

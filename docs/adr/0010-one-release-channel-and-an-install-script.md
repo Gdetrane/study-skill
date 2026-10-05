@@ -35,8 +35,10 @@ curl -fsSL https://raw.githubusercontent.com/mordor-forge/lamplight/main/install
 - It downloads the archive for the machine and `checksums.txt`, and installs nothing unless
   the archive's SHA-256 is the one listed.
 - It puts `study` in `~/.local/bin`, or the folder `STUDY_INSTALL_DIR` names, without sudo,
-  and replaces an earlier `study` by renaming, never by writing into it. When that folder is
-  a `bin` folder, the man page goes in `share/man/man1` beside it, where `man` looks.
+  and replaces an earlier `study` by renaming, never by writing into it, and only once the
+  new one has run `--version` there: a `study` that does not run installs nothing. When that
+  folder is a `bin` folder, the man page goes in `share/man/man1` beside it, where `man`
+  looks.
 - It then runs `study completion install`, and goes on when that fails. It never runs
   `study setup`: it prints it as the next step, and says so when the folder is not on the
   `PATH` or another `study` comes first there.
