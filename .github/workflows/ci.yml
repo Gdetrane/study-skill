@@ -61,6 +61,12 @@ jobs:
           ar p "$deb" data.tar.gz | tar tz | grep -q '^./usr/share/man/man1/study.1.gz$'
           ar p "$deb" data.tar.gz | tar tz | grep -q '^./usr/share/zsh/vendor-completions/_study$'
           ar p "$deb" data.tar.gz | tar tz | grep -q '^./usr/share/doc/lamplight/copyright$'
+          # The rpm has paths of its own for zsh and the licence.
+          rpm=$(ls dist/lamplight-*x86_64.rpm)
+          command -v rpm >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq rpm; }
+          for f in /usr/share/man/man1/study.1.gz /usr/share/zsh/site-functions/_study /usr/share/licenses/lamplight/LICENSE; do
+            rpm -qlp "$rpm" | grep -qx "$f" || { echo "missing $f in $rpm"; exit 1; }
+          done
       - name: Install the snapshot with install.sh
         run: |
           set -eu

@@ -120,10 +120,9 @@ completions afterwards.
 
 CI's "Release snapshot" job runs `shellcheck` on `install.sh`, validates the configuration
 with `goreleaser check`, builds every artefact with
-`goreleaser release --snapshot --clean --skip=publish`, checks that the archives and the
-deb package contain the completions, the man page and the licence, and installs the
-snapshot with `install.sh` into a temporary home. It needs no secrets and is not a required
-check.
+`goreleaser release --snapshot --clean --skip=publish`, checks that an archive, a deb and
+an rpm contain the completions, the man page and the licence, and installs the snapshot
+with `install.sh` into a temporary home. It needs no secrets and is not a required check.
 
 The "Lamplight core" job, which is required, runs `internal/e2e`'s test of `install.sh`
 against a local folder of release files: a good install, an upgrade, every refusal, and the
