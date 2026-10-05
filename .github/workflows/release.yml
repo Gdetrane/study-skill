@@ -35,7 +35,3 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Optional: publishing to the Homebrew tap and the AUR is skipped
-          # when these are not set.
-          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-          AUR_KEY: ${{ secrets.AUR_KEY }}
