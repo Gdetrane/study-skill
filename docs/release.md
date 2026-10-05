@@ -14,7 +14,7 @@ the token GitHub gives the workflow.
 
 | File | What it is for |
 |---|---|
-| `lamplight_<os>_<arch>.tar.gz` | `install.sh`, or unpacking by hand. Holds `study`, `completions/`, `manpages/study.1.gz` and the README. |
+| `lamplight_<os>_<arch>.tar.gz` | `install.sh`, or unpacking by hand. Holds `study`, `completions/`, `manpages/study.1.gz`, the README and `LICENSE`. |
 | `checksums.txt` | The SHA-256 of every file of the release. `install.sh` checks its download against it. |
 | `lamplight_<version>_<arch>.deb`, `lamplight-<version>-1.<arch>.rpm` | Installing system-wide by hand. |
 
@@ -31,7 +31,9 @@ The deb and rpm packages install:
 - completions: bash in `/usr/share/bash-completion/completions/study`, zsh as `_study` in
   `/usr/share/zsh/vendor-completions` (deb) or `/usr/share/zsh/site-functions` (rpm), fish
   in `/usr/share/fish/vendor_completions.d/study.fish`;
-- the man page `/usr/share/man/man1/study.1.gz`.
+- the man page `/usr/share/man/man1/study.1.gz`;
+- the licence: `/usr/share/doc/lamplight/copyright` (deb) or
+  `/usr/share/licenses/lamplight/LICENSE` (rpm).
 
 `scripts/release-assets.sh` generates the completions and the man page before every
 build, from `study completion <shell>` and `study man`.
@@ -84,7 +86,6 @@ learner's and stays.
   `install.sh` from. GitHub runs the workflow file of the tagged commit, so a `v*` tag on
   any commit that has `release.yml` publishes a release: tag only release commits, such as
   a release candidate on `v2` or a release on `main`.
-- [ ] Add a `LICENSE` file (the README says MIT); the archives and packages should ship it.
 - [ ] Check the maintainer named in `.goreleaser.yaml` (deb and rpm metadata).
 
 ## Cutting a release
@@ -120,8 +121,9 @@ completions afterwards.
 CI's "Release snapshot" job runs `shellcheck` on `install.sh`, validates the configuration
 with `goreleaser check`, builds every artefact with
 `goreleaser release --snapshot --clean --skip=publish`, checks that the archives and the
-deb package contain the completions and the man page, and installs the snapshot with
-`install.sh` into a temporary home. It needs no secrets and is not a required check.
+deb package contain the completions, the man page and the licence, and installs the
+snapshot with `install.sh` into a temporary home. It needs no secrets and is not a required
+check.
 
 The "Lamplight core" job, which is required, runs `internal/e2e`'s test of `install.sh`
 against a local folder of release files: a good install, an upgrade, every refusal, and the

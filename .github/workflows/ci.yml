@@ -50,16 +50,17 @@ jobs:
           distribution: goreleaser
           version: "~> v2"
           args: release --snapshot --clean --skip=publish
-      - name: Check that packages ship completions and the man page
+      - name: Check that packages ship completions, the man page and the licence
         run: |
           set -eu
           archive=dist/lamplight_linux_amd64.tar.gz
-          for f in study completions/study.bash completions/study.zsh completions/study.fish manpages/study.1.gz; do
+          for f in study LICENSE completions/study.bash completions/study.zsh completions/study.fish manpages/study.1.gz; do
             tar tzf "$archive" | grep -qx "$f" || { echo "missing $f in $archive"; exit 1; }
           done
           deb=$(ls dist/lamplight_*_amd64.deb)
           ar p "$deb" data.tar.gz | tar tz | grep -q '^./usr/share/man/man1/study.1.gz$'
           ar p "$deb" data.tar.gz | tar tz | grep -q '^./usr/share/zsh/vendor-completions/_study$'
+          ar p "$deb" data.tar.gz | tar tz | grep -q '^./usr/share/doc/lamplight/copyright$'
       - name: Install the snapshot with install.sh
         run: |
           set -eu

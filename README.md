@@ -132,4 +132,4 @@ make lint       # gofmt and go vet
 
 ## License
 
-MIT
+MIT: see [LICENSE](LICENSE).
