@@ -36,6 +36,8 @@ jobs:
         with:
           go-version-file: go.mod
           check-latest: true
+      - name: Check the install script
+        run: shellcheck install.sh
       - name: Check the GoReleaser configuration
         uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
@@ -51,11 +53,21 @@ jobs:
       - name: Check that packages ship completions and the man page
         run: |
           set -eu
-          archive=$(ls dist/lamplight_*_linux_amd64.tar.gz)
+          archive=dist/lamplight_linux_amd64.tar.gz
           for f in study completions/study.bash completions/study.zsh completions/study.fish manpages/study.1.gz; do
             tar tzf "$archive" | grep -qx "$f" || { echo "missing $f in $archive"; exit 1; }
           done
           deb=$(ls dist/lamplight_*_amd64.deb)
           ar p "$deb" data.tar.gz | tar tz | grep -q '^./usr/share/man/man1/study.1.gz$'
           ar p "$deb" data.tar.gz | tar tz | grep -q '^./usr/share/zsh/vendor-completions/_study$'
-
+      - name: Install the snapshot with install.sh
+        run: |
+          set -eu
+          home=$(mktemp -d)
+          export HOME="$home" SHELL=/bin/bash
+          export XDG_CONFIG_HOME="$home/.config" XDG_DATA_HOME="$home/.local/share"
+          export XDG_STATE_HOME="$home/.local/state" XDG_CACHE_HOME="$home/.cache"
+          STUDY_DOWNLOAD_URL="file://$PWD/dist" sh install.sh
+          "$home/.local/bin/study" --version | grep -F snapshot
+          test -s "$home/.local/share/man/man1/study.1.gz"
+          test -s "$home/.local/share/bash-completion/completions/study"

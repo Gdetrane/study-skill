@@ -1078,7 +1078,9 @@ What `study` will and won't touch:
 `uninstall` reports `removed`, `kept` and `already_gone` scripts, `rc_lines` with a
 `status` of `removed`, `already_gone` or `not_removed`, and any `manual` steps.
 
-Packages install the scripts from `study completion <shell>` system-wide instead.
+The install script (`install.sh`) runs `study completion install` once `study` is in place.
+The deb and rpm packages install the scripts from `study completion <shell>` system-wide
+instead.
 
 ## Setting up agents
 
@@ -1092,9 +1094,10 @@ Packages install the scripts from `study completion <shell>` system-wide instead
   `codex mcp add lamplight -- <study> mcp`. An agent whose command is not on `PATH` is
   skipped with a note; run `study setup` again once it is installed.
 - `<study>` is an absolute path, because GUI editors do not inherit the shell's `PATH`. When
-  the `study` on `PATH` is this same program, its `PATH` entry is used as written (Homebrew's
-  `bin` link, `~/go/bin/study`, `/usr/bin/study`), because the real file behind it often
-  lives in a versioned folder that the next upgrade removes. When the first `study` on
+  the `study` on `PATH` is this same program, its `PATH` entry is used as written
+  (`~/.local/bin/study` from the install script, `~/go/bin/study`, `/usr/bin/study`,
+  Homebrew's `bin` link), because the real file behind it can live in a versioned folder
+  that the next upgrade removes. When the first `study` on
   `PATH` is a version manager's shim (a `shims` folder, as mise and asdf use), or the running
   binary sits in a version manager's `installs` folder next to one, agents run the shim, and
   `study_note` says so. Otherwise the running binary's path is used, and `study_note` says it

@@ -675,8 +675,11 @@ never appear among the large files a Checkpoint reports.
 
 ## Distribution and setup
 
-ADR-0008. `study` ships for Linux and macOS through a Homebrew cask tap, the AUR, deb and
-rpm packages, and `go install`. `study setup` installs the `lamplight` skill and registers
+ADR-0008 and ADR-0010. `study` ships for Linux and macOS on the GitHub release alone.
+`install.sh` downloads the archive for the machine, checks it against the release's
+checksums, puts `study` in `~/.local/bin` and installs completions; running it again
+upgrades. The release also holds deb and rpm packages, and `go install` works. There is no
+Homebrew cask and no AUR package. `study setup` installs the `lamplight` skill and registers
 the MCP server at user scope for Claude Code and Codex, never overwrites a folder it did not
 create, and can be reversed exactly with `--remove`. Claude Code can instead use the
 marketplace plugin, which includes a session-start hook that prints `status` when the agent
@@ -848,7 +851,8 @@ Break points and Next steps, Checks with Attempts and diagnostic held-out result
 with drafts and Reviews, History with replay, Checkpoints, Assessment, Goal, Pace and Tasks,
 recording Level signals); sync for one machine at a time; the Library in Go; the CLI with
 terminal Reviews; the MCP server; the `lamplight` skill; the Claude Code plugin and
-`study setup` for Claude Code and Codex; Linux and macOS packages; `study import`.
+`study setup` for Claude Code and Codex; Linux and macOS releases with an install script;
+`study import`.
 
 **Order of work**: the tracer bullet, then the History engine (its file formats are settled
 before any real data is written), then a thin learner loop through every layer, then each

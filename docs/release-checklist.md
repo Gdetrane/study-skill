@@ -29,17 +29,14 @@ REPO=mordor-forge/study-skill        # bash, zsh; in fish: set REPO mordor-forge
 - [ ] #34's prerequisites, from `docs/release.md`, are done:
   - a `LICENSE` file at the repository root (the README says MIT), which the archives and
     packages ship;
-  - the tap repository `mordor-forge/homebrew-tap` (public, with a `Casks/` folder), and a
-    fine-grained token with contents write access to it alone, stored as the Actions
-    secret `HOMEBREW_TAP_TOKEN`;
-  - an AUR account with a password-less SSH key, `lamplight-bin` claimed, and the private
-    key stored as the Actions secret `AUR_KEY`;
-  - the maintainer named in `.goreleaser.yaml` checked.
+  - the maintainer named in `.goreleaser.yaml` checked (deb and rpm metadata).
+
+  The release needs no secret and no other repository: it publishes to the GitHub release
+  alone, and `install.sh` installs from there (ADR-0010).
 
   ```sh
   git cat-file -e upstream/v2:LICENSE && echo LICENSE present
-  gh repo view mordor-forge/homebrew-tap
-  gh secret list -R $REPO                 # HOMEBREW_TAP_TOKEN and AUR_KEY, names only
+  grep -n maintainer .goreleaser.yaml
   ```
 
 - [ ] #18's first half is done: the `v1.0.0` tag points at the last v1 commit, `main`'s
@@ -178,8 +175,9 @@ In this order: the v1 branch, the checks `main` requires, the rename, the merge,
       #34's "Release snapshot" job runs on every pull request too, but it is not a required
       check, as `docs/release.md` decides: do not add it.
 - [ ] Rename the repository to `lamplight`, before the tag: the module path
-      (`github.com/mordor-forge/lamplight/v2`), the packages, the plugin marketplace and the
-      README already use the new name, and Go's module proxy remembers the first fetch.
+      (`github.com/mordor-forge/lamplight/v2`), `install.sh`, the packages, the plugin
+      marketplace and the README already use the new name, and Go's module proxy remembers
+      the first fetch.
 
       ```sh
       gh repo rename lamplight -R mordor-forge/study-skill
@@ -218,19 +216,35 @@ In this order: the v1 branch, the checks `main` requires, the rename, the merge,
 
 ## 7. After the release
 
-- [ ] The release has every package, and each one installs and passes `study doctor`. Run
-      each package's own `study` by its path: the trial build from step 2 may come first on
-      `PATH`.
+- [ ] The release has every file: four archives (`lamplight_linux_amd64.tar.gz` and the
+      like), `checksums.txt`, two deb and two rpm packages.
 
       ```sh
       gh release view v2.0.0 -R $REPO
+      ```
+
+- [ ] Each way to install works and passes `study doctor`. Run each `study` by its path:
+      the trial build from step 2 may come first on `PATH`, and the install script says
+      when another `study` does.
+
+      ```sh
+      curl -fsSL https://raw.githubusercontent.com/mordor-forge/lamplight/main/install.sh | sh
+      ~/.local/bin/study --version && ~/.local/bin/study doctor          # on Linux, and on a Mac
       go install github.com/mordor-forge/lamplight/v2/cmd/study@v2.0.0   # replaces the trial build
       "$(go env GOPATH)/bin/study" --version && "$(go env GOPATH)/bin/study" doctor
-      brew install --cask mordor-forge/tap/lamplight                      # on a Mac
-      "$(brew --prefix)/bin/study" --version && "$(brew --prefix)/bin/study" doctor
-      yay -S lamplight-bin                                                # on Arch
-      /usr/bin/study --version && /usr/bin/study doctor
       ```
+
+      For a package, install the file from the release on a Debian or Fedora machine, or in
+      a container:
+
+      ```sh
+      gh release download v2.0.0 -R $REPO --pattern 'lamplight_*_amd64.deb'
+      podman run --rm -v "$PWD:/pkg:ro" debian:stable sh -c \
+        'apt-get update -qq && apt-get install -y -qq /pkg/lamplight_*_amd64.deb >/dev/null && study --version'
+      ```
+
+      Keep one `study` afterwards. Agents run the one `study setup` registered: if you
+      remove that one, run `study setup` again with the one you keep.
 
 - [ ] The Claude Code plugin installs, now that `main` holds `.claude-plugin/`. The plugin
       and `study setup` never both serve Claude Code, so hand Claude Code over first, and
