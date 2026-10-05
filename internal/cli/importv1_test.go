@@ -113,6 +113,12 @@ func TestImportCommand(t *testing.T) {
 	if !strings.Contains(status.stdout, `"action": "adopt"`) || !strings.Contains(status.stdout, `"imported": {`) {
 		t.Errorf("status after the import:\n%s", status.stdout)
 	}
+	// The Level is v1's estimate until an Assessment or the learner sets it,
+	// so status must not call it the learner's choice.
+	shown := run(t, home, "status")
+	if !strings.Contains(shown.stdout, "beginner (v1's estimate)") || strings.Contains(shown.stdout, "your choice") {
+		t.Errorf("status after the import should say the Level is v1's estimate:\n%s", shown.stdout)
+	}
 	if usage := run(t, home, "import", "--json"); usage.code != cli.ExitUsage {
 		t.Errorf("import without a folder: exit %d", usage.code)
 	}

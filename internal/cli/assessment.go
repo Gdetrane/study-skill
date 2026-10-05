@@ -188,6 +188,8 @@ func describeLevel(l *core.LevelInfo) string {
 	switch l.Source {
 	case core.LevelFromAssessment:
 		return l.Level + styleDim.Render(" (set by an Assessment)")
+	case core.LevelFromImport:
+		return l.Level + styleDim.Render(" (v1's estimate)")
 	default:
 		return l.Level + styleDim.Render(" (your choice)")
 	}
