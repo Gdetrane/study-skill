@@ -466,6 +466,7 @@ func newRelease(t *testing.T, binary []byte, version string) release {
 		mode int64
 		data []byte
 	}{
+		{"LICENSE", 0o644, []byte("MIT License\n")},
 		{"README.md", 0o644, []byte("# Lamplight\n")},
 		{"completions/study.fish", 0o644, []byte("# not what the script installs\n")},
 		{"manpages/study.1.gz", 0o644, rel.manPage},

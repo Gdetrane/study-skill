@@ -27,8 +27,8 @@ REPO=mordor-forge/study-skill        # bash, zsh; in fish: set REPO mordor-forge
       ```
 
 - [ ] #34's prerequisites, from `docs/release.md`, are done:
-  - a `LICENSE` file at the repository root (the README says MIT), which the archives and
-    packages ship;
+  - the `LICENSE` file at the repository root (MIT), which the archives and packages
+    ship;
   - the maintainer named in `.goreleaser.yaml` checked (deb and rpm metadata).
 
   The release needs no secret and no other repository: it publishes to the GitHub release
