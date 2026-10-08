@@ -69,21 +69,26 @@ These enhance the experience but aren't required:
 
 | Plugin/MCP | What it enables |
 |---|---|
-| [NotebookLM MCP](https://github.com/jacob-bd/notebooklm-mcp-cli) | PDF textbook ingestion + semantic querying via Google NotebookLM (see below) |
 | LSP plugins (gopls, pyright, etc.) | Real-time code validation during exercise review |
-| pdfkb-mcp or rag-cli | Local PDF RAG (alternative to NotebookLM) |
+| pdfkb-mcp or rag-cli | Local PDF RAG: indexes a textbook on your machine and searches it during lessons |
 | calibre or pandoc | Ebook format conversion (epub/mobi → PDF for ingestion) |
 
-#### NotebookLM MCP Setup
+#### NotebookLM is no longer supported
 
-NotebookLM MCP works with free and paid Google accounts and does not require a Google Cloud project. It uses Google account authentication rather than an official public NotebookLM API.
+Earlier versions of this README recommended a community NotebookLM MCP server for source
+material. That path is unsupported now, and Lamplight v2 removes it.
 
-Built by [Jacob Ben-David](https://github.com/jacob-bd). To set up the current unified CLI/MCP package:
-1. Install the MCP server: `uv tool install notebooklm-mcp-cli`
-2. Authenticate: `nlm login` (opens browser for one-time Google sign-in)
-3. Connect to Claude Code: `nlm setup add claude-code`
+NotebookLM has no official API for personal Google accounts. The community server reaches it
+through undocumented endpoints, signed in with your browser's Google session cookies. That is
+unofficial access, which Google neither documents nor supports, and it may not be allowed by
+Google's terms. If it goes wrong, the account at risk is yours, so this project no longer
+recommends installing it.
 
-> **Note:** The NotebookLM MCP uses undocumented browser APIs (cookie-based auth), not an official Google API. It works reliably but could break if Google changes their internal endpoints. This is why the skill includes fallback strategies (local RAG, chunked text) for source material.
+v1 still uses a NotebookLM MCP server when it finds one in your agent. To keep v1 away from
+it, remove the server from your agent's configuration. If you installed the tool only for
+this skill, uninstall it too (`uv tool uninstall notebooklm-mcp-cli`) and delete the Google
+sign-in it saved, as that project's documentation describes. Without the server, v1 falls
+back to local RAG or extracted text, as [Source Material](#source-material) describes.
 
 ## Graceful Degradation
 
@@ -93,7 +98,7 @@ The skill adapts to what's available. Nothing crashes if a plugin is missing:
 |---|---|---|
 | Scientific domains | Curated workflows, parameter tables, troubleshooting via SciAgent-Skills | Falls through to web search |
 | Lesson research | Live docs via context7 | Model's built-in knowledge |
-| Source material | Semantic search via NotebookLM | Grep over extracted text, or skipped |
+| Source material | Semantic search via local RAG (pdfkb-mcp or rag-cli) | Grep over extracted text, or skipped |
 | Concept diagrams | HTML via visual-explainer | ASCII diagrams in lesson notes |
 | Code validation | LSP real-time checking | User runs tests manually |
 | Book catalog | Fuzzy search across library | Manual `--source` path |
@@ -225,9 +230,11 @@ Add a textbook as source material and the skill queries it during lessons:
 ```
 
 Backend priority:
-1. **NotebookLM** — creates a notebook, adds PDF, queries semantically
-2. **Local RAG** — uses pdfkb-mcp or rag-cli for local indexing
-3. **Chunked text** — extracts text, saves as searchable markdown files
+1. **Local RAG** — uses pdfkb-mcp or rag-cli for local indexing
+2. **Chunked text** — extracts text, saves as searchable markdown files
+
+A NotebookLM MCP server, when one is installed in your agent, still comes before both in v1.
+That path is unsupported: see [NotebookLM is no longer supported](#notebooklm-is-no-longer-supported).
 
 ## SciAgent-Skills Integration
 
