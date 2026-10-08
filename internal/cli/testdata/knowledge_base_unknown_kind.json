@@ -1,0 +1,7 @@
+{
+  "ok": false,
+  "error": {
+    "code": "invalid_argument",
+    "message": "the Knowledge base kind must be \"none\", the only one this version has, not \"rag\""
+  }
+}

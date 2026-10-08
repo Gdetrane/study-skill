@@ -57,8 +57,7 @@ type Topic struct {
 	// from a v1 workspace, and whether it has been adopted yet.
 	Imported *TopicImported `json:"imported,omitempty"`
 	// LessonsWithoutEvidence are the Lessons started or done that cite no
-	// Evidence, once the Topic has Sources or a NotebookLM Knowledge base.
-	// They are marked, never blocked.
+	// Evidence, once the Topic has Sources. They are marked, never blocked.
 	LessonsWithoutEvidence []string `json:"lessons_without_evidence,omitempty"`
 	// Cards says whether Cards are ready to review, never how many; absent
 	// for a Topic without Cards.
@@ -743,7 +742,7 @@ func (c *Core) loadTopic(home *os.Root, id string) (Topic, error) {
 		describeBreakPoint(root, &r)
 		topic.Resume = &r
 	}
-	topic.LessonsWithoutEvidence = s.lessonsWithoutEvidence(s.citingLessons(topic.KnowledgeBase))
+	topic.LessonsWithoutEvidence = s.lessonsWithoutEvidence(s.citingLessons())
 	c.addPlan(&topic, s, settings, newView(root, s))
 	addLevel(&topic, s, settings, data)
 	addApproach(&topic, settings)

@@ -1,0 +1,6 @@
+# Topic settings. Lamplight rewrites this file; comments are not kept.
+format = 1
+title = "C"
+[knowledge_base]
+  kind = "notebooklm"
+  notebook = "nb-43"

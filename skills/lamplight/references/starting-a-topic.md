@@ -26,7 +26,7 @@ Done when Session 1 ends at a Break point of Lesson 1, or with a Next step.
    Record the Goal, the deadline, the Pace and the Approach with `topic_update`, and write
    the Workbench kind in `notes/brainstorm.md`.
    Done when the Goal, the Pace and the Approach are recorded.
-4. Sources: add them and choose the Knowledge base ([Knowledge](knowledge.md)).
+4. Sources: add them ([Knowledge](knowledge.md)).
    Done when the Sources are added, or the learner chose to start without any.
 5. The placement Assessment, time-boxed to about 15 minutes. Ask short questions across
    the Goal's areas, from easy to hard, moving on as soon as an area is clear; the areas you

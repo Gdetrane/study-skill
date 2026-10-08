@@ -42,9 +42,9 @@ Done when the Syllabus is approved and the learner has a Next step.
 5. Checks for the open Lessons. Each open Lesson's file is `lessons/<lesson-id>.md`; add
    its Check to the YAML header as [The lesson loop](lesson-loop.md) describes, starting
    with the Lesson in progress. Done when the current Lesson has a Check.
-6. The Knowledge base. Check what `sources` lists and the Knowledge base the import set;
-   add what is missing as [Knowledge](knowledge.md) describes. Done when the learner agrees
-   the Sources are complete.
+6. Sources. Check what `sources` lists, and add what is missing as
+   [Knowledge](knowledge.md) describes. Done when the learner agrees the Sources are
+   complete.
 7. Cards for the completed Lessons. Go over each one with the learner and write a few
    Cards from it with `card_add`, as [Cards and Reviews](cards-and-reviews.md) describes.
    Done when each completed Lesson has Cards, or the learner chose to skip it.

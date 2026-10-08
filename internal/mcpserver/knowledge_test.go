@@ -12,9 +12,9 @@ import (
 	"github.com/mordor-forge/lamplight/v2/internal/core"
 )
 
-// TestKnowledgeSeam drives the notebooklm kind the way an agent would: choose
-// the Knowledge base, add a Source it also added to the notebook, record
-// Evidence from a NotebookLM citation, and read it all back.
+// TestKnowledgeSeam drives the Knowledge seam the way an agent would: choose
+// the Knowledge base, add a Source, record Evidence with the location a
+// Knowledge base gave, and read it all back.
 func TestKnowledgeSeam(t *testing.T) {
 	ctx := context.Background()
 	home := t.TempDir()
@@ -23,8 +23,8 @@ func TestKnowledgeSeam(t *testing.T) {
 
 	var updated core.TopicUpdate
 	decode(t, call(t, session, "topic_update", map[string]any{"topic": "c",
-		"knowledge_base": map[string]any{"kind": "notebooklm", "notebook": "nb-42"}}), &updated)
-	if !updated.Changed || updated.Topic.KnowledgeBase == nil || updated.Topic.KnowledgeBase.Notebook != "nb-42" {
+		"knowledge_base": map[string]any{"kind": "none"}}), &updated)
+	if !updated.Changed || updated.Topic.KnowledgeBase == nil || updated.Topic.KnowledgeBase.Kind != core.KnowledgeBaseNone {
 		t.Fatalf("topic_update = %+v", updated)
 	}
 
@@ -36,8 +36,8 @@ func TestKnowledgeSeam(t *testing.T) {
 		t.Fatal(err)
 	}
 	var added core.SourceResult
-	decode(t, call(t, session, "source_add", map[string]any{"topic": "c", "file": book, "notebooklm_id": "nlm-1"}), &added)
-	if added.Source.Kind != core.SourceFile || added.Source.NotebookLMID != "nlm-1" || added.Source.Title != "K And R" {
+	decode(t, call(t, session, "source_add", map[string]any{"topic": "c", "file": book}), &added)
+	if added.Source.Kind != core.SourceFile || added.Source.Title != "K And R" {
 		t.Fatalf("source_add = %+v", added)
 	}
 
@@ -51,7 +51,7 @@ func TestKnowledgeSeam(t *testing.T) {
 
 	var sources core.SourceList
 	decode(t, call(t, session, "sources", map[string]any{"topic": "c"}), &sources)
-	if sources.KnowledgeBase == nil || sources.KnowledgeBase.Kind != core.KnowledgeBaseNotebookLM ||
+	if sources.KnowledgeBase == nil || sources.KnowledgeBase.Kind != core.KnowledgeBaseNone ||
 		len(sources.Sources) != 1 || sources.Sources[0].State != core.SourceOK {
 		t.Errorf("sources = %+v", sources)
 	}
@@ -91,6 +91,8 @@ func TestKnowledgeSeam(t *testing.T) {
 		// The server's folder is not the agent's: relative paths are refused.
 		{"source_add", map[string]any{"topic": "c", "file": "Books/k_and_r.pdf"}, "invalid_argument"},
 		{"source_update", map[string]any{"topic": "c", "source": added.Source.ID, "path": "k_and_r.pdf"}, "invalid_argument"},
+		// A kind this version does not have.
+		{"topic_update", map[string]any{"topic": "c", "knowledge_base": map[string]any{"kind": "rag"}}, "invalid_argument"},
 	} {
 		res, err := session.CallTool(ctx, &mcp.CallToolParams{Name: tc.tool, Arguments: tc.args})
 		if err != nil {

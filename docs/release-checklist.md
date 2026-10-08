@@ -26,6 +26,10 @@ REPO=mordor-forge/study-skill        # bash, zsh; in fish: set REPO mordor-forge
       gh pr list -R $REPO --base v2
       ```
 
+- [ ] Lamplight has a Knowledge base that needs no account: v2.0 is not released until it
+      does (ADR-0011). The work is tracked in the v2.0 milestone, so its issues are in the
+      list above until they land.
+
 - [ ] #34's prerequisites, from `docs/release.md`, are done:
   - the `LICENSE` file at the repository root (MIT), which the archives and packages
     ship;

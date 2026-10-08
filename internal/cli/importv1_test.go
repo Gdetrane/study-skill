@@ -26,8 +26,12 @@ func v1Workspace(t *testing.T) string {
 		},
 		"session_state": map[string]any{"phase": "practicing", "pending_action": "review practice/lesson-02 implementation",
 			"context": "Half way through the channels exercise.", "energy": "half", "time_budget_minutes": 25},
-		"sources": []any{},
-		"review":  map[string]any{"items_due": 1},
+		// v1 kept a NotebookLM notebook and each source's id in it; the import
+		// lists them under Dropped (ADR-0011).
+		"sources": []any{map[string]any{"url": "https://go.dev/blog/pipelines",
+			"title": "Go Concurrency Patterns: Pipelines", "source_id": "s-1"}},
+		"notebooklm": map[string]any{"notebook_id": "nb-1"},
+		"review":     map[string]any{"items_due": 1},
 	}
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {

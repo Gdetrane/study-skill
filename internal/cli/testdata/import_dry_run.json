@@ -46,6 +46,10 @@
         "detail": ".study-config.json becomes topic.toml; the original is kept as notes/v1-config.json"
       },
       {
+        "what": "sources",
+        "detail": "1 Sources"
+      },
+      {
         "what": "session_state",
         "detail": "where v1 stopped, for the Next step"
       }
@@ -83,7 +87,14 @@
         "v1_status": "in_progress"
       }
     ],
-    "sources": [],
+    "sources": [
+      {
+        "id": "go-concurrency-patterns-pipelines.id001",
+        "kind": "url",
+        "title": "Go Concurrency Patterns: Pipelines",
+        "url": "https://go.dev/blog/pipelines"
+      }
+    ],
     "level": "beginner",
     "approach": "concepts",
     "v1_next_step": {
@@ -92,6 +103,14 @@
       "context": "Half way through the channels exercise."
     },
     "dropped": [
+      {
+        "what": "notebooklm",
+        "detail": "Lamplight v2 does not use NotebookLM (ADR-0011)"
+      },
+      {
+        "what": "sources[0].source_id",
+        "detail": "Lamplight v2 does not use NotebookLM (ADR-0011); the Source itself is imported"
+      },
       {
         "what": "session_state.energy and time_budget_minutes",
         "detail": "Energy and time are asked at every Session"

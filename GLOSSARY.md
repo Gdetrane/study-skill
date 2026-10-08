@@ -198,9 +198,9 @@ _Avoid_: Errand, todo
 A document or web page a Topic learns from.
 
 **Knowledge base**:
-Where a Topic's Sources are held and searched for Evidence, such as a NotebookLM notebook. A
-Topic has at most one; without one, the agent records Evidence itself.
-_Avoid_: Backend, RAG, notebook
+Where a Topic's Sources are held and searched for Evidence. A Topic has at most one; without
+one, the agent reads the Sources and records Evidence itself.
+_Avoid_: Backend, RAG
 
 **Library**:
 The learner's whole collection of documents across all Topics.

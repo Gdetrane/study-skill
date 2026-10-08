@@ -25,8 +25,8 @@ const (
 	// LocationFromSource: read in the Source itself, such as a printed page
 	// number or a section heading.
 	LocationFromSource = "source"
-	// LocationFromKnowledgeBase: reported by the Knowledge base, such as a
-	// NotebookLM citation, recorded as given.
+	// LocationFromKnowledgeBase: reported by the Knowledge base with the
+	// passage, recorded as given.
 	LocationFromKnowledgeBase = "knowledge_base"
 	// LocationFromLearner: given by the learner.
 	LocationFromLearner = "learner"
@@ -307,13 +307,12 @@ func cleanQuote(s string) (string, error) {
 }
 
 // citingLessons returns the Syllabus's Lessons that should cite Evidence:
-// those started or done, in Syllabus order, once the Topic has Sources or a
-// NotebookLM Knowledge base to cite. Lessons not started yet are left out, so
-// status does not mark the whole Syllabus.
-func (s *replayed) citingLessons(kb *KnowledgeBase) []string {
+// those started or done, in Syllabus order, once the Topic has Sources to
+// cite. Lessons not started yet are left out, so status does not mark the
+// whole Syllabus.
+func (s *replayed) citingLessons() []string {
 	syllabus := s.study.syllabus
-	hasNotebook := kb != nil && kb.Kind == KnowledgeBaseNotebookLM
-	if syllabus == nil || (len(s.knowledge().sources) == 0 && !hasNotebook) {
+	if syllabus == nil || len(s.knowledge().sources) == 0 {
 		return nil
 	}
 	var lessons []string

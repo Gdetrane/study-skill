@@ -51,17 +51,16 @@ func (a *app) sourceCommand() *cobra.Command {
 	add.Flags().StringVar(&spec.File, "file", "", "the file, such as a PDF from your Library")
 	add.Flags().StringVar(&spec.URL, "url", "", "the web page's address")
 	add.Flags().StringVar(&spec.Title, "title", "", "the Source's title; derived from the file or URL when omitted")
-	add.Flags().StringVar(&spec.NotebookLMID, "notebooklm-id", "", "the Source's id in the Topic's NotebookLM notebook")
 	add.Flags().BoolVar(&spec.DryRun, "dry-run", false, "show the Source that would be added without recording it")
 
 	var changes core.SourceChanges
-	var title, path, notebookID string
+	var title, path string
 	update := &cobra.Command{
 		Use:   "update <topic> <source>",
-		Short: "Change a Source's title or NotebookLM id, or say where its file is on this computer",
-		Long: "Change a Source's title or NotebookLM id, which the History records, or say where its file is on\n" +
-			"this computer with --path, which is remembered here only.",
-		Example: `  study source update c kernighan-ritchie.k3f9a2 --notebooklm-id 7b1e
+		Short: "Change a Source's title, or say where its file is on this computer",
+		Long: "Change a Source's title, which the History records, or say where its file is on this computer\n" +
+			"with --path, which is remembered here only.",
+		Example: `  study source update c kernighan-ritchie.k3f9a2 --title "The C Programming Language"
   study source update c kernighan-ritchie.k3f9a2 --path ~/Books/C/kr.pdf`,
 		Args: exactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -70,9 +69,6 @@ func (a *app) sourceCommand() *cobra.Command {
 			}
 			if cmd.Flags().Changed("path") {
 				changes.Path = &path
-			}
-			if cmd.Flags().Changed("notebooklm-id") {
-				changes.NotebookLMID = &notebookID
 			}
 			c, err := core.Open(a.opts)
 			if err != nil {
@@ -90,7 +86,6 @@ func (a *app) sourceCommand() *cobra.Command {
 	}
 	update.Flags().StringVar(&title, "title", "", "the new title")
 	update.Flags().StringVar(&path, "path", "", "where the file is on this computer; it must hold the same content")
-	update.Flags().StringVar(&notebookID, "notebooklm-id", "", "the Source's id in the NotebookLM notebook; empty removes it")
 	update.Flags().BoolVar(&changes.DryRun, "dry-run", false, "show the result without recording anything")
 
 	list := &cobra.Command{
@@ -220,12 +215,14 @@ func (a *app) evidenceCommand() *cobra.Command {
 	return group
 }
 
+// describeKnowledgeBase shows the kind as topic.toml records it. One this
+// version does not know is treated as none, and says so.
 func describeKnowledgeBase(kb *core.KnowledgeBase) string {
 	switch {
 	case kb == nil:
 		return "not chosen yet, so none"
-	case kb.Notebook != "":
-		return kb.Kind + " (notebook " + printable(kb.Notebook) + ")"
+	case kb.Kind != core.KnowledgeBaseNone:
+		return printable(kb.Kind) + " (a kind this version of study does not know, so treated as none)"
 	default:
 		return kb.Kind
 	}
@@ -279,13 +276,6 @@ func writeSourceDetails(w io.Writer, s core.SourceStatus) {
 	case core.SourceUntracked:
 		fmt.Fprintf(w, "  %s added to %s by hand, so not a Source yet: add it with study source add\n",
 			styleWarn.Render("!"), "sources.jsonl")
-	}
-	if s.NotebookLMID != "" {
-		note := ""
-		if s.NotebookLMStale {
-			note = styleWarn.Render(" (from another notebook)")
-		}
-		fmt.Fprintf(w, "  NotebookLM: %s%s\n", printable(s.NotebookLMID), note)
 	}
 }
 

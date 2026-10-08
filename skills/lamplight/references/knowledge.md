@@ -8,13 +8,11 @@ Library with `library_search`, add files or web pages with `source_add`, and lis
 
 ## The Knowledge base
 
-A Topic has at most one Knowledge base, chosen with `topic_update`:
-
-- `notebooklm`: the Sources live in a NotebookLM notebook, searched through the NotebookLM
-  MCP server when it is installed in your agent;
-- `none`: you read the Sources yourself.
-
-When the NotebookLM server is not installed, read the Sources yourself, as with `none`.
+A Topic has at most one Knowledge base: where its Sources are held and searched for
+Evidence. This version has one kind, `none`: you read the Sources yourself, files at the
+path `sources` gives and web pages at their URL. A Topic without a Knowledge base yet
+behaves the same, and so does one whose kind this version does not know, which `sources`
+shows as it is recorded.
 
 ## Evidence
 

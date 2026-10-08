@@ -8,8 +8,7 @@
       "path": "$STUDY_HOME/linear-algebra",
       "created": "2026-10-01T09:30:00Z",
       "knowledge_base": {
-        "kind": "notebooklm",
-        "notebook": "nb-42"
+        "kind": "none"
       },
       "state": "active",
       "new_cards_per_day": 10

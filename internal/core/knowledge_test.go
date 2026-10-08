@@ -2,7 +2,9 @@ package core
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -157,24 +159,20 @@ func TestKnowledgeWithoutAKnowledgeBase(t *testing.T) {
 	checkChain(t, filepath.Join(m.home, "c"))
 }
 
-func TestNotebookLMKnowledgeBase(t *testing.T) {
+// A Source's title can be changed, and asking for the title it has changes
+// nothing. A location the Knowledge base gave is recorded as given.
+func TestSourceTitlesAndKnowledgeBaseLocations(t *testing.T) {
 	ctx := context.Background()
 	m := newTopic(t)
-	page := m.addSource(t, SourceSpec{URL: "https://example.com/before"})
-	if _, err := m.UpdateSource(ctx, "c", page.ID, SourceChanges{NotebookLMID: ptr("nlm-0")}); CodeOf(err) != CodeFailedPrecondition {
-		t.Errorf("a NotebookLM id without a notebooklm Knowledge base: err = %v, want failed_precondition", err)
-	}
-
-	// A notebook alone means a NotebookLM notebook.
-	res := m.update(t, TopicChanges{Goal: ptr("Write a small shell"), KnowledgeBase: &KnowledgeBase{Notebook: "nb-123"}})
-	want := KnowledgeBase{Kind: KnowledgeBaseNotebookLM, Notebook: "nb-123"}
-	if !res.Changed || res.Topic.Goal != "Write a small shell" || res.Topic.KnowledgeBase == nil || *res.Topic.KnowledgeBase != want {
+	res := m.update(t, TopicChanges{Goal: ptr("Write a small shell"), KnowledgeBase: &KnowledgeBase{Kind: KnowledgeBaseNone}})
+	if !res.Changed || res.Topic.Goal != "Write a small shell" || res.Topic.KnowledgeBase == nil ||
+		*res.Topic.KnowledgeBase != (KnowledgeBase{Kind: KnowledgeBaseNone}) {
 		t.Fatalf("goal and Knowledge base = %+v", res)
 	}
 
 	book := writeBook(t, filepath.Join(t.TempDir(), "unix.pdf"), "%PDF-1.4 fork and exec")
-	src := m.addSource(t, SourceSpec{File: book, Title: "The UNIX Programming Environment", NotebookLMID: "nlm-src-1"})
-	if src.NotebookLMID != "nlm-src-1" || src.NotebookLMNotebook != "nb-123" || src.Title != "The UNIX Programming Environment" {
+	src := m.addSource(t, SourceSpec{File: book, Title: "The UNIX Programming Environment"})
+	if src.Title != "The UNIX Programming Environment" {
 		t.Errorf("Source = %+v", src)
 	}
 	update := func(changes SourceChanges) SourceResult {
@@ -185,38 +183,19 @@ func TestNotebookLMKnowledgeBase(t *testing.T) {
 		}
 		return res
 	}
-	if r := update(SourceChanges{NotebookLMID: ptr("nlm-src-2")}); !r.Changed || r.Source.NotebookLMID != "nlm-src-2" {
-		t.Errorf("new NotebookLM id = %+v", r)
+	if r := update(SourceChanges{Title: ptr("UNIX")}); !r.Changed || r.Source.Title != "UNIX" {
+		t.Errorf("new title = %+v", r)
 	}
-	if r := update(SourceChanges{NotebookLMID: ptr("nlm-src-2")}); r.Changed {
-		t.Error("the same NotebookLM id recorded a change")
+	if r := update(SourceChanges{Title: ptr("UNIX")}); r.Changed {
+		t.Error("the same title recorded a change")
 	}
-
-	// Moving to another notebook makes the Source's id stale until updated.
-	m.update(t, TopicChanges{KnowledgeBase: &KnowledgeBase{Kind: KnowledgeBaseNotebookLM, Notebook: "nb-456"}})
-	if got := m.sources(t).Sources[1]; !got.NotebookLMStale || got.NotebookLMNotebook != "nb-123" {
-		t.Errorf("after moving to another notebook: %+v, want a stale NotebookLM id", got)
+	if got := m.sources(t).Sources; len(got) != 1 || got[0].Title != "UNIX" || got[0].Path != book {
+		t.Errorf("ListSources = %+v", got)
 	}
-	if r := update(SourceChanges{NotebookLMID: ptr("nlm-src-2")}); !r.Changed || r.Source.NotebookLMNotebook != "nb-456" {
-		t.Errorf("the same id in the new notebook = %+v", r)
-	}
-	if got := m.sources(t).Sources[1]; got.NotebookLMStale {
-		t.Errorf("the id was recorded for the new notebook, yet %+v", got)
-	}
-	if r := update(SourceChanges{NotebookLMID: ptr(""), Title: ptr("UNIX")}); !r.Changed || r.Source.NotebookLMID != "" ||
-		r.Source.NotebookLMNotebook != "" || r.Source.Title != "UNIX" {
-		t.Errorf("removing the NotebookLM id = %+v", r)
-	}
-	m.recordEvidence(t, EvidenceSpec{Lesson: "processes", Source: src.ID, Quote: "fork creates a process.",
+	cited := m.recordEvidence(t, EvidenceSpec{Lesson: "processes", Source: src.ID, Quote: "fork creates a process.",
 		Location: "citation 3", LocationFrom: LocationFromKnowledgeBase})
-
-	// Switching to none drops the notebook along with its kind.
-	res = m.update(t, TopicChanges{KnowledgeBase: &KnowledgeBase{Kind: KnowledgeBaseNone}})
-	if !res.Changed || *res.Topic.KnowledgeBase != (KnowledgeBase{Kind: KnowledgeBaseNone}) {
-		t.Errorf("switching to none = %+v", res)
-	}
-	if data, _ := os.ReadFile(filepath.Join(m.home, "c", topicFile)); strings.Contains(string(data), "nb-456") {
-		t.Errorf("topic.toml still names the notebook:\n%s", data)
+	if cited.Evidence.Location != "citation 3" || cited.Evidence.LocationFrom != LocationFromKnowledgeBase {
+		t.Errorf("Evidence = %+v", cited.Evidence)
 	}
 	checkChain(t, filepath.Join(m.home, "c"))
 }
@@ -226,11 +205,10 @@ func TestKnowledgeBaseValidation(t *testing.T) {
 	m := newTopic(t)
 	for _, kb := range []KnowledgeBase{
 		{},
-		{Kind: KnowledgeBaseNotebookLM},
-		{Kind: KnowledgeBaseNone, Notebook: "nb"},
 		{Kind: "rag"},
-		{Kind: KnowledgeBaseNotebookLM, Notebook: "two words"},
-		{Kind: KnowledgeBaseNotebookLM, Notebook: "nb\xff"},
+		{Kind: "notebooklm"}, // a kind earlier builds had (ADR-0011)
+		{Kind: "None"},
+		{Kind: "no\xff"},
 	} {
 		if _, err := m.UpdateTopic(ctx, "c", TopicChanges{KnowledgeBase: &kb}); CodeOf(err) != CodeInvalidArgument {
 			t.Errorf("%+v: err = %v, want invalid_argument", kb, err)
@@ -238,8 +216,9 @@ func TestKnowledgeBaseValidation(t *testing.T) {
 	}
 	before := historyLines(t, filepath.Join(m.home, "c"))
 	res, err := m.UpdateTopic(ctx, "c", TopicChanges{DryRun: true, Title: ptr("Systems C"),
-		KnowledgeBase: &KnowledgeBase{Kind: KnowledgeBaseNotebookLM, Notebook: "nb"}})
-	if err != nil || !res.Changed || res.Topic.Title != "Systems C" || res.Topic.KnowledgeBase.Notebook != "nb" {
+		KnowledgeBase: &KnowledgeBase{Kind: KnowledgeBaseNone}})
+	if err != nil || !res.Changed || res.Topic.Title != "Systems C" || res.Topic.KnowledgeBase == nil ||
+		res.Topic.KnowledgeBase.Kind != KnowledgeBaseNone {
 		t.Errorf("dry run = %+v, %v", res, err)
 	}
 	if after := historyLines(t, filepath.Join(m.home, "c")); !slices.Equal(before, after) {
@@ -250,27 +229,384 @@ func TestKnowledgeBaseValidation(t *testing.T) {
 	}
 }
 
-// Keys of [knowledge_base] this version does not know stay while the kind
-// stays, and go with it when the kind changes.
+// Keys of [knowledge_base] this version does not know stay while the table is
+// left as it is: another setting's write keeps them, and choosing the kind
+// the Topic has writes nothing. Choosing a kind over another writes the table
+// anew, with the kind alone.
 func TestKnowledgeBaseKeepsUnknownKeys(t *testing.T) {
 	m := newTopic(t)
-	m.update(t, TopicChanges{KnowledgeBase: &KnowledgeBase{Notebook: "nb1"}})
+	none := &KnowledgeBase{Kind: KnowledgeBaseNone}
+	m.update(t, TopicChanges{KnowledgeBase: none})
 	path := filepath.Join(m.home, "c", topicFile)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	// [knowledge_base] is the last table, so the key lands inside it.
-	if err := os.WriteFile(path, append(data, "account = \"ada@example.com\"\n"...), 0o644); err != nil {
+	if err := os.WriteFile(path, append(data, "  account = \"ada@example.com\"\n"...), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	m.update(t, TopicChanges{KnowledgeBase: &KnowledgeBase{Notebook: "nb2"}})
-	if data, _ := os.ReadFile(path); !strings.Contains(string(data), "ada@example.com") || !strings.Contains(string(data), "nb2") {
-		t.Errorf("same kind, new notebook:\n%s", data)
+	// Another setting rewrites topic.toml, and choosing the kind the Topic
+	// has records nothing.
+	m.update(t, TopicChanges{Goal: ptr("Write a small shell")})
+	before := historyLines(t, filepath.Join(m.home, "c"))
+	if again := m.update(t, TopicChanges{KnowledgeBase: none}); again.Changed {
+		t.Error("choosing the same kind again recorded a change")
 	}
-	m.update(t, TopicChanges{KnowledgeBase: &KnowledgeBase{Kind: KnowledgeBaseNone}})
-	if data, _ := os.ReadFile(path); strings.Contains(string(data), "ada@example.com") {
-		t.Errorf("a new kind kept the old kind's settings:\n%s", data)
+	if after := historyLines(t, filepath.Join(m.home, "c")); !slices.Equal(before, after) {
+		t.Error("choosing the same kind again recorded an Event")
+	}
+	data, _ = os.ReadFile(path)
+	if !strings.Contains(string(data), "ada@example.com") {
+		t.Errorf("the table was not left as it is:\n%s", data)
+	}
+
+	// A kind this version does not know, as a newer version would write it,
+	// with its settings.
+	newer := strings.Replace(string(data), `kind = "none"`, `kind = "rag"`, 1)
+	if newer == string(data) {
+		t.Fatalf("topic.toml has no kind to replace:\n%s", data)
+	}
+	if err := os.WriteFile(path, []byte(newer), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if res := m.update(t, TopicChanges{KnowledgeBase: none}); !res.Changed || *res.Topic.KnowledgeBase != *none {
+		t.Errorf("choosing none over another kind = %+v", res)
+	}
+	if data, _ := os.ReadFile(path); strings.Contains(string(data), "ada@example.com") || strings.Contains(string(data), "rag") {
+		t.Errorf("choosing a kind over another kept the other's settings:\n%s", data)
+	}
+}
+
+// A kind this version does not know, one a newer version added or one an
+// earlier build had, is shown as topic.toml records it. The Topic works as
+// one without a Knowledge base, and the kind cannot be chosen here.
+func TestAnUnknownKnowledgeBaseKindIsShownAndBehavesAsNone(t *testing.T) {
+	ctx := context.Background()
+	m := learningTopic(t)
+	practicing(t, m)
+	path := filepath.Join(m.home, "c", topicFile)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(data, "[knowledge_base]\n  kind = \"rag\"\n  index = \"books\"\n"...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	topic, err := m.readTopic("c")
+	if err != nil || topic.KnowledgeBase == nil || topic.KnowledgeBase.Kind != "rag" || len(topic.Flags) != 0 {
+		t.Fatalf("Topic = %+v, flags %+v, %v; want the kind as recorded and no flags", topic.KnowledgeBase, topic.Flags, err)
+	}
+	// As with none, Lessons are marked once the Topic has Sources, not before.
+	if topic.LessonsWithoutEvidence != nil {
+		t.Errorf("without Sources = %v, want nothing marked", topic.LessonsWithoutEvidence)
+	}
+	src := m.addSource(t, SourceSpec{URL: "https://example.com/a"})
+	if topic, err = m.readTopic("c"); err != nil || !slices.Equal(topic.LessonsWithoutEvidence, []string{"answer"}) {
+		t.Errorf("with a Source = %v, %v; want [answer]", topic.LessonsWithoutEvidence, err)
+	}
+	m.recordEvidence(t, EvidenceSpec{Lesson: "answer", Source: src.ID, Quote: "the answer is 42"})
+	if list := m.sources(t); list.KnowledgeBase == nil || list.KnowledgeBase.Kind != "rag" || len(list.Sources) != 1 {
+		t.Errorf("ListSources = %+v", list)
+	}
+	if _, err := m.UpdateTopic(ctx, "c", TopicChanges{KnowledgeBase: &KnowledgeBase{Kind: "rag"}}); CodeOf(err) != CodeInvalidArgument {
+		t.Errorf("choosing the unknown kind: err = %v, want invalid_argument", err)
+	}
+	// Other settings can change, and the kind and its settings stay.
+	m.update(t, TopicChanges{Goal: ptr("G")})
+	if data, _ := os.ReadFile(path); !strings.Contains(string(data), `kind = "rag"`) || !strings.Contains(string(data), `index = "books"`) {
+		t.Errorf("topic.toml after another change:\n%s", data)
+	}
+}
+
+// earlierBuildTopic returns a machine whose Topic "c" is as an earlier build
+// of v2 left it, when a Topic could have a NotebookLM Knowledge base and its
+// Sources an id in the notebook (ADR-0011). Its History, topic.toml and
+// sources.jsonl are that build's own output, kept in testdata/earlier-build:
+// two Sources, one source.updated Event that changed only a NotebookLM id,
+// one that changed a title too, and a Knowledge base moved to a second
+// notebook.
+func earlierBuildTopic(t *testing.T) *machine {
+	t.Helper()
+	m := newTopic(t)
+	for _, name := range []string{historyFile, topicFile, sourcesFile} {
+		data, err := os.ReadFile(filepath.Join("testdata", "earlier-build", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(m.home, "c", name), data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	m.setClock(time.Date(2026, 10, 9, 9, 0, 0, 0, time.UTC)) // after the fixture's Events
+	return m
+}
+
+// A Topic written by an earlier build still loads: nothing is corrupt or
+// flagged, its Knowledge base kind is shown as recorded, and the NotebookLM
+// ids in its Events are ignored.
+func TestATopicOfAnEarlierBuildStillLoads(t *testing.T) {
+	ctx := context.Background()
+	m := earlierBuildTopic(t)
+	dir := filepath.Join(m.home, "c")
+	history, sources := historyLines(t, dir), readSourcesFile(t, m)
+
+	topic, err := m.readTopic("c")
+	if err != nil || len(topic.Flags) != 0 || topic.KnowledgeBase == nil || topic.KnowledgeBase.Kind != "notebooklm" {
+		t.Fatalf("Topic = %+v, flags %+v, %v; want the kind as recorded and no flags", topic.KnowledgeBase, topic.Flags, err)
+	}
+	if status, err := m.Status(ctx); err != nil || len(status.Topics) != 1 || len(status.Topics[0].Flags) != 0 {
+		t.Errorf("status = %+v, %v", status.Topics, err)
+	}
+	list := m.sources(t)
+	if list.KnowledgeBase == nil || list.KnowledgeBase.Kind != "notebooklm" || len(list.Sources) != 2 {
+		t.Fatalf("ListSources = %+v", list)
+	}
+	// The source.updated that changed only a NotebookLM id changed nothing;
+	// the one that changed a title too changed the title.
+	page, book := list.Sources[0], list.Sources[1]
+	if page.Kind != SourceURL || page.Title != "https://example.com/a" || page.URL != "https://example.com/a" ||
+		book.Kind != SourceFile || book.Title != "UNIX" || book.FileName != "unix.pdf" {
+		t.Errorf("Sources = %+v", list.Sources)
+	}
+	if out, err := json.Marshal(list); err != nil || strings.Contains(string(out), "nlm-") || strings.Contains(string(out), "nb-4") {
+		t.Errorf("ListSources shows an id of the notebook: %s, %v", out, err)
+	}
+	view, err := m.HistoryOf(ctx, "c", HistoryQuery{})
+	if err != nil || len(view.Entries) != len(history) {
+		t.Errorf("HistoryOf = %d entries, %v; want %d", len(view.Entries), err, len(history))
+	}
+	if !slices.Equal(historyLines(t, dir), history) || readSourcesFile(t, m) != sources {
+		t.Error("reading the Topic changed it")
+	}
+
+	// The next change to a Source keeps, in its line, the fields this
+	// version does not know, and records none of them.
+	res, err := m.UpdateSource(ctx, "c", page.ID, SourceChanges{Title: ptr("Example")})
+	if err != nil || !res.Changed || res.Source.Title != "Example" {
+		t.Fatalf("UpdateSource = %+v, %v", res, err)
+	}
+	want := `{"id":"` + page.ID + `","kind":"url","title":"Example","url":"https://example.com/a","notebooklm_id":"nlm-2","notebooklm_notebook":"nb-42"}`
+	if data := readSourcesFile(t, m); !strings.Contains(data, want+"\n") || strings.Count(data, page.ID) != 1 ||
+		!strings.Contains(data, `"title":"UNIX"`) {
+		t.Errorf("sources.jsonl after the change, want the line\n%s\nin\n%s", want, data)
+	}
+	after := historyLines(t, dir)
+	if len(after) != len(history)+1 || strings.Contains(after[len(after)-1], "notebook") {
+		t.Errorf("the change recorded %d Events, the last %s", len(after)-len(history), after[len(after)-1])
+	}
+	if got := m.sources(t).Sources[0]; got.Title != "Example" {
+		t.Errorf("ListSources after the change = %+v", got)
+	}
+
+	// The retired kind cannot be chosen, and choosing none starts a new
+	// table, without the notebook.
+	if _, err := m.UpdateTopic(ctx, "c", TopicChanges{KnowledgeBase: &KnowledgeBase{Kind: "notebooklm"}}); CodeOf(err) != CodeInvalidArgument {
+		t.Errorf("choosing notebooklm: err = %v, want invalid_argument", err)
+	}
+	if res := m.update(t, TopicChanges{KnowledgeBase: &KnowledgeBase{Kind: KnowledgeBaseNone}}); !res.Changed ||
+		*res.Topic.KnowledgeBase != (KnowledgeBase{Kind: KnowledgeBaseNone}) {
+		t.Errorf("choosing none = %+v", res)
+	}
+	if data, _ := os.ReadFile(filepath.Join(dir, topicFile)); strings.Contains(string(data), "notebook") {
+		t.Errorf("topic.toml still names the notebook:\n%s", data)
+	}
+	if topic, err := m.readTopic("c"); err != nil || len(topic.Flags) != 0 {
+		t.Errorf("flags after the changes: %+v, %v", topic.Flags, err)
+	}
+	checkChain(t, dir)
+}
+
+// earlierBuildEvent returns the id of the last Event of type typ in the
+// Topic's History whose line contains text.
+func earlierBuildEvent(t *testing.T, dir, typ, text string) string {
+	t.Helper()
+	found := ""
+	for _, line := range historyLines(t, dir) {
+		var ev struct{ ID, Type string }
+		if err := json.Unmarshal([]byte(line), &ev); err != nil {
+			t.Fatal(err)
+		}
+		if ev.Type == typ && strings.Contains(line, text) {
+			found = ev.ID
+		}
+	}
+	if found == "" {
+		t.Fatalf("the History has no %s Event containing %s", typ, text)
+	}
+	return found
+}
+
+// leaveIntent leaves the marker of a write to Topic "c" that stopped after
+// recording the Event, before changing any content.
+func (m *machine) leaveIntent(t *testing.T, eventID, typ string) {
+	t.Helper()
+	home, err := os.OpenRoot(m.home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer home.Close()
+	if err := writeIntent(home, intent{Format: FormatVersion, Topic: "c", Event: eventID, Type: typ}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func (m *machine) hasIntent(t *testing.T) bool {
+	t.Helper()
+	home, err := os.OpenRoot(m.home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer home.Close()
+	return hasIntent(home, "c")
+}
+
+// An interrupted Source change of an earlier build is finished by this one as
+// that build would have finished it: the line is the Source the Event
+// recorded, with its NotebookLM ids as fields this version does not know,
+// like every other line the earlier build wrote.
+func TestRecoveryFinishesAnEarlierBuildsWrite(t *testing.T) {
+	m := earlierBuildTopic(t)
+	dir := filepath.Join(m.home, "c")
+	// The Event that named the book "UNIX" and gave it a NotebookLM id.
+	interrupted := earlierBuildEvent(t, dir, eventSourceUpdated, `"title":"UNIX"`)
+	// Take its change back out of sources.jsonl and leave its marker, as if
+	// the earlier build had stopped between recording the Event and writing.
+	sources := readSourcesFile(t, m)
+	undone := strings.Replace(sources, `"title":"UNIX"`, `"title":"The UNIX Programming Environment"`, 1)
+	undone = strings.Replace(undone, `,"notebooklm_id":"nlm-9","notebooklm_notebook":"nb-42"`, "", 1)
+	if err := os.WriteFile(filepath.Join(dir, sourcesFile), []byte(undone), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m.leaveIntent(t, interrupted, eventSourceUpdated)
+
+	m.update(t, TopicChanges{Goal: ptr("G")}) // the next write finishes the interrupted one
+	if data := readSourcesFile(t, m); data != sources {
+		t.Errorf("recovery should leave sources.jsonl as the earlier build would have:\n%s\nwant\n%s\nlogs:\n%s", data, sources, m.logs)
+	}
+	if logs := m.logs.String(); !strings.Contains(logs, "finished an interrupted write") ||
+		strings.Contains(logs, "writes differently") || m.hasIntent(t) {
+		t.Errorf("the interrupted write should be finished as recorded; logs:\n%s", logs)
+	}
+	list := m.sources(t)
+	if len(list.Sources) != 2 || list.Sources[1].Title != "UNIX" {
+		t.Errorf("ListSources = %+v", list.Sources)
+	}
+	if out, err := json.Marshal(list); err != nil || strings.Contains(string(out), "nlm-") {
+		t.Errorf("ListSources shows an id of the notebook: %s, %v", out, err)
+	}
+	if topic, err := m.readTopic("c"); err != nil || len(topic.Flags) != 0 {
+		t.Errorf("flags after recovery: %+v, %v", topic.Flags, err)
+	}
+}
+
+// After this version finishes an earlier build's interrupted Source change
+// that touched only a NotebookLM id, the next change to that Source is no
+// conflict: only one machine ever wrote. Recovery must leave the line at the
+// version the Event recorded, not at the one it started from, or the next
+// Event would change the Source from the same version a second time.
+func TestAChangeAfterRecoveringAnEarlierBuildsIDChangeIsNoConflict(t *testing.T) {
+	const page = `{"id":"example-com-a.qpm4lo","kind":"url","title":"%s","url":"https://example.com/a"%s}` + "\n"
+	for _, tc := range []struct {
+		name string
+		// interrupt leaves the Topic as the earlier build would have, had it
+		// stopped after recording the Event, and returns the Event's id.
+		interrupt func(t *testing.T, m *machine, dir string) string
+		// ids are the NotebookLM fields the line carries once the write is
+		// finished.
+		ids string
+	}{
+		{"an id changed", func(t *testing.T, m *machine, dir string) string {
+			// The fixture's own Event, from nlm-1 to nlm-2: put the line back
+			// as it was when the Source was added.
+			sources := readSourcesFile(t, m)
+			undone := strings.Replace(sources, `"notebooklm_id":"nlm-2"`, `"notebooklm_id":"nlm-1"`, 1)
+			if undone == sources {
+				t.Fatal("the fixture's line has no nlm-2 to undo")
+			}
+			if err := os.WriteFile(filepath.Join(dir, sourcesFile), []byte(undone), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			return earlierBuildEvent(t, dir, eventSourceUpdated, `"notebooklm_id":"nlm-2"`)
+		}, `,"notebooklm_id":"nlm-2","notebooklm_notebook":"nb-42"`},
+		{"an id removed", func(t *testing.T, m *machine, dir string) string {
+			// The Event the earlier build recorded for
+			// study source update --notebooklm-id "" on the fixture's Topic,
+			// with the line still as that Event found it.
+			removal, err := os.ReadFile(filepath.Join("testdata", "earlier-build", "id-removed.event.jsonl"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			appendLine(t, filepath.Join(dir, historyFile), string(removal))
+			return earlierBuildEvent(t, dir, eventSourceUpdated, `"notebooklm_id":""`)
+		}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			m := earlierBuildTopic(t)
+			dir := filepath.Join(m.home, "c")
+			m.leaveIntent(t, tc.interrupt(t, m, dir), eventSourceUpdated)
+
+			res, err := m.UpdateSource(ctx, "c", "example-com-a.qpm4lo", SourceChanges{Title: ptr("Example")})
+			if err != nil || !res.Changed {
+				t.Fatalf("UpdateSource = %+v, %v", res, err)
+			}
+			topic, err := m.readTopic("c")
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, f := range topic.Flags {
+				t.Errorf("flag after one machine's recovery and one change: %s: %s", f.Kind, f.Message)
+			}
+			if data, want := readSourcesFile(t, m), fmt.Sprintf(page, "Example", tc.ids); !strings.HasPrefix(data, want) {
+				t.Errorf("sources.jsonl after the change:\n%s\nwant its first line to be\n%s", data, want)
+			}
+			if logs := m.logs.String(); strings.Contains(logs, "writes differently") || m.hasIntent(t) {
+				t.Errorf("the interrupted write should be finished as recorded; logs:\n%s", logs)
+			}
+		})
+	}
+}
+
+// An earlier build's interrupted move from one notebook to another is
+// finished by this version, which writes the table anew with the kind alone.
+// topic.toml is then at a version of its own, so the next change to it is no
+// conflict: only one machine ever wrote.
+func TestAChangeAfterRecoveringAnEarlierBuildsNotebookChangeIsNoConflict(t *testing.T) {
+	m := earlierBuildTopic(t)
+	dir := filepath.Join(m.home, "c")
+	interrupted := earlierBuildEvent(t, dir, eventKnowledgeBaseSet, `"notebook":"nb-43"`)
+	// topic.toml as that Event found it: with the first notebook.
+	path := filepath.Join(dir, topicFile)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	undone := strings.Replace(string(data), `"nb-43"`, `"nb-42"`, 1)
+	if undone == string(data) {
+		t.Fatalf("the fixture's topic.toml has no nb-43 to undo:\n%s", data)
+	}
+	if err := os.WriteFile(path, []byte(undone), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m.leaveIntent(t, interrupted, eventKnowledgeBaseSet)
+
+	res := m.update(t, TopicChanges{Title: ptr("Systems C")})
+	if !res.Changed || res.Topic.Title != "Systems C" || res.Topic.KnowledgeBase == nil || res.Topic.KnowledgeBase.Kind != "notebooklm" {
+		t.Errorf("the title change = %+v", res)
+	}
+	topic, err := m.readTopic("c")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range topic.Flags {
+		t.Errorf("flag after one machine's recovery and one change: %s: %s", f.Kind, f.Message)
+	}
+	if data, _ := os.ReadFile(path); !strings.Contains(string(data), `kind = "notebooklm"`) || strings.Contains(string(data), "nb-4") {
+		t.Errorf("topic.toml should keep the kind and no notebook:\n%s", data)
+	}
+	if logs := m.logs.String(); !strings.Contains(logs, "finished an interrupted write") || m.hasIntent(t) {
+		t.Errorf("the interrupted write was not finished; logs:\n%s", logs)
 	}
 }
 
@@ -300,7 +636,6 @@ func TestSourceValidation(t *testing.T) {
 		{"same content", SourceSpec{Topic: "c", File: copyOfBook}, CodeAlreadyExists},
 		{"same URL", SourceSpec{Topic: "c", URL: "https://EXAMPLE.com:443/page"}, CodeAlreadyExists},
 		{"unknown Topic", SourceSpec{Topic: "go", URL: "https://example.com/other"}, CodeNotFound},
-		{"bad NotebookLM id", SourceSpec{Topic: "c", URL: "https://example.com/other", NotebookLMID: "a b"}, CodeInvalidArgument},
 		{"inside .git", SourceSpec{Topic: "c", File: filepath.Join(m.home, "c", ".git", "HEAD")}, CodeInvalidArgument},
 	} {
 		if tc.name == "inside .git" {
@@ -426,11 +761,11 @@ func TestCrashesInKnowledgeWrites(t *testing.T) {
 	ops := []op{
 		{"knowledge_base.set", func(*testing.T, *machine) string { return "" },
 			func(m *machine, _ string, dry bool) (bool, error) {
-				res, err := m.UpdateTopic(ctx, "c", TopicChanges{KnowledgeBase: &KnowledgeBase{Notebook: "nb"}, DryRun: dry})
+				res, err := m.UpdateTopic(ctx, "c", TopicChanges{KnowledgeBase: &KnowledgeBase{Kind: KnowledgeBaseNone}, DryRun: dry})
 				return res.Changed, err
 			},
 			func(t *testing.T, m *machine) {
-				if kb := knowledgeBaseOf(readSettings(t, filepath.Join(m.home, "c"))); kb == nil || kb.Notebook != "nb" {
+				if kb := knowledgeBaseOf(readSettings(t, filepath.Join(m.home, "c"))); kb == nil || kb.Kind != KnowledgeBaseNone {
 					t.Errorf("Knowledge base = %+v", kb)
 				}
 			}},
@@ -758,22 +1093,22 @@ func TestTheDuplicateLinesFlagIsTheSameInEitherOrder(t *testing.T) {
 func TestTheNextChangeWritesTheHistorysVersion(t *testing.T) {
 	ctx := context.Background()
 	m := newTopic(t)
-	m.update(t, TopicChanges{KnowledgeBase: &KnowledgeBase{Notebook: "nb-1"}})
 	src := m.addSource(t, SourceSpec{URL: "https://example.com/a"})
 	if _, err := m.UpdateSource(ctx, "c", src.ID, SourceChanges{Title: ptr("Your title")}); err != nil {
 		t.Fatal(err)
 	}
 	// The other machine's copy sorts before the History's version.
 	appendLine(t, filepath.Join(m.home, "c", sourcesFile),
-		`{"id":"`+src.ID+`","kind":"url","title":"A stray title","url":"https://example.com/a"}`+"\n")
-	if _, err := m.UpdateSource(ctx, "c", src.ID, SourceChanges{NotebookLMID: ptr("nlm-1")}); err != nil {
+		`{"id":"`+src.ID+`","kind":"url","title":"A stray title","url":"https://example.com/stray"}`+"\n")
+	if _, err := m.UpdateSource(ctx, "c", src.ID, SourceChanges{Title: ptr("Your new title")}); err != nil {
 		t.Fatal(err)
 	}
 	data := readSourcesFile(t, m)
-	if strings.Count(data, src.ID) != 1 || !strings.Contains(data, `"title":"Your title"`) || !strings.Contains(data, `"notebooklm_id":"nlm-1"`) {
-		t.Errorf("sources.jsonl after the next change, want the History's title and the new NotebookLM id:\n%s", data)
+	if strings.Count(data, src.ID) != 1 || !strings.Contains(data, `"title":"Your new title"`) ||
+		!strings.Contains(data, `"url":"https://example.com/a"`) {
+		t.Errorf("sources.jsonl after the next change, want the new title and the History's address:\n%s", data)
 	}
-	if got := m.sources(t).Sources; len(got) != 1 || got[0].Title != "Your title" || got[0].NotebookLMID != "nlm-1" {
+	if got := m.sources(t).Sources; len(got) != 1 || got[0].Title != "Your new title" || got[0].URL != "https://example.com/a" {
 		t.Errorf("ListSources = %+v", got)
 	}
 	if topic, _ := m.readTopic("c"); len(topic.Flags) != 0 {
@@ -871,8 +1206,12 @@ func TestEvidenceRetraction(t *testing.T) {
 	}
 }
 
-// Fields of sources.jsonl that this version does not know survive an update.
+// Fields of sources.jsonl that this version does not know survive an update,
+// and an interrupted update that recovery finishes: the Event's payload does
+// not hold them, so recovery takes them from the line, as the write would
+// have.
 func TestUnknownSourceFieldsAreKept(t *testing.T) {
+	ctx := context.Background()
 	m := newTopic(t)
 	src := m.addSource(t, SourceSpec{URL: "https://example.com/page"})
 	path := filepath.Join(m.home, "c", sourcesFile)
@@ -880,11 +1219,27 @@ func TestUnknownSourceFieldsAreKept(t *testing.T) {
 	if err := os.WriteFile(path, []byte(line), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.UpdateSource(context.Background(), "c", src.ID, SourceChanges{Title: ptr("Example")}); err != nil {
+	if _, err := m.UpdateSource(ctx, "c", src.ID, SourceChanges{Title: ptr("Example")}); err != nil {
 		t.Fatal(err)
 	}
 	if data := readSourcesFile(t, m); !strings.Contains(data, `"pages":312`) || !strings.Contains(data, `"title":"Example"`) {
 		t.Errorf("sources.jsonl = %s", data)
+	}
+
+	m.crash = crashOnce(crashAfterEvent)
+	if _, err := m.UpdateSource(ctx, "c", src.ID, SourceChanges{Title: ptr("Example, again")}); !errors.Is(err, errCrash) {
+		t.Fatalf("err = %v", err)
+	}
+	m.crash = nil
+	m.update(t, TopicChanges{Goal: ptr("G")}) // the next write finishes the interrupted one
+	if data := readSourcesFile(t, m); !strings.Contains(data, `"pages":312`) || !strings.Contains(data, `"title":"Example, again"`) {
+		t.Errorf("sources.jsonl after recovery = %s", data)
+	}
+	if logs := m.logs.String(); !strings.Contains(logs, "finished an interrupted write") || strings.Contains(logs, "writes differently") {
+		t.Errorf("recovery should write the version the Event recorded; logs:\n%s", logs)
+	}
+	if topic, err := m.readTopic("c"); err != nil || len(topic.Flags) != 0 {
+		t.Errorf("flags after recovery: %+v, %v", topic.Flags, err)
 	}
 }
 
@@ -988,7 +1343,7 @@ func TestUpdateTopicSaysWhatChangedBeforeAFailure(t *testing.T) {
 		return nil
 	}
 	_, err := m.UpdateTopic(context.Background(), "c", TopicChanges{Title: ptr("New title"), Goal: ptr(""),
-		KnowledgeBase: &KnowledgeBase{Notebook: "nb"}})
+		KnowledgeBase: &KnowledgeBase{Kind: KnowledgeBaseNone}})
 	m.crash = nil
 	if err == nil || !strings.Contains(err.Error(), "the title of c was changed, but not its Knowledge base") {
 		t.Errorf("err = %v, want it to say only the title changed", err)

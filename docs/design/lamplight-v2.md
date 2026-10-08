@@ -207,8 +207,8 @@ hours before any learning happens is exactly what v1 produced.
    exercises), `project` (one project built step by step) or `challenges` (a run of
    challenges of growing difficulty). It lives in `topic.toml` as `approach`, set through
    `topic_update` (`approach.set`).
-3. Add Sources: files from the Library or URLs. Choose the Knowledge base: `notebooklm` or
-   `none`.
+3. Add Sources: files from the Library or URLs. The Knowledge base is `none`, the only
+   kind until another is decided (ADR-0011).
 4. Assessment, time-boxed to about 15 minutes. Areas not reached are marked "confirm during
    Lessons". The result is saved in `notes/` and sets the Level.
 5. The agent drafts the Syllabus: Milestone 1 in detail, later Milestones as outlines with
@@ -544,12 +544,20 @@ hours before any learning happens is exactly what v1 produced.
 
 ## Knowledge
 
-- **v2.0** (ADR-0007): Knowledge base kind `notebooklm` or `none`. Evidence is an exact quote
-  plus a location when known, with where the location came from. Sources are files (by path
-  plus content hash) or URLs. The NotebookLM login is checked when a Session opens; Lessons
-  without Evidence are marked, never blocked.
+- **Built** (ADR-0007, ADR-0011): the Knowledge base kind is `none`, with which the agent
+  reads the Sources itself. Evidence is an exact quote plus a location when known, with
+  where the location came from. Sources are files (by path plus content hash) or URLs.
+  Lessons without Evidence are marked, never blocked.
   - The Knowledge base lives in `topic.toml`'s `[knowledge_base]` table and is set by a
-    `knowledge_base.set` Event; keys a newer version added stay while the kind stays.
+    `knowledge_base.set` Event, which writes the table anew with the kind alone. With one
+    kind, choosing it again writes nothing, so the table is left as it is, with any keys a
+    newer version added. A kind this version does not know, one a newer version added or
+    the `notebooklm` of earlier builds, is shown as recorded and treated as `none`.
+  - Lamplight does not use NotebookLM (ADR-0011): its community MCP server works through
+    undocumented endpoints and the learner's browser session, at the risk of the learner's
+    Google account. Earlier builds of v2 recorded a notebook and each Source's id in it;
+    their Topics still load, with those fields ignored in Events and kept, unread, in
+    `sources.jsonl`, and a write they left interrupted is finished without a conflict.
   - The History is the single source of truth for Sources: `source.added` and
     `source.updated` record them, and `sources.jsonl` is the readable copy, one line per
     Source and each its own item (`sources.jsonl#<id>`). A line added by hand is
@@ -566,15 +574,16 @@ hours before any learning happens is exactly what v1 produced.
   - Evidence lives only in the History: `evidence.recorded`, held until its Source is known,
     and `evidence.retracted`, which takes it back without deleting it.
   - Location origins are `source` (read in the Source itself), `knowledge_base` (a citation
-    as given; NotebookLM's carry no page numbers), `learner` and `estimate`.
+    as the Knowledge base gave it), `learner` and `estimate`.
   - The core reads a file's bytes only to hash it, never blocking on a FIFO or device, and
     stops when the request is cancelled.
   - `status` marks the Lessons started or done that cite no Evidence, once the Topic has
-    Sources or a NotebookLM Knowledge base (`lessons_without_evidence`); they are never
-    blocked.
-- **Later**: Knowledge base plugins are MCP servers implementing Lamplight's fixed contract
-  (add a Source, search for Evidence, list Sources). The first is a generic local RAG
-  plugin: layout-aware conversion (Docling), hybrid keyword and embedding search, reranking.
+    Sources (`lessons_without_evidence`); they are never blocked.
+- **Still to build for v2.0** (ADR-0011): a Knowledge base that needs no account, so the
+  agent can search a Topic's Sources. ADR-0007 plans Knowledge base plugins, MCP servers
+  implementing Lamplight's fixed contract (add a Source, search for Evidence, list
+  Sources), the first a generic local RAG plugin: layout-aware conversion (Docling), hybrid
+  keyword and embedding search, reranking. Its own ADR decides what v2.0 ships.
 
 ## Library
 
@@ -635,8 +644,7 @@ repository configuration names (see Checkpoints). The core treats agent input as
 Topic files are accessed through Go's `os.Root` (Go 1.24+), IDs are validated, and child
 processes never inherit the MCP server's stdin. `.git/config` lives inside the Topic and the
 agent can edit it, so the guarantee is that the core executes nothing it names, not that the
-configuration is trusted. Sources and caches stay local, except what the learner sends to
-NotebookLM.
+configuration is trusted. Sources and caches stay local.
 
 ## Checkpoints
 
@@ -722,11 +730,12 @@ for testing, against a separate Study home, so "let's study" keeps reaching v1.
    history included, into the Study home and leaves the original untouched. It keeps v1
    folder and Lesson names as IDs (`lesson-01`), so paths quoted in Lesson text and in
    `.gitignore` keep working. It moves `lessons/plan.md` to `notes/v1-plan.md`, converts
-   `.study-config.json` into `topic.toml`, and maps `sources` and `notebooklm` to the
-   Knowledge base. It records one `topic.imported` Event, whose payload is the import's
-   report and carries the Lesson completions it can prove, after the settings and Sources it
-   converts. v1's lesson-level cards are dropped. `--dry-run` lists everything that will be
-   copied, converted, moved and dropped, with each proof.
+   `.study-config.json` into `topic.toml`, and maps `sources` to Sources. v1's `notebooklm`
+   setting and each source's ids in a notebook are dropped, and the import chooses no
+   Knowledge base (ADR-0011). It records one `topic.imported` Event, whose payload is the
+   import's report and carries the Lesson completions it can prove, after the settings and
+   Sources it converts. v1's lesson-level cards are dropped. `--dry-run` lists everything
+   that will be copied, converted, moved and dropped, with each proof.
    - Every move is planned before anything is copied, and the dry run and the import share
      the plan: a Lesson's file under `lessons/` moves to `lessons/lesson-NN.md`, the Lesson
      file v2 reads, once, never over another file; v1's config is kept as
@@ -759,7 +768,7 @@ for testing, against a separate Study home, so "let's study" keeps reaching v1.
 2. An adoption Session works through a checklist: Goal and deadline, Pace periods, Syllabus
    from `notes/v1-plan.md` (the three tiers become three Milestone priorities), or, without
    one (only v1's project approach wrote it), from v1's lesson list and the learner's notes,
-   a Check for each open Lesson, the Knowledge base, Cards for completed Lessons, and the
+   a Check for each open Lesson, the Sources, Cards for completed Lessons, and the
    Next step from v1's `pending_action` and `context`. The learner approves the result as a
    Revision. A proof the learner disputes is fixed before adoption, by importing again with
    `--not-done`. Until the Topic has a Syllabus, `status` recommends `adopt` and carries the
@@ -852,22 +861,24 @@ with drafts and Reviews, History with replay, Checkpoints, Assessment, Goal, Pac
 recording Level signals); sync for one machine at a time; the Library in Go; the CLI with
 terminal Reviews; the MCP server; the `lamplight` skill; the Claude Code plugin and
 `study setup` for Claude Code and Codex; Linux and macOS releases with an install script;
-`study import`.
+`study import`; and, still to build, a Knowledge base that needs no account (ADR-0011: the
+Knowledge base plugins of ADR-0007, decided in their own ADR).
 
 **Order of work**: the tracer bullet, then the History engine (its file formats are settled
 before any real data is written), then a thin learner loop through every layer, then each
 module deepened.
 
 **Later**: the dashboard (Vue 3, TypeScript, shadcn-vue; home network with a login, or
-Tailscale; read-mostly first), Knowledge base plugins and the generic RAG plugin, Level
-suggestions, held-out results that can block completion (with fresh, reviewed test sets for
-a retry), using one Topic on several machines at once, Windows packages, the Agent Plugins
-1.0 manifest, setup for more agents, reading tables of contents from PDFs, retrieval from
-page images, the Journal, the FSRS optimizer, publishing to the MCP Registry.
+Tailscale; read-mostly first), Level suggestions, held-out results that can block completion
+(with fresh, reviewed test sets for a retry), using one Topic on several machines at once,
+Windows packages, the Agent Plugins 1.0 manifest, setup for more agents, reading tables of
+contents from PDFs, retrieval from page images, the Journal, the FSRS optimizer, publishing
+to the MCP Registry.
 
 ## Known risks
 
-- NotebookLM access is unofficial and can break without notice.
+- Until a Knowledge base exists (ADR-0011), the agent reads the Sources itself, which is
+  slow in a long book.
 - Approvals are tamper-evident only: an agent with a shell can still edit files.
 - Agents that read both `~/.agents/skills` and `~/.claude/skills` may list the skill twice.
 - The session-start `status` is automatic only where the agent supports hooks.
