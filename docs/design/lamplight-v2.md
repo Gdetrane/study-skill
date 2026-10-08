@@ -632,7 +632,7 @@ switch tool.
   moves it into place. Creating a Topic takes no lock, and there the rename does the work:
   it is refused when a folder that holds anything is under the id. So a Topic created or
   imported under the id meanwhile is never touched, and the removed one never ends up
-  inside it. Both commands are for the learner alone, with no MCP tool.
+  inside it. Both commands are for the learner alone, with no MCP tool (ADR-0013).
   - Neither records an Event. They move a folder on one computer and change nothing
     inside the Topic, so they are that computer's state, like where a Source's file is.
     Writes are Events because the History is what every computer shares, and a Topic
