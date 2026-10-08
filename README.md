@@ -1,6 +1,6 @@
 # study
 
-> **Lamplight v2 is in development** on the [`v2`](https://github.com/mordor-forge/study-skill/tree/v2) branch. See the [design doc](docs/design/lamplight-v2.md) and the [tracking issue](https://github.com/mordor-forge/study-skill/issues/37).
+> **Lamplight v2 is in development** on the [`v2`](https://github.com/mordor-forge/study-skill/tree/v2) branch. See the [design doc](https://github.com/mordor-forge/study-skill/blob/v2/docs/design/lamplight-v2.md) and the [tracking issue](https://github.com/mordor-forge/study-skill/issues/37).
 > `main` stays v1 until v2.0 ships. v1 is also preserved at the [`v1.0.0`](https://github.com/mordor-forge/study-skill/tree/v1.0.0) tag.
 
 An Agent Skills-compatible study tutor for structured, interactive learning with spaced repetition.
@@ -70,13 +70,13 @@ These enhance the experience but aren't required:
 | Plugin/MCP | What it enables |
 |---|---|
 | LSP plugins (gopls, pyright, etc.) | Real-time code validation during exercise review |
-| pdfkb-mcp or rag-cli | Local PDF RAG: indexes a textbook on your machine and searches it during lessons |
 | calibre or pandoc | Ebook format conversion (epub/mobi → PDF for ingestion) |
 
 #### NotebookLM is no longer supported
 
 Earlier versions of this README recommended a community NotebookLM MCP server for source
-material. That path is unsupported now, and Lamplight v2 removes it.
+material. That path is unsupported now, and Lamplight v2 removes it
+([ADR-0011](https://github.com/mordor-forge/study-skill/blob/v2/docs/adr/0011-lamplight-does-not-use-notebooklm.md)).
 
 NotebookLM has no official API for personal Google accounts. The community server reaches it
 through undocumented endpoints, signed in with your browser's Google session cookies. That is
@@ -88,7 +88,7 @@ v1 still uses a NotebookLM MCP server when it finds one in your agent. To keep v
 it, remove the server from your agent's configuration. If you installed the tool only for
 this skill, uninstall it too (`uv tool uninstall notebooklm-mcp-cli`) and delete the Google
 sign-in it saved, as that project's documentation describes. Without the server, v1 falls
-back to local RAG or extracted text, as [Source Material](#source-material) describes.
+back to searching extracted text, as [Source Material](#source-material) describes.
 
 ## Graceful Degradation
 
@@ -98,7 +98,7 @@ The skill adapts to what's available. Nothing crashes if a plugin is missing:
 |---|---|---|
 | Scientific domains | Curated workflows, parameter tables, troubleshooting via SciAgent-Skills | Falls through to web search |
 | Lesson research | Live docs via context7 | Model's built-in knowledge |
-| Source material | Semantic search via local RAG (pdfkb-mcp or rag-cli) | Grep over extracted text, or skipped |
+| Source material | Semantic search via a NotebookLM MCP server ([unsupported](#notebooklm-is-no-longer-supported)) | Grep over extracted text, or skipped |
 | Concept diagrams | HTML via visual-explainer | ASCII diagrams in lesson notes |
 | Code validation | LSP real-time checking | User runs tests manually |
 | Book catalog | Fuzzy search across library | Manual `--source` path |
@@ -229,12 +229,11 @@ Add a textbook as source material and the skill queries it during lessons:
 /study init "Operating Systems" --source ~/Books/tanenbaum-os.pdf
 ```
 
-Backend priority:
-1. **Local RAG** — uses pdfkb-mcp or rag-cli for local indexing
-2. **Chunked text** — extracts text, saves as searchable markdown files
+The skill extracts the text, saves it as searchable markdown files under `sources/`, and
+searches those during lessons.
 
-A NotebookLM MCP server, when one is installed in your agent, still comes before both in v1.
-That path is unsupported: see [NotebookLM is no longer supported](#notebooklm-is-no-longer-supported).
+A NotebookLM MCP server, when one is installed in your agent, is used instead in v1. That
+path is unsupported: see [NotebookLM is no longer supported](#notebooklm-is-no-longer-supported).
 
 ## SciAgent-Skills Integration
 
