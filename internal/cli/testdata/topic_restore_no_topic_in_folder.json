@@ -1,0 +1,7 @@
+{
+  "ok": false,
+  "error": {
+    "code": "corrupt",
+    "message": "$STUDY_HOME/.lamplight/removed/20261001-093000-linear-algebra holds no Topic (it has neither topic.toml nor history.jsonl), so it was not restored: if anything in it is yours, move it out, then delete the folder"
+  }
+}

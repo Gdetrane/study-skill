@@ -1,0 +1,10 @@
+{
+  "ok": true,
+  "data": {
+    "topic": "linear-algebra",
+    "path": "$STUDY_HOME/linear-algebra",
+    "restored_from": "$STUDY_HOME/.lamplight/removed/20261001-093000-linear-algebra",
+    "removed": "2026-10-01T09:30:00Z",
+    "dry_run": true
+  }
+}

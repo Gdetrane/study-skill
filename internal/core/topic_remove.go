@@ -6,13 +6,22 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"strings"
 	"syscall"
+	"time"
 )
 
 // removedDir is where removed Topics are kept, in the Study home's .lamplight
-// folder: out of the way of status, never deleted.
+// folder: out of the way of status, never deleted. RestoreTopic brings one
+// back (topic_restore.go).
 const removedDir = "removed"
+
+// Points where a test can interrupt a removal or a restore, as a crash would.
+// See Core.crash.
+const (
+	crashRemoveRecorded = "remove-recorded" // the removal's record is written, the Topic not yet moved
+	crashRestoreChecked = "restore-checked" // the lock is held and the id found free, the Topic not yet moved back
+	crashRestoreMoved   = "restore-moved"   // the Topic is back, the removal's record still there
+)
 
 // TopicRemoval reports a Topic moved out of the Study home.
 type TopicRemoval struct {
@@ -20,9 +29,10 @@ type TopicRemoval struct {
 	// MovedTo is the folder the Topic now lives in, whole, git history
 	// included: .lamplight/removed/<UTC time>-<topic>.
 	MovedTo string `json:"moved_to"`
-	// Restore is the shell command that moves the folder back, restoring
-	// the Topic under its id. It checks first that no Topic has that id,
-	// and moves nothing if one has.
+	// Restore is the command that brings back exactly this removal, under
+	// the Topic's id: study topic restore <topic> --from <folder>. It names
+	// the folder, so a later removal of the same id does not change what it
+	// restores.
 	Restore string `json:"restore"`
 	// Note says, in a dry run, that a write to the Topic is in progress:
 	// the removal waits for it to finish.
@@ -36,10 +46,26 @@ type TopicRemoval struct {
 // takes the Topic's lock, so it waits for a write in progress, and refuses
 // while an interrupted write waits to be finished.
 //
+// It records no Event. Removing moves a folder on one computer and changes
+// nothing inside the Topic, so it is this computer's state, like where a
+// Source's file is (sourcelocal.go): the rule that every write is an Event
+// covers what a Topic holds, and a Topic removed here is unchanged on every
+// other computer. What it does write is a record beside the removed folder,
+// saying which Topic it was (see removalRecord).
+//
 // It exists for the learner: to import a v1 workspace again, for example
 // with --not-done after the adoption showed a Lesson wrongly proven done.
 // Agents have no tool for it.
 func (c *Core) RemoveTopic(ctx context.Context, topicID string, dryRun bool) (TopicRemoval, error) {
+	out, err := c.removeTopic(ctx, topicID, dryRun)
+	if err != nil && ctx.Err() != nil {
+		return TopicRemoval{}, &Error{Code: CodeCanceled, Err: ctx.Err(),
+			Message: "the removal was stopped before it moved the Topic, so nothing was removed"}
+	}
+	return out, err
+}
+
+func (c *Core) removeTopic(ctx context.Context, topicID string, dryRun bool) (TopicRemoval, error) {
 	home, topic, err := c.openTopicFolder(topicID)
 	if err != nil {
 		return TopicRemoval{}, err
@@ -48,7 +74,7 @@ func (c *Core) RemoveTopic(ctx context.Context, topicID string, dryRun bool) (To
 	defer topic.Close()
 
 	if dryRun {
-		out := c.removal(home, topicID)
+		out, _ := c.removal(home, topicID)
 		out.DryRun = true
 		if wasInterrupted(home, topicID) {
 			return TopicRemoval{}, interruptedWrite(topicID)
@@ -74,16 +100,27 @@ func (c *Core) RemoveTopic(ctx context.Context, topicID string, dryRun bool) (To
 		return TopicRemoval{}, interruptedWrite(topicID)
 	}
 
-	out := c.removal(home, topicID)
+	out, when := c.removal(home, topicID)
 	rel, err := filepath.Rel(c.home, out.MovedTo)
 	if err != nil {
 		return TopicRemoval{}, internalError("placing the removed Topic", err)
 	}
-	dir := filepath.Dir(rel)
+	dir, folder := filepath.Dir(rel), filepath.Base(rel)
 	if err := home.MkdirAll(dir, 0o755); err != nil {
 		return TopicRemoval{}, internalError("creating "+dir, err)
 	}
+	// The record first, then the move. A crash between the two leaves a
+	// record without its folder, which is no removal at all and is passed
+	// over; the other order would leave a removed Topic whose id nothing
+	// says.
+	if err := writeRemovalRecord(home, folder, removalRecord{Format: FormatVersion, Topic: topicID, Removed: when}); err != nil {
+		return TopicRemoval{}, err
+	}
+	if err := c.crashAt(crashRemoveRecorded); err != nil {
+		return TopicRemoval{}, err
+	}
 	if err := home.Rename(topicID, rel); err != nil {
+		_ = home.Remove(removalRecordPath(folder))
 		return TopicRemoval{}, moveError(topicID, out.MovedTo, err)
 	}
 	syncDir(home, ".")
@@ -92,28 +129,28 @@ func (c *Core) RemoveTopic(ctx context.Context, topicID string, dryRun bool) (To
 	return out, nil
 }
 
-// removal names where the Topic would go now: the UTC time, to the second,
-// then the id, with a random suffix if that name is taken.
-func (c *Core) removal(home *os.Root, topicID string) TopicRemoval {
-	name := c.now().UTC().Format("20060102-150405") + "-" + topicID
-	if _, err := home.Lstat(filepath.Join(localDir, removedDir, name)); err == nil {
-		name += "-" + randomID()[:6]
+// removal names where the Topic would go now, and when that is: the UTC
+// time, to the second, then the id, with a random suffix if that name is
+// taken, by a folder or by the record of one.
+func (c *Core) removal(home *os.Root, topicID string) (TopicRemoval, time.Time) {
+	when := c.now().UTC()
+	name := when.Format(removedTimeLayout) + "-" + topicID
+	for _, taken := range []string{filepath.Join(localDir, removedDir, name), removalRecordPath(name)} {
+		if _, err := home.Lstat(taken); err == nil {
+			name += "-" + randomID()[:removalSuffixLen]
+			break
+		}
 	}
 	movedTo := filepath.Join(c.home, localDir, removedDir, name)
-	return TopicRemoval{Topic: topicID, MovedTo: movedTo, Restore: restoreCommand(movedTo, filepath.Join(c.home, topicID))}
+	return TopicRemoval{Topic: topicID, MovedTo: movedTo, Restore: restoreCommand(topicID, name)}, when
 }
 
-// restoreCommand is the shell command that moves a removed Topic from its
-// folder back to to. It moves nothing when something is at to already: mv
-// alone would put the removed Topic inside the Topic that took its id, and
-// succeed.
-//
-// The check comes before the move, not with it: the systems study runs on
-// share no mv that refuses an existing destination (-T is GNU's). A Topic
-// created under the id between the two would still get the removed one
-// inside it; nothing is lost then, and it can be moved back out.
-func restoreCommand(from, to string) string {
-	return "test ! -e " + shellWord(to) + " && mv " + shellWord(from) + " " + shellWord(to)
+// restoreCommand is the command that restores the removal kept in folder. A
+// Topic id and a removed Topic's folder name hold only lowercase letters,
+// digits and hyphens, so neither needs quoting in any shell. Like every
+// command study prints, it is for the Study home study is running in.
+func restoreCommand(topicID, folder string) string {
+	return "study topic restore " + topicID + " --from " + folder
 }
 
 func interruptedWrite(topicID string) error {
@@ -136,10 +173,4 @@ func moveError(topicID, to string, err error) error {
 			"'s folder is in use or is a mount point: close the programs using it, or unmount it, and try again"}
 	}
 	return internalError("moving Topic "+topicID+" to "+to, err)
-}
-
-// shellWord quotes s as one word of a POSIX shell. It always quotes, so a
-// command reads the same whatever the paths in it.
-func shellWord(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }

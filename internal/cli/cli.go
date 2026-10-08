@@ -174,7 +174,7 @@ func (a *app) rootCommand() *cobra.Command {
 
 	topic := &cobra.Command{
 		Use:   "topic",
-		Short: "Create, change and remove Topics, and dismiss their flags",
+		Short: "Create, change, remove and restore Topics, and dismiss their flags",
 		Args:  noArgs,
 		RunE:  a.groupHelp,
 	}
@@ -321,8 +321,8 @@ func (a *app) rootCommand() *cobra.Command {
 		Short: "Move a Topic out of the Study home, deleting nothing",
 		Long: "Move a Topic's folder, whole, into the Study home's .lamplight/removed folder, as\n" +
 			"<YYYYMMDD-HHMMSS>-<topic> in UTC. Nothing is deleted: study prints the exact command\n" +
-			"that restores it, mv <moved to> <Study home>/<topic>, to run while no other Topic has\n" +
-			"that id. Use it to import a v1 workspace again, for example with --not-done.\n\n" +
+			"that restores it, study topic restore <topic> --from <folder>. Use it to import a v1\n" +
+			"workspace again, for example with --not-done.\n\n" +
 			"It acts on this computer only: the Topic's git remote and other computers keep their\n" +
 			"copies. It waits for a write in progress, and refuses while an interrupted one waits\n" +
 			"to be finished.",
@@ -344,7 +344,70 @@ func (a *app) rootCommand() *cobra.Command {
 		},
 	}
 	remove.Flags().BoolVar(&removeDryRun, "dry-run", false, "show where the Topic would go without moving it")
-	topic.AddCommand(create, update, dismiss, remove)
+	var restoreSpec core.TopicRestoreSpec
+	var listRemoved bool
+	restore := &cobra.Command{
+		Use:   "restore [topic]",
+		Short: "Bring a removed Topic back into the Study home, or list the removed Topics",
+		Long: "Move a Topic that study topic remove moved out back into the Study home, under its\n" +
+			"id: the newest removal of that Topic, or with --from the one kept in that folder of\n" +
+			".lamplight/removed. --list shows the removed Topics, newest first, each with its folder\n" +
+			"and the command that restores it.\n\n" +
+			"It refuses while anything in the Study home has the Topic's id, and moves nothing then:\n" +
+			"a Topic is never put inside another, even one created or imported while the restore\n" +
+			"waits. A folder that holds no Topic is not restored. Like the removal, it acts on this\n" +
+			"computer only and records nothing in the History.",
+		Example: "  study topic restore --list\n  study topic restore go-concurrency --dry-run\n" +
+			"  study topic restore go-concurrency --from 20261001-093000-go-concurrency",
+		Args: func(cmd *cobra.Command, args []string) error {
+			if listRemoved {
+				return noArgs(cmd, args)
+			}
+			if len(args) == 0 {
+				return usageError{fmt.Errorf("%q needs the id of the Topic to restore, or --list to see the removed Topics", cmd.CommandPath())}
+			}
+			return exactArgs(1)(cmd, args)
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if listRemoved && (cmd.Flags().Changed("from") || cmd.Flags().Changed("dry-run")) {
+				return a.fail(usageError{fmt.Errorf("--list only lists: leave out --from and --dry-run")})
+			}
+			// An empty --from is not "the newest": a script whose variable
+			// is empty must not restore another removal than it meant.
+			if cmd.Flags().Changed("from") && restoreSpec.From == "" {
+				return a.fail(usageError{fmt.Errorf("--from needs the name of a folder in .lamplight/removed: " +
+					"study topic restore --list shows them; leave --from out to restore the newest removal")})
+			}
+			c, err := core.Open(a.opts)
+			if err != nil {
+				return a.fail(err)
+			}
+			if listRemoved {
+				list, err := c.ListRemovedTopics(cmd.Context())
+				if err != nil {
+					return a.fail(err)
+				}
+				if a.json {
+					return a.writeJSON(envelope{OK: true, Data: list})
+				}
+				return writeRemovedTopics(a.out, list)
+			}
+			restoreSpec.Topic = args[0]
+			res, err := c.RestoreTopic(cmd.Context(), restoreSpec)
+			if err != nil {
+				return a.fail(err)
+			}
+			if a.json {
+				return a.writeJSON(envelope{OK: true, Data: res})
+			}
+			return writeTopicRestore(a.out, res)
+		},
+	}
+	restore.Flags().StringVar(&restoreSpec.From, "from", "",
+		"the removal to restore, by the name of its folder in .lamplight/removed (default: the newest of the Topic)")
+	restore.Flags().BoolVar(&listRemoved, "list", false, "list the Topics removed on this computer, newest first")
+	restore.Flags().BoolVar(&restoreSpec.DryRun, "dry-run", false, "show what would be restored without moving it")
+	topic.AddCommand(create, update, dismiss, remove, restore)
 
 	doctor := &cobra.Command{
 		Use:   "doctor",

@@ -1,0 +1,7 @@
+{
+  "ok": false,
+  "error": {
+    "code": "invalid_argument",
+    "message": "20261001-093000-linear-algebra holds Topic linear-algebra, not biology: to restore it, run study topic restore linear-algebra --from 20261001-093000-linear-algebra"
+  }
+}

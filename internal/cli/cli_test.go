@@ -114,6 +114,20 @@ func TestJSONOutput(t *testing.T) {
 		{"topic_remove_dry_run", withTopic, []string{"topic", "remove", "linear-algebra", "--dry-run", "--json"}, cli.ExitOK},
 		{"topic_remove", withTopic, []string{"topic", "remove", "linear-algebra", "--json"}, cli.ExitOK},
 		{"topic_remove_unknown", withTopic, []string{"topic", "remove", "biology", "--json"}, cli.ExitError},
+		{"topic_restore_list", withRemovedTopic, []string{"topic", "restore", "--list", "--json"}, cli.ExitOK},
+		{"topic_restore_list_empty", withTopic, []string{"topic", "restore", "--list", "--json"}, cli.ExitOK},
+		{"topic_restore_dry_run", withRemovedTopic, []string{"topic", "restore", "linear-algebra", "--dry-run", "--json"}, cli.ExitOK},
+		{"topic_restore", withRemovedTopic, []string{"topic", "restore", "linear-algebra", "--json"}, cli.ExitOK},
+		{"topic_restore_from", withRemovedTopic, []string{"topic", "restore", "linear-algebra", "--from", removedFolder, "--json"}, cli.ExitOK},
+		{"topic_restore_never_removed", withRemovedTopic, []string{"topic", "restore", "biology", "--json"}, cli.ExitError},
+		{"topic_restore_id_taken", withReplacedTopic, []string{"topic", "restore", "linear-algebra", "--json"}, cli.ExitError},
+		{"topic_restore_other_topic", withRemovedTopic, []string{"topic", "restore", "biology", "--from", removedFolder, "--json"}, cli.ExitUsage},
+		{"topic_restore_no_topic", withRemovedTopic, []string{"topic", "restore", "--json"}, cli.ExitUsage},
+		{"topic_restore_list_with_topic", withRemovedTopic, []string{"topic", "restore", "linear-algebra", "--list", "--json"}, cli.ExitUsage},
+		{"topic_restore_list_with_from", withRemovedTopic, []string{"topic", "restore", "--list", "--from", removedFolder, "--json"}, cli.ExitUsage},
+		{"topic_restore_empty_from", withTwoRemovals, []string{"topic", "restore", "linear-algebra", "--from", "", "--json"}, cli.ExitUsage},
+		{"topic_restore_no_topic_in_folder", withHollowRemoval, []string{"topic", "restore", "linear-algebra", "--json"}, cli.ExitError},
+		{"topic_restore_list_hollow", withHollowRemoval, []string{"topic", "restore", "--list", "--json"}, cli.ExitOK},
 	} {
 		t.Run(tc.golden, func(t *testing.T) {
 			home := tc.home(t)
@@ -170,6 +184,62 @@ func TestHumanOutput(t *testing.T) {
 	golden(t, "topic_remove_dry_run.txt", run(t, removable, "topic", "remove", "linear-algebra", "--dry-run").stdout)
 	golden(t, "topic_remove.txt", run(t, removable, "topic", "remove", "linear-algebra").stdout)
 	golden(t, "status_after_topic_remove.txt", run(t, removable, "status").stdout)
+
+	golden(t, "topic_restore_list.txt", localTime.ReplaceAllString(run(t, removable, "topic", "restore", "--list").stdout, "<time>"))
+	golden(t, "topic_restore_dry_run.txt", run(t, removable, "topic", "restore", "linear-algebra", "--dry-run").stdout)
+	golden(t, "topic_restore.txt", run(t, removable, "topic", "restore", "linear-algebra").stdout)
+	golden(t, "status_one_topic.txt", run(t, removable, "status").stdout)
+	golden(t, "topic_restore_list_empty.txt", run(t, removable, "topic", "restore", "--list").stdout)
+	golden(t, "topic_restore_list_hollow.txt",
+		localTime.ReplaceAllString(run(t, withHollowRemoval(t), "topic", "restore", "--list").stdout, "<time>"))
+}
+
+// removedFolder is where withRemovedTopic's removal went, in
+// .lamplight/removed: the tests' clock is fixed.
+const removedFolder = "20261001-093000-linear-algebra"
+
+// withRemovedTopic returns a Study home whose one Topic, "Linear algebra",
+// was removed.
+func withRemovedTopic(t *testing.T) string {
+	t.Helper()
+	home := withTopic(t)
+	if r := run(t, home, "topic", "remove", "linear-algebra"); r.code != cli.ExitOK {
+		t.Fatalf("setup: exit %d, stderr %s", r.code, r.stderr)
+	}
+	return home
+}
+
+// withReplacedTopic returns a Study home where another Topic took the id of
+// the one removed.
+func withReplacedTopic(t *testing.T) string {
+	t.Helper()
+	home := withRemovedTopic(t)
+	if r := run(t, home, "topic", "create", "--title", "Linear algebra", "--goal", "Pass the June exam"); r.code != cli.ExitOK {
+		t.Fatalf("setup: exit %d, stderr %s", r.code, r.stderr)
+	}
+	return home
+}
+
+// withTwoRemovals returns a Study home from which two Topics named
+// "Linear algebra" were removed, one after the other.
+func withTwoRemovals(t *testing.T) string {
+	t.Helper()
+	home := withReplacedTopic(t)
+	if r := run(t, home, "topic", "remove", "linear-algebra"); r.code != cli.ExitOK {
+		t.Fatalf("setup: exit %d, stderr %s", r.code, r.stderr)
+	}
+	return home
+}
+
+// withHollowRemoval returns a Study home whose .lamplight/removed holds a
+// folder named like a removal, with no Topic in it.
+func withHollowRemoval(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, ".lamplight", "removed", removedFolder), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return home
 }
 
 // heldFlag is the ID of the flag withFlaggedTopic's held Event raises. Flag

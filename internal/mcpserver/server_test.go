@@ -79,6 +79,23 @@ func TestServerSendsInstructionsAndTools(t *testing.T) {
 	}
 }
 
+// Removing a Topic and restoring one are the learner's alone to do, with
+// study topic remove and study topic restore: agents create and update
+// Topics, and the server offers them nothing else to do to one.
+func TestNoToolRemovesOrRestoresATopic(t *testing.T) {
+	tools, err := connect(t, t.TempDir()).ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range tools.Tools {
+		name := tool.Name
+		if strings.HasPrefix(name, "topic_") && name != "topic_create" && name != "topic_update" ||
+			strings.Contains(name, "restore") {
+			t.Errorf("the server offers %s: removing and restoring a Topic have no tool", name)
+		}
+	}
+}
+
 func TestUpdateTopic(t *testing.T) {
 	ctx := context.Background()
 	session := connect(t, t.TempDir())

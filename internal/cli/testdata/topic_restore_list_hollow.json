@@ -1,0 +1,13 @@
+{
+  "ok": true,
+  "data": {
+    "removed": [
+      {
+        "folder": "20261001-093000-linear-algebra",
+        "path": "$STUDY_HOME/.lamplight/removed/20261001-093000-linear-algebra",
+        "removed": "2026-10-01T09:30:00Z",
+        "note": "it holds no Topic (it has neither topic.toml nor history.jsonl), so study does not restore it: if anything in it is yours, move it out, then delete the folder"
+      }
+    ]
+  }
+}

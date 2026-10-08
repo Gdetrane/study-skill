@@ -112,7 +112,7 @@ git -C ~/path/to/workspace status --short     # unchanged
       and import again keeping it open:
 
       ```sh
-      study topic remove <topic>      # prints the mv command that would restore it
+      study topic remove <topic>      # prints the study topic restore command that brings it back
       study import ~/path/to/workspace --not-done lesson-NN
       ```
 

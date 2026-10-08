@@ -1,0 +1,3 @@
+Removed Topics on this computer, newest first:
+  linear-algebra  removed <time>, in 20261001-093000-linear-algebra
+    study topic restore linear-algebra --from 20261001-093000-linear-algebra
