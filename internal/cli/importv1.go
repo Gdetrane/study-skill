@@ -84,11 +84,8 @@ func writeImport(w io.Writer, r core.TopicImport) error {
 			fmt.Fprintf(&b, "  %s  %s%s\n", l.Lesson, printable(l.Title), status)
 		}
 	}
-	if len(r.Sources) > 0 || r.KnowledgeBase != nil {
-		section("Knowledge:")
-		if kb := r.KnowledgeBase; kb != nil {
-			fmt.Fprintf(&b, "  Knowledge base: %s %s\n", kb.Kind, printable(kb.Notebook))
-		}
+	if len(r.Sources) > 0 {
+		section("Sources:")
 		for _, s := range r.Sources {
 			where := s.URL
 			if s.TopicPath != "" {

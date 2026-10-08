@@ -23,9 +23,7 @@ import (
 // The Knowledge seam (ADR-0007): a Topic's Knowledge base, its Sources, and
 // the Evidence its Lessons cite. The core records them and nothing more: it
 // never parses a document and never calls a knowledge service. The agent
-// searches the Knowledge base itself, such as a NotebookLM notebook through
-// the NotebookLM MCP server, or reads the Sources when there is none, and
-// records the exact quotes it relied on.
+// reads the Sources itself and records the exact quotes it relied on.
 //
 // The History is the single source of truth for which Sources exist and
 // what they are. sources.jsonl is the readable copy Lamplight writes, one
@@ -39,16 +37,12 @@ const (
 	eventSourceAdded      = "source.added"
 	eventSourceUpdated    = "source.updated"
 
-	maxRefRunes  = 200  // notebook and NotebookLM Source ids
 	maxURLRunes  = 2000 // a Source's URL
 	maxPathRunes = 4096 // a file path
 )
 
-// Knowledge base kinds.
+// Knowledge base kinds. "none" is the only one this version has (ADR-0011).
 const (
-	// KnowledgeBaseNotebookLM: the Topic's Sources are in a NotebookLM
-	// notebook, which the agent queries through the NotebookLM MCP server.
-	KnowledgeBaseNotebookLM = "notebooklm"
 	// KnowledgeBaseNone: there is no Knowledge base; the agent reads the
 	// Sources itself.
 	KnowledgeBaseNone = "none"
@@ -86,39 +80,25 @@ func init() {
 // KnowledgeBase is where a Topic's Sources are held and searched for
 // Evidence. A Topic has at most one; until one is chosen, it behaves as
 // "none".
+//
+// Kind is shown as topic.toml records it, so it can be one this version
+// does not know: one a newer version added, or one an earlier build had.
+// Such a Topic behaves as "none" too.
 type KnowledgeBase struct {
 	Kind string `json:"kind"`
-	// Notebook is the NotebookLM notebook's id, for kind notebooklm.
-	Notebook string `json:"notebook,omitempty"`
 }
 
-// checkKnowledgeBase validates a Knowledge base setting. A notebook without
-// a kind means a NotebookLM notebook.
+// checkKnowledgeBase validates a Knowledge base setting: a kind this version
+// knows.
 func checkKnowledgeBase(kb KnowledgeBase) (KnowledgeBase, error) {
-	notebook, err := cleanRef("notebook id", kb.Notebook)
-	if err != nil {
-		return KnowledgeBase{}, err
-	}
-	kind := strings.TrimSpace(kb.Kind)
-	if kind == "" && notebook != "" {
-		kind = KnowledgeBaseNotebookLM
-	}
-	switch kind {
-	case KnowledgeBaseNotebookLM:
-		if notebook == "" {
-			return KnowledgeBase{}, invalidf("a notebooklm Knowledge base needs the notebook's id")
-		}
-		return KnowledgeBase{Kind: kind, Notebook: notebook}, nil
+	switch kind := strings.TrimSpace(kb.Kind); kind {
 	case KnowledgeBaseNone:
-		if notebook != "" {
-			return KnowledgeBase{}, invalidf("a Topic without a Knowledge base has no notebook: leave the notebook id out")
-		}
 		return KnowledgeBase{Kind: kind}, nil
 	case "":
-		return KnowledgeBase{}, invalidf("give the Knowledge base kind: %q or %q", KnowledgeBaseNotebookLM, KnowledgeBaseNone)
+		return KnowledgeBase{}, invalidf("give the Knowledge base kind: %q is the only one this version has", KnowledgeBaseNone)
 	default:
-		return KnowledgeBase{}, invalidf("the Knowledge base kind must be %q or %q, not %q",
-			KnowledgeBaseNotebookLM, KnowledgeBaseNone, kb.Kind)
+		return KnowledgeBase{}, invalidf("the Knowledge base kind must be %q, the only one this version has, not %q",
+			KnowledgeBaseNone, kb.Kind)
 	}
 }
 
@@ -134,8 +114,7 @@ func knowledgeBaseOf(settings topicSettings) *KnowledgeBase {
 	if kind == "" {
 		return nil
 	}
-	notebook, _ := table["notebook"].(string)
-	return &KnowledgeBase{Kind: kind, Notebook: notebook}
+	return &KnowledgeBase{Kind: kind}
 }
 
 // topicKnowledgeBase reads a Topic's Knowledge base through view.
@@ -169,9 +148,13 @@ func planKnowledgeBase(topicID string, kb KnowledgeBase) plan {
 	}
 }
 
-// applyKnowledgeBaseSet sets the [knowledge_base] table of topic.toml. Keys
-// this version does not know stay while the kind stays; a new kind starts a
-// new table, since its settings belong to the kind.
+// applyKnowledgeBaseSet writes the [knowledge_base] table of topic.toml anew,
+// with the Event's kind alone: a table's other keys are the settings of the
+// kind that had them. Choosing the kind a Topic has records no Event (see
+// planKnowledgeBase), so this version's own Events always change the kind.
+// An Event that keeps the kind is an earlier build's, moving a Topic from one
+// notebook to another (ADR-0011); when recovery finishes one, the table is
+// left without the notebook, at a version of its own.
 func applyKnowledgeBaseSet(ev event, item string, current []byte, exists bool) ([]byte, bool, error) {
 	if item != topicFile {
 		return nil, false, corruptf("Event %s (%s) cannot edit %s", ev.ID, ev.Type, item)
@@ -190,18 +173,7 @@ func applyKnowledgeBaseSet(ev event, item string, current []byte, exists bool) (
 	if settings.extra == nil {
 		settings.extra = map[string]any{}
 	}
-	table := map[string]any{}
-	if old, ok := settings.extra["knowledge_base"].(map[string]any); ok && old["kind"] == kb.Kind {
-		for k, v := range old {
-			table[k] = v
-		}
-	}
-	table["kind"] = kb.Kind
-	delete(table, "notebook")
-	if kb.Notebook != "" {
-		table["notebook"] = kb.Notebook
-	}
-	settings.extra["knowledge_base"] = table
+	settings.extra["knowledge_base"] = map[string]any{"kind": kb.Kind}
 	data, err := encodeTopicSettings(settings)
 	return data, err == nil, err
 }
@@ -227,16 +199,11 @@ type Source struct {
 	Size int64  `json:"size_bytes,omitempty"`
 	// URL is a web page Source's address.
 	URL string `json:"url,omitempty"`
-	// NotebookLMID is the Source's id in the NotebookLM notebook named by
-	// NotebookLMNotebook.
-	NotebookLMID       string `json:"notebooklm_id,omitempty"`
-	NotebookLMNotebook string `json:"notebooklm_notebook,omitempty"`
 }
 
 // knownSourceFields are the fields of Source; others in a line, written by a
-// newer version, are kept as they are.
-var knownSourceFields = []string{"id", "kind", "title", "topic_path", "file_name", "hash", "size_bytes", "url",
-	"notebooklm_id", "notebooklm_notebook"}
+// newer version or by an earlier build, are kept as they are.
+var knownSourceFields = []string{"id", "kind", "title", "topic_path", "file_name", "hash", "size_bytes", "url"}
 
 var sourceIDPattern = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*\.[a-z0-9]{1,26}$`)
 
@@ -251,11 +218,8 @@ type SourceSpec struct {
 	URL  string
 	// Title defaults to the Library's title for the file, else one derived
 	// from its name, or the URL.
-	Title string
-	// NotebookLMID is the Source's id in the Topic's NotebookLM notebook, if
-	// the agent added it there already.
-	NotebookLMID string
-	DryRun       bool
+	Title  string
+	DryRun bool
 }
 
 // SourceChanges describes changes to a Source. Nil fields stay as they are.
@@ -264,11 +228,8 @@ type SourceChanges struct {
 	// Path records where a file Source is on this computer. The file there
 	// must have the recorded content. It is local state, not recorded in the
 	// History.
-	Path *string
-	// NotebookLMID sets the Source's id in the Topic's NotebookLM notebook;
-	// empty removes it.
-	NotebookLMID *string
-	DryRun       bool
+	Path   *string
+	DryRun bool
 }
 
 // SourceResult is the result of AddSource and UpdateSource.
@@ -283,12 +244,12 @@ type SourceResult struct {
 }
 
 // sourceUpdatedData is the payload of a source.updated Event: the fields that
-// changed, with their new values.
+// changed, with their new values. An Event of an earlier build can name
+// fields this version does not have; they are ignored, so such an Event may
+// change nothing.
 type sourceUpdatedData struct {
-	ID                 string  `json:"id"`
-	Title              *string `json:"title,omitempty"`
-	NotebookLMID       *string `json:"notebooklm_id,omitempty"`
-	NotebookLMNotebook *string `json:"notebooklm_notebook,omitempty"`
+	ID    string  `json:"id"`
+	Title *string `json:"title,omitempty"`
 	// Source is the Source as the History has it after the change. The
 	// changed fields above are what replay applies, so edits made on two
 	// machines both survive; Source is what sources.jsonl is written from,
@@ -304,10 +265,6 @@ func (c *Core) AddSource(ctx context.Context, spec SourceSpec) (SourceResult, er
 		return SourceResult{}, err
 	}
 	title, err := cleanText("title", spec.Title, maxTitleRunes)
-	if err != nil {
-		return SourceResult{}, err
-	}
-	notebookID, err := cleanRef("NotebookLM id", spec.NotebookLMID)
 	if err != nil {
 		return SourceResult{}, err
 	}
@@ -348,7 +305,7 @@ func (c *Core) AddSource(ctx context.Context, spec SourceSpec) (SourceResult, er
 		slugFrom = title
 	}
 
-	_, err = c.writeTopic(ctx, spec.Topic, func(s *replayed, view *topicView) (*change, error) {
+	_, err = c.writeTopic(ctx, spec.Topic, func(s *replayed, _ *topicView) (*change, error) {
 		k := s.knowledge()
 		for _, id := range k.order {
 			other := k.sources[id]
@@ -356,13 +313,6 @@ func (c *Core) AddSource(ctx context.Context, spec SourceSpec) (SourceResult, er
 				return nil, &Error{Code: CodeAlreadyExists, Message: fmt.Sprintf(
 					"Topic %s already has this %s as Source %s", spec.Topic, src.Kind, other.ID)}
 			}
-		}
-		if notebookID != "" {
-			nb, err := notebookOf(view, spec.Topic)
-			if err != nil {
-				return nil, err
-			}
-			src.NotebookLMID, src.NotebookLMNotebook = notebookID, nb
 		}
 		src.ID = c.newSourceID(slugFrom, k)
 		return &change{Type: eventSourceAdded, Data: src, Items: []string{sourceItem(src.ID)}}, nil
@@ -380,24 +330,9 @@ func (c *Core) AddSource(ctx context.Context, spec SourceSpec) (SourceResult, er
 	return res, nil
 }
 
-// notebookOf returns the Topic's NotebookLM notebook, which a NotebookLM
-// Source id belongs to.
-func notebookOf(view *topicView, topicID string) (string, error) {
-	kb, err := topicKnowledgeBase(view, topicID)
-	if err != nil {
-		return "", err
-	}
-	if kb == nil || kb.Kind != KnowledgeBaseNotebookLM || kb.Notebook == "" {
-		return "", &Error{Code: CodeFailedPrecondition, Message: fmt.Sprintf(
-			"a NotebookLM id belongs to a notebook, but the Knowledge base of %s is not notebooklm: "+
-				"set it first with study topic update %s --notebook <id>", topicID, topicID)}
-	}
-	return kb.Notebook, nil
-}
-
-// UpdateSource changes a Source's title or NotebookLM id, recorded in the
-// History, or records where its file is on this computer, which is local
-// state only. Asking for the values it already has changes nothing.
+// UpdateSource changes a Source's title, recorded in the History, or records
+// where its file is on this computer, which is local state only. Asking for
+// the values it already has changes nothing.
 func (c *Core) UpdateSource(ctx context.Context, topicID, sourceID string, changes SourceChanges) (SourceResult, error) {
 	if err := checkTopicID(topicID); err != nil {
 		return SourceResult{}, err
@@ -416,13 +351,6 @@ func (c *Core) UpdateSource(ctx context.Context, topicID, sourceID string, chang
 		}
 		want.Title = &title
 	}
-	if changes.NotebookLMID != nil {
-		id, err := cleanRef("NotebookLM id", *changes.NotebookLMID)
-		if err != nil {
-			return SourceResult{}, err
-		}
-		want.NotebookLMID = &id
-	}
 	var file *foundFile
 	if changes.Path != nil {
 		f, err := c.findSourceFile(ctx, topicID, *changes.Path)
@@ -431,14 +359,14 @@ func (c *Core) UpdateSource(ctx context.Context, topicID, sourceID string, chang
 		}
 		file = &f
 	}
-	if want.Title == nil && want.NotebookLMID == nil && file == nil {
-		return SourceResult{}, invalidf("nothing to change: give a new title, path or NotebookLM id")
+	if want.Title == nil && file == nil {
+		return SourceResult{}, invalidf("nothing to change: give a new title or path")
 	}
 
 	var src Source
 	res := SourceResult{Topic: topicID, DryRun: changes.DryRun}
-	if want.Title != nil || want.NotebookLMID != nil {
-		ev, err := c.writeTopic(ctx, topicID, func(s *replayed, view *topicView) (*change, error) {
+	if want.Title != nil {
+		ev, err := c.writeTopic(ctx, topicID, func(s *replayed, _ *topicView) (*change, error) {
 			known, ok := s.knowledge().sources[sourceID]
 			if !ok {
 				return nil, unknownSource(topicID, sourceID)
@@ -449,27 +377,11 @@ func (c *Core) UpdateSource(ctx context.Context, topicID, sourceID string, chang
 					return nil, err
 				}
 			}
-			diff := sourceUpdatedData{ID: sourceID}
-			if want.Title != nil && *want.Title != src.Title {
-				diff.Title, src.Title = want.Title, *want.Title
-			}
-			if want.NotebookLMID != nil {
-				notebook := ""
-				if *want.NotebookLMID != "" {
-					nb, err := notebookOf(view, topicID)
-					if err != nil {
-						return nil, err
-					}
-					notebook = nb
-				}
-				if *want.NotebookLMID != src.NotebookLMID || notebook != src.NotebookLMNotebook {
-					diff.NotebookLMID, diff.NotebookLMNotebook = want.NotebookLMID, &notebook
-					src.NotebookLMID, src.NotebookLMNotebook = *want.NotebookLMID, notebook
-				}
-			}
-			if diff.Title == nil && diff.NotebookLMID == nil {
+			if *want.Title == src.Title {
 				return nil, nil
 			}
+			diff := sourceUpdatedData{ID: sourceID, Title: want.Title}
+			src.Title = *want.Title
 			after := src
 			diff.Source = &after
 			return &change{Type: eventSourceUpdated, Data: diff, Items: []string{sourceItem(sourceID)}}, nil
@@ -550,9 +462,6 @@ type SourceStatus struct {
 	// never fetched, and untracked for a line of sources.jsonl the History
 	// does not know.
 	State string `json:"state,omitempty"`
-	// NotebookLMStale is set when the Source's NotebookLM id belongs to a
-	// notebook other than the Topic's.
-	NotebookLMStale bool `json:"notebooklm_stale,omitempty"`
 }
 
 // SourceList is a Topic's Knowledge base and Sources.
@@ -592,9 +501,6 @@ func (c *Core) ListSources(ctx context.Context, topicID string) (SourceList, err
 			if st.Path, st.State, err = l.locate(src); err != nil {
 				return SourceList{}, err
 			}
-		}
-		if src.NotebookLMID != "" && (kb == nil || kb.Kind != KnowledgeBaseNotebookLM || kb.Notebook != src.NotebookLMNotebook) {
-			st.NotebookLMStale = true
 		}
 		list.Sources = append(list.Sources, st)
 	}
@@ -676,6 +582,9 @@ func encodeSourceLine(src Source, extra map[string]json.RawMessage) ([]byte, err
 	return buf.Bytes(), nil
 }
 
+// applySourceAdded writes a new Source's line from the payload, which is the
+// Source. When recovery finishes an interrupted write and the payload is the
+// line the Event recorded, it is written as it is (see recordedSourceLine).
 func applySourceAdded(ev event, item string, _ []byte, _ bool) ([]byte, bool, error) {
 	var src Source
 	if err := json.Unmarshal(ev.Data, &src); err != nil || src.ID == "" {
@@ -683,6 +592,9 @@ func applySourceAdded(ev event, item string, _ []byte, _ bool) ([]byte, bool, er
 	}
 	if item != sourceItem(src.ID) {
 		return nil, false, corruptf("Event %s (%s) cannot edit %s", ev.ID, ev.Type, item)
+	}
+	if line, ok := recordedSourceLine(ev, item, ev.Data); ok {
+		return line, true, nil
 	}
 	line, err := encodeSourceLine(src, nil)
 	return line, err == nil, err
@@ -694,6 +606,10 @@ func applySourceAdded(ev event, item string, _ []byte, _ bool) ([]byte, bool, er
 // need not be the History's version, so the line is written from the
 // payload's Source, never from the line's known fields. A line deleted by
 // hand stops the write, which says how to restore it.
+//
+// When recovery finishes an interrupted write, the Event already recorded
+// the line it meant to leave. If the payload's Source is that line, it is
+// written as it is (see recordedSourceLine, which says when it is not).
 func applySourceUpdated(ev event, item string, current []byte, exists bool) ([]byte, bool, error) {
 	var d sourceUpdatedData
 	if err := json.Unmarshal(ev.Data, &d); err != nil || d.ID == "" {
@@ -714,6 +630,14 @@ func applySourceUpdated(ev event, item string, current []byte, exists bool) ([]b
 		if d.Source.ID != d.ID {
 			return nil, false, corruptf("Event %s has an unreadable payload", ev.ID)
 		}
+		var payload struct {
+			Source json.RawMessage `json:"source"`
+		}
+		if err := json.Unmarshal(ev.Data, &payload); err == nil {
+			if line, ok := recordedSourceLine(ev, item, payload.Source); ok {
+				return line, true, nil
+			}
+		}
 		src = *d.Source
 	} else {
 		d.applyTo(&src)
@@ -722,15 +646,47 @@ func applySourceUpdated(ev event, item string, current []byte, exists bool) ([]b
 	return line, err == nil, err
 }
 
+// recordedSourceLine returns source, the Source as an Event's payload holds
+// it (the whole payload of source.added, the "source" of source.updated),
+// written as a line, when that line is the version of item the Event
+// recorded. Only an Event read back from the History has recorded one, so
+// this is found when recovery finishes an interrupted write, never while an
+// Event is prepared.
+//
+// The line is then what the Event's writer wrote, whatever fields this
+// version knows. It matters for an Event of an earlier build that set,
+// changed or removed a field this version does not have (ADR-0011). Writing
+// only the fields this version knows would drop such a field from an added
+// Source's line, and would leave an updated Source's line as it was, at the
+// version the Event changed it from, so that the next change to the Source
+// looked like a second machine's.
+//
+// The payload's Source is not the recorded version when the writer put more
+// in the line than the payload holds: an update keeps the fields of the line
+// that its writer did not know, such as one added by hand. The caller then
+// writes as it always does. For an earlier build's update that changed
+// nothing this version knows, that leaves the line as it was, and the next
+// change to the Source is flagged as a conflict.
+func recordedSourceLine(ev event, item string, source json.RawMessage) ([]byte, bool) {
+	recorded := ""
+	for _, it := range ev.Items {
+		if it.Item == item {
+			recorded = it.After
+		}
+	}
+	if recorded == "" || len(source) == 0 {
+		return nil, false
+	}
+	var line bytes.Buffer
+	if err := json.Compact(&line, source); err != nil || contentHash(line.Bytes(), true) != recorded {
+		return nil, false
+	}
+	return line.Bytes(), true
+}
+
 func (d sourceUpdatedData) applyTo(src *Source) {
 	if d.Title != nil {
 		src.Title = *d.Title
-	}
-	if d.NotebookLMID != nil {
-		src.NotebookLMID = *d.NotebookLMID
-	}
-	if d.NotebookLMNotebook != nil {
-		src.NotebookLMNotebook = *d.NotebookLMNotebook
 	}
 }
 
@@ -854,19 +810,6 @@ func cleanURL(raw string) (string, error) {
 		out += "#" + u.EscapedFragment()
 	}
 	return out, nil
-}
-
-// cleanRef checks an id from another service, such as a NotebookLM notebook
-// id: printable, without spaces.
-func cleanRef(field, s string) (string, error) {
-	s, err := cleanText(field, s, maxRefRunes)
-	if err != nil {
-		return "", err
-	}
-	if strings.ContainsFunc(s, unicode.IsSpace) {
-		return "", invalidf("the %s contains a space", field)
-	}
-	return s, nil
 }
 
 // knowledgeState is what replay knows about a Topic's Sources and Evidence.

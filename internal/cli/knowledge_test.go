@@ -67,10 +67,10 @@ func TestKnowledgeCommands(t *testing.T) {
 		golden(t, name, r.stdout)
 	}
 
-	// --notebook alone means a NotebookLM notebook.
-	check("knowledge_base_set.json", cli.ExitOK, "", "topic", "update", "linear-algebra", "--notebook", "nb-42", "--json")
-	check("knowledge_base_no_notebook.json", cli.ExitUsage, "",
-		"topic", "update", "linear-algebra", "--knowledge-base", "notebooklm", "--json")
+	// none is the only kind this version has.
+	check("knowledge_base_set.json", cli.ExitOK, "", "topic", "update", "linear-algebra", "--knowledge-base", "none", "--json")
+	check("knowledge_base_unknown_kind.json", cli.ExitUsage, "",
+		"topic", "update", "linear-algebra", "--knowledge-base", "rag", "--json")
 
 	// A relative path is resolved against the folder study started in.
 	strang := dataID(t, home, "source", "source", "add", "linear-algebra", "--file", "Books/strang_linear_algebra.pdf", "--json")
@@ -82,10 +82,24 @@ func TestKnowledgeCommands(t *testing.T) {
 	check("source_add_duplicate.json", cli.ExitError, "", "source", "add", "linear-algebra", "--file", book, "--json")
 	check("source_add_dry_run.json", cli.ExitOK, "", "source", "add", "linear-algebra",
 		"--url", "https://example.com/notes", "--dry-run", "--json")
-	check("source_update.json", cli.ExitOK, "", "source", "update", "linear-algebra", strang, "--notebooklm-id", "nlm-7", "--json")
+	check("source_update.json", cli.ExitOK, "", "source", "update", "linear-algebra", strang,
+		"--title", "Introduction to Linear Algebra", "--json")
 	check("source_list.json", cli.ExitOK, "", "source", "list", "linear-algebra", "--json")
 
-	// Hand edits, and a file this computer no longer has.
+	// Hand edits, a file this computer no longer has, and a Knowledge base
+	// kind this version does not know, as a newer version would record it.
+	settings := filepath.Join(home, "linear-algebra", "topic.toml")
+	toml, err := os.ReadFile(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newer := strings.Replace(string(toml), `kind = "none"`, `kind = "rag"`, 1)
+	if newer == string(toml) {
+		t.Fatalf("topic.toml has no Knowledge base kind to replace:\n%s", toml)
+	}
+	if err := os.WriteFile(settings, []byte(newer), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	lines, err := os.OpenFile(filepath.Join(home, "linear-algebra", "sources.jsonl"), os.O_APPEND|os.O_WRONLY, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -102,8 +116,6 @@ func TestKnowledgeCommands(t *testing.T) {
 		t.Fatal(err)
 	}
 	check("knowledge_base_set.txt", cli.ExitOK, "", "topic", "update", "linear-algebra", "--knowledge-base", "none")
-	check("source_update_no_notebook.json", cli.ExitError, "", "source", "update", "linear-algebra", strang,
-		"--notebooklm-id", "nlm-8", "--json")
 
 	check("evidence_record.json", cli.ExitOK, "", "evidence", "record", "linear-algebra", "--lesson", "elimination",
 		"--source", strang, "--quote", "Elimination produces an upper triangular system.",

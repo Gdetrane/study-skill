@@ -34,8 +34,6 @@ Everything else in a Topic changes only through the tools (Instruction 3).
      recommended until the Assessment is recorded or the learner starts a Lesson of another
      Milestone; it is never late, and never a reason for guilt.
    - Tell them about any flags; once they accept one, `flag_dismiss` clears it.
-   - When the Topic's Knowledge base is `notebooklm`, make one cheap call to the NotebookLM
-     MCP server; when it fails, tell them they may need to log in to NotebookLM again.
    - No Topic yet, or a new subject: [Starting a Topic](references/starting-a-topic.md).
    - When it recommends `adopt`, the Topic came from v1 with
      `study import <v1-workspace>`: open the Session on it, then follow

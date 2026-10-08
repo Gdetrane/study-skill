@@ -12,9 +12,8 @@ import (
 )
 
 // addKnowledgeTools adds the Knowledge seam's tools (ADR-0007): Sources and
-// Evidence. The core never searches a Knowledge base: the agent asks the
-// knowledge MCP server it has, such as NotebookLM's, and records here what it
-// relied on.
+// Evidence. The core never searches a Knowledge base: the agent reads the
+// Sources and records here what it relied on.
 func addKnowledgeTools(server *mcp.Server, c *core.Core) {
 	closedWorld := false
 	notDestructive := false
@@ -23,13 +22,12 @@ func addKnowledgeTools(server *mcp.Server, c *core.Core) {
 		Name:  "sources",
 		Title: "A Topic's Knowledge base and Sources",
 		Description: "List a Topic's Knowledge base and Sources before teaching from its material. " +
-			"With Knowledge base kind notebooklm, ask the NotebookLM MCP server, if it is installed, about the notebook; " +
-			"with none, or when no knowledge server is available, read the Sources yourself: files at their path on this " +
-			"computer, web pages at their URL. Files are found automatically, inside the Topic or in the learner's " +
-			"Library, by their content. State missing means the file is not on this computer: ask the learner where it " +
-			"is and record it with source_update. State untracked is a line someone added to sources.jsonl by hand: " +
-			"add the Source with source_add instead. notebooklm_stale means the Source's NotebookLM id belongs to " +
-			"another notebook. A Topic without a Knowledge base yet behaves as none.",
+			"Read the Sources yourself: files at their path on this computer, web pages at their URL. Files are found " +
+			"automatically, inside the Topic or in the learner's Library, by their content. State missing means the " +
+			"file is not on this computer: ask the learner where it is and record it with source_update. State " +
+			"untracked is a line someone added to sources.jsonl by hand: add the Source with source_add instead. " +
+			"The Knowledge base kind is none, which a Topic without one behaves as too; so does a Topic whose kind " +
+			"this version does not know, shown as it is recorded.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, OpenWorldHint: &closedWorld},
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in topicInput) (*mcp.CallToolResult, core.SourceList, error) {
 		list, err := c.ListSources(ctx, in.Topic)
@@ -44,16 +42,13 @@ func addKnowledgeTools(server *mcp.Server, c *core.Core) {
 		Title: "Add a Source",
 		Description: "Add a document or web page the Topic learns from: a file by its absolute path or a path " +
 			"starting with ~/ (library_search finds the learner's books), or an http or https URL. Files are hashed, " +
-			"never parsed, and found again on any machine by their content. When the Topic's Knowledge base is " +
-			"notebooklm, also add the Source to the notebook with the NotebookLM MCP server and record its NotebookLM " +
-			"id, here or later with source_update.",
+			"never parsed, and found again on any machine by their content.",
 		Annotations: &mcp.ToolAnnotations{DestructiveHint: &notDestructive, OpenWorldHint: &closedWorld},
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in sourceAddInput) (*mcp.CallToolResult, core.SourceResult, error) {
 		if err := absolutePath(in.File); err != nil {
 			return nil, core.SourceResult{}, toolError(err)
 		}
-		res, err := c.AddSource(ctx, core.SourceSpec{Topic: in.Topic, File: in.File, URL: in.URL,
-			Title: in.Title, NotebookLMID: in.NotebookLMID})
+		res, err := c.AddSource(ctx, core.SourceSpec{Topic: in.Topic, File: in.File, URL: in.URL, Title: in.Title})
 		if err != nil {
 			return nil, core.SourceResult{}, toolError(err)
 		}
@@ -63,9 +58,9 @@ func addKnowledgeTools(server *mcp.Server, c *core.Core) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:  "source_update",
 		Title: "Change a Source",
-		Description: "Change a Source's title or NotebookLM id (an empty id removes it), or record where its file is " +
-			"on this computer when the sources tool says missing. The file there must hold the same content. A path is " +
-			"remembered on this computer only and records nothing in the History.",
+		Description: "Change a Source's title, or record where its file is on this computer when the sources tool " +
+			"says missing. The file there must hold the same content. A path is remembered on this computer only and " +
+			"records nothing in the History.",
 		Annotations: &mcp.ToolAnnotations{DestructiveHint: &notDestructive, IdempotentHint: true, OpenWorldHint: &closedWorld},
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in sourceUpdateInput) (*mcp.CallToolResult, core.SourceResult, error) {
 		if in.Path != nil {
@@ -73,8 +68,7 @@ func addKnowledgeTools(server *mcp.Server, c *core.Core) {
 				return nil, core.SourceResult{}, toolError(err)
 			}
 		}
-		res, err := c.UpdateSource(ctx, in.Topic, in.Source, core.SourceChanges{Title: in.Title, Path: in.Path,
-			NotebookLMID: in.NotebookLMID})
+		res, err := c.UpdateSource(ctx, in.Topic, in.Source, core.SourceChanges{Title: in.Title, Path: in.Path})
 		if err != nil {
 			return nil, core.SourceResult{}, toolError(err)
 		}
@@ -85,10 +79,10 @@ func addKnowledgeTools(server *mcp.Server, c *core.Core) {
 		Name:  "evidence_record",
 		Title: "Record Evidence",
 		Description: "Record an exact quote from one of the Topic's Sources that a Lesson relies on: the Source's own " +
-			"words, copied word for word, never paraphrased. With NotebookLM, quote the cited passage of the Source, " +
-			"never NotebookLM's answer. Give the quote's location when you know it, and where it came from: source " +
-			"(read in the Source itself, such as a printed page number), knowledge_base (a citation as the Knowledge " +
-			"base gave it; NotebookLM citations carry no page numbers, so record the citation as given), learner, or " +
+			"words, copied word for word, never paraphrased. When a search tool or service found the passage for you, " +
+			"quote the passage of the Source, never the service's answer or summary. Give the quote's location when " +
+			"you know it, and where it came from: source (read in the Source itself, such as a printed page number), " +
+			"knowledge_base (a citation as the Knowledge base gave it, recorded as given), learner, or " +
 			"estimate. Record Evidence whenever you teach from a Source; Lessons without Evidence are marked, never " +
 			"blocked. Recording the same Evidence twice changes nothing; evidence_retract takes back a mistake.",
 		Annotations: &mcp.ToolAnnotations{DestructiveHint: &notDestructive, IdempotentHint: true, OpenWorldHint: &closedWorld},
@@ -131,19 +125,17 @@ func addKnowledgeTools(server *mcp.Server, c *core.Core) {
 }
 
 type sourceAddInput struct {
-	Topic        string `json:"topic" jsonschema:"the Topic's id, from status"`
-	File         string `json:"file,omitempty" jsonschema:"the file's absolute path, or a path starting with ~/; give a file or a url"`
-	URL          string `json:"url,omitempty" jsonschema:"the web page's http or https address; give a file or a url"`
-	Title        string `json:"title,omitempty" jsonschema:"the Source's title; derived from the file or URL when omitted"`
-	NotebookLMID string `json:"notebooklm_id,omitempty" jsonschema:"the Source's id in the Topic's NotebookLM notebook"`
+	Topic string `json:"topic" jsonschema:"the Topic's id, from status"`
+	File  string `json:"file,omitempty" jsonschema:"the file's absolute path, or a path starting with ~/; give a file or a url"`
+	URL   string `json:"url,omitempty" jsonschema:"the web page's http or https address; give a file or a url"`
+	Title string `json:"title,omitempty" jsonschema:"the Source's title; derived from the file or URL when omitted"`
 }
 
 type sourceUpdateInput struct {
-	Topic        string  `json:"topic" jsonschema:"the Topic's id, from status"`
-	Source       string  `json:"source" jsonschema:"the Source's id, from the sources tool"`
-	Title        *string `json:"title,omitempty" jsonschema:"the new title"`
-	Path         *string `json:"path,omitempty" jsonschema:"where the file is on this computer: an absolute path, or one starting with ~/"`
-	NotebookLMID *string `json:"notebooklm_id,omitempty" jsonschema:"the Source's id in the NotebookLM notebook; empty removes it"`
+	Topic  string  `json:"topic" jsonschema:"the Topic's id, from status"`
+	Source string  `json:"source" jsonschema:"the Source's id, from the sources tool"`
+	Title  *string `json:"title,omitempty" jsonschema:"the new title"`
+	Path   *string `json:"path,omitempty" jsonschema:"where the file is on this computer: an absolute path, or one starting with ~/"`
 }
 
 type evidenceRecordInput struct {
@@ -178,6 +170,5 @@ func absolutePath(path string) error {
 }
 
 type knowledgeBaseInput struct {
-	Kind     string `json:"kind,omitempty" jsonschema:"notebooklm or none; a notebook alone means notebooklm"`
-	Notebook string `json:"notebook,omitempty" jsonschema:"the NotebookLM notebook's id, for kind notebooklm"`
+	Kind string `json:"kind" jsonschema:"none, the only kind this version has"`
 }

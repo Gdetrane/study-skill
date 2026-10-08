@@ -9,12 +9,12 @@ that scripts and agents can rely on. Terms follow [GLOSSARY.md](../GLOSSARY.md).
 | Command | What it does |
 |---|---|
 | `study` | Same as `study status`. |
-| `study status` | Shows the Study home, the Active topic and why it was chosen, the one action recommended for it (`recommended`), the Learner profile (`learner_profile`), every Topic, and any Topic that could not be read (`problems`). A broken Topic never stops the others from being listed. Each Topic can carry `flags`, its Resume point (`resume`), whether its Cards are ready (`cards`, never a count), its additions to the Learner profile (`learner_additions`) and `lessons_without_evidence`: Lessons started or done that cite no Evidence yet, once the Topic has Sources or a NotebookLM Knowledge base (a reminder, never a block). See "Where the learner stopped" below. It also carries its plan (see [Goal, Pace and Forecasts](#goal-pace-and-forecasts)): `state`, `deadline`, `pace`, `new_cards_per_day`, the `forecast` and the open `tasks` that matter now; human output shows them under the Active topic. |
+| `study status` | Shows the Study home, the Active topic and why it was chosen, the one action recommended for it (`recommended`), the Learner profile (`learner_profile`), every Topic, and any Topic that could not be read (`problems`). A broken Topic never stops the others from being listed. Each Topic can carry `flags`, its Resume point (`resume`), whether its Cards are ready (`cards`, never a count), its additions to the Learner profile (`learner_additions`) and `lessons_without_evidence`: Lessons started or done that cite no Evidence yet, once the Topic has Sources (a reminder, never a block). See "Where the learner stopped" below. It also carries its plan (see [Goal, Pace and Forecasts](#goal-pace-and-forecasts)): `state`, `deadline`, `pace`, `new_cards_per_day`, the `forecast` and the open `tasks` that matter now; human output shows them under the Active topic. |
 | `study session open <topic> [--energy E] [--focus F] [--session ID] [--dry-run]` | Opens a Session and shows where you stopped. With an Energy and no Focus chosen yet, it suggests one (or to plan, or to stop); it lists every Session that ended without a Next step, and what changed since the last Checkpoint. With `--session` and `--focus`, it records the Focus chosen for that open Session instead of opening another. See "Opening a Session" below. |
 | `study session close <topic> --next-step S [--context C] [--session ID] [--dry-run]` | Closes the Session with a Next step that starts with a verb (see "Next steps" below), and saves the work with a Checkpoint. `--session` gives a Session left unclosed the note it never got. |
 | `study session break-point <topic> <lesson> <break-point> --next-step S [--context C] [--dry-run]` | Records a Break point the Lesson's header declares, with a Next step, and saves the work with a Checkpoint. The Session stays open. Reaching the same Break point with the same Next step again changes nothing. |
 | `study topic create --title T [--id ID] [--goal G] [--dry-run]` | Creates a Topic folder with its settings, History and git repository. `--dry-run` validates and shows the result without writing. |
-| `study topic update <topic> [--title T] [--goal G] [--knowledge-base K [--notebook ID]] [--deadline D] [--pace H[@FROM] ... \| --clear-pace] [--new-cards-per-day N] [--level L] [--approach A] [--state S] [--dry-run]` | Changes a Topic's title, goal, Knowledge base (`notebooklm` with the notebook's id, or `none`; see [Sources and Evidence](#sources-and-evidence)), the Goal's deadline, the Pace, the daily cap on new Cards, the Level (the learner's choice, which holds until the next Assessment), the Approach (`concepts`, `project` or `challenges`; see [Assessments, Level and learning signals](#assessments-level-and-learning-signals)), or its state (`active`, `paused` or `finished`); see [Goal, Pace and Forecasts](#goal-pace-and-forecasts). Flags left out stay as they are; `--goal ""` and `--deadline ""` remove them. `--pace` replaces the Pace: `--pace 10` is 10 hours a week from now on, and a further `--pace 3@2026-11-16` starts a period of 3 hours a week that day. Settings in `topic.toml` that this version does not know are kept. The result is `{"topic": ..., "changed": bool}`: asking for the values the Topic already has changes nothing and records nothing. Each kind of change is its own Event; if a later one fails, the error says which were recorded. A dry run shows the Topic as it would be, Forecast included. |
+| `study topic update <topic> [--title T] [--goal G] [--knowledge-base K] [--deadline D] [--pace H[@FROM] ... \| --clear-pace] [--new-cards-per-day N] [--level L] [--approach A] [--state S] [--dry-run]` | Changes a Topic's title, goal, Knowledge base (`none`, the only kind this version has; see [Sources and Evidence](#sources-and-evidence)), the Goal's deadline, the Pace, the daily cap on new Cards, the Level (the learner's choice, which holds until the next Assessment), the Approach (`concepts`, `project` or `challenges`; see [Assessments, Level and learning signals](#assessments-level-and-learning-signals)), or its state (`active`, `paused` or `finished`); see [Goal, Pace and Forecasts](#goal-pace-and-forecasts). Flags left out stay as they are; `--goal ""` and `--deadline ""` remove them. `--pace` replaces the Pace: `--pace 10` is 10 hours a week from now on, and a further `--pace 3@2026-11-16` starts a period of 3 hours a week that day. Settings in `topic.toml` that this version does not know are kept. The result is `{"topic": ..., "changed": bool}`: asking for the values the Topic already has changes nothing and records nothing. Each kind of change is its own Event; if a later one fails, the error says which were recorded. A dry run shows the Topic as it would be, Forecast included. |
 | `study assessment record <topic> --file F [--dry-run]` | Records an Assessment read from a JSON file (`--file -` reads stdin) holding one object in the shape the `assessment_record` tool takes; anything after it is refused. With a `level`, it sets the Topic's Level. A retry records nothing (see below). A dry run shows the Assessment without an id and the Level the Topic would have. See [Assessments, Level and learning signals](#assessments-level-and-learning-signals). |
 | `study assessment list [topic]` | Lists a Topic's Assessments, newest first in the text and in `--json`, and its Level. |
 | `study hint record <lesson> --requested-by learner\|agent [--topic ID] [--kind K] [--note N] [--request ID] [--dry-run]` | Records a hint given for a Lesson: `nudge`, `explanation` or `step`, asked for by the `learner` or offered unasked by the `agent`. Without `--topic`, it uses the Topic whose folder it runs in. |
@@ -28,8 +28,8 @@ that scripts and agents can rely on. Terms follow [GLOSSARY.md](../GLOSSARY.md).
 | `study import <v1-workspace> [--topic ID] [--not-done LESSON]... [--dry-run]` | Imports a v1 study workspace as a new Topic, with its history, leaving the original untouched. `--not-done` keeps a Lesson open that v1's records prove done. See [Importing a v1 workspace](#importing-a-v1-workspace). |
 | `study library build <folder>` | Indexes the books in a folder (relative to where you run it) and replaces the Library index in the Study home. |
 | `study library search <query> [--limit N]` | Ranks the books in the Library against the query. `--limit` defaults to 10 and is capped at 100; no matches is a success with an empty list. |
-| `study source add <topic> (--file PATH \| --url URL) [--title T] [--notebooklm-id ID] [--dry-run]` | Adds a file or a web page as a Source of the Topic. A file is hashed, never parsed. Adding a file or URL the Topic already has is `already_exists`, naming the Source. |
-| `study source update <topic> <source> [--title T] [--path P] [--notebooklm-id ID] [--dry-run]` | Changes a Source's title or NotebookLM id (`""` removes it), which the History records, or says where its file is on this computer (`--path`, remembered locally only); the file at `--path` must hold the same content. |
+| `study source add <topic> (--file PATH \| --url URL) [--title T] [--dry-run]` | Adds a file or a web page as a Source of the Topic. A file is hashed, never parsed. Adding a file or URL the Topic already has is `already_exists`, naming the Source. |
+| `study source update <topic> <source> [--title T] [--path P] [--dry-run]` | Changes a Source's title, which the History records, or says where its file is on this computer (`--path`, remembered locally only); the file at `--path` must hold the same content. |
 | `study source list <topic>` | Lists the Topic's Knowledge base and Sources, and finds each file on this computer. |
 | `study evidence record <topic> --lesson L --source S --quote Q [--location LOC --location-from F] [--dry-run]` | Records an exact quote from a Source that a Lesson cites. `--quote -` reads the quote from stdin. Recording the same Evidence twice changes nothing. |
 | `study evidence retract <topic> <evidence> [--dry-run]` | Takes back Evidence recorded by mistake. The retraction is recorded, never deleted; retracting twice changes nothing. |
@@ -825,8 +825,8 @@ in `.gitignore` keep working. The workspace is recognised by its real path, link
 | a Lesson `completed` with proof | done, through the import's Event, with no Attempt |
 | `lessons/plan.md` (v1's project approach only) | `notes/v1-plan.md`, for the adoption Session |
 | `.study-config.json` | `topic.toml`; the original is kept as `notes/v1-config.json` |
-| `sources[]` (paths, or objects with `path`, `url`, `title`, `notebook_id`, `source_id`) | Sources: a file inside the workspace by its path there, one outside by its content, URLs as they are |
-| `notebooklm` (an id, a NotebookLM address, an object with either, or `{"notebooks": [...]}`), or a source's `notebook_id` | a NotebookLM Knowledge base (the first notebook; others are dropped). A Source keeps the notebook it declared |
+| `sources[]` (paths, or objects with `path`, `url`, `title`) | Sources: a file inside the workspace by its path there, one outside by its content, URLs as they are |
+| `notebooklm`, and a source's NotebookLM keys (`notebook_id`, `source_id` and their other spellings) | nothing: Lamplight v2 does not use NotebookLM ([ADR-0011](adr/0011-lamplight-does-not-use-notebooklm.md)). Each is listed under `dropped`, the Source itself is imported, and the import chooses no Knowledge base |
 | `session_state` (`pending_action`, `context`, `phase`) | `v1_next_step`, for the adoption Session's Next step |
 | `syllabus.toml`, `cards.jsonl`, `sources.jsonl`, `tasks.jsonl` at the top | `notes/v1-<name>`, so they are not taken for Lamplight's own |
 | `.gitignore`, `.gitattributes` | merged: the learner's lines first, Lamplight's last, so they win |
@@ -868,11 +868,12 @@ history tracks them: `node_modules`, `.venv`, `venv` and any folder holding `pyv
 
 **Dropped from the config**, each with its reason: templates, the mode, calibration rounds
 (`next_calibration_at_lesson`, `difficulty_override_at_lesson`), progress counters, the
-review queue, the catalog path, companions' settings, Energy and time budget, v1's creation
-date, each Lesson's `metrics`, keys the importer does not know (they stay in
-`notes/v1-config.json`), and Lesson entries it cannot read. Lessons are read one at a time:
-a `num` written as `"1"` or `1.0` is read as 1, and an entry without a whole number, or that
-is not an object, is dropped alone.
+review queue, the catalog path, companions' settings, the NotebookLM notebook and each
+imported source's ids in it, Energy and time budget, v1's creation date, each Lesson's
+`metrics`, keys the importer does not know (they stay in `notes/v1-config.json`), and
+Lesson entries it cannot read. Lessons are read one at a time: a `num` written as `"1"` or
+`1.0` is read as 1, and an entry without a whole number, or that is not an object, is
+dropped alone.
 
 **Refused:** a folder without `.study-config.json`; one inside the Study home, or holding it;
 one that is a Lamplight Topic already; a config version newer than 3, or more than 500
@@ -892,7 +893,7 @@ workspace cannot both succeed. The Topic is assembled under `.lamplight/tmp` and
 place only when complete, so an interrupted import leaves no Topic, and importing again
 starts over; each import first removes staging folders over an hour old whose Topic no
 process holds the lock of. It records `topic.created`, then the settings (`level.set` with
-`source: import`, `approach.set`, `knowledge_base.set`), one `source.added` per Source, and
+`source: import`, `approach.set`), one `source.added` per Source, and
 one `topic.imported` Event, which writes the `.gitattributes` and whose payload is the
 report: where it came from (`from`, `head`, `config_version`, `config_hash`), where the plan
 and the config now are (`plan`, `config`), the Lessons kept open with `--not-done`
@@ -908,7 +909,7 @@ recommendation `adopt` until it has a Syllabus. The adoption, with the agent, is
 checklist: the Goal and deadline, the Pace, the Syllabus from `notes/v1-plan.md` (v1's three
 tiers become the priorities `must`, `if_time` and `after_deadline`), or, without a plan,
 from v1's lesson list and the learner's notes, approved as a Revision that keeps every
-Lesson proven done, Checks for the open Lessons, the Knowledge base, Cards for the completed
+Lesson proven done, Checks for the open Lessons, the Sources, Cards for the completed
 Lessons, and a Next step from where v1 stopped.
 
 ## Writes
@@ -933,14 +934,18 @@ syncs the Study home, exclude `.lamplight/` from it. Topics sync through git.
 
 The Knowledge seam ([ADR-0007](adr/0007-knowledge-bases-return-evidence.md)) records where
 a Topic's material comes from. `study` never parses a document and never calls a knowledge
-service: the agent searches the Knowledge base itself, such as a NotebookLM notebook through
-the NotebookLM MCP server, or reads the Sources when there is none, and records the quotes
-it relied on.
+service: the agent reads the Sources itself and records the quotes it relied on.
 
-- **Knowledge base**: `notebooklm`, with the notebook's id, or `none`; `--notebook` alone
-  means `notebooklm`. It is stored in the `[knowledge_base]` table of `topic.toml`, whose
-  other keys stay while the kind stays, and shown on the Topic in `status`. A Topic without
-  one behaves as `none`.
+- **Knowledge base**: `none` is the only kind this version has
+  ([ADR-0011](adr/0011-lamplight-does-not-use-notebooklm.md)); any other is
+  `invalid_argument`. It is stored in the `[knowledge_base]` table of `topic.toml` and shown
+  on the Topic in `status`. Choosing the kind a Topic already has writes nothing, so the
+  table is left as it is, with any keys this version does not know; choosing a kind over
+  another writes the table anew, with the kind alone. A Topic without a Knowledge base
+  behaves as `none`. So does a Topic whose `topic.toml` holds a kind this version does not
+  know, one a newer version added or one an earlier build of v2 had: the kind is shown as
+  recorded, human output says it is treated as `none`, and `--knowledge-base none` replaces
+  it.
 - **Sources**: the History records which Sources exist and what they are;
   `sources.jsonl` is the readable copy Lamplight writes, one line per Source. Edit Sources
   with `study source`, not by hand: a line added by hand is listed as `untracked` and is not
@@ -950,17 +955,17 @@ it relied on.
 
   ```json
   {"id":"strang-linear-algebra.k3f9a2","kind":"file","title":"Linear Algebra","file_name":"strang.pdf",
-   "hash":"sha256:…","size_bytes":15,"notebooklm_id":"7b1e","notebooklm_notebook":"nb-42"}
+   "hash":"sha256:…","size_bytes":15}
   {"id":"notes-paper.p2x7q1","kind":"file","title":"Paper","topic_path":"notes/paper.pdf","hash":"sha256:…","size_bytes":9}
   {"id":"go-dev-blog-context.m4k8s3","kind":"url","title":"Go Concurrency Patterns: Context","url":"https://go.dev/blog/context"}
   ```
 
   A file inside the Topic is kept by its `topic_path`, so every clone has it; a file
-  outside, by its original `file_name`, `hash` and `size_bytes`. A `notebooklm_id` belongs to
-  the `notebooklm_notebook` it was recorded for; after the Topic moves to another notebook,
-  `source list` marks it `notebooklm_stale`. URLs are normalised: the scheme and host are
-  lowercased, a default port is dropped, an international host stays readable (Unicode,
-  NFC), and addresses with a user name or password are refused.
+  outside, by its original `file_name`, `hash` and `size_bytes`. Fields in a line that this
+  version does not know, written by a newer version or by an earlier build, are kept as
+  they are and not shown. URLs are normalised: the scheme and host are lowercased, a default
+  port is dropped, an international host stays readable (Unicode, NFC), and addresses with
+  a user name or password are refused.
 - **Where files are** differs from one computer to the next, so it is local state, never
   synced: `.lamplight/sources/<topic>.json` in the Study home.
 
@@ -979,11 +984,10 @@ it relied on.
   FIFO or a device is refused, and hashing stops when the command is cancelled.
 - **Evidence** is an exact quote, cited by a Lesson, with an optional `location` and
   `location_from`: `source` (read in the Source itself, such as a printed page number),
-  `knowledge_base` (a citation as the Knowledge base gave it; NotebookLM citations carry no
-  page numbers), `learner`, or `estimate`. Evidence lives in the History only, and Evidence
-  whose Source has not arrived from another machine yet is held until it does. Retracted
-  Evidence no longer counts for its Lesson. Lessons without Evidence are marked, never
-  blocked.
+  `knowledge_base` (a citation as the Knowledge base gave it), `learner`, or `estimate`.
+  Evidence lives in the History only, and Evidence whose Source has not arrived from
+  another machine yet is held until it does. Retracted Evidence no longer counts for its
+  Lesson. Lessons without Evidence are marked, never blocked.
 
   ```json
   { "id": "k3f9a2b7qd", "lesson": "elimination", "source": "strang-linear-algebra.k3f9a2",

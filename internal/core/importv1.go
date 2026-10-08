@@ -10,7 +10,6 @@ import (
 	"io/fs"
 	"maps"
 	"math"
-	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -89,12 +88,11 @@ type TopicImport struct {
 	Converted []ImportNote `json:"converted"`
 	Moved     []ImportMove `json:"moved"`
 	// Completed are the Lessons proven done, Open the others.
-	Completed     []ImportedLesson `json:"completed"`
-	Open          []ImportedLesson `json:"open"`
-	Sources       []Source         `json:"sources"`
-	KnowledgeBase *KnowledgeBase   `json:"knowledge_base,omitempty"`
-	Level         string           `json:"level,omitempty"`
-	Approach      string           `json:"approach,omitempty"`
+	Completed []ImportedLesson `json:"completed"`
+	Open      []ImportedLesson `json:"open"`
+	Sources   []Source         `json:"sources"`
+	Level     string           `json:"level,omitempty"`
+	Approach  string           `json:"approach,omitempty"`
 	// NextStep is where v1 stopped, for the adoption Session to turn into
 	// a Next step.
 	NextStep *V1NextStep `json:"v1_next_step,omitempty"`
@@ -739,47 +737,30 @@ func v1Number(raw json.RawMessage) (int, bool) {
 	return int(f), true
 }
 
-// planV1Sources maps v1's sources and NotebookLM notebooks onto Sources and
-// the Knowledge base.
+// v1NotebookLMDropped is why an import leaves out what v1 recorded about
+// NotebookLM: its notebooks, and each source's ids in one.
+const v1NotebookLMDropped = "Lamplight v2 does not use NotebookLM (ADR-0011)"
+
+// v1NotebookLMKeys are the keys under which a v1 source named its notebook
+// and its id there.
+var v1NotebookLMKeys = []string{"notebook_id", "notebookId", "notebook", "notebook_url",
+	"notebooklm_id", "source_id", "notebooklm_source_id"}
+
+// planV1Sources maps v1's sources onto Sources: the files and the web pages.
+// What v1 recorded about NotebookLM is listed as dropped (ADR-0011), and the
+// import chooses no Knowledge base.
 func (c *Core) planV1Sources(ctx context.Context, src *os.Root, srcPath string, cfg v1Config,
 	p *importPlan, convert, drop func(what, detail string)) error {
-	var notebooks []string
-	addNotebook := func(id string) {
-		if !slices.Contains(notebooks, id) {
-			notebooks = append(notebooks, id)
-		}
-	}
 	if raw := strings.TrimSpace(string(cfg.NotebookLM)); raw != "" && raw != "null" {
-		var v any
-		_ = json.Unmarshal(cfg.NotebookLM, &v)
-		list, isList := v.([]any)
-		if o, ok := v.(map[string]any); ok && o["notebooks"] != nil {
-			if list, isList = o["notebooks"].([]any); !isList {
-				drop("notebooklm.notebooks", "it is not a list")
-			}
-		}
-		switch {
-		case isList:
-			for i, item := range list {
-				if id, why := v1Notebook(item); why != "" {
-					drop(fmt.Sprintf("notebooklm.notebooks[%d]", i), why)
-				} else {
-					addNotebook(id)
-				}
-			}
-		default:
-			if id, why := v1Notebook(v); why != "" {
-				drop("notebooklm", why)
-			} else {
-				addNotebook(id)
-			}
-		}
+		drop("notebooklm", v1NotebookLMDropped)
 	}
 	type planned struct {
-		src             Source
-		notebook, nlmID string
-		what            string
-		outside         *foundFile
+		src  Source
+		what string
+		// notebookLM are the entry's NotebookLM keys, reported once the
+		// Source is known to be imported.
+		notebookLM []string
+		outside    *foundFile
 	}
 	var sources []planned
 	for i, raw := range cfg.Sources {
@@ -796,19 +777,9 @@ func (c *Core) planV1Sources(ctx context.Context, src *os.Root, srcPath string, 
 		}
 		var pl planned
 		pl.what = what
-		if ref := firstString(entry, "notebook_id", "notebookId", "notebook", "notebook_url"); ref != "" {
-			if id, why := v1Notebook(ref); why != "" {
-				drop(what+".notebook", why)
-			} else {
-				pl.notebook = id
-				addNotebook(id)
-			}
-		}
-		if nlm := firstString(entry, "notebooklm_id", "source_id", "notebooklm_source_id"); nlm != "" {
-			if ref, err := cleanRef("NotebookLM id", nlm); err != nil {
-				drop(what+".source_id", err.Error())
-			} else {
-				pl.nlmID = ref
+		for _, k := range v1NotebookLMKeys {
+			if v, ok := entry[k]; ok && v != nil {
+				pl.notebookLM = append(pl.notebookLM, k)
 			}
 		}
 		title := derivedText(firstString(entry, "title", "name"), maxTitleRunes)
@@ -848,16 +819,6 @@ func (c *Core) planV1Sources(ctx context.Context, src *os.Root, srcPath string, 
 		sources = append(sources, pl)
 	}
 
-	// The Knowledge base is the first notebook; a Source keeps the notebook
-	// it declared, or the Knowledge base's.
-	if len(notebooks) > 0 {
-		p.report.KnowledgeBase = &KnowledgeBase{Kind: KnowledgeBaseNotebookLM, Notebook: notebooks[0]}
-		convert("notebooklm", "the Knowledge base is the NotebookLM notebook "+notebooks[0])
-		for _, other := range notebooks[1:] {
-			drop("NotebookLM notebook "+other, "a Topic has one Knowledge base, so "+notebooks[0]+
-				" is kept; Sources that declared "+other+" keep it as theirs")
-		}
-	}
 	k := &knowledgeState{sources: map[string]*Source{}}
 	for _, pl := range sources {
 		srcItem := pl.src
@@ -872,15 +833,8 @@ func (c *Core) planV1Sources(ctx context.Context, src *os.Root, srcPath string, 
 			drop(pl.what, "the same "+srcItem.Kind+" as an earlier source")
 			continue
 		}
-		if pl.nlmID != "" {
-			switch {
-			case pl.notebook != "":
-				srcItem.NotebookLMID, srcItem.NotebookLMNotebook = pl.nlmID, pl.notebook
-			case len(notebooks) > 0:
-				srcItem.NotebookLMID, srcItem.NotebookLMNotebook = pl.nlmID, notebooks[0]
-			default:
-				drop(pl.what+".source_id", "no NotebookLM notebook is known for it")
-			}
+		if len(pl.notebookLM) > 0 {
+			drop(pl.what+"."+strings.Join(pl.notebookLM, " and "), v1NotebookLMDropped+"; the Source itself is imported")
 		}
 		srcItem.ID = c.newSourceID(srcItem.Title, k)
 		if pl.outside != nil {
@@ -894,41 +848,6 @@ func (c *Core) planV1Sources(ctx context.Context, src *os.Root, srcPath string, 
 		convert("sources", fmt.Sprintf("%d Sources", n))
 	}
 	return nil
-}
-
-// v1Notebook reads a NotebookLM notebook as v1 recorded it: its id, a
-// NotebookLM URL, or an object holding either. It returns the id, or why
-// there is none.
-func v1Notebook(v any) (string, string) {
-	switch x := v.(type) {
-	case string:
-		s := strings.TrimSpace(x)
-		if strings.Contains(s, "://") {
-			u, err := url.Parse(s)
-			if err != nil || u.Scheme != "https" || u.Hostname() != "notebooklm.google.com" {
-				return "", fmt.Sprintf("%s is not a NotebookLM address", clip(s, 80))
-			}
-			rest, ok := strings.CutPrefix(u.Path, "/notebook/")
-			if !ok || rest == "" || strings.Contains(strings.TrimSuffix(rest, "/"), "/") {
-				return "", fmt.Sprintf("%s names no notebook", clip(s, 80))
-			}
-			s = strings.TrimSuffix(rest, "/")
-		}
-		id, err := cleanRef("NotebookLM notebook", s)
-		if err != nil {
-			return "", err.Error()
-		}
-		if id == "" {
-			return "", "it is empty"
-		}
-		return id, ""
-	case map[string]any:
-		if s := firstString(x, "notebook_id", "notebookId", "notebook", "id", "url", "link", "notebook_url"); s != "" {
-			return v1Notebook(s)
-		}
-		return "", "it names no notebook id or NotebookLM address"
-	}
-	return "", "it is neither a notebook id nor an object with one"
 }
 
 // v1SourceFile finds a v1 source's file: inside the workspace, where the

@@ -388,9 +388,6 @@ func (c *Core) runImport(ctx context.Context, home, src *os.Root, p *importPlan)
 	if p.report.Approach != "" {
 		steps = append(steps, planApproach(p.id, p.report.Approach))
 	}
-	if kb := p.report.KnowledgeBase; kb != nil {
-		steps = append(steps, planKnowledgeBase(p.id, *kb))
-	}
 	for _, source := range p.report.Sources {
 		steps = append(steps, func(*replayed, *topicView) (*change, error) {
 			return &change{Type: eventSourceAdded, Data: source, Items: []string{sourceItem(source.ID)}}, nil

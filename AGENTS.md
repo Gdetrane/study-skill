@@ -16,7 +16,9 @@ Read these before changing behaviour:
   0003 was written for v1's Python book catalog; the Go Library (`internal/library`), which
   replaced that catalog, keeps its walk-once and case-insensitive extension rules and
   replaces its title clean-up with one shared normalizer. 0010 replaces the packaging
-  channels of 0008: releases are on GitHub alone, installed by `install.sh`.
+  channels of 0008: releases are on GitHub alone, installed by `install.sh`. 0011 replaces
+  the v2.0 part of 0007: Lamplight does not use NotebookLM, and `none` is the only Knowledge
+  base kind until another is decided.
 - `docs/cli.md`: the command-line contract that scripts and agents rely on. A test checks
   that it mentions every command and flag.
 

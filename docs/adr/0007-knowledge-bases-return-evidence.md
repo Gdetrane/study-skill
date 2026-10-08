@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted
+Accepted. ADR-0011 replaces its v2.0 part and the first of its consequences: `notebooklm` is
+not a Knowledge base kind, Lamplight does not use NotebookLM, and NotebookLM is no longer
+the recommended Knowledge base. The rest stands, and its "Later" becomes part of v2.0.
 
 ## Context
 

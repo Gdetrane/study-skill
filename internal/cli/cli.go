@@ -215,7 +215,6 @@ func (a *app) rootCommand() *cobra.Command {
 		Short: "Change a Topic's title, goal, Knowledge base, deadline, Pace, Level, Approach or state",
 		Example: `  study topic update linear-algebra --goal "Pass the June exam" --deadline 2027-06-01
   study topic update c --title "Systems programming in C" --dry-run
-  study topic update c --knowledge-base notebooklm --notebook 4f2a9c1e
   study topic update c --pace 10 --pace 3@2026-11-16
   study topic update c --level intermediate --approach project
   study topic update c --state paused`,
@@ -227,7 +226,7 @@ func (a *app) rootCommand() *cobra.Command {
 			if cmd.Flags().Changed("goal") {
 				changes.Goal = &newGoal
 			}
-			if cmd.Flags().Changed("knowledge-base") || cmd.Flags().Changed("notebook") {
+			if cmd.Flags().Changed("knowledge-base") {
 				changes.KnowledgeBase = &kb
 			}
 			if cmd.Flags().Changed("deadline") {
@@ -271,10 +270,10 @@ func (a *app) rootCommand() *cobra.Command {
 	}
 	update.Flags().StringVar(&newTitle, "title", "", "the new title")
 	update.Flags().StringVar(&newGoal, "goal", "", "the new goal; an empty goal removes it")
-	update.Flags().StringVar(&kb.Kind, "knowledge-base", "", "where the Topic's Sources are searched: notebooklm or none")
-	update.Flags().StringVar(&kb.Notebook, "notebook", "", "the NotebookLM notebook's id, with --knowledge-base notebooklm")
+	update.Flags().StringVar(&kb.Kind, "knowledge-base", "",
+		"where the Topic's Sources are searched: none, the only kind this version has")
 	_ = update.RegisterFlagCompletionFunc("knowledge-base", cobra.FixedCompletions(
-		[]string{core.KnowledgeBaseNotebookLM, core.KnowledgeBaseNone}, cobra.ShellCompDirectiveNoFileComp))
+		[]string{core.KnowledgeBaseNone}, cobra.ShellCompDirectiveNoFileComp))
 	update.Flags().StringVar(&deadline, "deadline", "", "the Goal's deadline, YYYY-MM-DD; an empty value removes it")
 	update.Flags().StringArrayVar(&pace, "pace", nil,
 		"hours a week, such as 10; repeat with HOURS@YYYY-MM-DD for a period starting that day; replaces the Pace")

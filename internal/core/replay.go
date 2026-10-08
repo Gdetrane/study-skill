@@ -17,8 +17,11 @@ import (
 type eventKind struct {
 	// apply returns an item's content after the Event, given its current
 	// content, and whether the item exists afterwards. It reads only the
-	// Event's Data and must be deterministic: recovery runs it again on the
-	// same content and expects the version the Event recorded.
+	// Event and must be deterministic: recovery runs it again on the same
+	// content and expects the version the Event recorded. That version is
+	// among the Event's Items once the Event is in the History, never while
+	// it is prepared; an applier uses it only to write exactly what was
+	// recorded (see recordedSourceLine).
 	apply func(ev event, item string, current []byte, exists bool) (next []byte, keep bool, err error)
 	// replay folds the Event into the replayed state. It returns an error
 	// wrapping errUnknownItem when the Event refers to something not known

@@ -1,7 +1,0 @@
-{
-  "ok": false,
-  "error": {
-    "code": "invalid_argument",
-    "message": "a notebooklm Knowledge base needs the notebook's id"
-  }
-}

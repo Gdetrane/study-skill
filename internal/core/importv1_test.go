@@ -450,7 +450,10 @@ func TestAnImportWithoutAPlanIsAdoptedFromTheLessonList(t *testing.T) {
 	}
 }
 
-func TestImportMapsSourcesAndTheNotebook(t *testing.T) {
+// v1's sources become Sources, as files and web pages. What v1 recorded about
+// NotebookLM, its notebook and each source's ids in one, is listed under
+// Dropped (ADR-0011), and the import chooses no Knowledge base.
+func TestImportMapsSourcesAndLeavesNotebookLMOut(t *testing.T) {
 	ctx := context.Background()
 	gitIdentity(t)
 	outside := filepath.Join(t.TempDir(), "Strang Linear Algebra.pdf")
@@ -464,8 +467,8 @@ func TestImportMapsSourcesAndTheNotebook(t *testing.T) {
 				"sources/book.pdf",
 				map[string]any{"path": outside, "title": "Linear Algebra", "notebook_id": "nb-1", "source_id": "s-9"},
 				map[string]any{"url": "https://go.dev/doc/effective_go", "source_id": "s-10"},
-				map[string]any{"path": "missing.pdf"},
-				map[string]any{"url": "https://go.dev/doc/effective_go"},
+				map[string]any{"path": "missing.pdf", "source_id": "s-11"},
+				map[string]any{"url": "https://go.dev/doc/effective_go", "notebooklm_id": "s-12"},
 			},
 			"notebooklm": map[string]any{"notebook_id": "nb-2"},
 		}})
@@ -474,34 +477,43 @@ func TestImportMapsSourcesAndTheNotebook(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.KnowledgeBase == nil || got.KnowledgeBase.Kind != KnowledgeBaseNotebookLM || got.KnowledgeBase.Notebook != "nb-2" {
-		t.Errorf("knowledge base = %+v", got.KnowledgeBase)
-	}
 	if len(got.Sources) != 3 {
 		t.Fatalf("sources = %+v", got.Sources)
 	}
-	// A Source keeps the notebook it declared; one that declared none
-	// takes the Knowledge base's.
 	if got.Sources[0].TopicPath != "sources/book.pdf" || got.Sources[1].FileName != "Strang Linear Algebra.pdf" ||
-		got.Sources[1].NotebookLMID != "s-9" || got.Sources[1].NotebookLMNotebook != "nb-1" ||
-		got.Sources[2].URL != "https://go.dev/doc/effective_go" || got.Sources[2].NotebookLMNotebook != "nb-2" {
+		got.Sources[1].Title != "Linear Algebra" || got.Sources[2].URL != "https://go.dev/doc/effective_go" {
 		t.Errorf("sources = %+v", got.Sources)
 	}
-	dropped := strings.Join(notesWhat(got.Dropped), ",")
-	if !strings.Contains(dropped, "sources[3]") || !strings.Contains(dropped, "sources[4]") || !strings.Contains(dropped, "NotebookLM notebook nb-1") {
-		t.Errorf("dropped = %s", dropped)
+	for what, want := range map[string]string{
+		"notebooklm":                           "does not use NotebookLM (ADR-0011)",
+		"sources[1].notebook_id and source_id": "does not use NotebookLM (ADR-0011); the Source itself is imported",
+		"sources[2].source_id":                 "does not use NotebookLM (ADR-0011); the Source itself is imported",
+		"sources[3]":                           "missing.pdf",
+		"sources[4]":                           "the same url",
+	} {
+		if detail := note(t, got.Dropped, what); !strings.Contains(detail, want) {
+			t.Errorf("dropped %s: %q, want %q", what, detail, want)
+		}
+	}
+	// A source that is not imported is listed once, whole.
+	for _, what := range notesWhat(got.Dropped) {
+		if strings.HasPrefix(what, "sources[3].") || strings.HasPrefix(what, "sources[4].") {
+			t.Errorf("dropped %s, though the source itself is dropped", what)
+		}
 	}
 	stored, err := os.ReadFile(filepath.Join(m.home, "go-concurrency", sourcesFile))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(stored), `"notebooklm_id":"s-9","notebooklm_notebook":"nb-1"`) ||
-		!strings.Contains(string(stored), `"notebooklm_id":"s-10","notebooklm_notebook":"nb-2"`) {
-		t.Errorf("%s = %s", sourcesFile, stored)
+	if strings.Contains(string(stored), "notebook") || strings.Contains(string(stored), "s-9") {
+		t.Errorf("%s keeps something of NotebookLM: %s", sourcesFile, stored)
 	}
 	list, err := m.ListSources(ctx, "go-concurrency")
 	if err != nil {
 		t.Fatal(err)
+	}
+	if list.KnowledgeBase != nil {
+		t.Errorf("the import chose a Knowledge base: %+v", list.KnowledgeBase)
 	}
 	if len(list.Sources) != 3 {
 		t.Fatalf("listed = %+v", list.Sources)
@@ -511,31 +523,35 @@ func TestImportMapsSourcesAndTheNotebook(t *testing.T) {
 			t.Errorf("Source %s is %s, want ok", s.ID, s.State)
 		}
 	}
+	history, err := os.ReadFile(filepath.Join(m.home, "go-concurrency", historyFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(history), eventKnowledgeBaseSet) {
+		t.Errorf("the import recorded a %s Event", eventKnowledgeBaseSet)
+	}
 }
 
-// v1 wrote NotebookLM notebooks in several shapes: each is read, or listed
-// under Dropped with why.
-func TestImportReadsEveryShapeOfNotebookLM(t *testing.T) {
+// v1 wrote NotebookLM notebooks in several shapes. Whatever the shape, the
+// setting is listed under Dropped once, with why, and is not read further.
+func TestImportLeavesOutEveryShapeOfNotebookLM(t *testing.T) {
 	ctx := context.Background()
 	gitIdentity(t)
 	m := newMachine(t, t.TempDir(), "id", t0)
 	for _, tc := range []struct {
 		name       string
 		notebooklm any
-		kb         string
-		dropped    map[string]string
+		dropped    bool
 	}{
-		{"an id", "nb-1", "nb-1", nil},
-		{"an address", "https://notebooklm.google.com/notebook/0a1b-2c3d?authuser=1", "0a1b-2c3d", nil},
-		{"an object with an address", map[string]any{"url": "https://notebooklm.google.com/notebook/nb-u/"}, "nb-u", nil},
+		{"an id", "nb-1", true},
+		{"an address", "https://notebooklm.google.com/notebook/0a1b-2c3d?authuser=1", true},
+		{"an object with an address", map[string]any{"url": "https://notebooklm.google.com/notebook/nb-u/"}, true},
 		{"a list of notebooks", map[string]any{"notebooks": []any{map[string]any{"id": "nb-q"},
-			"https://notebooklm.google.com/notebook/nb-r", map[string]any{"name": "Notes"}}}, "nb-q",
-			map[string]string{"NotebookLM notebook nb-r": "one Knowledge base", "notebooklm.notebooks[2]": "names no notebook"}},
-		{"another site", "https://example.com/notebook/x", "", map[string]string{"notebooklm": "not a NotebookLM address"}},
-		{"an address without a notebook", map[string]any{"url": "https://notebooklm.google.com/"}, "",
-			map[string]string{"notebooklm": "names no notebook"}},
-		{"an object without one", map[string]any{"title": "Go"}, "", map[string]string{"notebooklm": "names no notebook"}},
-		{"a number", 7, "", map[string]string{"notebooklm": "neither"}},
+			"https://notebooklm.google.com/notebook/nb-r", map[string]any{"name": "Notes"}}}, true},
+		{"another site", "https://example.com/notebook/x", true},
+		{"an object without a notebook", map[string]any{"title": "Go"}, true},
+		{"a number", 7, true},
+		{"null", nil, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			src := v1Workspace(t, v1Options{noGit: true, config: map[string]any{"notebooklm": tc.notebooklm}})
@@ -543,15 +559,22 @@ func TestImportReadsEveryShapeOfNotebookLM(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			switch {
-			case tc.kb == "" && got.KnowledgeBase != nil:
-				t.Errorf("knowledge base = %+v, want none", got.KnowledgeBase)
-			case tc.kb != "" && (got.KnowledgeBase == nil || got.KnowledgeBase.Notebook != tc.kb):
-				t.Errorf("knowledge base = %+v, want %s", got.KnowledgeBase, tc.kb)
+			var about []ImportNote
+			for _, n := range got.Dropped {
+				if strings.Contains(strings.ToLower(n.What+" "+n.Detail), "notebook") {
+					about = append(about, n)
+				}
 			}
-			for what, want := range tc.dropped {
-				if detail := note(t, got.Dropped, what); !strings.Contains(detail, want) {
-					t.Errorf("dropped %s: %q, want %q", what, detail, want)
+			switch {
+			case !tc.dropped && len(about) > 0:
+				t.Errorf("dropped = %+v, want nothing about NotebookLM", about)
+			case tc.dropped && (len(about) != 1 || about[0].What != "notebooklm" ||
+				about[0].Detail != "Lamplight v2 does not use NotebookLM (ADR-0011)"):
+				t.Errorf("dropped = %+v, want the notebooklm setting alone, with why", about)
+			}
+			for _, n := range got.Converted {
+				if strings.Contains(strings.ToLower(n.What+" "+n.Detail), "notebook") {
+					t.Errorf("converted %+v", n)
 				}
 			}
 		})

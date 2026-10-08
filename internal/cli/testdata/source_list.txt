@@ -1,11 +1,10 @@
-Knowledge base: notebooklm (notebook nb-42)
+Knowledge base: rag (a kind this version of study does not know, so treated as none)
 
 Sources:
-strang-linear-algebra.<id>  Strang Linear Algebra
+strang-linear-algebra.<id>  Introduction to Linear Algebra
   strang_linear_algebra.pdf
   ! not found on this computer: say where it is with study source update --path,
     or add its folder to the Library with study library build
-  NotebookLM: nlm-7
 strang-s-course-page.<id>  Strang's course page
   https://math.mit.edu/~gs/linearalgebra/
 by-hand.abc123  By hand
