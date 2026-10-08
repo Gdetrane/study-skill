@@ -557,7 +557,9 @@ hours before any learning happens is exactly what v1 produced.
     undocumented endpoints and the learner's browser session, at the risk of the learner's
     Google account. Earlier builds of v2 recorded a notebook and each Source's id in it;
     their Topics still load, with those fields ignored in Events and kept, unread, in
-    `sources.jsonl`, and a write they left interrupted is finished without a conflict.
+    `sources.jsonl`. A write they left interrupted is finished by this version; ADR-0011
+    says how, and the one case in which the next change to a Source is then flagged as a
+    conflict.
   - The History is the single source of truth for Sources: `source.added` and
     `source.updated` record them, and `sources.jsonl` is the readable copy, one line per
     Source and each its own item (`sources.jsonl#<id>`). A line added by hand is

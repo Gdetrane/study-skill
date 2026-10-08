@@ -462,9 +462,10 @@ func (m *machine) hasIntent(t *testing.T) bool {
 }
 
 // An interrupted Source change of an earlier build is finished by this one as
-// that build would have finished it: the line is the Source the Event
-// recorded, with its NotebookLM ids as fields this version does not know,
-// like every other line the earlier build wrote.
+// that build would have finished it, when the Source in the Event's payload
+// is the version the Event recorded, as it is here: the line is that Source,
+// with its NotebookLM ids as fields this version does not know, like every
+// other line the earlier build wrote.
 func TestRecoveryFinishesAnEarlierBuildsWrite(t *testing.T) {
 	m := earlierBuildTopic(t)
 	dir := filepath.Join(m.home, "c")
@@ -502,9 +503,12 @@ func TestRecoveryFinishesAnEarlierBuildsWrite(t *testing.T) {
 
 // After this version finishes an earlier build's interrupted Source change
 // that touched only a NotebookLM id, the next change to that Source is no
-// conflict: only one machine ever wrote. Recovery must leave the line at the
-// version the Event recorded, not at the one it started from, or the next
-// Event would change the Source from the same version a second time.
+// conflict when the Source in the Event's payload is the version the Event
+// recorded: only one machine ever wrote. Recovery must then leave the line at
+// that version, not at the one it started from, or the next Event would
+// change the Source from the same version a second time.
+// TestRecoveryOfAnEarlierBuildsIDChangeOnAHandEditedLineCanFlagAConflict
+// covers the case in which the payload's Source is not that version.
 func TestAChangeAfterRecoveringAnEarlierBuildsIDChangeIsNoConflict(t *testing.T) {
 	const page = `{"id":"example-com-a.qpm4lo","kind":"url","title":"%s","url":"https://example.com/a"%s}` + "\n"
 	for _, tc := range []struct {
@@ -565,6 +569,129 @@ func TestAChangeAfterRecoveringAnEarlierBuildsIDChangeIsNoConflict(t *testing.T)
 				t.Errorf("the interrupted write should be finished as recorded; logs:\n%s", logs)
 			}
 		})
+	}
+}
+
+// An earlier build that stopped after recording a source.added Event, before
+// writing the line, is finished by this version as that build would have
+// finished it: the line is the Source the Event recorded, with its NotebookLM
+// ids as fields this version does not know. A later change to that Source
+// keeps them and is no conflict.
+func TestRecoveryFinishesAnEarlierBuildsAddedSource(t *testing.T) {
+	ctx := context.Background()
+	m := earlierBuildTopic(t)
+	dir := filepath.Join(m.home, "c")
+	// The Topic as it was while the fixture's first Source was being added:
+	// the History up to that Event, the first notebook in topic.toml, and no
+	// sources.jsonl yet.
+	const added = `{"id":"example-com-a.qpm4lo","kind":"url","title":"https://example.com/a","url":"https://example.com/a","notebooklm_id":"nlm-1","notebooklm_notebook":"nb-42"}`
+	lines := historyLines(t, dir)
+	at := slices.IndexFunc(lines, func(line string) bool {
+		return strings.Contains(line, `"type":"`+eventSourceAdded+`","data":`+added)
+	})
+	if at < 0 {
+		t.Fatal("the fixture has no source.added Event carrying NotebookLM ids")
+	}
+	if err := os.WriteFile(filepath.Join(dir, historyFile), []byte(strings.Join(lines[:at+1], "")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	settings, err := os.ReadFile(filepath.Join(dir, topicFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, topicFile), []byte(strings.Replace(string(settings), `"nb-43"`, `"nb-42"`, 1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(dir, sourcesFile)); err != nil {
+		t.Fatal(err)
+	}
+	m.leaveIntent(t, earlierBuildEvent(t, dir, eventSourceAdded, `"notebooklm_id":"nlm-1"`), eventSourceAdded)
+
+	m.update(t, TopicChanges{Goal: ptr("G")}) // the next write finishes the interrupted one
+	if data := readSourcesFile(t, m); data != added+"\n" {
+		t.Errorf("recovery should write the line the earlier build would have:\n%s\nwant\n%s\nlogs:\n%s", data, added, m.logs)
+	}
+	if logs := m.logs.String(); !strings.Contains(logs, "finished an interrupted write") ||
+		strings.Contains(logs, "writes differently") || m.hasIntent(t) {
+		t.Errorf("the interrupted write should be finished as recorded; logs:\n%s", logs)
+	}
+	list := m.sources(t)
+	if len(list.Sources) != 1 || list.Sources[0].ID != "example-com-a.qpm4lo" || list.Sources[0].Title != "https://example.com/a" {
+		t.Errorf("ListSources = %+v", list.Sources)
+	}
+	if out, err := json.Marshal(list); err != nil || strings.Contains(string(out), "nlm-") {
+		t.Errorf("ListSources shows an id of the notebook: %s, %v", out, err)
+	}
+
+	if res, err := m.UpdateSource(ctx, "c", "example-com-a.qpm4lo", SourceChanges{Title: ptr("Example")}); err != nil || !res.Changed {
+		t.Fatalf("UpdateSource = %+v, %v", res, err)
+	}
+	topic, err := m.readTopic("c")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range topic.Flags {
+		t.Errorf("flag after one machine's recovery and one change: %s: %s", f.Kind, f.Message)
+	}
+	want := strings.Replace(added, `"title":"https://example.com/a"`, `"title":"Example"`, 1) + "\n"
+	if data := readSourcesFile(t, m); data != want {
+		t.Errorf("sources.jsonl after the change:\n%s\nwant\n%s", data, want)
+	}
+}
+
+// A limit of that rule, kept on purpose (ADR-0011). The Source in an Event's
+// payload is the version the Event recorded only when the line held nothing
+// else. If the line also held a field the earlier build did not know, such as
+// one added by hand, the recorded version had that field too and the payload
+// does not, so recovery writes as it always did. An id-only change then
+// leaves the line as it was, and the next change to the Source is flagged as
+// a conflict, which the learner dismisses. Nothing is lost.
+func TestRecoveryOfAnEarlierBuildsIDChangeOnAHandEditedLineCanFlagAConflict(t *testing.T) {
+	ctx := context.Background()
+	m := earlierBuildTopic(t)
+	dir := filepath.Join(m.home, "c")
+	const (
+		source   = `"id":"example-com-a.qpm4lo","kind":"url","title":"https://example.com/a","url":"https://example.com/a"`
+		before   = `{` + source + `,"notebooklm_id":"nlm-2","notebooklm_notebook":"nb-42","pages":312}`
+		recorded = `{` + source + `,"notebooklm_id":"nlm-3","notebooklm_notebook":"nb-42","pages":312}`
+	)
+	// The learner added "pages" to the line by hand.
+	sources := readSourcesFile(t, m)
+	edited := strings.Replace(sources, `"notebooklm_notebook":"nb-42"}`, `"notebooklm_notebook":"nb-42","pages":312}`, 1)
+	if !strings.HasPrefix(edited, before+"\n") {
+		t.Fatalf("the fixture's first line is not the one this test edits:\n%s", sources)
+	}
+	if err := os.WriteFile(filepath.Join(dir, sourcesFile), []byte(edited), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Then the earlier build recorded a change of the id alone, from nlm-2 to
+	// nlm-3, and stopped before writing: its Event, as that build wrote them,
+	// with the line it meant to leave, "pages" included, as the version after.
+	appendLine(t, filepath.Join(dir, historyFile), `{"format":1,"id":"earlierbuild01","time":"2026-10-08T19:00:00Z",`+
+		`"wall":"2026-10-08T19:00:00Z","type":"source.updated","data":{"id":"example-com-a.qpm4lo",`+
+		`"notebooklm_id":"nlm-3","notebooklm_notebook":"nb-42","source":{`+source+`,"notebooklm_id":"nlm-3","notebooklm_notebook":"nb-42"}},`+
+		`"items":[{"item":"sources.jsonl#example-com-a.qpm4lo","before":"`+contentHash([]byte(before), true)+
+		`","after":"`+contentHash([]byte(recorded), true)+`"}]}`+"\n")
+	m.leaveIntent(t, "earlierbuild01", eventSourceUpdated)
+
+	if res, err := m.UpdateSource(ctx, "c", "example-com-a.qpm4lo", SourceChanges{Title: ptr("Example")}); err != nil || !res.Changed {
+		t.Fatalf("UpdateSource = %+v, %v", res, err)
+	}
+	topic, err := m.readTopic("c")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(topic.Flags) != 1 || topic.Flags[0].Kind != FlagConflict || topic.Flags[0].Item != sourceItem("example-com-a.qpm4lo") {
+		t.Errorf("flags = %+v, want one conflict on the Source", topic.Flags)
+	}
+	// The title change and the hand-added field are both there; the id is the
+	// one the line had.
+	want := strings.Replace(before, `"title":"https://example.com/a"`, `"title":"Example"`, 1) + "\n"
+	if data := readSourcesFile(t, m); !strings.HasPrefix(data, want) {
+		t.Errorf("sources.jsonl after the change:\n%s\nwant its first line to be\n%s", data, want)
+	}
+	if !strings.Contains(m.logs.String(), "writes differently") || m.hasIntent(t) {
+		t.Errorf("recovery should finish the write, warning that it writes the line differently; logs:\n%s", m.logs)
 	}
 }
 

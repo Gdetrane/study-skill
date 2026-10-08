@@ -46,9 +46,16 @@ Lamplight does not use NotebookLM, and nothing in it names a way to reach it.
     History is replayed, so a `source.updated` that changed only such an id changes nothing.
   - The same fields in a line of `sources.jsonl` are kept as a newer version's fields are:
     they stay in the line and are never shown.
-  - A write an earlier build left interrupted is finished without raising a conflict. A
-    Source's line is written as the Event recorded it, those fields included. A move from
-    one notebook to another leaves the table with the kind alone.
+  - A write an earlier build left interrupted is finished by this version. A Source's line
+    is written as the Event recorded it, those fields included, when the Source in the
+    Event's payload is the version the Event recorded; the next change to that Source then
+    raises no conflict. It is not that version when the line also held a field the earlier
+    build did not know, such as one added by hand. Recovery then writes the fields this
+    version knows over the line, and if the Event changed or removed only an id in a
+    notebook, the next change to that Source is flagged as a conflict, which the learner
+    dismisses; nothing is lost. A move from one notebook to another leaves the table with
+    the kind alone, at a version of its own, so the next change to `topic.toml` raises no
+    conflict.
 
 ## Consequences
 

@@ -582,6 +582,9 @@ func encodeSourceLine(src Source, extra map[string]json.RawMessage) ([]byte, err
 	return buf.Bytes(), nil
 }
 
+// applySourceAdded writes a new Source's line from the payload, which is the
+// Source. When recovery finishes an interrupted write and the payload is the
+// line the Event recorded, it is written as it is (see recordedSourceLine).
 func applySourceAdded(ev event, item string, _ []byte, _ bool) ([]byte, bool, error) {
 	var src Source
 	if err := json.Unmarshal(ev.Data, &src); err != nil || src.ID == "" {
@@ -589,6 +592,9 @@ func applySourceAdded(ev event, item string, _ []byte, _ bool) ([]byte, bool, er
 	}
 	if item != sourceItem(src.ID) {
 		return nil, false, corruptf("Event %s (%s) cannot edit %s", ev.ID, ev.Type, item)
+	}
+	if line, ok := recordedSourceLine(ev, item, ev.Data); ok {
+		return line, true, nil
 	}
 	line, err := encodeSourceLine(src, nil)
 	return line, err == nil, err
@@ -603,7 +609,7 @@ func applySourceAdded(ev event, item string, _ []byte, _ bool) ([]byte, bool, er
 //
 // When recovery finishes an interrupted write, the Event already recorded
 // the line it meant to leave. If the payload's Source is that line, it is
-// written as it is (see recordedSourceLine).
+// written as it is (see recordedSourceLine, which says when it is not).
 func applySourceUpdated(ev event, item string, current []byte, exists bool) ([]byte, bool, error) {
 	var d sourceUpdatedData
 	if err := json.Unmarshal(ev.Data, &d); err != nil || d.ID == "" {
@@ -624,8 +630,13 @@ func applySourceUpdated(ev event, item string, current []byte, exists bool) ([]b
 		if d.Source.ID != d.ID {
 			return nil, false, corruptf("Event %s has an unreadable payload", ev.ID)
 		}
-		if line, ok := recordedSourceLine(ev, item); ok {
-			return line, true, nil
+		var payload struct {
+			Source json.RawMessage `json:"source"`
+		}
+		if err := json.Unmarshal(ev.Data, &payload); err == nil {
+			if line, ok := recordedSourceLine(ev, item, payload.Source); ok {
+				return line, true, nil
+			}
 		}
 		src = *d.Source
 	} else {
@@ -635,36 +646,39 @@ func applySourceUpdated(ev event, item string, current []byte, exists bool) ([]b
 	return line, err == nil, err
 }
 
-// recordedSourceLine returns the Source in a source.updated Event's payload,
+// recordedSourceLine returns source, the Source as an Event's payload holds
+// it (the whole payload of source.added, the "source" of source.updated),
 // written as a line, when that line is the version of item the Event
 // recorded. Only an Event read back from the History has recorded one, so
 // this is found when recovery finishes an interrupted write, never while an
 // Event is prepared.
 //
 // The line is then what the Event's writer wrote, whatever fields this
-// version knows. It matters for an Event of an earlier build that changed or
-// removed a field this version does not have (ADR-0011): writing the payload's
-// known fields over the line would leave such a line as it was, at the
-// version the Event changed it from, and the next change to the Source would
-// look like a second machine's.
-func recordedSourceLine(ev event, item string) ([]byte, bool) {
+// version knows. It matters for an Event of an earlier build that set,
+// changed or removed a field this version does not have (ADR-0011). Writing
+// only the fields this version knows would drop such a field from an added
+// Source's line, and would leave an updated Source's line as it was, at the
+// version the Event changed it from, so that the next change to the Source
+// looked like a second machine's.
+//
+// The payload's Source is not the recorded version when the writer put more
+// in the line than the payload holds: an update keeps the fields of the line
+// that its writer did not know, such as one added by hand. The caller then
+// writes as it always does. For an earlier build's update that changed
+// nothing this version knows, that leaves the line as it was, and the next
+// change to the Source is flagged as a conflict.
+func recordedSourceLine(ev event, item string, source json.RawMessage) ([]byte, bool) {
 	recorded := ""
 	for _, it := range ev.Items {
 		if it.Item == item {
 			recorded = it.After
 		}
 	}
-	if recorded == "" {
-		return nil, false
-	}
-	var payload struct {
-		Source json.RawMessage `json:"source"`
-	}
-	if err := json.Unmarshal(ev.Data, &payload); err != nil || len(payload.Source) == 0 {
+	if recorded == "" || len(source) == 0 {
 		return nil, false
 	}
 	var line bytes.Buffer
-	if err := json.Compact(&line, payload.Source); err != nil || contentHash(line.Bytes(), true) != recorded {
+	if err := json.Compact(&line, source); err != nil || contentHash(line.Bytes(), true) != recorded {
 		return nil, false
 	}
 	return line.Bytes(), true
