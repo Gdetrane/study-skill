@@ -14,6 +14,8 @@ no account. What forces the shape of it:
   an extension that the Go SDK Lamplight uses (v1.8.0) does not implement.
 - A Topic syncs between machines and can be cloned from anywhere, so nothing in it may
   decide which program runs (ADR-0009).
+- The MCP server runs outside the agent's sandbox (ADR-0009). Anything it reads because the
+  agent named it, and then hands back, is a way around the sandbox.
 - "An exact quote, never a paraphrase" was only an instruction to the agent. Nothing
   checked it.
 - A survey of six local servers found none that indexes a file or URL on request, reports
@@ -39,23 +41,26 @@ Lamplight's; what is behind them is the plugin's.
 | Tool | Takes | Gives back |
 | --- | --- | --- |
 | `contract` | nothing | the contract version, and what the plugin can do: file Sources, URL Sources, keyword search, embedding search, which kinds of location |
-| `index` | a collection, and one Source: id, title, path or URL, content hash | an answer at once; the work goes on afterwards |
-| `status` | a collection | for each Source: indexed, indexing with its progress, or failed with the reason, and the content hash that was indexed |
+| `index` | a collection, and one Source: id, title, a path with its content hash, or a URL | an answer at once; the work goes on afterwards |
+| `status` | a collection | for each Source: indexed, indexing with its progress, or failed with the reason, and the hash of the content that was indexed |
 | `search` | a collection, a query, a limit, optionally some Sources | Passages, best first |
 | `passage` | a collection and a Passage's id | that Passage |
 
 - A **collection** is a name `study` chooses for a Topic. A plugin keeps collections apart
   and knows nothing else about Topics.
-- A **Passage** has an id, the Source's id, its text, a location and a score. The text is
-  the Source's own, as the plugin extracted it: never a summary and never a generated
-  answer.
+- A **Passage** has an id, the Source's id, its text, a score and, when the plugin knows
+  one, a location. The text is the Source's own, as the plugin extracted it: never a summary
+  and never a generated answer.
 - A **location** says what kind it is. Version 1 has `pages`, with a first and last page.
-  Other kinds, such as a time range in a recording, are added to the same field without a
-  new contract version; `contract` says which kinds a plugin gives.
+  A Passage from a web page has none. Other kinds, such as a time range in a recording, are
+  added to the same field without a new contract version; `contract` says which kinds a
+  plugin gives.
 - `index` never blocks. It returns at once and `status` is asked again, because tasks are
-  not available to us. Indexing a Source whose content hash is already indexed does
-  nothing, and a plugin that was stopped halfway carries on or starts over when asked
-  again.
+  not available to us. A plugin that was stopped halfway carries on or starts over when
+  asked again.
+- Indexing a file whose content hash is already indexed does nothing. A URL has no hash
+  until it is fetched: the plugin fetches it, `status` gives the hash of what it indexed,
+  and it is fetched again only when the learner asks for that.
 - A plugin that reports a contract version newer than `study` knows is refused, like every
   newer format.
 
@@ -70,20 +75,35 @@ Lamplight's; what is behind them is the plugin's.
   tool takes a command line or a URL for a plugin. A test enforces it.
 - `study` starts a registered command directly, without a shell, with pipes of its own,
   when a Topic first needs it, and stops it when `study` exits. It runs as the learner.
+- `study` gives a command plugin a folder of its own under the Study home's `.lamplight`
+  to keep its index in. That is this machine's state, never synced, and rebuilt by indexing
+  again.
+- A plugin reached by URL reads files on its own machine, whatever sandbox the agent is in.
+  It must be told which folders it may read; Shelf refuses a path outside them.
 - A Topic that names a plugin this machine does not have is treated as `none`, and
   `status` gives the one action that fixes it. So is one whose plugin does not start or
   does not speak the contract.
 
 ADR-0009 stands: the core runs nothing that a Topic's files name.
 
-### Indexing and searching
+### Indexing runs only through the CLI
 
-- `study source index` asks the plugin to index a Topic's Sources and shows progress until
-  it is done; stopping it leaves what was indexed. The MCP tool of the same name asks and
-  returns, as adding a Source does: neither waits.
+- `study source index` is the one thing that asks a plugin to index. It indexes a Topic's
+  Sources and shows progress until it is done; stopping it leaves what was indexed.
+- It is CLI-only, like `study check` (ADR-0009): the agent runs it in its own shell, or the
+  learner does, so the harness's sandbox and approval prompts apply to every file the
+  plugin reads and every address it fetches. No MCP tool starts indexing. If one did, an
+  agent could add any file on the computer as a Source over MCP and read its text back
+  through a search.
+- Adding a Source, over MCP or the CLI, records it and indexes nothing. `sources` and
+  `status` say which Sources are not indexed and give the command.
 - Whether a Source is indexed is the plugin's to say, on this machine. It is not in the
-  History and records no Event. `sources` and `status` show it.
-- `evidence_search`, a command and an MCP tool, returns Passages for a query.
+  History and records no Event.
+
+### Searching
+
+- `evidence_search`, a command and an MCP tool, returns Passages for a query. A search
+  reads the plugin's index and never a Source.
 - Nothing waits for a plugin: a Session opens and teaching goes on while Sources are being
   indexed or the plugin is missing, and Lessons without Evidence are marked, never blocked.
 
@@ -125,6 +145,9 @@ Considered and rejected:
   second server installed, and nothing could check a quote.
 - **Sending a file's bytes over MCP.** Books are tens of megabytes. The contract passes a
   path.
+- **Indexing when a Source is added, or from an MCP tool.** Convenient, but it makes the MCP
+  server read files for the agent outside its sandbox, and a command that exits cannot
+  leave a plugin indexing behind it.
 
 ## Consequences
 
@@ -136,6 +159,10 @@ Considered and rejected:
   change together.
 - The module gains SQLite as a dependency of Shelf. `study` stays free of it.
 - A plugin on another machine must see the same files, since it is handed a path.
+- An agent without a shell cannot index, as it cannot run a Check. The learner can always
+  run `study source index` themselves.
+- Indexing inside a sandbox needs the sandbox to allow the Study home, and the embedding
+  endpoint if there is one.
 - A formula is quoted as it was extracted, or recorded without a Passage, unchecked.
 - Changing the embedding model means embedding a collection again, which `status` reports.
 - Recordings, video and images as Sources need no new contract version. What an exact

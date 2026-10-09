@@ -590,16 +590,22 @@ hours before any learning happens is exactly what v1 produced.
     `status` (each Source indexed, indexing or failed, and the content hash indexed),
     `search` (Passages for a query) and `passage` (one Passage again). A Passage is the
     Source's own text as extracted, with a location that says its kind: `pages` now, others
-    such as a time range later, without a new contract version.
+    such as a time range later, without a new contract version; a Passage from a web page
+    has no location. A file is indexed by its content hash; a URL gets one when the plugin
+    fetches it.
   - A plugin is registered per machine with `study knowledge-base add`, by a command or a
     URL, in a file in the learner's configuration folder, outside the Study home. A Topic
     records only its name (`kind = "plugin"`, `plugin = "<name>"`), so nothing a Topic
     holds decides which program runs (ADR-0009). Registering is CLI-only. A Topic whose
     plugin this machine lacks is treated as `none`, and `status` says how to fix it.
-  - `study source index` indexes a Topic's Sources and shows progress; adding a Source asks
-    for it and does not wait. Whether a Source is indexed is the plugin's to say on this
-    machine: it records no Event, and `sources` and `status` show it. Nothing waits for a
-    plugin.
+  - `study source index` is the one thing that asks a plugin to index, and it is CLI-only,
+    like `study check`: run in the agent's shell or by the learner, so the sandbox and
+    approval prompts apply to what the plugin reads and fetches. No MCP tool starts
+    indexing, or the MCP server would read any file the agent named and hand its text back
+    through a search. Adding a Source records it and indexes nothing. Whether a Source is
+    indexed is the plugin's to say on this machine: it records no Event, and `sources` and
+    `status` show it and give the command. A command plugin keeps its index in a folder
+    `study` gives it under the Study home's `.lamplight`. Nothing waits for a plugin.
   - `evidence_search` returns Passages. Evidence recorded with a Passage's id is checked:
     `study` reads the Passage again, refuses a quote that is not in it, and takes the
     location from it. That is a new Event type. Evidence without a Passage stays possible,
@@ -632,8 +638,8 @@ Every write names its Topic. Tools are named after things that happen in the dom
   agent only).
 - **Topics**: `topic_create`, `topic_update` (Goal, Pace, Level, Approach, Knowledge base,
   Tasks, pause, finish), `task_done`, `assessment_record`, `source_add`, `source_update`,
-  `evidence_record`, `evidence_retract`. Still to build (ADR-0012): `evidence_search`, and
-  `source_index`.
+  `evidence_record`, `evidence_retract`. Still to build (ADR-0012): `evidence_search`.
+  Indexing has no tool: `study source index` is CLI-only.
 - **Syllabus**: `revision_propose`, `revision_apply`, `revision_decline`.
 - **Sessions**: `session_open`, `session_close`, `phase_set`, `break_point_reached`,
   `checkpoint`, `hint_record`, `rubric_record`, `lesson_complete`.
