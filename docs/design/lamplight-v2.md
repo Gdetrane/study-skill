@@ -614,11 +614,12 @@ hours before any learning happens is exactly what v1 produced.
     repository and release, of which `study` links nothing. Go without cgo, one SQLite file
     per collection for keyword search and vectors, PDFs read page by page, embeddings from
     any endpoint that speaks the OpenAI embeddings API, keyword and embedding results
-    merged by rank, and keyword alone when there is no endpoint. A Recipe names Shelf's
-    settings for one embedding model; the first is for EmbeddingGemma 2.
+    merged by rank, and keyword alone when there is no endpoint. When a reranking endpoint
+    is given, it reorders the best Passages before they are returned. A Recipe names
+    Shelf's settings for one embedding model; the first is for EmbeddingGemma 2.
 - **Later**: a context written by a language model for each Passage, used for indexing
-  only; a reranking endpoint; layout-aware conversion for formulas, tables and scans;
-  recordings, video and images as Sources.
+  only; layout-aware conversion for formulas, tables and scans; recordings, video and
+  images as Sources.
 
 ## Library
 
@@ -900,7 +901,7 @@ terminal Reviews; the MCP server; the `lamplight` skill; the Claude Code plugin 
 `study setup` for Claude Code and Codex; Linux and macOS releases with an install script;
 `study import`; and, still to build, Knowledge base plugins (ADR-0012): the contract, `study`
 as its client, the registry, `evidence_search` with the quote check, and Shelf with keyword
-and embedding search.
+and embedding search and optional reranking.
 
 **Order of work**: the tracer bullet, then the History engine (its file formats are settled
 before any real data is written), then a thin learner loop through every layer, then each
@@ -911,7 +912,7 @@ Tailscale; read-mostly first), Level suggestions, held-out results that can bloc
 (with fresh, reviewed test sets for a retry), using one Topic on several machines at once,
 Windows packages, the Agent Plugins 1.0 manifest, setup for more agents, reading tables of
 contents from PDFs, retrieval from page images, the Journal, the FSRS optimizer, publishing
-to the MCP Registry; for Knowledge bases, the context written for each Passage, reranking,
+to the MCP Registry; for Knowledge bases, the context written for each Passage,
 layout-aware conversion, and recordings, video and images as Sources.
 
 ## Known risks

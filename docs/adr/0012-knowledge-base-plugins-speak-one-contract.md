@@ -130,9 +130,15 @@ The Passage makes a new payload, so it is recorded by a new Event type.
   text it wants before a query and before a document, the size of its vectors, and how
   long a Passage may be. Shelf works with any model; the first recipe is for
   EmbeddingGemma 2, which has open weights under Apache 2.0.
-- Two further settings can follow without changing the contract: a short context written
-  by a language model for each Passage and used only for indexing, never returned as the
-  Passage's text; and a reranking endpoint.
+- A reranking endpoint is an optional setting. When one is given, Shelf has it reorder the
+  best Passages before it returns them. In a test on four of the maintainer's books, with
+  300 questions, it was the largest gain after embeddings themselves: the right Passage
+  came first for 64% of the questions, against 51% with embeddings alone and 32% with
+  keyword search.
+- One further setting can follow without changing the contract: a short context written by
+  a language model for each Passage, used only for indexing and never returned as the
+  Passage's text. In the same test it gained a point or two, for about a hundred times the
+  indexing time.
 
 Considered and rejected:
 
@@ -152,9 +158,9 @@ Considered and rejected:
 ## Consequences
 
 - v2.0 ships the contract, `study` as its client, the registry, Topics naming a plugin,
-  `evidence_search` with the quote check, and Shelf with keyword and embedding search.
-  Layout-aware conversion and reranking come later, as settings of Shelf or as other
-  plugins.
+  `evidence_search` with the quote check, and Shelf with keyword and embedding search and
+  optional reranking. Layout-aware conversion and a context for each Passage come later, as
+  settings of Shelf or as other plugins.
 - The release holds two programs. `.goreleaser.yaml`, `install.sh` and `docs/release.md`
   change together.
 - The module gains SQLite as a dependency of Shelf. `study` stays free of it.
