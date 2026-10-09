@@ -53,7 +53,8 @@ the maintainer's answers to the questions they raised.
 ~/study/                            Study home (STUDY_HOME); not a git repository
   learner.md                        Learner profile
   .lamplight/                       local state: most recent Topic, write markers,
-                                    Library index, where Source files are, caches
+                                    Library index, where Source files are, removed
+                                    Topics, caches
   .templates/<name>/                optional learner-provided Workbench starters
   llm-data-engineering/             a Topic: its own git repository
     topic.toml                      Goal and deadline, Pace periods, Level, Approach,
@@ -662,6 +663,29 @@ switch tool.
   `--limit`.
 - `study` alone prints `status`. `study review` runs terminal Reviews. `study doctor --json`
   works even when setup is broken.
+- `study topic remove` moves a Topic's folder, whole, into `.lamplight/removed`, deleting
+  nothing, and `study topic restore` moves it back: it takes the lock of the Topic id,
+  refuses while anything in the Study home has that id, and moves the folder into place
+  with a rename. The lock keeps it apart from writes, removals, other restores and
+  `study import`, which holds the lock of its Topic's id while it stages the Topic and
+  moves it into place. Creating a Topic takes no lock, and there the rename does the work:
+  it is refused when a folder that holds anything is under the id. So a Topic created or
+  imported under the id meanwhile is never touched, and the removed one never ends up
+  inside it. Both commands are for the learner alone, with no MCP tool (ADR-0013).
+  - Neither records an Event. They move a folder on one computer and change nothing
+    inside the Topic, so they are that computer's state, like where a Source's file is.
+    Writes are Events because the History is what every computer shares, and a Topic
+    removed here is unchanged everywhere else, on its git remote too. It is not a general
+    exemption: anything that changes what a Topic holds records an Event.
+  - A record beside each removed folder says which Topic it was and when, since a Topic
+    does not hold its own id. It is written before the folder moves out and deleted after
+    it moves back, so an interrupted removal or restore leaves at worst a record, or the
+    temporary file of one, without a folder; both are ignored.
+  - A folder whose record is missing or cannot be used has only its name, which gives the
+    time to the second and an id when it fits one (`<time>-<id>` and `<time>-<id>-<suffix>`
+    look alike). It is restored by id alone only when that is enough to tell that it is the
+    Topic's newest removal; otherwise the learner names the folder, and the id too when
+    the name fits two. A folder that holds no Topic is never restored.
 - Human output via cobra, Charm's fang and lipgloss; colour turns off with `NO_COLOR` or when
   piped. `study completion install` writes bash, zsh and fish completions; packages ship them
   system-wide.

@@ -1,0 +1,7 @@
+{
+  "ok": false,
+  "error": {
+    "code": "not_found",
+    "message": "no Topic named biology was removed on this computer: study topic restore --list shows the removed Topics"
+  }
+}

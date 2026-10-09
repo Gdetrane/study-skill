@@ -1,0 +1,1 @@
+Would restore Topic linear-algebra to $STUDY_HOME/linear-algebra, from $STUDY_HOME/.lamplight/removed/20261001-093000-linear-algebra

@@ -55,7 +55,9 @@ GOOS=darwin go vet ./...            # macOS is supported too
   `busy`, …); adapters map codes to exit codes and MCP tool errors.
 - Every write is an Event in the Topic's History, written first, then the content, under
   the Topic's lock. Event types are versioned by name: a new payload shape is a new type.
-  Domain time is the Event's `wall`; `time` only orders Events.
+  Domain time is the Event's `wall`; `time` only orders Events. `study topic remove` and
+  `study topic restore` record none: they move a Topic's folder on one computer and change
+  nothing inside it.
 - Conflicts between machines are flagged in `status`, never resolved silently.
 - Files in a Topic are read and written through `os.Root`. git runs only through the
   hardened `internal/checkpoint` package or `gitCommand`, never with the caller's `GIT_*`
@@ -125,8 +127,9 @@ GOOS=darwin go vet ./...            # macOS is supported too
   and `--dry-run` for writes) and the MCP server, document it in `docs/cli.md`, and mention
   it in the skill if agents should use it. Some operations are CLI-only on purpose and get
   no MCP tool: `study check`, which runs code (ADR-0009), and what is for the learner or the
-  installation alone, such as `study topic remove`, `study import`, `study setup`,
-  `study doctor`, `study completion`, `study library build` and terminal `study review`.
+  installation alone, such as `study topic remove`, `study topic restore`, `study import`,
+  `study setup`, `study doctor`, `study completion`, `study library build` and terminal
+  `study review`.
 - New file or Event format: bump nothing silently; add a `format` field and a test that
   newer formats are refused.
 - Design changes: update `GLOSSARY.md`, the design and a new ADR together.

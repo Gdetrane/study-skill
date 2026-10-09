@@ -1,0 +1,14 @@
+{
+  "ok": true,
+  "data": {
+    "removed": [
+      {
+        "topic": "linear-algebra",
+        "folder": "20261001-093000-linear-algebra",
+        "path": "$STUDY_HOME/.lamplight/removed/20261001-093000-linear-algebra",
+        "removed": "2026-10-01T09:30:00Z",
+        "restore": "study topic restore linear-algebra --from 20261001-093000-linear-algebra"
+      }
+    ]
+  }
+}

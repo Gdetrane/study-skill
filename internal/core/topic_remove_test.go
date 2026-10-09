@@ -4,16 +4,15 @@ import (
 	"context"
 	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
 )
 
-// Removing a Topic moves its folder, whole, into .lamplight/removed, where
-// moving it back restores it; the dry run reports the same place and moves
-// nothing.
+// Removing a Topic moves its folder, whole, into .lamplight/removed, from
+// where study topic restore brings it back (topic_restore_test.go); the dry
+// run reports the same place and moves nothing.
 func TestRemoveTopicMovesItOutOfTheStudyHome(t *testing.T) {
 	ctx := context.Background()
 	gitIdentity(t)
@@ -69,26 +68,28 @@ func TestRemoveTopicMovesItOutOfTheStudyHome(t *testing.T) {
 		t.Fatalf("two removals of one id: %s and %s", got.MovedTo, again.MovedTo)
 	}
 
-	// The restore command, run as given, brings the Topic back under its id.
-	back := shellWord(filepath.Join(home, "rust"))
-	if want := "test ! -e " + back + " && mv " + shellWord(got.MovedTo) + " " + back; got.Restore != want {
-		t.Errorf("restore = %q, want %q", got.Restore, want)
+	// Each removal names the command that restores it, by its own folder,
+	// and has a record beside that folder saying which Topic it was.
+	if want := "study topic restore rust --from 20261001-093000-rust"; got.Restore != want || dry.Restore != want {
+		t.Errorf("restore = %q, in the dry run %q, want %q", got.Restore, dry.Restore, want)
 	}
-	if out, err := exec.Command("sh", "-c", got.Restore).CombinedOutput(); err != nil {
-		t.Fatalf("%s: %v\n%s", got.Restore, err, out)
+	if want := "study topic restore rust --from " + filepath.Base(again.MovedTo); again.Restore != want {
+		t.Errorf("restore of the second removal = %q, want %q", again.Restore, want)
 	}
-	status, err = m.Status(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(status.Topics) != 1 || status.Topics[0].Goal != "Write a CLI" || len(status.Topics[0].Flags) != 0 {
-		t.Fatalf("status after moving it back = %+v", status.Topics)
+	for _, removal := range []TopicRemoval{got, again} {
+		data, err := os.ReadFile(removal.MovedTo + ".json")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := `{"format":1,"topic":"rust","removed":"2026-10-01T09:30:00Z"}` + "\n"; string(data) != want {
+			t.Errorf("the record of %s = %s, want %s", removal.MovedTo, data, want)
+		}
 	}
 }
 
-// Once another Topic has the id, the restore command refuses: it never moves
-// the removed Topic inside the Topic that took its place.
-func TestRestoreCommandRefusesATakenID(t *testing.T) {
+// A removal interrupted between its two writes moved nothing: the record it
+// left names no removed Topic, and the Topic is removed the next time.
+func TestARemovalInterruptedAfterItsRecordRemovedNothing(t *testing.T) {
 	ctx := context.Background()
 	gitIdentity(t)
 	home := t.TempDir()
@@ -96,29 +97,37 @@ func TestRestoreCommandRefusesATakenID(t *testing.T) {
 	if _, err := m.CreateTopic(ctx, TopicSpec{Title: "Rust", Goal: "Write a CLI"}); err != nil {
 		t.Fatal(err)
 	}
+	m.crash = crashOnce(crashRemoveRecorded)
+	if _, err := m.RemoveTopic(ctx, "rust", false); !errors.Is(err, errCrash) {
+		t.Fatalf("RemoveTopic = %v, want the crash", err)
+	}
+	orphan := filepath.Join(home, ".lamplight", removedDir, "20261001-093000-rust.json")
+	if !exists(orphan) || !exists(filepath.Join(home, "rust", "topic.toml")) {
+		t.Fatal("the crash should leave the record and the Topic where they were")
+	}
+
+	if list, err := m.ListRemovedTopics(ctx); err != nil || len(list.Removed) != 0 {
+		t.Errorf("removed Topics after the crash = %+v, %v; want none", list, err)
+	}
+	for _, spec := range []TopicRestoreSpec{{Topic: "rust"}, {Topic: "rust", From: "20261001-093000-rust"}} {
+		if _, err := m.RestoreTopic(ctx, spec); CodeOf(err) != CodeNotFound {
+			t.Errorf("RestoreTopic(%+v) = %v, want not_found", spec, err)
+		}
+	}
+	if status, err := m.Status(ctx); err != nil || len(status.Topics) != 1 || len(status.Topics[0].Flags) != 0 {
+		t.Fatalf("status after the crash = %+v, %v", status, err)
+	}
+
+	// The next removal does not take the name the record holds.
 	removed, err := m.RemoveTopic(ctx, "rust", false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.CreateTopic(ctx, TopicSpec{Title: "Rust", Goal: "Write a web server"}); err != nil {
-		t.Fatal(err)
+	if removed.MovedTo+".json" == orphan || !exists(removed.MovedTo+".json") || !exists(filepath.Join(removed.MovedTo, "topic.toml")) {
+		t.Errorf("the removal after the crash went to %s", removed.MovedTo)
 	}
-
-	if out, err := exec.Command("sh", "-c", removed.Restore).CombinedOutput(); err == nil {
-		t.Errorf("%s succeeded although another Topic is named rust\n%s", removed.Restore, out)
-	}
-	if !exists(filepath.Join(removed.MovedTo, "topic.toml")) {
-		t.Errorf("the removed Topic left %s", removed.MovedTo)
-	}
-	if nested := filepath.Join(home, "rust", filepath.Base(removed.MovedTo)); exists(nested) {
-		t.Errorf("the removed Topic was moved inside the new one, to %s", nested)
-	}
-	status, err := m.Status(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(status.Topics) != 1 || status.Topics[0].Goal != "Write a web server" || len(status.Topics[0].Flags) != 0 {
-		t.Fatalf("status after the refused restore = %+v", status.Topics)
+	if list, err := m.ListRemovedTopics(ctx); err != nil || len(list.Removed) != 1 || list.Removed[0].Path != removed.MovedTo {
+		t.Errorf("removed Topics = %+v, %v; want the one removal", list, err)
 	}
 }
 

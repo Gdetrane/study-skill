@@ -1,0 +1,7 @@
+{
+  "ok": false,
+  "error": {
+    "code": "usage",
+    "message": "\"study topic restore\" needs the id of the Topic to restore, or --list to see the removed Topics"
+  }
+}

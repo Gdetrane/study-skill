@@ -47,11 +47,28 @@ func newRemovalRace(t *testing.T) removalRace {
 // removed is the one folder the removals left in .lamplight/removed.
 func (r removalRace) removed(t *testing.T) string {
 	t.Helper()
-	entries, err := os.ReadDir(filepath.Join(r.home, ".lamplight", removedDir))
-	if err != nil || len(entries) != 1 {
-		t.Fatalf("removed Topics: %v, %v", entries, err)
+	folders := removedFolders(t, r.home)
+	if len(folders) != 1 {
+		t.Fatalf("removed Topics: %v", folders)
 	}
-	return filepath.Join(r.home, ".lamplight", removedDir, entries[0].Name())
+	return folders[0]
+}
+
+// removedFolders are the folders in home's .lamplight/removed, by name; the
+// records beside them are left out.
+func removedFolders(t *testing.T, home string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(filepath.Join(home, ".lamplight", removedDir))
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	var folders []string
+	for _, e := range entries {
+		if e.IsDir() {
+			folders = append(folders, filepath.Join(home, ".lamplight", removedDir, e.Name()))
+		}
+	}
+	return folders
 }
 
 // The writers that open a Topic and then wait for its lock: each must find,

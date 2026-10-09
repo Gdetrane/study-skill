@@ -1,0 +1,7 @@
+{
+  "ok": false,
+  "error": {
+    "code": "usage",
+    "message": "--from needs the name of a folder in .lamplight/removed: study topic restore --list shows them; leave --from out to restore the newest removal"
+  }
+}

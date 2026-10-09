@@ -75,6 +75,44 @@ func writeTopicRemoval(w io.Writer, r core.TopicRemoval) error {
 	return err
 }
 
+func writeTopicRestore(w io.Writer, r core.TopicRestore) error {
+	verb := "Restored"
+	if r.DryRun {
+		verb = "Would restore"
+	}
+	_, err := fmt.Fprintf(w, "%s Topic %s to %s, from %s\n", verb, styleAccent.Render(r.Topic), printable(r.Path), printable(r.RestoredFrom))
+	if err == nil && r.Note != "" {
+		_, err = fmt.Fprintf(w, "Note: %s\n", printable(r.Note))
+	}
+	return err
+}
+
+func writeRemovedTopics(w io.Writer, l core.RemovedTopicList) error {
+	if len(l.Removed) == 0 {
+		_, err := fmt.Fprintln(w, "No removed Topics on this computer.")
+		return err
+	}
+	var b strings.Builder
+	b.WriteString("Removed Topics on this computer, newest first:\n")
+	for _, r := range l.Removed {
+		id := styleAccent.Render(r.Topic)
+		if r.Topic == "" {
+			// The note below says why: the id is not known, or the folder
+			// holds no Topic.
+			id = styleWarn.Render("(no id)")
+		}
+		fmt.Fprintf(&b, "  %s  %s\n", id, styleDim.Render("removed "+r.Removed.Local().Format("2 Jan 2006 15:04")+", in "+printable(r.Folder)))
+		if r.Restore != "" {
+			fmt.Fprintf(&b, "    %s\n", printable(r.Restore))
+		}
+		if r.Note != "" {
+			fmt.Fprintf(&b, "    %s\n", printable(r.Note))
+		}
+	}
+	_, err := io.WriteString(w, b.String())
+	return err
+}
+
 func writeTopicUpdate(w io.Writer, u core.TopicUpdate, dryRun bool) error {
 	var b strings.Builder
 	t := u.Topic

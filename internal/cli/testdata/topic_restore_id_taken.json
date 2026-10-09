@@ -1,0 +1,7 @@
+{
+  "ok": false,
+  "error": {
+    "code": "already_exists",
+    "message": "another Topic is named linear-algebra now, so the removed one cannot have the id back; nothing was moved, and it stays in $STUDY_HOME/.lamplight/removed/20261001-093000-linear-algebra. To swap them, run study topic remove linear-algebra, then study topic restore linear-algebra --from 20261001-093000-linear-algebra"
+  }
+}

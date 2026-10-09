@@ -1,0 +1,3 @@
+Removed Topics on this computer, newest first:
+  (no id)  removed <time>, in 20261001-093000-linear-algebra
+    it holds no Topic (it has neither topic.toml nor history.jsonl), so study does not restore it: if anything in it is yours, move it out, then delete the folder

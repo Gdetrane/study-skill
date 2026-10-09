@@ -13,6 +13,11 @@ review material. A Topic is active, paused or finished; a paused Topic hides its
 and Forecasts.
 _Avoid_: Workspace, course, subject
 
+**Removed Topic**:
+A Topic the learner moved out of the Study home on one computer. It is kept whole there
+until it is restored; the learner's other computers and the Topic's git remote keep theirs.
+_Avoid_: Deleted, archived, trashed
+
 **Goal**:
 What the learner wants to be able to do at the end of a Topic, optionally with a deadline.
 _Avoid_: End goal, objective
