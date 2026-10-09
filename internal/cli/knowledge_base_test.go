@@ -4,6 +4,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -78,6 +79,54 @@ func withAProgramInTheStudyHome(t *testing.T) *kbComputer {
 	return k
 }
 
+// withAScriptInATopic is a computer whose Study home has a Topic with a
+// script in it, kb.py, a notes folder beside the Study home, and a file,
+// kb.toml, in the folder study is started in.
+func withAScriptInATopic(t *testing.T) *kbComputer {
+	t.Helper()
+	k := newKBComputer(t)
+	writeFile(t, filepath.Join(k.home, "study", "go-concurrency", "kb.py"), "print()\n")
+	writeFile(t, filepath.Join(k.home, "notes", "index.md"), "# Notes\n")
+	writeFile(t, filepath.Join(k.home, "kb.toml"), "port = 8765\n")
+	return k
+}
+
+// withAnAllowedArgument is withAScriptInATopic with two plugins registered:
+// kb, whose argument inside the Study home the learner allowed, and notes,
+// whose argument is outside it.
+func withAnAllowedArgument(t *testing.T) *kbComputer {
+	t.Helper()
+	k := withAScriptInATopic(t)
+	k.must(t, "knowledge-base", "add", "kb", "--allow-study-home-arguments", "--", "study-shelf", "-u", filepath.Join(k.home, "study", "go-concurrency", "kb.py"))
+	k.must(t, "knowledge-base", "add", "notes", "--", "notes-kb", "=serve", "--root="+filepath.Join(k.home, "notes"))
+	return k
+}
+
+// withAnArgumentInTheStudyHome is withAnAllowedArgument run with a Study
+// home that holds what the argument of notes names: the Study home was
+// another when notes was registered.
+func withAnArgumentInTheStudyHome(t *testing.T) *kbComputer {
+	t.Helper()
+	k := withAnAllowedArgument(t)
+	k.env["STUDY_HOME"] = filepath.Join(k.home, "notes")
+	return k
+}
+
+// withALockThatIsALink is a computer where the registry's lock is a link to
+// the registry's own name.
+func withALockThatIsALink(t *testing.T) *kbComputer {
+	t.Helper()
+	k := newKBComputer(t)
+	lock := filepath.Join(filepath.Dir(k.registry()), "knowledge-base-plugins.lock")
+	if err := os.MkdirAll(filepath.Dir(lock), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("knowledge-base-plugins.json", lock); err != nil {
+		t.Fatal(err)
+	}
+	return k
+}
+
 func withRegistry(content string) func(*testing.T) *kbComputer {
 	return func(t *testing.T) *kbComputer {
 		t.Helper()
@@ -106,6 +155,20 @@ func TestKnowledgeBaseJSON(t *testing.T) {
 		{"knowledge_base_add_bad_name", newKBComputer, []string{"knowledge-base", "add", "My Shelf", "--json", "--", "study-shelf"}, cli.ExitUsage},
 		{"knowledge_base_add_reserved_name", newKBComputer, []string{"knowledge-base", "add", "none", "--url", "http://localhost:8765/mcp", "--json"}, cli.ExitUsage},
 		{"knowledge_base_add_bad_url", newKBComputer, []string{"knowledge-base", "add", "remote", "--url", "file:///usr/bin/study-shelf", "--json"}, cli.ExitUsage},
+		{"knowledge_base_add_url_password", newKBComputer, []string{"knowledge-base", "add", "remote", "--url", "http://ada:secret@localhost:8765/mcp", "--json"}, cli.ExitUsage},
+		{"knowledge_base_add_url_fragment", newKBComputer, []string{"knowledge-base", "add", "remote", "--url", "http://localhost:8765/mcp#top", "--json"}, cli.ExitUsage},
+		{"knowledge_base_add_url_port", newKBComputer, []string{"knowledge-base", "add", "remote", "--url", "http://localhost:0/mcp", "--json"}, cli.ExitUsage},
+		{"knowledge_base_add_dots_in_program", newKBComputer, []string{"knowledge-base", "add", "shelf", "--json", "--", "$HOME/bin/../bin/study-shelf"}, cli.ExitUsage},
+		{"knowledge_base_add_argument_in_study_home", withAScriptInATopic, []string{"knowledge-base", "add", "kb", "--json", "--", "study-shelf", "-u", "$HOME/study/go-concurrency/kb.py"}, cli.ExitUsage},
+		{"knowledge_base_add_argument_in_study_home_dry_run", withAScriptInATopic, []string{"knowledge-base", "add", "kb", "--dry-run", "--json", "--", "study-shelf", "--script=$HOME/study/go-concurrency/kb.py"}, cli.ExitUsage},
+		{"knowledge_base_add_argument_allowed", withAScriptInATopic, []string{"knowledge-base", "add", "kb", "--allow-study-home-arguments", "--json", "--", "study-shelf", "-u", "$HOME/study/go-concurrency/kb.py"}, cli.ExitOK},
+		{"knowledge_base_add_argument_allowed_without_need", withAScriptInATopic, []string{"knowledge-base", "add", "notes", "--allow-study-home-arguments", "--json", "--", "notes-kb", "$HOME/notes"}, cli.ExitOK},
+		{"knowledge_base_add_allow_with_url", newKBComputer, []string{"knowledge-base", "add", "remote", "--allow-study-home-arguments", "--url", "http://localhost:8765/mcp", "--json"}, cli.ExitUsage},
+		{"knowledge_base_add_relative_argument", withAScriptInATopic, []string{"knowledge-base", "add", "kb", "--json", "--", "study-shelf", "--config=kb.toml"}, cli.ExitUsage},
+		{"knowledge_base_add_lock_is_a_link", withALockThatIsALink, []string{"knowledge-base", "add", "remote", "--url", "http://localhost:8765/mcp", "--json"}, cli.ExitError},
+		{"knowledge_base_add_lock_is_a_link_dry_run", withALockThatIsALink, []string{"knowledge-base", "add", "remote", "--dry-run", "--url", "http://localhost:8765/mcp", "--json"}, cli.ExitError},
+		{"knowledge_base_list_allowed", withAnAllowedArgument, []string{"knowledge-base", "list", "--json"}, cli.ExitOK},
+		{"knowledge_base_list_argument_problem", withAnArgumentInTheStudyHome, []string{"knowledge-base", "list", "--json"}, cli.ExitOK},
 		{"knowledge_base_add_empty_url", newKBComputer, []string{"knowledge-base", "add", "remote", "--url", "", "--json"}, cli.ExitUsage},
 		{"knowledge_base_add_no_name", newKBComputer, []string{"knowledge-base", "add", "--json", "--", "study-shelf"}, cli.ExitUsage},
 		{"knowledge_base_add_no_dash", newKBComputer, []string{"knowledge-base", "add", "shelf", "study-shelf", "--json"}, cli.ExitUsage},
@@ -124,12 +187,20 @@ func TestKnowledgeBaseJSON(t *testing.T) {
 		{"knowledge_base_damaged", withRegistry(`{"format": 1, "plugins": [{"name": "shelf", "command": ["study-shelf"]}]}`), []string{"knowledge-base", "list", "--json"}, cli.ExitError},
 	} {
 		t.Run(tc.golden, func(t *testing.T) {
-			got := tc.computer(t).run(t, tc.args...)
+			k := tc.computer(t)
+			args := slices.Clone(tc.args)
+			for i := range args {
+				args[i] = strings.ReplaceAll(args[i], "$HOME", k.home)
+			}
+			got := k.run(t, args...)
 			if got.code != tc.code {
 				t.Errorf("exit code = %d, want %d (stderr: %s)", got.code, tc.code, got.stderr)
 			}
 			if got.stderr != "" {
 				t.Errorf("--json wrote to stderr: %q", got.stderr)
+			}
+			if strings.Contains(got.stdout, "secret") {
+				t.Errorf("the output repeats a password: %s", got.stdout)
 			}
 			golden(t, tc.golden+".json", got.stdout)
 		})
@@ -150,6 +221,24 @@ func TestKnowledgeBaseHumanOutput(t *testing.T) {
 	golden(t, "knowledge_base_remove_dry_run.txt", k.must(t, "knowledge-base", "remove", "remote", "--dry-run").stdout)
 	golden(t, "knowledge_base_remove.txt", k.must(t, "knowledge-base", "remove", "remote").stdout)
 	golden(t, "knowledge_base_list_problem.txt", withAProgramInTheStudyHome(t).must(t, "knowledge-base", "list").stdout)
+
+	// An argument inside the Study home: refused, then allowed, and said so
+	// wherever the plugin is shown.
+	s := withAScriptInATopic(t)
+	script := filepath.Join(s.home, "study", "go-concurrency", "kb.py")
+	refused := s.run(t, "knowledge-base", "add", "kb", "--", "study-shelf", "-u", script)
+	if refused.code != cli.ExitUsage || refused.stdout != "" || !strings.Contains(refused.stderr, "names something inside the Study home") ||
+		!strings.Contains(refused.stderr, "--allow-study-home-arguments") {
+		t.Errorf("an argument in the Study home: exit %d, stdout %q, stderr %q", refused.code, refused.stdout, refused.stderr)
+	}
+	golden(t, "knowledge_base_add_argument_allowed_dry_run.txt",
+		s.must(t, "knowledge-base", "add", "kb", "--allow-study-home-arguments", "--dry-run", "--", "study-shelf", "-u", script).stdout)
+	golden(t, "knowledge_base_add_argument_allowed.txt",
+		s.must(t, "knowledge-base", "add", "kb", "--allow-study-home-arguments", "--", "study-shelf", "-u", script).stdout)
+	// A word a shell would not take as it is, =serve, is shown quoted.
+	s.must(t, "knowledge-base", "add", "notes", "--", "notes-kb", "=serve", "--root="+filepath.Join(s.home, "notes"))
+	golden(t, "knowledge_base_list_allowed.txt", s.must(t, "knowledge-base", "list").stdout)
+	golden(t, "knowledge_base_list_argument_problem.txt", withAnArgumentInTheStudyHome(t).must(t, "knowledge-base", "list").stdout)
 
 	taken := k.run(t, "knowledge-base", "add", "shelf", "--", "study-shelf")
 	if taken.code != cli.ExitError || taken.stdout != "" || !strings.Contains(taken.stderr, "registered already") || !strings.Contains(taken.stderr, "--replace") {

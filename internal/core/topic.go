@@ -834,14 +834,8 @@ func slugify(title string) string {
 // named so that the Topic's .gitignore keeps a crash's leftovers out of
 // Checkpoints, and recovery removes them.
 func writeFileAtomic(root *os.Root, name string, data []byte) error {
-	return writeFileAtomicMode(root, name, data, 0o644)
-}
-
-// writeFileAtomicMode is writeFileAtomic for a file that is created with
-// other permissions than a Topic's files.
-func writeFileAtomicMode(root *os.Root, name string, data []byte, perm os.FileMode) error {
 	tmp := filepath.Join(filepath.Dir(name), tempPrefix(filepath.Base(name))+randomID())
-	f, err := root.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, perm)
+	f, err := root.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	if err != nil {
 		return internalError("writing "+name, err)
 	}

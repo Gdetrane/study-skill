@@ -202,10 +202,7 @@ func userHomeDir(getenv func(string) string) (string, error) {
 	return h, nil
 }
 
-// configDir is Lamplight's configuration folder: lamplight in
-// XDG_CONFIG_HOME, or in ~/.config. It holds config.toml and the Knowledge
-// base plugin registry.
-func configDir(getenv func(string) string) (string, error) {
+func configPath(getenv func(string) string) (string, error) {
 	base := getenv("XDG_CONFIG_HOME")
 	if base == "" {
 		h, err := userHomeDir(getenv)
@@ -214,15 +211,7 @@ func configDir(getenv func(string) string) (string, error) {
 		}
 		base = filepath.Join(h, ".config")
 	}
-	return filepath.Join(base, "lamplight"), nil
-}
-
-func configPath(getenv func(string) string) (string, error) {
-	dir, err := configDir(getenv)
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(dir, "config.toml"), nil
+	return filepath.Join(base, "lamplight", "config.toml"), nil
 }
 
 func loadConfig(path string) (config, error) {
@@ -303,10 +292,19 @@ func (e *Error) Unwrap() error { return e.Err }
 
 // CodeOf returns the code of err, or CodeInternal for errors the core did not
 // classify.
+//
+// An error of a package the core builds on carries its code itself, through
+// an ErrorCode method: the Knowledge base plugin registry's errors do, which
+// reach the command line without passing through the core. Their codes are
+// among the ones above.
 func CodeOf(err error) ErrorCode {
 	var e *Error
 	if errors.As(err, &e) {
 		return e.Code
+	}
+	var coded interface{ ErrorCode() string }
+	if errors.As(err, &coded) {
+		return ErrorCode(coded.ErrorCode())
 	}
 	return CodeInternal
 }

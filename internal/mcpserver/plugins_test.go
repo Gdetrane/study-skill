@@ -6,13 +6,13 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
 	"testing"
-
-	"github.com/mordor-forge/lamplight/v2/internal/core"
+	"unicode"
 )
 
 // The Knowledge base plugin registry says which program study starts for a
@@ -20,35 +20,152 @@ import (
 // change, with study knowledge-base (ADR-0012). The MCP server runs outside
 // the agent's sandbox, so a tool that registered, changed or removed a
 // plugin, or took a command line or a URL for one, would let the agent
-// choose a program for study to run there. These tests fail if a tool could.
+// choose a program for study to run there.
+//
+// What keeps it from happening is how the program is built, and the first
+// test below checks that: what changes the registry is in a package the
+// server does not link, so no tool can reach it, however it is named and
+// through however many wrappers. The other two are a second line. They look
+// at names, and a name can be chosen to pass them.
 
-// The core's operations that change the registry, and the type that carries
-// a plugin's command line or URL to them. Named here, they keep the test
-// below in step with the core: renamed, this file no longer compiles.
-var (
-	_ = (*core.Core).AddPlugin
-	_ = (*core.Core).RemovePlugin
-	_ = core.PluginSpec{}
+const (
+	module = "github.com/mordor-forge/lamplight/v2"
+	// registrar is the one package that changes the registry, and
+	// registryReader the one that reads it.
+	registrar      = module + "/internal/pluginregistry/registrar"
+	registryReader = module + "/internal/pluginregistry"
 )
 
-// pluginReads are the names with "Plugin" in them that the server may use
-// from the core: what reads the registry, and what a reading returns. Every
-// other such name is refused, as AddPlugin, RemovePlugin and PluginSpec are.
-var pluginReads = []string{"Plugins", "Plugin", "PluginList"}
-
-// changesPlugins reports whether a name the server's source uses could be an
-// operation on the registry other than reading it.
-func changesPlugins(name string) bool {
-	return strings.Contains(name, "Plugin") && !slices.Contains(pluginReads, name)
+// goList runs go list from the module's root and returns its lines.
+func goList(t *testing.T, args ...string) []string {
+	t.Helper()
+	cmd := exec.Command("go", append([]string{"list"}, args...)...)
+	cmd.Dir = filepath.Join("..", "..")
+	out, err := cmd.Output()
+	if err != nil {
+		stderr := ""
+		if exit, ok := err.(*exec.ExitError); ok {
+			stderr = string(exit.Stderr)
+		}
+		t.Fatalf("go list %s: %v\n%s", strings.Join(args, " "), err, stderr)
+	}
+	return strings.Split(strings.TrimSpace(string(out)), "\n")
 }
 
-// TestTheServerCannotChangeThePluginRegistry reads the server's own source.
-// The server reaches files only through the core, so it cannot write the
-// registry itself, and of the core's operations on plugins it uses none but
-// the ones that only read.
-func TestTheServerCannotChangeThePluginRegistry(t *testing.T) {
-	for _, name := range []string{"AddPlugin", "RemovePlugin", "PluginSpec"} {
-		if !changesPlugins(name) {
+// TestOnlyTheCommandLineLinksWhatChangesThePluginRegistry lists what the
+// server is built from. The package that registers and removes plugins is
+// not in it, nor in the core, which the server links whole: a wrapper around
+// it in either would not compile without importing it, and importing it
+// fails this test. Only the command line imports it.
+func TestOnlyTheCommandLineLinksWhatChangesThePluginRegistry(t *testing.T) {
+	for _, pkg := range []string{"./internal/mcpserver", "./internal/core"} {
+		deps := goList(t, "-deps", pkg)
+		if slices.Contains(deps, registrar) {
+			t.Errorf("%s links %s: nothing the MCP server is built from may change the Knowledge base plugin registry "+
+				"(ADR-0012). Registering and removing a plugin stay in the command line", pkg, registrar)
+		}
+		// The list is what it seems: it holds what reads the registry.
+		if !slices.Contains(deps, registryReader) || !slices.Contains(deps, module+"/internal/core") {
+			t.Fatalf("go list -deps %s does not list %s, so this test proves nothing:\n%s", pkg, registryReader, strings.Join(deps, "\n"))
+		}
+	}
+	// The package is there, under that name, and the command line links it.
+	if deps := goList(t, "-deps", "./internal/cli"); !slices.Contains(deps, registrar) {
+		t.Fatalf("the command line does not link %s: this test names the wrong package", registrar)
+	}
+
+	// And nothing but the command line imports it.
+	var importers []string
+	for _, line := range goList(t, "-f", `{{.ImportPath}} {{join .Imports ","}}`, "./...") {
+		pkg, imports, _ := strings.Cut(line, " ")
+		if slices.Contains(strings.Split(imports, ","), registrar) {
+			importers = append(importers, strings.TrimPrefix(pkg, module+"/"))
+		}
+	}
+	if !slices.Equal(importers, []string{"internal/cli"}) {
+		t.Errorf("%s is imported by %v: only internal/cli may", registrar, importers)
+	}
+}
+
+// words splits a name into its words, in lower case: at underscores, hyphens
+// and dots, and where camelCase changes case, so that pluginCommand,
+// plugin_command and PluginURL all hold the word plugin.
+func words(name string) []string {
+	var out []string
+	var word []rune
+	flush := func() {
+		if len(word) > 0 {
+			out = append(out, strings.ToLower(string(word)))
+			word = nil
+		}
+	}
+	runes := []rune(name)
+	for i, r := range runes {
+		switch {
+		case r == '_' || r == '-' || r == '.':
+			flush()
+			continue
+		case unicode.IsUpper(r) && i > 0:
+			prev := runes[i-1]
+			nextLower := i+1 < len(runes) && unicode.IsLower(runes[i+1])
+			// A capital after a small letter starts a word, and so does the
+			// last capital of a run when a small letter follows: URLPath.
+			if unicode.IsLower(prev) || unicode.IsDigit(prev) || unicode.IsUpper(prev) && nextLower {
+				flush()
+			}
+		}
+		word = append(word, r)
+	}
+	flush()
+	return out
+}
+
+func TestWords(t *testing.T) {
+	for name, want := range map[string]string{
+		"plugin_command":    "plugin command",
+		"pluginCommand":     "plugin command",
+		"PluginURL":         "plugin url",
+		"pluginURLPath":     "plugin url path",
+		"SetSourceReader":   "set source reader",
+		"kb-plugin.name":    "kb plugin name",
+		"knowledgeBase":     "knowledge base",
+		"knowledge_base":    "knowledge base",
+		"AddPlugin":         "add plugin",
+		"HTTPEndpoint":      "http endpoint",
+		"next_step":         "next step",
+		"hours_per_week":    "hours per week",
+		"PluginRegistryEnv": "plugin registry env",
+		"args2":             "args2",
+	} {
+		if got := strings.Join(words(name), " "); got != want {
+			t.Errorf("words(%q) = %q, want %q", name, got, want)
+		}
+	}
+}
+
+// pluginReads are the names about plugins that the server may use from the
+// core: what reads the registry, and what a reading returns.
+var pluginReads = []string{"Plugins", "Plugin", "PluginList"}
+
+// aboutTheRegistry reports whether a name the server's source uses speaks of
+// plugins or of the registry, and is not one of the names that only read.
+func aboutTheRegistry(name string) bool {
+	if slices.Contains(pluginReads, name) {
+		return false
+	}
+	return slices.ContainsFunc(words(name), func(word string) bool {
+		return slices.Contains([]string{"plugin", "plugins", "registry", "registrar", "registrars"}, word)
+	})
+}
+
+// TestTheServerNamesNothingThatChangesThePluginRegistry reads the server's
+// own source, as a second line behind the test above. The server reaches
+// files only through the core, so it cannot write the registry itself; it
+// imports nothing of the registry's packages; and it uses no name about
+// plugins or the registry but the ones that only read.
+func TestTheServerNamesNothingThatChangesThePluginRegistry(t *testing.T) {
+	for _, name := range []string{"AddPlugin", "RemovePlugin", "PluginSpec", "PluginRegistryEnv", "registrar", "SetPluginReader", "pluginRegistry"} {
+		if !aboutTheRegistry(name) {
 			t.Fatalf("%s is not refused, so this test proves nothing", name)
 		}
 	}
@@ -72,9 +189,13 @@ func TestTheServerCannotChangeThePluginRegistry(t *testing.T) {
 				t.Errorf("%s imports %s: the server reaches files only through the core, so that no tool can write "+
 					"the Knowledge base plugin registry itself (ADR-0012)", name, p)
 			}
+			if strings.HasPrefix(p, registryReader) {
+				t.Errorf("%s imports %s: the server asks the core about plugins, and has nothing to do with the "+
+					"registry's own packages (ADR-0012)", name, p)
+			}
 		}
 		ast.Inspect(file, func(n ast.Node) bool {
-			if sel, ok := n.(*ast.SelectorExpr); ok && changesPlugins(sel.Sel.Name) {
+			if sel, ok := n.(*ast.SelectorExpr); ok && aboutTheRegistry(sel.Sel.Name) {
 				t.Errorf("%s uses %s: no tool registers, changes or removes a Knowledge base plugin (ADR-0012). "+
 					"If %s only reads the registry, add it to pluginReads", name, sel.Sel.Name, sel.Sel.Name)
 			}
@@ -98,12 +219,11 @@ var programOrAddressWords = []string{
 // namesAProgramOrAnAddress reports whether an input's name holds one of
 // those words, or speaks of the Knowledge base.
 func namesAProgramOrAnAddress(name string) bool {
-	name = strings.ToLower(name)
-	if strings.Contains(strings.ReplaceAll(name, "_", ""), "knowledgebase") {
+	parts := words(name)
+	if strings.Contains(strings.Join(parts, ""), "knowledgebase") {
 		return true
 	}
-	return slices.ContainsFunc(strings.FieldsFunc(name, func(r rune) bool { return r == '_' || r == '-' || r == '.' }),
-		func(word string) bool { return slices.Contains(programOrAddressWords, word) })
+	return slices.ContainsFunc(parts, func(word string) bool { return slices.Contains(programOrAddressWords, word) })
 }
 
 // programOrAddressInputs are the inputs with such a name that were looked at
@@ -114,11 +234,11 @@ var programOrAddressInputs = map[string]string{
 	"topic_update.knowledge_base": "the Topic's Knowledge base: its kind alone",
 }
 
-// TestNoToolTakesAPluginsCommandOrURL looks at what every tool accepts. An
-// input whose name could be a program, an address or a plugin must be one
-// this test knows, and every object a tool accepts must list its fields, so
-// that none arrives under a name this test never saw. And no tool is named
-// after the registry.
+// TestNoToolTakesAPluginsCommandOrURL looks at what every tool accepts, as a
+// second line too. An input whose name could be a program, an address or a
+// plugin must be one this test knows, and every object a tool accepts must
+// list its fields, so that none arrives under a name this test never saw.
+// And no tool is named after the registry.
 func TestNoToolTakesAPluginsCommandOrURL(t *testing.T) {
 	tools, err := connect(t, t.TempDir()).ListTools(context.Background(), nil)
 	if err != nil {
@@ -163,14 +283,15 @@ func TestNoToolTakesAPluginsCommandOrURL(t *testing.T) {
 			t.Errorf("programOrAddressInputs lists %s, which no tool has any more", path)
 		}
 	}
-	// The check catches what it is for, and leaves ordinary names alone.
-	for _, name := range []string{"command", "plugin_command", "args", "program", "url", "plugin_url", "plugin", "endpoint",
-		"knowledge_base", "knowledgeBase", "kb_plugin", "shell_script"} {
+	// The check catches what it is for, however the name is cased, and
+	// leaves ordinary names alone.
+	for _, name := range []string{"command", "plugin_command", "pluginCommand", "PluginURL", "args", "program", "url", "plugin_url",
+		"plugin", "endpoint", "knowledge_base", "knowledgeBase", "kb_plugin", "shellScript", "serverAddress"} {
 		if !namesAProgramOrAnAddress(name) {
 			t.Errorf("an input named %s would pass unnoticed", name)
 		}
 	}
-	for _, name := range []string{"topic", "report", "support", "next_step", "learner_said", "hours_per_week", "dry_run"} {
+	for _, name := range []string{"topic", "report", "support", "next_step", "learner_said", "hours_per_week", "dry_run", "reportedBy"} {
 		if namesAProgramOrAnAddress(name) {
 			t.Errorf("an input named %s is taken for a program or an address", name)
 		}

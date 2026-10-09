@@ -11,12 +11,18 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/mordor-forge/lamplight/v2/internal/core"
+	"github.com/mordor-forge/lamplight/v2/internal/pluginregistry/registrar"
 )
 
 // knowledgeBaseCommand is study knowledge-base: the registry of the
 // Knowledge base plugins this computer has (ADR-0012). It is for the
 // learner. The MCP server has no tool for any of it, so no agent decides
 // over MCP which program study starts.
+//
+// Listing goes through the core, like every reading. Registering and
+// removing go to the registrar package, which this package alone imports:
+// the core does not hold what changes the registry, so that the MCP server,
+// which links the core, cannot be made to change it.
 func (a *app) knowledgeBaseCommand() *cobra.Command {
 	group := &cobra.Command{
 		Use:   "knowledge-base",
@@ -31,7 +37,7 @@ func (a *app) knowledgeBaseCommand() *cobra.Command {
 		RunE: a.groupHelp,
 	}
 
-	var spec core.PluginSpec
+	var spec registrar.Spec
 	add := &cobra.Command{
 		Use:   "add <name> [-- <command> [args...]]",
 		Short: "Register a Knowledge base plugin under a name, by its command or its URL",
@@ -39,11 +45,16 @@ func (a *app) knowledgeBaseCommand() *cobra.Command {
 			"digits and single hyphens, up to 64 characters, and neither none nor plugin.\n\n" +
 			"Give the command that starts the plugin after --, as you would type it: the program,\n" +
 			"then its arguments, which are kept as they are. The program is found now, on your PATH\n" +
-			"or at the path you give, and registered by its absolute path. One inside the Study home\n" +
-			"is refused: your agent can write there, and the plugin is started outside the agent's\n" +
-			"sandbox. Or give the http or https address of a plugin you run yourself, with --url.\n\n" +
-			"Registering a plugin as it is registered already changes nothing. A name that stands\n" +
-			"for another command or URL is refused unless you pass --replace.",
+			"or at the path you give, and registered by its absolute path. Or give the http or https\n" +
+			"address of a plugin you run yourself, with --url.\n\n" +
+			"A plugin is started outside your agent's sandbox, and your agent can write in the Study\n" +
+			"home. So a program inside the Study home, or reached through a link there, is refused.\n" +
+			"So is an argument that names something there, such as a script kept in a Topic, unless\n" +
+			"you pass --allow-study-home-arguments. That check catches the honest mistake; it cannot\n" +
+			"see what a command such as sh -c or npx goes on to load.\n\n" +
+			"A plugin is started from the registry's folder, so give files in its arguments by their\n" +
+			"full path. Registering a plugin as it is registered already changes nothing. A name that\n" +
+			"stands for something else is refused unless you pass --replace.",
 		Example: `  study knowledge-base add shelf -- study-shelf
   study knowledge-base add notes --dry-run -- ~/bin/notes-kb --stdio
   study knowledge-base add remote --url http://localhost:8765/mcp
@@ -83,9 +94,12 @@ func (a *app) knowledgeBaseCommand() *cobra.Command {
 			if err != nil {
 				return a.fail(err)
 			}
-			res, err := c.AddPlugin(cmd.Context(), spec)
+			res, err := registrar.Add(cmd.Context(), c.PluginRegistryEnv(), spec)
 			if err != nil {
 				return a.fail(err)
+			}
+			if res.Changed && !res.DryRun {
+				a.logs.logger.Info("registered a Knowledge base plugin", "name", res.Plugin.Name, "registry", res.Registry)
 			}
 			if a.json {
 				return a.writeJSON(envelope{OK: true, Data: res})
@@ -105,6 +119,8 @@ func (a *app) knowledgeBaseCommand() *cobra.Command {
 		},
 	}
 	add.Flags().StringVar(&spec.URL, "url", "", "the http or https address of a plugin you run as a service")
+	add.Flags().BoolVar(&spec.AllowStudyHomeArguments, "allow-study-home-arguments", false,
+		"register the command although an argument names something inside the Study home, which your agent can change")
 	add.Flags().BoolVar(&spec.Replace, "replace", false, "replace what the name is registered as")
 	add.Flags().BoolVar(&spec.DryRun, "dry-run", false, "show what would be registered without writing anything")
 	_ = add.RegisterFlagCompletionFunc("url", cobra.NoFileCompletions)
@@ -145,9 +161,12 @@ func (a *app) knowledgeBaseCommand() *cobra.Command {
 			if err != nil {
 				return a.fail(err)
 			}
-			res, err := c.RemovePlugin(cmd.Context(), args[0], removeDryRun)
+			res, err := registrar.Remove(cmd.Context(), c.PluginRegistryEnv(), args[0], removeDryRun)
 			if err != nil {
 				return a.fail(err)
+			}
+			if !res.DryRun {
+				a.logs.logger.Info("removed a Knowledge base plugin", "name", res.Plugin.Name, "registry", res.Registry)
 			}
 			if a.json {
 				return a.writeJSON(envelope{OK: true, Data: res})
@@ -193,8 +212,9 @@ func (a *app) completePluginNames(cmd *cobra.Command) ([]string, cobra.ShellComp
 	return names, cobra.ShellCompDirectiveNoFileComp
 }
 
-// plainWord is a word a shell takes as it is, so it needs no quotes.
-var plainWord = regexp.MustCompile(`^[A-Za-z0-9_@%+=:,./-]+$`)
+// plainWord is a word every shell takes as it is, so it needs no quotes. One
+// that starts with = is not: zsh reads =name as the path of a command.
+var plainWord = regexp.MustCompile(`^[A-Za-z0-9_@%+:,./-][A-Za-z0-9_@%+=:,./-]*$`)
 
 // describePlugin is what a plugin's name stands for: its URL, or its command
 // as a shell would take it, each word quoted when it needs to be.
@@ -212,7 +232,11 @@ func describePlugin(p core.Plugin) string {
 	return printable(strings.Join(words, " "))
 }
 
-func writePluginRegistration(w io.Writer, r core.PluginRegistration) error {
+// allowedNote is said of a plugin registered with
+// --allow-study-home-arguments.
+const allowedNote = "Its arguments inside the Study home are allowed: your agent can change what they name."
+
+func writePluginRegistration(w io.Writer, r registrar.Registration) error {
 	name := styleAccent.Render(printable(r.Plugin.Name))
 	if !r.Changed {
 		_, err := fmt.Fprintf(w, "Knowledge base plugin %s is registered that way already: nothing changed\n", name)
@@ -224,6 +248,9 @@ func writePluginRegistration(w io.Writer, r core.PluginRegistration) error {
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s Knowledge base plugin %s on this computer: %s\n", verb, name, describePlugin(r.Plugin))
+	if r.Plugin.AllowStudyHomeArguments {
+		fmt.Fprintf(&b, "%s %s\n", styleWarn.Render("!"), allowedNote)
+	}
 	if r.Replaced != nil {
 		fmt.Fprintf(&b, "%s: %s\n", replaces, describePlugin(*r.Replaced))
 	}
@@ -231,7 +258,7 @@ func writePluginRegistration(w io.Writer, r core.PluginRegistration) error {
 	return err
 }
 
-func writePluginRemoval(w io.Writer, r core.PluginRemoval) error {
+func writePluginRemoval(w io.Writer, r registrar.Removal) error {
 	verb := "Removed"
 	if r.DryRun {
 		verb = "Would remove"
@@ -257,6 +284,9 @@ func writePluginList(w io.Writer, l core.PluginList) error {
 	width := widest(names)
 	for i, p := range l.Plugins {
 		fmt.Fprintf(&b, "%s  %s\n", styleAccent.Render(pad(names[i], width)), describePlugin(p))
+		if p.AllowStudyHomeArguments {
+			fmt.Fprintf(&b, "  %s %s\n", styleWarn.Render("!"), allowedNote)
+		}
 		if p.Problem != "" {
 			fmt.Fprintf(&b, "  %s %s\n", styleWarn.Render("!"), printable(p.Problem))
 		}

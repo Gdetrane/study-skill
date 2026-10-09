@@ -589,24 +589,47 @@ hours before any learning happens is exactly what v1 produced.
     configuration folder beside `config.toml`. An entry is a name and either a command, as
     an argument list, or an http or https URL. A name follows the rule of a Topic's id and
     is neither `none` nor `plugin`, the kinds of Knowledge base a Topic records.
-  - A command's program is resolved when it is registered, on `PATH` or from the folder
-    `study` started in, and stored as an absolute path with its symbolic links unresolved.
-    A program inside the Study home is refused, by its path and by where its links lead.
-    Only absolute folders of `PATH` are searched.
-  - The registry decides which programs run, so it is read only where the agent cannot
-    write it: when the configuration folder is the Study home or inside it, or is not an
-    absolute path, the registry is not read at all and the commands say why. A registry
-    that is a symbolic link is not followed. One in a newer format is refused before
-    anything else in it is read; one this version cannot vouch for whole, an unknown key
-    included, is `corrupt`.
+  - A command's program is resolved when it is registered, on the absolute folders of
+    `PATH` or from the folder `study` started in, and stored as an absolute path with its
+    symbolic links unresolved. A path with `..` in it is refused: by name it leads
+    elsewhere than through a link.
+  - Nothing the registry depends on may be in the Study home or be reached through it: the
+    agent writes there, and a plugin is started outside its sandbox. A path is followed one
+    name at a time, each folder opened from the one before it and each symbolic link
+    followed from the folder that really holds it, and is refused as soon as it enters the
+    Study home, wherever it ends. The Study home is known by file identity, not by name,
+    so another letter case, link or mount of it is still the Study home. That holds for a
+    plugin's program and for Lamplight's configuration folder, which is then read, locked
+    and written through the folder as it was opened, never through its name again. A
+    configuration folder that is not an absolute path is refused too.
+  - An argument that names something in the Study home is refused unless the learner
+    allows it (`--allow-study-home-arguments`), which the entry records. An argument that
+    names a file relative to where the command was typed is refused, since a plugin is
+    started from the registry's folder. This catches the honest mistake and is no
+    guarantee: `sh -c` and the like resolve more at start than any reading of arguments
+    sees, and no following of paths sees a hard link.
+  - The reader takes exactly what the writer writes. A newer format is refused before
+    anything else is judged. Anything else is `corrupt`: a key it does not know, in
+    another letter case or given twice, a `null`, bytes that are no text, a path or a URL
+    not written as `study` writes one. A registry that is a symbolic link is not followed.
+    A change never writes what the reader would refuse, one over the size it reads
+    included.
   - The registry is the machine's and no Topic's, so changing it records no Event. A change
     takes the lock of a file beside the registry, reads the registry again under it and
     replaces the file whole. Registering a plugin as it is registered changes nothing;
-    another command or URL under a registered name needs `--replace`.
-  - The commands are CLI-only. No MCP tool registers, changes or removes a plugin or takes
-    a command line or a URL for one, and tests enforce it: the server's source names none
-    of the core's operations that change the registry and touches no file itself, and no
-    tool's input has a field for a program or an address beyond the ones listed there.
+    anything else under a registered name needs `--replace`. A dry run looks at everything
+    the change needs and fails where the real run would, making nothing.
+  - No MCP tool registers, changes or removes a plugin or takes a command line or a URL
+    for one, and the build keeps it so. `internal/pluginregistry` reads the registry, and
+    the core and the MCP server link it. `internal/pluginregistry/registrar` changes it,
+    and only `internal/cli` imports that: a test lists what the server is built from and
+    fails when the registrar is in it, so no wrapper in the core can register a plugin
+    for a tool. What the two share, the opened configuration folder included, is in a
+    package neither the core nor the server can import. Tests that look at names, the
+    server's source and every tool's inputs, are a second line.
+  - `pluginregistry.OpenProgram` is what starting a plugin will use: it checks the program
+    and the arguments at that moment and returns the program open. The file is what is
+    started, not its path, which must not be resolved again after the check.
 - **Still to build for v2.0** (ADR-0012): the rest of Knowledge base plugins, so the agent
   can search a Topic's Sources with no account anywhere.
   - The agent talks to `study`, and `study` is the MCP client of the Topic's plugin. `study`

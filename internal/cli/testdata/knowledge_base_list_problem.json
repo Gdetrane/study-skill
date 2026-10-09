@@ -14,7 +14,7 @@
           "--recipe",
           "embedding gemma"
         ],
-        "problem": "its program is inside the Study home, $HOME/bin, where your agent can write, so study does not use this plugin: install the program outside the Study home, then register it again with study knowledge-base add shelf --replace -- <command>"
+        "problem": "its program is inside the Study home, $HOME/bin, or is reached through it, where your agent can write, so study does not use this plugin: install the program outside the Study home, then register it again with study knowledge-base add shelf --replace -- <command>"
       }
     ]
   }
