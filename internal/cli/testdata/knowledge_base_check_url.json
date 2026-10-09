@@ -1,0 +1,26 @@
+{
+  "ok": true,
+  "data": {
+    "plugin": {
+      "name": "remote",
+      "url": "http://127.0.0.1:PORT/mcp?key=s3cr3t"
+    },
+    "contract": {
+      "version": 1,
+      "sources": [
+        "file",
+        "url"
+      ],
+      "search": [
+        "keyword"
+      ],
+      "locations": [
+        "pages"
+      ]
+    },
+    "server": {
+      "name": "a-service",
+      "version": "0.9"
+    }
+  }
+}

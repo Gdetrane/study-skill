@@ -43,6 +43,12 @@ type Options struct {
 	// Logger receives the Log: diagnostics, never the learner's activity.
 	// Defaults to discarding everything.
 	Logger *slog.Logger
+	// Version is study's version, which a Knowledge base plugin is told
+	// when study opens an MCP session with it. Defaults to "dev".
+	Version string
+	// Plugins says how Knowledge base plugins are started and how long they
+	// have.
+	Plugins PluginOptions
 	// Crash is only for tests that simulate a crash, and must be nil
 	// otherwise: it is called at each point of a write where one could
 	// happen (CrashAfterIntent and the other Crash points), and returning an
@@ -82,6 +88,10 @@ type Core struct {
 	// a crash could happen; returning an error stops the write there
 	// without any cleanup, as a crash would.
 	crash func(point string) error
+	// version is study's version, and plugins how Knowledge base plugins
+	// are started (see plugin_client.go).
+	version string
+	plugins PluginOptions
 }
 
 // Open resolves the Study home and returns a Core for it. The Study home is
@@ -104,7 +114,11 @@ func Open(opts Options) (*Core, error) {
 	if dir, err = filepath.Abs(dir); err != nil {
 		return nil, internalError("resolving the working directory", err)
 	}
-	c := &Core{home: home, dir: dir, getenv: getenv, now: opts.Now, newID: opts.NewID, log: opts.Logger, gating: isGating, crash: opts.Crash}
+	c := &Core{home: home, dir: dir, getenv: getenv, now: opts.Now, newID: opts.NewID, log: opts.Logger, gating: isGating, crash: opts.Crash,
+		version: opts.Version, plugins: opts.Plugins}
+	if c.version == "" {
+		c.version = "dev"
+	}
 	if c.now == nil {
 		c.now = time.Now
 	}

@@ -1,0 +1,7 @@
+{
+  "ok": false,
+  "error": {
+    "code": "failed_precondition",
+    "message": "Knowledge base plugin remote does not answer as an MCP server at its address (dial tcp 127.0.0.1:PORT: connect: connection refused). Check that the service is running and that the address is the one of its MCP endpoint: study knowledge-base list shows it, and study knowledge-base add remote --replace --url <URL> changes it"
+  }
+}

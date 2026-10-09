@@ -111,6 +111,27 @@ Building the registry showed that three of these rules needed more than they say
   that the MCP server's dependencies do not contain it. A rule about names was passed by
   one wrapper function.
 
+Building the client showed that starting a command needed more than these rules say too:
+
+- What the system starts for a script is the interpreter its first line names, so that
+  program is checked as the plugin's own is, and its own interpreter after it.
+- The learner's environment can point into the Study home: an agent started in a Topic
+  with its virtual environment switched on hands the MCP server a `PATH` and a
+  `PYTHONPATH` into the Topic. A plugin started with those, outside the sandbox, would run
+  what the agent wrote there. So besides `GIT_*`, whatever in the environment names
+  something inside the Study home is taken out. Like the look at arguments, this catches
+  what is written as a path and is not a guarantee.
+- Only Linux can run a file that is already open. On macOS the program is started by its
+  path after a last look that the path still names the file that was checked, which leaves
+  the moment between that look and the system's own.
+- The plugin's folder is in the Study home, where the agent writes, and the plugin is told
+  its name. `study` refuses to start a plugin whose folder, or a folder on the way to it,
+  is a symbolic link; that is a look at one moment. And an agent that can write the index
+  can write what a search finds, so a quote checked against a Passage is as good as the
+  index it came from.
+- A `study` that is killed can stop nothing. Its end of the plugin's standard input closes
+  with it, and the contract has a plugin exit when that happens.
+
 ADR-0009 stands: the core runs nothing that a Topic's files name.
 
 ### Indexing runs only through the CLI

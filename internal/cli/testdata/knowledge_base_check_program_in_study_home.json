@@ -1,0 +1,7 @@
+{
+  "ok": false,
+  "error": {
+    "code": "failed_precondition",
+    "message": "Knowledge base plugin kb cannot be started: $HOME/bin/kb is inside the Study home, $HOME/bin, or is reached through it, where your agent can write. study starts a Knowledge base plugin outside the agent's sandbox, so its program must be one the agent cannot change, by a path no link in the Study home is part of: install it outside the Study home"
+  }
+}

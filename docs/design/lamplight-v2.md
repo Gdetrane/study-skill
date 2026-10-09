@@ -585,8 +585,8 @@ hours before any learning happens is exactly what v1 produced.
   - `status` marks the Lessons started or done that cite no Evidence, once the Topic has
     Sources (`lessons_without_evidence`); they are never blocked.
 - **Built** (ADR-0012): the registry of the Knowledge base plugins a machine has, and
-  `study knowledge-base add`, `list` and `remove` to change it. Nothing starts or contacts
-  a plugin yet, and no Topic names one.
+  `study knowledge-base add`, `list` and `remove` to change it. No Topic names a plugin
+  yet.
   - The registry is `knowledge-base-plugins.json`, with a `format` number, in Lamplight's
     configuration folder beside `config.toml`. An entry is a name and either a command, as
     an argument list, or an http or https URL. A name follows the rule of a Topic's id and
@@ -632,22 +632,63 @@ hours before any learning happens is exactly what v1 produced.
     for a tool. What the two share, the opened configuration folder included, is in a
     package neither the core nor the server can import. Tests that look at names, the
     server's source and every tool's inputs, are a second line.
-  - `pluginregistry.OpenProgram` is what starting a plugin will use: it checks the program
+  - `pluginregistry.OpenProgram` is what starting a plugin uses: it checks the program
     and the arguments at that moment and returns the program open. The file is what is
     started, not its path, which must not be resolved again after the check.
+    `pluginregistry.OpenFolder` opens the registry's folder the same way, to start the
+    plugin in.
+- **Built** (ADR-0012): the contract, `study` as the MCP client of a plugin, and
+  `study knowledge-base check`. Nothing indexes or searches yet.
+  - The contract, version 1, is `docs/knowledge-base-contract.md` for whoever writes a
+    plugin and `internal/plugincontract` for `study`; a test keeps the two in step, down to
+    the page's examples. It is six tools with fixed names: `contract` (the version, and the
+    kinds of Source, of search and of location the plugin has), `index` (one Source of a
+    collection; it answers at once with the Source's state), `status` (each Source
+    `indexed`, `indexing` with its progress or `failed` with the reason, and the hash of
+    the content that is indexed), `cancel` (stop indexing a Source; it answers once the
+    work has stopped), `search` (Passages for a query, best first, each with its score) and
+    `passage` (one Passage again, without a score). A Passage is the Source's own text as
+    extracted, with a location when the plugin knows one. A location says its kind: `pages`
+    now, others such as a time range later, without a new contract version; a Passage from
+    a web page has none. A file is indexed by its content hash, and the plugin gives the
+    hash of the bytes it read; a URL gets one when the plugin fetches it.
+  - Every tool takes one JSON object and gives one back, as structured content or as text.
+    A refusal is a tool error with a code: `invalid_argument`, `not_found`, `unsupported`
+    or `internal`. `study` reports the first two under the same codes and the others as
+    `failed_precondition`, since a plugin that fails is the learner's setup to put right.
+    What goes wrong with a Source is not an error of `index`: `status` says `failed`.
+  - `internal/pluginclient` starts a registered command, or reaches a registered URL over
+    streamable HTTP, and returns a Connection with the contract's five other tools as
+    methods. A command is the file `OpenProgram` checked, run without a shell, in the
+    registry's folder, in a session of its own, with pipes of its own, and with a folder of
+    its own, `.lamplight/knowledge-base-plugins/<name>` in the Study home, which
+    `LAMPLIGHT_PLUGIN_DATA` names. Its environment is the learner's less `GIT_*` and less
+    whatever names something inside the Study home: an agent started in a Topic with its
+    virtual environment switched on hands the MCP server a `PATH` and a `PYTHONPATH` into
+    the Topic, and a plugin started with those would run what the agent wrote. A script's
+    interpreter is checked as the program is, since it is what the system runs. On Linux the program and the folder are named by their
+    descriptors (`/proc/self/fd`), so nothing is resolved by name after the check; on
+    macOS, which cannot run an open file, they are named after a last look that the names
+    still lead to what was checked. Closing the Connection stops the command, with its
+    process group: its pipes are closed, then `SIGTERM`, then `SIGKILL`.
+  - A plugin is not trusted with `study`'s time, memory or terminal. Starting, each call
+    and stopping have deadlines; a message is read up to 16 MiB; every answer is checked
+    against the contract; and what a plugin wrote reaches a message only on one line, cut
+    short, with control characters escaped. A plugin that reports a newer contract version
+    is `newer_format`.
+  - `study knowledge-base check <name>` starts or reaches a plugin, reports the contract it
+    speaks, and stops it. It is CLI-only. The core starts a plugin for nothing else yet,
+    and a test fails when anything but `CheckPlugin` does, so no MCP tool starts or reaches
+    a plugin until a Topic can name one.
+  - `internal/plugintest` holds a small plugin that speaks the contract, which is the one
+    program tests start (a test binary run as the plugin), and the conformance suite: a
+    test helper that takes a way to connect to any plugin and holds it to everything the
+    contract promises. A test runs the suite against plugins that each break the contract
+    in one way, so the suite is known to fail them.
 - **Still to build for v2.0** (ADR-0012): the rest of Knowledge base plugins, so the agent
   can search a Topic's Sources with no account anywhere.
   - The agent talks to `study`, and `study` is the MCP client of the Topic's plugin. `study`
     ships no retrieval and still never parses a document.
-  - The contract is six tools with fixed names: `contract` (the version, and what the
-    plugin can do), `index` (one Source of a Topic's collection; it returns at once),
-    `status` (each Source indexed, indexing or failed, and the hash of the content
-    indexed), `cancel` (stop indexing a Source), `search` (Passages for a query, each with
-    its score) and `passage` (one Passage again). A Passage is the Source's own text as
-    extracted, with a location when the plugin knows one. A location says its kind: `pages`
-    now, others such as a time range later, without a new contract version; a Passage from
-    a web page has none. A file is indexed by its content hash; a URL gets one when the
-    plugin fetches it.
   - A plugin is registered per machine with `study knowledge-base add` (built, above). A
     Topic records only its name (`kind = "plugin"`, `plugin = "<name>"`), so nothing a Topic
     holds decides which program runs (ADR-0009). A Topic whose plugin this machine lacks is
@@ -979,9 +1020,10 @@ with drafts and Reviews, History with replay, Checkpoints, Assessment, Goal, Pac
 recording Level signals); sync for one machine at a time; the Library in Go; the CLI with
 terminal Reviews; the MCP server; the `lamplight` skill; the Claude Code plugin and
 `study setup` for Claude Code and Codex; Linux and macOS releases with an install script;
-`study import`; and, still to build, Knowledge base plugins (ADR-0012): the contract, `study`
-as its client, the registry, `evidence_search` with the quote check, and Shelf with keyword
-and embedding search and optional reranking.
+`study import`; and Knowledge base plugins (ADR-0012): the registry, the contract and `study`
+as its client, which are built, and, still to build, Topics that name a plugin,
+`study source index`, `evidence_search` with the quote check, and Shelf with keyword and
+embedding search and optional reranking.
 
 **Order of work**: the tracer bullet, then the History engine (its file formats are settled
 before any real data is written), then a thin learner loop through every layer, then each

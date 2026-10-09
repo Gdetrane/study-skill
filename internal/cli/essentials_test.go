@@ -20,6 +20,7 @@ import (
 
 	"github.com/mordor-forge/lamplight/v2/internal/cli"
 	"github.com/mordor-forge/lamplight/v2/internal/core"
+	"github.com/mordor-forge/lamplight/v2/internal/plugintest"
 )
 
 // TestMain keeps results independent of the machine: completion scripts that
@@ -28,7 +29,12 @@ import (
 // sets GIT_INDEX_FILE, and GIT_DIR from a linked worktree: the git and go
 // commands the tests run themselves would then work on the repository being
 // committed. The core drops these variables on its own.
+//
+// Started as the test Knowledge base plugin, this test binary is that
+// plugin and runs no test: it is the one program the tests of study
+// knowledge-base check start.
 func TestMain(m *testing.M) {
+	plugintest.Main()
 	*cli.SystemCompletionRoots = []string{filepath.Join(os.TempDir(), "study-test-no-package-completions")}
 	for _, kv := range os.Environ() {
 		if name, _, _ := strings.Cut(kv, "="); strings.HasPrefix(name, "GIT_") {

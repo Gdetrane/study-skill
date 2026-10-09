@@ -164,7 +164,10 @@ func aboutTheRegistry(name string) bool {
 // imports nothing of the registry's packages; and it uses no name about
 // plugins or the registry but the ones that only read.
 func TestTheServerNamesNothingThatChangesThePluginRegistry(t *testing.T) {
-	for _, name := range []string{"AddPlugin", "RemovePlugin", "PluginSpec", "PluginRegistryEnv", "registrar", "SetPluginReader", "pluginRegistry"} {
+	for _, name := range []string{"AddPlugin", "RemovePlugin", "PluginSpec", "PluginRegistryEnv", "registrar", "SetPluginReader", "pluginRegistry",
+		// Nor what starts a plugin or reaches one (see
+		// TestNoToolStartsOrReachesAPlugin).
+		"CheckPlugin", "PluginCheck", "PluginOptions", "startPlugin"} {
 		if !aboutTheRegistry(name) {
 			t.Fatalf("%s is not refused, so this test proves nothing", name)
 		}
@@ -193,6 +196,9 @@ func TestTheServerNamesNothingThatChangesThePluginRegistry(t *testing.T) {
 				t.Errorf("%s imports %s: the server asks the core about plugins, and has nothing to do with the "+
 					"registry's own packages (ADR-0012)", name, p)
 			}
+			if strings.HasPrefix(p, module+"/internal/plugin") {
+				t.Errorf("%s imports %s: the server reaches a Knowledge base plugin only through the core (ADR-0012)", name, p)
+			}
 		}
 		ast.Inspect(file, func(n ast.Node) bool {
 			if sel, ok := n.(*ast.SelectorExpr); ok && aboutTheRegistry(sel.Sel.Name) {
@@ -204,6 +210,99 @@ func TestTheServerNamesNothingThatChangesThePluginRegistry(t *testing.T) {
 	}
 	if checked == 0 {
 		t.Fatal("no source files were checked")
+	}
+}
+
+// pluginClient is the package that starts a Knowledge base plugin, or
+// reaches one.
+const pluginClient = module + "/internal/pluginclient"
+
+// TestNoToolStartsOrReachesAPlugin: so far study starts a plugin, or reaches
+// one, for study knowledge-base check alone, which is for the learner and
+// CLI-only. The server runs outside the agent's sandbox, and until a Topic
+// can name a plugin no tool has a reason to start one.
+//
+// This reads how the program is built. Only the core imports the package
+// that starts a plugin; in the core, one function calls it, and one
+// operation calls that function, CheckPlugin, which the test above keeps
+// the server from naming. When a tool comes to search a Topic's plugin, this
+// test is where that is decided: add the operation here, on purpose.
+func TestNoToolStartsOrReachesAPlugin(t *testing.T) {
+	var importers []string
+	for _, line := range goList(t, "-f", `{{.ImportPath}} {{join .Imports ","}}`, "./...") {
+		pkg, imports, _ := strings.Cut(line, " ")
+		if slices.Contains(strings.Split(imports, ","), pluginClient) {
+			importers = append(importers, strings.TrimPrefix(pkg, module+"/"))
+		}
+	}
+	if !slices.Equal(importers, []string{"internal/core"}) {
+		t.Fatalf("%s is imported by %v: only internal/core may start a Knowledge base plugin", pluginClient, importers)
+	}
+
+	// starts are the core's functions that may start a plugin, and where
+	// each may be called from.
+	starts := map[string][]string{
+		"Start":       {"startPlugin"}, // pluginclient.Start
+		"startPlugin": {"CheckPlugin"},
+	}
+	files, err := filepath.Glob(filepath.Join("..", "core", "*.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := map[string]int{}
+	for _, name := range files {
+		if strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		file, err := parser.ParseFile(token.NewFileSet(), name, nil, parser.SkipObjectResolution)
+		if err != nil {
+			t.Fatal(err)
+		}
+		imports := false
+		for _, imp := range file.Imports {
+			imports = imports || strings.Trim(imp.Path.Value, `"`) == pluginClient
+		}
+		for _, decl := range file.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Body == nil {
+				continue
+			}
+			ast.Inspect(fn.Body, func(n ast.Node) bool {
+				sel, ok := n.(*ast.SelectorExpr)
+				if !ok {
+					return true
+				}
+				pkg, _ := sel.X.(*ast.Ident)
+				switch {
+				case sel.Sel.Name == "Start" && (pkg == nil || pkg.Name != "pluginclient" || !imports):
+					return true // another package's Start
+				case starts[sel.Sel.Name] == nil:
+					return true
+				}
+				found[sel.Sel.Name]++
+				if !slices.Contains(starts[sel.Sel.Name], fn.Name.Name) {
+					t.Errorf("%s: %s uses %s, which starts a Knowledge base plugin: only %v may, so that no MCP tool "+
+						"starts or reaches one (ADR-0012)", name, fn.Name.Name, sel.Sel.Name, starts[sel.Sel.Name])
+				}
+				return true
+			})
+		}
+	}
+	// The core is read as this test expects: each is used where it may be.
+	for name := range starts {
+		if found[name] != 1 {
+			t.Errorf("%s is used %d times in the core, want once: this test no longer reads the core as it is", name, found[name])
+		}
+	}
+	if !aboutTheRegistry("CheckPlugin") {
+		t.Fatal("the server could name CheckPlugin, so this test proves nothing")
+	}
+
+	// The test plugin is for tests: study is built without it.
+	if deps := goList(t, "-deps", "./cmd/study"); slices.Contains(deps, module+"/internal/plugintest") || !slices.Contains(deps, pluginClient) {
+		t.Errorf("study links the test plugin, or not the client: %v", slices.DeleteFunc(deps, func(dep string) bool {
+			return !strings.HasPrefix(dep, module+"/internal/plugin")
+		}))
 	}
 }
 

@@ -22,6 +22,9 @@ Read these before changing behaviour:
   speak one contract over MCP, with `study` as their client, and Shelf as the first.
 - `docs/cli.md`: the command-line contract that scripts and agents rely on. A test checks
   that it mentions every command and flag.
+- `docs/knowledge-base-contract.md`: the contract a Knowledge base plugin speaks, for
+  whoever writes one. `internal/plugincontract` is the same contract in Go, and a test
+  keeps the two in step: every field, kind, code and limit, and every example on the page.
 
 ## Development Commands
 
@@ -79,6 +82,21 @@ GOOS=darwin go vet ./...            # macOS is supported too
   identity, one hop of the path at a time, on folders that are then used as they were
   opened (`regfile.Walker`). Never decide it from a path's name, and never open by name
   again what was checked.
+- A Knowledge base plugin is started, or reached, only through `internal/pluginclient`,
+  which only the core imports; the MCP server reaches a plugin only through the core. A
+  command is the file `pluginregistry.OpenProgram` checked, run without a shell in the
+  registry's folder (`pluginregistry.OpenFolder`), never in the Topic or the Study home,
+  with pipes of its own, without the caller's `GIT_*` variables and without what in the
+  environment names something inside the Study home (`pluginregistry.Guard`), and stopped
+  with its process group when its Connection is closed. So far only
+  `study knowledge-base check` starts one: a test in `internal/mcpserver` fails when
+  anything in the core but `CheckPlugin` does. Change that test on purpose when a tool
+  comes to search a plugin.
+- A plugin is not trusted with `study`'s time, memory or terminal. Every call has a
+  deadline, a message is read up to a limit, every answer is checked against the contract
+  (`plugincontract`'s `Validate`), and text a plugin wrote reaches an error only through
+  the client's `clean`. A Passage's text is returned as it is: print it through
+  `printable()`.
 - Every file Lamplight owns carries a `format` number, and newer formats are refused.
 - Text from files or the History goes through `printable()` before it reaches a terminal;
   `--json` output never triggers terminal queries.
@@ -109,6 +127,12 @@ GOOS=darwin go vet ./...            # macOS is supported too
   `GIT_DIR`, which point those commands at the repository being committed.
   `TestTheTestsIgnoreTheCallersGitEnvironment` checks it in each such package. Tests that
   build `study` pass `-buildvcs=false`, so the build never needs git to report on the checkout.
+- The test plugin (`internal/plugintest`) is the only Knowledge base plugin a test starts,
+  and it is the test binary itself: call `plugintest.Main()` first in `TestMain`, and
+  register `plugintest.Command(...)`, whose flags make the plugin misbehave. Never start a
+  real plugin, and never reach an address that is not a test server on this computer. Give
+  the plugin the test's environment (`core.Options.Plugins.Environ`) and short deadlines.
+  A plugin of any kind is held to the contract with `plugintest.Conformance`.
 - Tests must pass with no git identity configured (CI has none), and in any order.
 
 ## Important Paths
@@ -119,13 +143,23 @@ GOOS=darwin go vet ./...            # macOS is supported too
   the Syllabus and Revisions, Sessions and the Resume point, Checks and Attempts, Cards and
   FSRS scheduling (`schedule.go`), Sources and Evidence, Goal and Pace, Assessments and
   signals, the read views, and `study import`. It reads the Knowledge base plugin registry
-  (`plugin_registry.go`) and changes nothing in it.
+  (`plugin_registry.go`) and changes nothing in it, and starts or reaches a plugin
+  (`plugin_client.go`).
+- `internal/plugincontract`: the contract a Knowledge base plugin speaks, version 1: the
+  six tools' inputs and results as Go types, the limits, the error codes, and what each
+  answer must hold (`Validate`). It holds no client and no server.
+- `internal/pluginclient`: `study` as the MCP client of a plugin: starting a registered
+  command or reaching a registered URL, the deadlines, and a `Connection` with the contract's
+  tools as methods.
+- `internal/plugintest`: for tests only: the test plugin, a learner's computer made of
+  temporary folders (`Computer`), and the conformance suite.
 - `internal/pluginregistry`: the Knowledge base plugin registry, which is the computer's
-  and not the Study home's. The package itself only reads (`Read`, and `OpenProgram` for
-  starting a plugin). `registrar` below it registers and removes plugins, for
-  `internal/cli` alone. `internal/regfile` below it is what the two share and nothing
-  else can import: the walk that keeps the Study home out, the configuration folder as it
-  was opened, and the file's shape. `internal/regtest` is their tests' fixture.
+  and not the Study home's. The package itself only reads (`Read`, and `OpenProgram` and
+  `OpenFolder` for starting a plugin). `registrar` below it registers and removes
+  plugins, for `internal/cli` alone. `internal/regfile` below it is what the two share and
+  nothing else can import: the walk that keeps the Study home out, the configuration
+  folder as it was opened, and the file's shape. `internal/regtest` is their tests'
+  fixture.
 - `internal/checkpoint`: hardened git: Checkpoints, work snapshots for Attempts, changes
   since a Checkpoint, and reading history.
 - `internal/library`: building and searching the Library index.
@@ -136,8 +170,9 @@ GOOS=darwin go vet ./...            # macOS is supported too
 - `internal/claudeplugin` and `.claude-plugin/marketplace.json`: the Claude Code plugin,
   generated by `study claude-plugin-path`.
 - `internal/e2e`: end-to-end tests: the learner loop driven by a scripted agent, the
-  v2.0 acceptance walkthrough from `study setup` to an imported v1 Topic, and `install.sh`
-  run against a local folder of release files.
+  v2.0 acceptance walkthrough from `study setup` to an imported v1 Topic, `install.sh`
+  run against a local folder of release files, and a built `study` that starts the test
+  plugin and stops it when it exits or is signalled.
 - `skills/lamplight`: the `lamplight` skill, embedded in the binary.
 - `install.sh`: the install script the README gives (ADR-0010), in POSIX `sh`. It relies on
   the names of the release files and of the files in an archive, set in `.goreleaser.yaml`
@@ -153,7 +188,7 @@ GOOS=darwin go vet ./...            # macOS is supported too
   no MCP tool: `study check`, which runs code (ADR-0009), and what is for the learner or the
   installation alone, such as `study topic remove`, `study topic restore`, `study import`,
   `study knowledge-base add`, `study knowledge-base list`, `study knowledge-base remove`,
-  `study setup`, `study doctor`, `study completion`, `study library build` and terminal
+  `study knowledge-base check`, `study setup`, `study doctor`, `study completion`, `study library build` and terminal
   `study review`.
 - New file or Event format: bump nothing silently; add a `format` field and a test that
   newer formats are refused.

@@ -1,0 +1,6 @@
+✓ Knowledge base plugin remote speaks version 1 of Lamplight's contract.
+  Reached at:    http://127.0.0.1:PORT/mcp?key=s3cr3t
+  Calls itself:  a-service 0.9
+  Indexes:       web pages
+  Searches:      by keyword
+  Locations:     pages

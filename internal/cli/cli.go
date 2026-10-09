@@ -45,6 +45,9 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	if opts.Getenv == nil {
 		opts.Getenv = os.Getenv
 	}
+	if opts.Version == "" {
+		opts.Version = version()
+	}
 	a := &app{opts: opts, args: args, stdin: stdin, stdout: stdout, stderr: stderr,
 		out: colorprofile.NewWriter(stdout, environ(opts.Getenv))}
 	defer func() { a.logs.close() }()
