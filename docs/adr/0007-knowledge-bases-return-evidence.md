@@ -4,7 +4,10 @@
 
 Accepted. ADR-0011 replaces its v2.0 part and the first of its consequences: `notebooklm` is
 not a Knowledge base kind, Lamplight does not use NotebookLM, and NotebookLM is no longer
-the recommended Knowledge base. The rest stands, and its "Later" becomes part of v2.0.
+the recommended Knowledge base. The rest stands, and its "Later" becomes part of v2.0, as
+ADR-0012 decides it. ADR-0012 also sharpens one sentence of the decision below: a search of
+the Knowledge base returns Passages, and Evidence is the exact quote a Lesson cites from
+one.
 
 ## Context
 
