@@ -1,6 +1,7 @@
 package regfile
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -358,6 +359,73 @@ func TestOpenProgramRefusesWhatIsNoProgram(t *testing.T) {
 		if file, err := w.OpenProgram(path); CodeOf(err) != code || file != nil {
 			t.Errorf("OpenProgram(%s) = %v, %v; want %s", path, file, err, code)
 		}
+	}
+}
+
+// A program is one the user study runs as may run. An execute bit that is
+// there for someone else, for others or for the group on a file the user
+// owns, does not make it one: the system is asked, not the bits.
+func TestAProgramIsOneThisUserMayRun(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root may run any file with an execute bit, whoever the bit is for")
+	}
+	c := regtest.New(t)
+	w := NewWalker(c.Study)
+	defer w.Close()
+	for _, tc := range []struct {
+		mode     os.FileMode
+		runnable bool
+	}{
+		{0o001, false}, // for others, and the user owns the file
+		{0o010, false}, // for the group, and the user owns the file
+		{0o011, false},
+		{0o655, false},
+		{0o644, false},
+		{0o000, false},
+		{0o100, true},
+		{0o500, true},
+		{0o744, true},
+		{0o755, true},
+	} {
+		name := fmt.Sprintf("kb-%03o", tc.mode)
+		path := regtest.Program(t, filepath.Join(c.Bin, name))
+		if err := os.Chmod(path, tc.mode); err != nil {
+			t.Fatal(err)
+		}
+		err := w.CheckProgram(path)
+		found, perr := w.ResolveProgram(envOf(c, c.Home), name)
+		byPath, rerr := w.ResolveProgram(envOf(c, c.Home), path)
+		if tc.runnable {
+			if err != nil || perr != nil || found != path || rerr != nil || byPath != path {
+				t.Errorf("mode %v: CheckProgram = %v; found on PATH %q, %v; by its path %q, %v; want it taken", tc.mode, err, found, perr, byPath, rerr)
+			}
+			continue
+		}
+		if CodeOf(err) != CodeInvalidArgument || !strings.Contains(err.Error(), "not a program you can run") || !strings.Contains(err.Error(), "chmod u+x") {
+			t.Errorf("mode %v: CheckProgram = %v; want invalid_argument, not a program you can run", tc.mode, err)
+		}
+		// On PATH it is passed over, as a shell passes it over.
+		if CodeOf(perr) != CodeNotFound || found != "" {
+			t.Errorf("mode %v: found on PATH %q, %v; want not_found", tc.mode, found, perr)
+		}
+		if CodeOf(rerr) != CodeInvalidArgument || byPath != "" {
+			t.Errorf("mode %v: by its path %q, %v; want invalid_argument", tc.mode, byPath, rerr)
+		}
+		if file, err := w.OpenProgram(path); CodeOf(err) != CodeInvalidArgument || !strings.Contains(err.Error(), "not a program you can run") || file != nil {
+			t.Errorf("mode %v: OpenProgram = %v, %v; want invalid_argument, not a program you can run", tc.mode, file, err)
+		}
+	}
+
+	// To be started, a program is opened, and so must be one the user may
+	// read as well.
+	readable := filepath.Join(c.Bin, "kb-500")
+	file, err := w.OpenProgram(readable)
+	if err != nil {
+		t.Fatalf("OpenProgram of a program the user may read and run: %v", err)
+	}
+	file.Close()
+	if file, err := w.OpenProgram(filepath.Join(c.Bin, "kb-100")); CodeOf(err) != CodeFailedPrecondition || file != nil {
+		t.Errorf("OpenProgram of a program the user may run and not read = %v, %v; want failed_precondition", file, err)
 	}
 }
 

@@ -193,6 +193,43 @@ func TestAddRefusals(t *testing.T) {
 	}
 }
 
+// A file with an execute bit that is not for the learner, on a file they
+// own, is no program they can run, and is not registered as one.
+func TestAddRefusesAProgramTheLearnerMayNotRun(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root may run any file with an execute bit, whoever the bit is for")
+	}
+	ctx := context.Background()
+	c := regtest.New(t)
+	forOthers := regtest.Program(t, filepath.Join(c.Bin, "kb"))
+	if err := os.Chmod(forOthers, 0o001); err != nil {
+		t.Fatal(err)
+	}
+	for _, program := range []string{forOthers, "kb"} {
+		for _, dryRun := range []bool{true, false} {
+			_, err := Add(ctx, at(c), Spec{Name: "kb", Command: []string{program}, DryRun: dryRun})
+			want, text := "invalid_argument", "not a program you can run"
+			if program == "kb" {
+				// On PATH it is passed over, as a shell passes it over.
+				want, text = "not_found", "PATH"
+			}
+			if pluginregistry.CodeOf(err) != want || !strings.Contains(err.Error(), text) {
+				t.Errorf("Add of %s (dry run %v) = %v; want %s with %q", program, dryRun, err, want, text)
+			}
+		}
+	}
+	if regtest.Exists(c.ConfigDir()) {
+		t.Error("a refused registration made the configuration folder")
+	}
+	// Once it is theirs to run, it is registered.
+	if err := os.Chmod(forOthers, 0o100); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Add(ctx, at(c), Spec{Name: "kb", Command: []string{"kb"}}); err != nil {
+		t.Errorf("Add of a program the learner may run: %v", err)
+	}
+}
+
 // A program is refused when its path leads through the Study home at any
 // hop. The full list of ways is with the walk that decides it; these are
 // the ones a learner, or an agent asking a learner, would try.

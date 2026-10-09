@@ -598,10 +598,13 @@ hours before any learning happens is exactly what v1 produced.
     name at a time, each folder opened from the one before it and each symbolic link
     followed from the folder that really holds it, and is refused as soon as it enters the
     Study home, wherever it ends. The Study home is known by file identity, not by name,
-    so another letter case, link or mount of it is still the Study home. That holds for a
+    so another letter case, link or mount of it is still the Study home. One that is not
+    there yet is known by where it will be, and looked for again at every folder, so a
+    Study home another `study` makes meanwhile is refused like any other. That holds for a
     plugin's program and for Lamplight's configuration folder, which is then read, locked
     and written through the folder as it was opened, never through its name again. A
-    configuration folder that is not an absolute path is refused too.
+    configuration folder that is not an absolute path is refused too. A program must be
+    one the user `study` runs as may run, which the system is asked.
   - An argument that names something in the Study home is refused unless the learner
     allows it (`--allow-study-home-arguments`), which the entry records. An argument that
     names a file relative to where the command was typed is refused, since a plugin is

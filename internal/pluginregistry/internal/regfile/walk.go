@@ -38,13 +38,17 @@ import (
 type Walker struct {
 	studyHome string
 	// home is the Study home, open, and homeInfo what identifies it. Both
-	// are nil when there is no Study home yet.
+	// are nil when there is no Study home yet. Then the Walker looks for it
+	// again at every folder it comes to (see identify): another study can
+	// make it at any moment.
 	home     *os.Root
 	homeInfo fs.FileInfo
 	// A Study home that is not there yet has no identity. Until it is made,
 	// what would be inside it is told by where it will be: comingIn is the
 	// deepest folder of its path that exists, and comingAs the names below
-	// that folder that do not.
+	// that folder that do not. That tells of paths that are not there
+	// either; what is there by the time a walk reaches it is told by the
+	// second look.
 	comingIn fs.FileInfo
 	comingAs []string
 	// blind is why the Study home cannot be told apart from other folders,
@@ -60,22 +64,17 @@ type Walker struct {
 // a loop, as the operating system does.
 const maxLinks = 40
 
+// afterNewWalker, when a test sets it, is called once a Walker has looked for
+// the Study home and before anything walks with it, where another study
+// could make a Study home that was not there.
+var afterNewWalker func()
+
 // NewWalker returns a Walker that refuses the Study home at studyHome. It
 // holds the Study home open until Close.
 func NewWalker(studyHome string) *Walker {
 	w := &Walker{studyHome: studyHome}
-	home, err := os.OpenRoot(studyHome)
-	switch {
-	case err == nil:
-		if info, err := home.Stat("."); err == nil {
-			w.home, w.homeInfo = home, info
-		} else {
-			_ = home.Close()
-		}
-	case errors.Is(err, fs.ErrNotExist):
-		if !filepath.IsAbs(studyHome) {
-			break
-		}
+	w.identify()
+	if w.homeInfo == nil && w.blind == nil && filepath.IsAbs(studyHome) {
 		// Not there yet: find where it will be.
 		if place, err := (&Walker{}).Walk(studyHome); err == nil {
 			if info, err := place.Folder().Stat("."); err == nil && len(place.Missing) > 0 {
@@ -83,20 +82,61 @@ func NewWalker(studyHome string) *Walker {
 			}
 			place.Close()
 		}
+	}
+	if afterNewWalker != nil {
+		afterNewWalker()
+	}
+	return w
+}
+
+// identify looks for the Study home and takes what identifies it. A Walker
+// asks when it is made, and again at every folder for as long as it found no
+// Study home: another study can make the Study home at any moment, a first
+// study topic create for one, and what is in it by the time a walk gets
+// there must be refused like anything else in it.
+func (w *Walker) identify() {
+	if w.studyHome == "" {
+		// A Walker without a Study home refuses nothing: NewWalker walks
+		// with one to find where a Study home will be.
+		return
+	}
+	home, err := os.OpenRoot(w.studyHome)
+	switch {
+	case err == nil:
+		if info, err := home.Stat("."); err == nil {
+			w.home, w.homeInfo = home, info
+			// It is known by what it is now, not by where it would be.
+			w.comingIn, w.comingAs = nil, nil
+		} else {
+			_ = home.Close()
+		}
+	case errors.Is(err, fs.ErrNotExist):
 	default:
 		// A Study home study cannot open, such as one it may not list, is
 		// still a folder with an identity. One it cannot even look at
 		// leaves no way to tell what is inside it, and then nothing is
 		// taken for outside.
-		info, serr := os.Stat(studyHome)
+		info, serr := os.Stat(w.studyHome)
 		switch {
 		case serr == nil && info.IsDir():
 			w.homeInfo = info
+			w.comingIn, w.comingAs = nil, nil
 		case serr != nil && !errors.Is(serr, fs.ErrNotExist):
-			w.blind = fmt.Errorf("study cannot look at the Study home, %s, to tell what is inside it: %w", studyHome, serr)
+			w.blind = fmt.Errorf("study cannot look at the Study home, %s, to tell what is inside it: %w", w.studyHome, serr)
 		}
 	}
-	return w
+}
+
+// isHome reports whether a folder is the Study home, by what identifies the
+// two. While no Study home is known, it looks for one again first.
+func (w *Walker) isHome(info fs.FileInfo) (bool, error) {
+	if w.homeInfo == nil && w.blind == nil {
+		w.identify()
+	}
+	if w.blind != nil {
+		return false, w.blind
+	}
+	return w.homeInfo != nil && os.SameFile(w.homeInfo, info), nil
 }
 
 // Close lets go of the Study home.
@@ -264,7 +304,9 @@ func (w *Walker) Walk(path string) (_ *Place, err error) {
 		case info.IsDir():
 			// The Study home is known before it is opened, which study may
 			// not be allowed to do.
-			if w.homeInfo != nil && os.SameFile(w.homeInfo, info) {
+			if home, err := w.isHome(info); err != nil {
+				return nil, err
+			} else if home {
 				return nil, &InsideError{StudyHome: p.path(s.name)}
 			}
 			if w.beforeEnter != nil {
@@ -302,7 +344,9 @@ func (w *Walker) Walk(path string) (_ *Place, err error) {
 
 // entered checks the folder the walk just went into, by what identifies it.
 func (w *Walker) entered(p *Place, info fs.FileInfo) error {
-	if w.homeInfo != nil && os.SameFile(w.homeInfo, info) {
+	if home, err := w.isHome(info); err != nil {
+		return err
+	} else if home {
 		return &InsideError{StudyHome: p.Path()}
 	}
 	return nil

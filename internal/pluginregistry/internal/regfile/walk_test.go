@@ -384,3 +384,153 @@ func TestWalkTakesNothingForOutsideAStudyHomeItCannotLookAt(t *testing.T) {
 		t.Error("a path into a Study home that cannot be listed counts as outside it")
 	}
 }
+
+// afterTheWalkerLooked has the next Walker that is made look for the Study
+// home first, and only then lets make run: what make puts there was not
+// there when the Walker looked, and is there for everything the Walker is
+// then asked.
+func afterTheWalkerLooked(t *testing.T, make func()) (made *bool) {
+	t.Helper()
+	made = new(bool)
+	afterNewWalker = func() {
+		if !*made {
+			*made = true
+			make()
+		}
+	}
+	t.Cleanup(func() { afterNewWalker = nil })
+	return made
+}
+
+// Another study can make the Study home after a Walker looked for it and
+// found none: a first study topic create, say, while study knowledge-base
+// add is under way. What is in the Study home by the time the walk gets
+// there is refused all the same: the Walker looks for the Study home again
+// at each folder for as long as it knows none.
+func TestWalkRefusesAStudyHomeMadeAfterTheWalkerLooked(t *testing.T) {
+	const planted = `{"format": 1, "plugins": [{"name": "planted", "url": "http://localhost/"}]}`
+	// A computer whose Study home is not there yet, and what another study
+	// then makes there: a Topic with a program and a script in it, and a
+	// configuration folder with a registry.
+	type world struct {
+		c                *regtest.Computer
+		later, kb, py    string
+		alias, python    string
+		insideConfigVars map[string]string
+	}
+	newWorld := func(t *testing.T) (world, func()) {
+		c := regtest.New(t)
+		later := filepath.Join(c.Base, "later", "study")
+		w := world{later: later, kb: filepath.Join(later, "topic", "kb"), py: filepath.Join(later, "topic", "kb.py"),
+			python: regtest.Program(t, filepath.Join(c.Bin, "python3")),
+			// Another name for the folder the Study home will be made in.
+			alias:            regtest.Symlink(t, c.Base, filepath.Join(c.Home, "base")),
+			insideConfigVars: map[string]string{"XDG_CONFIG_HOME": filepath.Join(later, ".config")}}
+		w.c = c.With(map[string]string{"STUDY_HOME": later})
+		return w, func() {
+			regtest.Program(t, w.kb)
+			regtest.WriteFile(t, w.py, "print()\n")
+			regtest.WriteFile(t, filepath.Join(later, ".config", "lamplight", FileName), planted)
+		}
+	}
+	// stale is a Walker that looked for the Study home before it was made.
+	stale := func(t *testing.T) (world, *Walker) {
+		w, make := newWorld(t)
+		made := afterTheWalkerLooked(t, make)
+		walker := NewWalker(w.later)
+		t.Cleanup(walker.Close)
+		if !*made || walker.homeInfo != nil || !regtest.Exists(w.kb) {
+			t.Fatalf("the Walker did not look before the Study home was made (made %v, identity %v), so this test proves nothing",
+				*made, walker.homeInfo)
+		}
+		return w, walker
+	}
+
+	t.Run("a program", func(t *testing.T) {
+		w, walker := stale(t)
+		if err := walker.CheckProgram(w.kb); !IsInside(err) || CodeOf(err) != CodeInvalidArgument {
+			t.Errorf("CheckProgram = %v; want it refused as inside the Study home", err)
+		}
+		// What is outside is still taken.
+		if err := walker.CheckProgram(w.python); err != nil {
+			t.Errorf("CheckProgram of a program outside: %v", err)
+		}
+	})
+	t.Run("a program, opened to be started", func(t *testing.T) {
+		w, walker := stale(t)
+		if file, err := walker.OpenProgram(w.kb); !IsInside(err) || file != nil {
+			t.Errorf("OpenProgram = %v, %v; want it refused as inside the Study home", file, err)
+		}
+	})
+	t.Run("a program found on PATH", func(t *testing.T) {
+		w, walker := stale(t)
+		env := envOf(w.c.With(map[string]string{"PATH": filepath.Dir(w.kb)}), w.c.Home)
+		if got, err := walker.ResolveProgram(env, "kb"); !IsInside(err) || got != "" {
+			t.Errorf("ResolveProgram = %q, %v; want it refused as inside the Study home", got, err)
+		}
+	})
+	t.Run("a program by another name of the Study home", func(t *testing.T) {
+		w, walker := stale(t)
+		if err := walker.CheckProgram(filepath.Join(w.alias, "later", "study", "topic", "kb")); !IsInside(err) {
+			t.Errorf("CheckProgram = %v; want it refused as inside the Study home", err)
+		}
+	})
+	t.Run("an argument", func(t *testing.T) {
+		w, walker := stale(t)
+		if i, arg := walker.InsideArgument(envOf(w.c, w.c.Home), []string{w.python, "-u", w.py}); i != 2 || arg != w.py {
+			t.Errorf("InsideArgument = %d, %q; want argument 2", i, arg)
+		}
+	})
+	t.Run("an argument after an =", func(t *testing.T) {
+		w, walker := stale(t)
+		if i, _ := walker.InsideArgument(envOf(w.c, w.c.Home), []string{w.python, "--script=" + w.py}); i != 1 {
+			t.Errorf("InsideArgument = %d; want argument 1", i)
+		}
+		if i, arg := walker.InsideArgument(envOf(w.c, w.c.Home), []string{w.python, w.c.Bin}); i != 0 {
+			t.Errorf("InsideArgument of an argument outside = %d, %q", i, arg)
+		}
+	})
+	t.Run("the configuration folder", func(t *testing.T) {
+		w, make := newWorld(t)
+		made := afterTheWalkerLooked(t, make)
+		folder, err := Open(envOf(w.c.With(w.insideConfigVars), w.c.Home))
+		if !*made {
+			t.Fatal("no Walker was made, so this test proves nothing")
+		}
+		if CodeOf(err) != CodeFailedPrecondition || !strings.Contains(err.Error(), "is inside the Study home") || folder != nil ||
+			strings.Contains(err.Error(), "planted") {
+			t.Errorf("Open = %v, %v; want failed_precondition, inside the Study home, with nothing read", folder, err)
+		}
+	})
+	t.Run("the configuration folder outside it", func(t *testing.T) {
+		w, make := newWorld(t)
+		made := afterTheWalkerLooked(t, make)
+		folder, err := Open(envOf(w.c, w.c.Home))
+		if err != nil || !*made {
+			t.Fatalf("Open = %v, made %v", err, *made)
+		}
+		defer folder.Close()
+		// Its Walker is the one a registration is then checked with.
+		if err := folder.Walker().CheckProgram(w.kb); !IsInside(err) {
+			t.Errorf("CheckProgram with the folder's Walker = %v; want it refused as inside the Study home", err)
+		}
+	})
+
+	// Made while the walk is on its way, between two of its folders.
+	t.Run("made between two hops", func(t *testing.T) {
+		w, make := newWorld(t)
+		parent := regtest.Mkdir(t, filepath.Dir(w.later))
+		walker := NewWalker(w.later)
+		defer walker.Close()
+		made := false
+		walker.beforeEnter = func(path string) {
+			if path == parent && !made {
+				made = true
+				make()
+			}
+		}
+		if err := walker.CheckProgram(w.kb); !made || !IsInside(err) {
+			t.Errorf("CheckProgram = %v (made %v); want it refused as inside the Study home", err, made)
+		}
+	})
+}

@@ -1056,8 +1056,10 @@ Topic's Knowledge base is still `none`.
     name is looked up in the absolute folders of `PATH`. A relative one, such as `.` or an
     empty entry, is passed over: it would let a file in a Topic stand for the program. A
     path is taken from the folder `study` was started in, with a leading `~` for the home
-    folder. A program that is not found is `not_found`; a folder, or a file without
-    permission to run it, is `invalid_argument`.
+    folder. A program that is not found is `not_found`; a folder, or a file the learner
+    may not run, is `invalid_argument`. The system is asked whether the user `study` runs
+    as may run it, so an execute bit that is there for someone else does not count; on
+    `PATH` such a file is passed over, as a shell passes it over.
   - A path with `..` in it is `invalid_argument`, and a folder of `PATH` with `..` in it
     is passed over. By name, `..` goes up from a symbolic link; the operating system goes
     up from where the link leads. The file registered could be another than the one that
@@ -1093,7 +1095,9 @@ Topic's Knowledge base is still `none`.
   - The Study home is known by what it is, not by what it is called: the folders are
     compared by file identity. Another letter case of its name, on a file system that
     ignores case, another link to it and another mount of it are all the Study home. A
-    Study home that is not there yet is known by where it will be.
+    Study home that is not there yet is known by where it will be, and is looked for again
+    at every folder on the way: one that another `study` makes meanwhile, a first
+    `study topic create` say, is the Study home from then on.
   - **This catches the honest mistake and is not a guarantee.** A command such as `sh -c`,
     `env` or `npx` resolves more when it starts than any reading of its arguments sees,
     and a path inside a longer argument is not looked at. Nor can following a path see a

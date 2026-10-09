@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -225,8 +224,8 @@ func expand(env Env, path string) string {
 var errNotAProgram = errors.New("not a program")
 
 // CheckProgram checks that the absolute path names a program study may
-// start: a regular file that can be run, reached without going through the
-// Study home at any hop. The agent could replace a program in the Study
+// start: a regular file that the user study runs as may run, reached without
+// going through the Study home at any hop. The agent could replace a program in the Study
 // home, or repoint a link there that leads to it, and study would then start
 // the agent's program outside the agent's sandbox.
 func (w *Walker) CheckProgram(path string) error {
@@ -259,14 +258,22 @@ func (w *Walker) openProgram(path string, open bool) (*os.File, error) {
 			"program (" + Reason(err) + "): give a path through folders you can read"}
 	}
 	defer place.Close()
+	notRunnable := &Error{Code: CodeInvalidArgument, Err: errNotAProgram, Message: fmt.Sprintf("%q is not a program you can "+
+		"run: make it executable for you, with chmod u+x, or name another", path)}
 	switch {
 	case len(place.Missing) > 0:
 		return nil, &Error{Code: CodeNotFound, Err: fs.ErrNotExist, Message: fmt.Sprintf("there is no program at %q", path)}
 	case place.Leaf == "":
 		return nil, &Error{Code: CodeInvalidArgument, Err: errNotAProgram, Message: fmt.Sprintf("%q is a folder, not a program", path)}
-	case !runnable(place.LeafInfo):
-		return nil, &Error{Code: CodeInvalidArgument, Err: errNotAProgram, Message: fmt.Sprintf("%q is not a program you can "+
-			"run: make it executable, with chmod +x, or name another", path)}
+	case !place.LeafInfo.Mode().IsRegular():
+		return nil, notRunnable
+	}
+	// Whether this user may run the file is the system's to say: an execute
+	// bit that is there for someone else does not make it runnable. It is
+	// asked through the folder the walk ended in, about the name there, not
+	// through the path again.
+	if !Runnable(place.Folder(), place.Leaf) {
+		return nil, notRunnable
 	}
 	if !open {
 		return nil, nil
@@ -278,17 +285,14 @@ func (w *Walker) openProgram(path string, open bool) (*os.File, error) {
 			Reason(err) + "): it must be a program you can read"}
 	case file == nil:
 		return nil, &Error{Code: CodeNotFound, Err: fs.ErrNotExist, Message: fmt.Sprintf("there is no program at %q", path)}
-	case !runnable(info):
+	case !os.SameFile(place.LeafInfo, info):
+		// What is opened is the file the walk looked at and the system
+		// was asked about, or nothing is: another file put under the name
+		// meanwhile is one nobody checked.
 		_ = file.Close()
-		return nil, &Error{Code: CodeInvalidArgument, Err: errNotAProgram, Message: fmt.Sprintf("%q is not a program you can run", path)}
+		return nil, notReadyf("%s changed while study was checking it: try again", path)
 	}
 	return file, nil
-}
-
-// runnable reports whether a file is a regular file with permission to run
-// it, as far as this operating system's permission bits tell.
-func runnable(info fs.FileInfo) bool {
-	return info.Mode().IsRegular() && (runtime.GOOS == "windows" || info.Mode().Perm()&0o111 != 0)
 }
 
 // An argument names a path as a whole, or after the = of an option or of a

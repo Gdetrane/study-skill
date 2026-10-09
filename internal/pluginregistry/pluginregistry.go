@@ -103,8 +103,9 @@ func problem(w *regfile.Walker, env Env, p Plugin) string {
 
 // OpenProgram opens the program of a plugin registered by a command, to
 // start it, and checks it at that moment: the program is a regular file that
-// can be run, reached without going through the Study home at any hop, and
-// no argument the learner did not allow names something there.
+// the user study runs as may run, reached without going through the Study
+// home at any hop, and no argument the learner did not allow names something
+// there. A Study home that another study made a moment ago counts.
 //
 // Start the file that is returned, not the path the plugin is registered
 // by: on Linux, by its descriptor (/proc/self/fd). The path must not be

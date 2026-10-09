@@ -19,3 +19,16 @@ func Writable(dir *os.Root) bool {
 	defer d.Close()
 	return unix.Faccessat(int(d.Fd()), ".", unix.W_OK|unix.X_OK, unix.AT_EACCESS) == nil
 }
+
+// Runnable reports whether the user study runs as may run the file called
+// name in an open folder. The system is asked, for the effective user, so
+// an execute bit that applies to someone else does not count; and it is
+// asked through the folder that is open, not through a path.
+func Runnable(dir *os.Root, name string) bool {
+	d, err := dir.Open(".")
+	if err != nil {
+		return false
+	}
+	defer d.Close()
+	return unix.Faccessat(int(d.Fd()), name, unix.X_OK, unix.AT_EACCESS) == nil
+}

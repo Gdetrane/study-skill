@@ -126,6 +126,37 @@ func TestOpenProgramOpensTheProgramThatWasChecked(t *testing.T) {
 	}
 }
 
+// A program replaced by another file, in its own folder, after it was
+// checked and before it is opened, is not opened: the other file is one
+// nobody checked, and whether this user may run it was never asked.
+func TestOpenProgramRefusesAProgramReplacedWhileItWasChecked(t *testing.T) {
+	c := regtest.New(t)
+	checked := regtest.Program(t, filepath.Join(c.Bin, "kb"))
+	other := regtest.Program(t, filepath.Join(c.Bin, "other"))
+	w := NewWalker(c.Study)
+	defer w.Close()
+	swapped := lookThenSwap(t, "kb", func() {
+		if err := os.Rename(other, checked); err != nil {
+			t.Fatal(err)
+		}
+	})
+	file, err := w.OpenProgram(checked)
+	if !*swapped {
+		t.Fatal("the program was never about to be opened, so this test proves nothing")
+	}
+	if CodeOf(err) != CodeFailedPrecondition || !strings.Contains(err.Error(), "changed while study was checking it") || file != nil {
+		t.Fatalf("OpenProgram = %v, %v; want it to stop because the program changed", file, err)
+	}
+	// Asked again, it is the file that is there now that is checked, and
+	// opened.
+	afterLook = nil
+	again, err := w.OpenProgram(checked)
+	if err != nil {
+		t.Fatalf("OpenProgram of the program that is there now: %v", err)
+	}
+	again.Close()
+}
+
 func TestCreateMakesTheFolderOrSaysWhyNot(t *testing.T) {
 	c := regtest.New(t)
 	folder, err := Open(envOf(c, c.Home))
