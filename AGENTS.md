@@ -18,7 +18,8 @@ Read these before changing behaviour:
   replaces its title clean-up with one shared normalizer. 0010 replaces the packaging
   channels of 0008: releases are on GitHub alone, installed by `install.sh`. 0011 replaces
   the v2.0 part of 0007: Lamplight does not use NotebookLM, and `none` is the only Knowledge
-  base kind until another is decided.
+  base kind until another is built. 0012 decides what is built: Knowledge base plugins that
+  speak one contract over MCP, with `study` as their client, and Shelf as the first.
 - `docs/cli.md`: the command-line contract that scripts and agents rely on. A test checks
   that it mentions every command and flag.
 

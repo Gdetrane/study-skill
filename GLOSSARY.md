@@ -207,6 +207,24 @@ Where a Topic's Sources are held and searched for Evidence. A Topic has at most 
 one, the agent reads the Sources and records Evidence itself.
 _Avoid_: Backend, RAG
 
+**Knowledge base plugin**:
+A program or service the learner runs that indexes a Topic's Sources and searches them,
+speaking Lamplight's contract over MCP. It is registered on each machine under a name, and a
+Topic names the one it uses.
+_Avoid_: Backend, RAG, extension, adapter
+
+**Shelf**:
+The Knowledge base plugin that ships with Lamplight, as the `study-shelf` program.
+
+**Recipe**:
+A named set of Shelf's settings for one embedding model.
+_Avoid_: Preset, profile
+
+**Passage**:
+A stretch of a Source's own text that a search of the Knowledge base returns, with its
+location when known. Evidence quotes from a Passage.
+_Avoid_: Chunk, snippet, hit, result
+
 **Library**:
 The learner's whole collection of documents across all Topics.
 _Avoid_: Catalog (that is only the index behind the Library)

@@ -209,7 +209,7 @@ hours before any learning happens is exactly what v1 produced.
    challenges of growing difficulty). It lives in `topic.toml` as `approach`, set through
    `topic_update` (`approach.set`).
 3. Add Sources: files from the Library or URLs. The Knowledge base is `none`, the only
-   kind until another is decided (ADR-0011).
+   kind until Knowledge base plugins are built (ADR-0012).
 4. Assessment, time-boxed to about 15 minutes. Areas not reached are marked "confirm during
    Lessons". The result is saved in `notes/` and sets the Level.
 5. The agent drafts the Syllabus: Milestone 1 in detail, later Milestones as outlines with
@@ -582,11 +582,49 @@ hours before any learning happens is exactly what v1 produced.
     stops when the request is cancelled.
   - `status` marks the Lessons started or done that cite no Evidence, once the Topic has
     Sources (`lessons_without_evidence`); they are never blocked.
-- **Still to build for v2.0** (ADR-0011): a Knowledge base that needs no account, so the
-  agent can search a Topic's Sources. ADR-0007 plans Knowledge base plugins, MCP servers
-  implementing Lamplight's fixed contract (add a Source, search for Evidence, list
-  Sources), the first a generic local RAG plugin: layout-aware conversion (Docling), hybrid
-  keyword and embedding search, reranking. Its own ADR decides what v2.0 ships.
+- **Still to build for v2.0** (ADR-0012): Knowledge base plugins, so the agent can search a
+  Topic's Sources with no account anywhere.
+  - The agent talks to `study`, and `study` is the MCP client of the Topic's plugin. `study`
+    ships no retrieval and still never parses a document.
+  - The contract is six tools with fixed names: `contract` (the version, and what the
+    plugin can do), `index` (one Source of a Topic's collection; it returns at once),
+    `status` (each Source indexed, indexing or failed, and the hash of the content
+    indexed), `cancel` (stop indexing a Source), `search` (Passages for a query, each with
+    its score) and `passage` (one Passage again). A Passage is the Source's own text as
+    extracted, with a location when the plugin knows one. A location says its kind: `pages`
+    now, others such as a time range later, without a new contract version; a Passage from
+    a web page has none. A file is indexed by its content hash; a URL gets one when the
+    plugin fetches it.
+  - A plugin is registered per machine with `study knowledge-base add`, by a command or a
+    URL, in a file in the learner's configuration folder, outside the Study home. A Topic
+    records only its name (`kind = "plugin"`, `plugin = "<name>"`), so nothing a Topic
+    holds decides which program runs (ADR-0009). Registering is CLI-only. A Topic whose
+    plugin this machine lacks is treated as `none`, and `status` says how to fix it. A
+    command is started by the absolute path recorded at registration, from the registry's
+    folder and never from the Topic. A plugin reached by URL is a service outside any
+    sandbox, so it must itself be told what it may read and fetch.
+  - `study source index` is the one thing that asks a plugin to index, and it is CLI-only,
+    like `study check`: run in the agent's shell or by the learner, so the sandbox and
+    approval prompts apply to what a command plugin reads and fetches. No MCP tool starts
+    indexing, or the MCP server would read any file the agent named and hand its text back
+    through a search. Adding a Source records it and indexes nothing. Whether a Source is
+    indexed is the plugin's to say on this machine: it records no Event, and `sources` and
+    `status` show it and give the command. A command plugin keeps its index in a folder
+    `study` gives it under the Study home's `.lamplight`. Nothing waits for a plugin.
+  - `evidence_search` returns Passages. Evidence recorded with a Passage's id is checked:
+    `study` reads the Passage again, refuses a quote that is not in it, and takes the
+    location from it. That is a new Event type. Evidence without a Passage stays possible,
+    unchecked.
+  - Shelf (`study-shelf`) is the plugin that ships with Lamplight: a second program in this
+    repository and release, of which `study` links nothing. Go without cgo, one SQLite file
+    per collection for keyword search and vectors, PDFs read page by page, embeddings from
+    any endpoint that speaks the OpenAI embeddings API, keyword and embedding results
+    merged by rank, and keyword alone when there is no endpoint. When a reranking endpoint
+    is given, it reorders the best Passages before they are returned. A Recipe names
+    Shelf's settings for one embedding model; the first is for EmbeddingGemma 2.
+- **Later**: a context written by a language model for each Passage, used for indexing
+  only; layout-aware conversion for formulas, tables and scans; recordings, video and
+  images as Sources.
 
 ## Library
 
@@ -606,7 +644,8 @@ Every write names its Topic. Tools are named after things that happen in the dom
   agent only).
 - **Topics**: `topic_create`, `topic_update` (Goal, Pace, Level, Approach, Knowledge base,
   Tasks, pause, finish), `task_done`, `assessment_record`, `source_add`, `source_update`,
-  `evidence_record`, `evidence_retract`.
+  `evidence_record`, `evidence_retract`. Still to build (ADR-0012): `evidence_search`.
+  Indexing has no tool: `study source index` is CLI-only.
 - **Syllabus**: `revision_propose`, `revision_apply`, `revision_decline`.
 - **Sessions**: `session_open`, `session_close`, `phase_set`, `break_point_reached`,
   `checkpoint`, `hint_record`, `rubric_record`, `lesson_complete`.
@@ -841,6 +880,7 @@ merged into `main`.
 
 ```
 cmd/study/                  entry point
+cmd/study-shelf/            Shelf, the Knowledge base plugin (still to build, ADR-0012)
 internal/…                  core modules, and the CLI and MCP adapters
 skills/lamplight/           the skill and its references (embedded in the binary)
 .claude-plugin/             marketplace.json; the plugin itself is generated by
@@ -887,8 +927,9 @@ with drafts and Reviews, History with replay, Checkpoints, Assessment, Goal, Pac
 recording Level signals); sync for one machine at a time; the Library in Go; the CLI with
 terminal Reviews; the MCP server; the `lamplight` skill; the Claude Code plugin and
 `study setup` for Claude Code and Codex; Linux and macOS releases with an install script;
-`study import`; and, still to build, a Knowledge base that needs no account (ADR-0011: the
-Knowledge base plugins of ADR-0007, decided in their own ADR).
+`study import`; and, still to build, Knowledge base plugins (ADR-0012): the contract, `study`
+as its client, the registry, `evidence_search` with the quote check, and Shelf with keyword
+and embedding search and optional reranking.
 
 **Order of work**: the tracer bullet, then the History engine (its file formats are settled
 before any real data is written), then a thin learner loop through every layer, then each
@@ -899,12 +940,15 @@ Tailscale; read-mostly first), Level suggestions, held-out results that can bloc
 (with fresh, reviewed test sets for a retry), using one Topic on several machines at once,
 Windows packages, the Agent Plugins 1.0 manifest, setup for more agents, reading tables of
 contents from PDFs, retrieval from page images, the Journal, the FSRS optimizer, publishing
-to the MCP Registry.
+to the MCP Registry; for Knowledge bases, the context written for each Passage,
+layout-aware conversion, and recordings, video and images as Sources.
 
 ## Known risks
 
-- Until a Knowledge base exists (ADR-0011), the agent reads the Sources itself, which is
-  slow in a long book.
+- Until Knowledge base plugins exist (ADR-0012), the agent reads the Sources itself, which
+  is slow in a long book.
+- A plugin is handed a file's path, so one on another machine must see the same files.
+- Formulas extract garbled from PDFs, so a formula is quoted as extracted or left unchecked.
 - Approvals are tamper-evident only: an agent with a shell can still edit files.
 - Agents that read both `~/.agents/skills` and `~/.claude/skills` may list the skill twice.
 - The session-start `status` is automatic only where the agent supports hooks.
