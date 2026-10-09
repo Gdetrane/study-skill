@@ -35,7 +35,7 @@ of the Topic's Knowledge base plugin. The agent installs no second server and ca
 
 ### The contract, version 1
 
-A Knowledge base plugin is an MCP server with these five tools. Their names and shapes are
+A Knowledge base plugin is an MCP server with these six tools. Their names and shapes are
 Lamplight's; what is behind them is the plugin's.
 
 | Tool | Takes | Gives back |
@@ -43,14 +43,16 @@ Lamplight's; what is behind them is the plugin's.
 | `contract` | nothing | the contract version, and what the plugin can do: file Sources, URL Sources, keyword search, embedding search, which kinds of location |
 | `index` | a collection, and one Source: id, title, a path with its content hash, or a URL | an answer at once; the work goes on afterwards |
 | `status` | a collection | for each Source: indexed, indexing with its progress, or failed with the reason, and the hash of the content that was indexed |
-| `search` | a collection, a query, a limit, optionally some Sources | Passages, best first |
+| `cancel` | a collection and a Source's id | indexing of that Source stops; what was indexed stays |
+| `search` | a collection, a query, a limit, optionally some Sources | Passages, best first, each with its score for that query |
 | `passage` | a collection and a Passage's id | that Passage |
 
 - A **collection** is a name `study` chooses for a Topic. A plugin keeps collections apart
   and knows nothing else about Topics.
-- A **Passage** has an id, the Source's id, its text, a score and, when the plugin knows
-  one, a location. The text is the Source's own, as the plugin extracted it: never a summary
-  and never a generated answer.
+- A **Passage** has an id, the Source's id, its text and, when the plugin knows one, a
+  location. The text is the Source's own, as the plugin extracted it: never a summary and
+  never a generated answer. A score belongs to one search, so `search` gives it and
+  `passage` does not.
 - A **location** says what kind it is. Version 1 has `pages`, with a first and last page.
   A Passage from a web page has none. Other kinds, such as a time range in a recording, are
   added to the same field without a new contract version; `contract` says which kinds a
@@ -58,6 +60,9 @@ Lamplight's; what is behind them is the plugin's.
 - `index` never blocks. It returns at once and `status` is asked again, because tasks are
   not available to us. A plugin that was stopped halfway carries on or starts over when
   asked again.
+- `cancel` is how indexing is stopped, since no request is open to cancel once `index` has
+  returned. `study source index` calls it when it is stopped, so no work goes on behind a
+  command that has exited, however long the plugin itself lives.
 - Indexing a file whose content hash is already indexed does nothing. A URL has no hash
   until it is fetched: the plugin fetches it, `status` gives the hash of what it indexed,
   and it is fetched again only when the learner asks for that.
@@ -75,11 +80,19 @@ Lamplight's; what is behind them is the plugin's.
   tool takes a command line or a URL for a plugin. A test enforces it.
 - `study` starts a registered command directly, without a shell, with pipes of its own,
   when a Topic first needs it, and stops it when `study` exits. It runs as the learner.
+- The command's program is resolved to an absolute path when it is registered, and a path
+  inside the Study home is refused. It is started from the registry's folder, never from
+  the Topic or Study home that `study` was started in: a command such as `python -m …`
+  would otherwise load a file the agent left in the Topic.
 - `study` gives a command plugin a folder of its own under the Study home's `.lamplight`
   to keep its index in. That is this machine's state, never synced, and rebuilt by indexing
   again.
-- A plugin reached by URL reads files on its own machine, whatever sandbox the agent is in.
-  It must be told which folders it may read; Shelf refuses a path outside them.
+- A plugin reached by URL is a service the learner runs. It reads files and fetches
+  addresses from where it runs, outside any sandbox the agent is in, so running
+  `study source index` inside a sandbox does not limit what that service can reach. Such a
+  plugin must itself be told what it may read and fetch. Shelf, served over a URL, refuses
+  a file outside the folders it was given, and fetches no URL Source unless fetching was
+  turned on for it, and then never a loopback, link-local or private address.
 - A Topic that names a plugin this machine does not have is treated as `none`, and
   `status` gives the one action that fixes it. So is one whose plugin does not start or
   does not speak the contract.

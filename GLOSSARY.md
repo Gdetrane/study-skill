@@ -217,7 +217,7 @@ _Avoid_: Preset, profile
 
 **Passage**:
 A stretch of a Source's own text that a search of the Knowledge base returns, with its
-location. Evidence quotes from a Passage.
+location when known. Evidence quotes from a Passage.
 _Avoid_: Chunk, snippet, hit, result
 
 **Library**:

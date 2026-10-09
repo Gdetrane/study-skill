@@ -585,19 +585,23 @@ hours before any learning happens is exactly what v1 produced.
   Topic's Sources with no account anywhere.
   - The agent talks to `study`, and `study` is the MCP client of the Topic's plugin. `study`
     ships no retrieval and still never parses a document.
-  - The contract is five tools with fixed names: `contract` (the version, and what the
+  - The contract is six tools with fixed names: `contract` (the version, and what the
     plugin can do), `index` (one Source of a Topic's collection; it returns at once),
-    `status` (each Source indexed, indexing or failed, and the content hash indexed),
-    `search` (Passages for a query) and `passage` (one Passage again). A Passage is the
-    Source's own text as extracted, with a location that says its kind: `pages` now, others
-    such as a time range later, without a new contract version; a Passage from a web page
-    has no location. A file is indexed by its content hash; a URL gets one when the plugin
-    fetches it.
+    `status` (each Source indexed, indexing or failed, and the hash of the content
+    indexed), `cancel` (stop indexing a Source), `search` (Passages for a query, each with
+    its score) and `passage` (one Passage again). A Passage is the Source's own text as
+    extracted, with a location when the plugin knows one. A location says its kind: `pages`
+    now, others such as a time range later, without a new contract version; a Passage from
+    a web page has none. A file is indexed by its content hash; a URL gets one when the
+    plugin fetches it.
   - A plugin is registered per machine with `study knowledge-base add`, by a command or a
     URL, in a file in the learner's configuration folder, outside the Study home. A Topic
     records only its name (`kind = "plugin"`, `plugin = "<name>"`), so nothing a Topic
     holds decides which program runs (ADR-0009). Registering is CLI-only. A Topic whose
-    plugin this machine lacks is treated as `none`, and `status` says how to fix it.
+    plugin this machine lacks is treated as `none`, and `status` says how to fix it. A
+    command is started by the absolute path recorded at registration, from the registry's
+    folder and never from the Topic. A plugin reached by URL is a service outside any
+    sandbox, so it must itself be told what it may read and fetch.
   - `study source index` is the one thing that asks a plugin to index, and it is CLI-only,
     like `study check`: run in the agent's shell or by the learner, so the sandbox and
     approval prompts apply to what the plugin reads and fetches. No MCP tool starts
