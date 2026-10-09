@@ -604,7 +604,7 @@ hours before any learning happens is exactly what v1 produced.
     sandbox, so it must itself be told what it may read and fetch.
   - `study source index` is the one thing that asks a plugin to index, and it is CLI-only,
     like `study check`: run in the agent's shell or by the learner, so the sandbox and
-    approval prompts apply to what the plugin reads and fetches. No MCP tool starts
+    approval prompts apply to what a command plugin reads and fetches. No MCP tool starts
     indexing, or the MCP server would read any file the agent named and hand its text back
     through a search. Adding a Source records it and indexes nothing. Whether a Source is
     indexed is the plugin's to say on this machine: it records no Event, and `sources` and

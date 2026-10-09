@@ -104,10 +104,11 @@ ADR-0009 stands: the core runs nothing that a Topic's files name.
 - `study source index` is the one thing that asks a plugin to index. It indexes a Topic's
   Sources and shows progress until it is done; stopping it leaves what was indexed.
 - It is CLI-only, like `study check` (ADR-0009): the agent runs it in its own shell, or the
-  learner does, so the harness's sandbox and approval prompts apply to every file the
-  plugin reads and every address it fetches. No MCP tool starts indexing. If one did, an
-  agent could add any file on the computer as a Source over MCP and read its text back
-  through a search.
+  learner does. A command plugin is then started inside the harness's sandbox, so the
+  sandbox and approval prompts apply to every file it reads and every address it fetches.
+  A plugin reached by URL is outside that sandbox and keeps to its own limits, as above.
+  No MCP tool starts indexing. If one did, an agent could add any file on the computer as
+  a Source over MCP and read its text back through a search.
 - Adding a Source, over MCP or the CLI, records it and indexes nothing. `sources` and
   `status` say which Sources are not indexed and give the command.
 - Whether a Source is indexed is the plugin's to say, on this machine. It is not in the
