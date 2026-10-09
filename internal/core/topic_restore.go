@@ -54,7 +54,8 @@ type removalRecord struct {
 	Format int    `json:"format"`
 	Topic  string `json:"topic"`
 	// Removed is when, in UTC, more exactly than the folder's name says it:
-	// it orders two removals made within one second.
+	// it orders two removals made within one second, and is always within
+	// the second the name gives.
 	Removed time.Time `json:"removed"`
 }
 
@@ -137,6 +138,7 @@ type removedEntry struct {
 	// newer is the format of a record a newer version of study wrote.
 	newer int
 	// noTopic is set when the folder holds no Topic, so it is not restored.
+	// It is never set beside a record in a newer format (newer).
 	noTopic bool
 	// note says why the folder cannot be restored by its id alone, and what
 	// the learner can do.
@@ -478,10 +480,11 @@ func (c *Core) removedEntries(ctx context.Context, home *os.Root) ([]removedEntr
 }
 
 // readRemoved reads one folder of .lamplight/removed and its record. The
-// folder's name bounds what the Topic's id can be, and the record says which
-// it is, and when exactly. A folder whose record is missing or cannot be
-// used keeps the time its name gives, and has a known id only when its name
-// fits one.
+// folder's name bounds what the record can say: the ids the Topic can have
+// had, and the second it was removed in. Within those bounds the record
+// says which id, and when in that second; one that steps outside them
+// cannot be used. A folder whose record is missing or cannot be used keeps
+// the time its name gives, and has a known id only when its name fits one.
 func (c *Core) readRemoved(home *os.Root, folder string) (removedEntry, bool) {
 	when, ids, ok := readRemovedName(folder)
 	if !ok {
@@ -514,11 +517,13 @@ func (c *Core) readRemoved(home *os.Root, folder string) (removedEntry, bool) {
 		unusable = "its record, " + recordPath + ", is damaged"
 	case !slices.Contains(ids, rec.Topic):
 		unusable = "its record, " + recordPath + ", names a Topic its folder's name does not fit"
+	case !rec.Removed.UTC().Truncate(time.Second).Equal(when):
+		// The folder's name fixes the second of the removal. A record may
+		// only say when within it: one that gives another time, or none,
+		// would otherwise decide which removal is the newest on its own word.
+		unusable = "its record, " + recordPath + ", gives a time its folder's name does not fit"
 	default:
-		r.topic = rec.Topic
-		if !rec.Removed.IsZero() {
-			r.when, r.byName = rec.Removed.UTC(), false
-		}
+		r.topic, r.when, r.byName = rec.Topic, rec.Removed.UTC(), false
 	}
 	switch {
 	case unusable == "":
@@ -528,7 +533,11 @@ func (c *Core) readRemoved(home *os.Root, folder string) (removedEntry, bool) {
 		r.note = unusable + ", and its name fits both " + strings.Join(ids, " and ") + ", so its Topic id is not known: " +
 			"restore it with study topic restore <id> --from " + folder + ", giving the id it had"
 	}
-	if !isTopic(home, filepath.Join(localDir, removedDir, folder)) {
+	// Whether the folder holds a Topic is judged by where this version keeps
+	// a Topic's files. A newer version may keep them elsewhere, so a folder
+	// whose record is in a newer format is not judged: it stays one to
+	// upgrade study for, never one to move away or delete.
+	if r.newer == 0 && !isTopic(home, filepath.Join(localDir, removedDir, folder)) {
 		r.noTopic = true
 		r.note = "it holds no Topic (it has neither " + topicFile + " nor " + historyFile + "), so study does not restore it: " +
 			"if anything in it is yours, move it out, then delete the folder"

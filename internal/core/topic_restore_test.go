@@ -900,6 +900,189 @@ func TestRestoreTopicRefusesAFolderThatHoldsNoTopic(t *testing.T) {
 	}
 }
 
+// A newer version of study may keep a Topic's files elsewhere than this one
+// looks. A folder whose record is in a newer format is therefore not judged
+// by this version's layout: without topic.toml and history.jsonl it is still
+// one to upgrade study for, never one said to hold no Topic and to delete.
+func TestRestoreTopicDoesNotJudgeANewerRemovalByItsOwnLayout(t *testing.T) {
+	ctx := context.Background()
+	m, removed := removedTopic(t)
+	record := removed.MovedTo + ".json"
+	newer := `{"format":2,"topic":"rust","removed":"2026-10-01T09:30:00Z"}` + "\n"
+	if err := os.WriteFile(record, []byte(newer), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// The newer layout: the two files this version knows a Topic by are
+	// somewhere else in the folder.
+	if err := os.Mkdir(filepath.Join(removed.MovedTo, "state"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{topicFile, historyFile} {
+		if err := os.Rename(filepath.Join(removed.MovedTo, name), filepath.Join(removed.MovedTo, "state", name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	before := treeHash(t, removed.MovedTo)
+
+	list, err := m.ListRemovedTopics(ctx)
+	if err != nil || len(list.Removed) != 1 {
+		t.Fatalf("removed Topics = %+v, %v", list, err)
+	}
+	if got := list.Removed[0]; got.Topic != "" || got.Restore != "" || !strings.Contains(got.Note, "has format 2") ||
+		!strings.Contains(got.Note, "upgrade study") || strings.Contains(got.Note, "holds no Topic") || strings.Contains(got.Note, "delete") {
+		t.Errorf("the entry = %+v; want the advice to upgrade, and none to delete", got)
+	}
+	// The dry run and the restore answer alike, by id or by folder.
+	for _, spec := range []TopicRestoreSpec{
+		{Topic: "rust", DryRun: true}, {Topic: "rust"},
+		{Topic: "rust", From: filepath.Base(removed.MovedTo), DryRun: true}, {Topic: "rust", From: filepath.Base(removed.MovedTo)},
+	} {
+		_, err := m.RestoreTopic(ctx, spec)
+		if CodeOf(err) != CodeNewerFormat || !strings.Contains(err.Error(), record) || strings.Contains(err.Error(), "holds no Topic") {
+			t.Errorf("RestoreTopic(%+v) = %v (%s), want newer_format naming the record", spec, err, CodeOf(err))
+		}
+	}
+	if left, err := os.ReadFile(record); err != nil || string(left) != newer {
+		t.Errorf("the newer record = %q, %v; want it left as it was", left, err)
+	}
+	if exists(filepath.Join(m.home, "rust")) || treeHash(t, removed.MovedTo) != before {
+		t.Fatal("a removal with a newer record was moved or changed")
+	}
+
+	// It is the record that says the folder is a newer version's. Without
+	// it, the folder is what it looks like to this version: no Topic.
+	dropRecord(t, removed)
+	for _, dryRun := range []bool{true, false} {
+		if _, err := m.RestoreTopic(ctx, TopicRestoreSpec{Topic: "rust", DryRun: dryRun}); CodeOf(err) != CodeCorrupt {
+			t.Errorf("the same folder without its record (dry run %v) = %v, want corrupt", dryRun, err)
+		}
+	}
+}
+
+// The folder's name fixes the second of a removal, and its record says when
+// within that second. A record that gives another time is not believed: it
+// would make an older removal the newest on its own word, and study topic
+// restore <id> would bring back the wrong copy without saying so.
+func TestRestoreTopicDoesNotBelieveARecordsTimeOutsideItsFoldersSecond(t *testing.T) {
+	ctx := context.Background()
+	setTime := func(t *testing.T, removed TopicRemoval, topicID, when string) {
+		t.Helper()
+		record := `{"format":1,"topic":"` + topicID + `"}` + "\n"
+		if when != "" {
+			record = `{"format":1,"topic":"` + topicID + `","removed":"` + when + `"}` + "\n"
+		}
+		if err := os.WriteFile(removed.MovedTo+".json", []byte(record), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	t.Run("the older of two removals, its record given a later time", func(t *testing.T) {
+		m, older := removedTopic(t)
+		if _, err := m.CreateTopic(ctx, TopicSpec{Title: "Rust", Goal: "Write a web server"}); err != nil {
+			t.Fatal(err)
+		}
+		m.setClock(t0.Add(time.Hour))
+		newer := m.remove(t, "rust")
+		setTime(t, older, "rust", "2026-10-01T12:00:00Z")
+
+		// The list orders them by what their folders' names allow.
+		list, err := m.ListRemovedTopics(ctx)
+		want := []RemovedTopic{
+			{Topic: "rust", Folder: filepath.Base(newer.MovedTo), Path: newer.MovedTo, Removed: t0.Add(time.Hour), Restore: newer.Restore},
+			{Topic: "rust", Folder: filepath.Base(older.MovedTo), Path: older.MovedTo, Removed: t0, Restore: older.Restore},
+		}
+		if err != nil || !reflect.DeepEqual(list.Removed, want) {
+			t.Fatalf("removed Topics = %+v, %v\nwant %+v", list.Removed, err, want)
+		}
+		// The dry run and the restore both take the newer removal.
+		for _, dryRun := range []bool{true, false} {
+			got, err := m.RestoreTopic(ctx, TopicRestoreSpec{Topic: "rust", DryRun: dryRun})
+			if err != nil || got.RestoredFrom != newer.MovedTo || !got.Removed.Equal(t0.Add(time.Hour)) {
+				t.Fatalf("restore by id (dry run %v) = %+v, %v; want the newer removal, %s", dryRun, got, err, newer.MovedTo)
+			}
+		}
+		if goal := readSettings(t, filepath.Join(m.home, "rust")).Goal; goal != "Write a web server" || !exists(older.MovedTo) {
+			t.Errorf("the restored Topic's goal = %q; the older removal still kept: %v", goal, exists(older.MovedTo))
+		}
+	})
+
+	// Within one second a folder's name cannot order two removals, and a
+	// record that is not believed leaves only the name: the learner chooses.
+	t.Run("two removals within one second", func(t *testing.T) {
+		gitIdentity(t)
+		m := newMachine(t, t.TempDir(), "id", t0.Add(100*time.Millisecond))
+		if _, err := m.CreateTopic(ctx, TopicSpec{Title: "Rust", Goal: "Write a CLI"}); err != nil {
+			t.Fatal(err)
+		}
+		first := m.remove(t, "rust")
+		if _, err := m.CreateTopic(ctx, TopicSpec{Title: "Rust", Goal: "Write a web server"}); err != nil {
+			t.Fatal(err)
+		}
+		m.setClock(t0.Add(200 * time.Millisecond))
+		second := m.remove(t, "rust")
+		setTime(t, first, "rust", "2026-10-01T09:30:07Z")
+
+		for _, dryRun := range []bool{true, false} {
+			_, err := m.RestoreTopic(ctx, TopicRestoreSpec{Topic: "rust", DryRun: dryRun})
+			if CodeOf(err) != CodeFailedPrecondition || !strings.Contains(err.Error(), filepath.Base(first.MovedTo)+" may hold a newer removal") ||
+				!strings.Contains(err.Error(), filepath.Base(second.MovedTo)+" does") {
+				t.Fatalf("restore by id (dry run %v) = %v, want failed_precondition naming both folders", dryRun, err)
+			}
+		}
+		if exists(filepath.Join(m.home, "rust")) || !exists(first.MovedTo) || !exists(second.MovedTo) {
+			t.Fatal("a refused restore moved a folder")
+		}
+		// Put right, the record is believed again, within its second.
+		setTime(t, first, "rust", "2026-10-01T09:30:00.9Z")
+		if got, err := m.RestoreTopic(ctx, TopicRestoreSpec{Topic: "rust", DryRun: true}); err != nil || got.RestoredFrom != first.MovedTo {
+			t.Errorf("with a time within the folder's second = %+v, %v; want the record believed", got, err)
+		}
+	})
+
+	// A record is believed for a time within the second, in any zone, and
+	// for no other, nor when it gives none. The folder's name fits two ids
+	// here, so a record that is not believed leaves the id unknown.
+	t.Run("which times fit", func(t *testing.T) {
+		gitIdentity(t)
+		m := newMachine(t, t.TempDir(), "id", t0)
+		if _, err := m.CreateTopic(ctx, TopicSpec{Title: "Data in Python", ID: "data-python", Goal: "Clean a dataset"}); err != nil {
+			t.Fatal(err)
+		}
+		removed := m.remove(t, "data-python")
+		for _, tc := range []struct {
+			when string
+			fits bool
+		}{
+			{"2026-10-01T09:30:00Z", true},
+			{"2026-10-01T09:30:00.999999999Z", true},
+			{"2026-10-01T11:30:00.5+02:00", true},
+			{"2026-10-01T09:29:59.999999999Z", false},
+			{"2026-10-01T09:30:01Z", false},
+			{"2026-10-01T11:30:00.5Z", false},
+			{"2027-10-01T09:30:00Z", false},
+			{"", false},
+		} {
+			setTime(t, removed, "data-python", tc.when)
+			list, err := m.ListRemovedTopics(ctx)
+			if err != nil || len(list.Removed) != 1 {
+				t.Fatalf("%q: removed Topics = %+v, %v", tc.when, list, err)
+			}
+			got := list.Removed[0]
+			if tc.fits && (got.Topic != "data-python" || got.Note != "" || !got.Removed.Truncate(time.Second).Equal(t0)) {
+				t.Errorf("a record of %q = %+v, want it believed", tc.when, got)
+			}
+			if !tc.fits && (got.Topic != "" || got.Restore != "" || !got.Removed.Equal(t0) ||
+				!strings.Contains(got.Note, "gives a time its folder's name does not fit")) {
+				t.Errorf("a record of %q = %+v, want it not believed, and the folder's own second kept", tc.when, got)
+			}
+			_, err = m.RestoreTopic(ctx, TopicRestoreSpec{Topic: "data-python", DryRun: true})
+			if tc.fits != (err == nil) || !tc.fits && CodeOf(err) != CodeNotFound {
+				t.Errorf("restore by id with a record of %q = %v", tc.when, err)
+			}
+		}
+	})
+}
+
 // What is in .lamplight/removed and is not a removed Topic's folder is not
 // listed, and never restored.
 func TestRemovedTopicsListsOnlyRemovals(t *testing.T) {
