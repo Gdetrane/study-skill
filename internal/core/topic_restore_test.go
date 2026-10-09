@@ -491,41 +491,80 @@ func TestARestoreInterruptedBeforeTheMoveMovedNothing(t *testing.T) {
 }
 
 // A record written by a newer version of study is refused: this one cannot
-// know what it says about the folder.
+// know what it says about the folder. Its format is read before anything
+// else in it, so a record whose other fields changed shape, which this
+// version cannot even decode, is refused as newer too, never taken for a
+// damaged one whose folder's name would do instead.
 func TestRestoreTopicRefusesARecordInANewerFormat(t *testing.T) {
 	ctx := context.Background()
-	m, removed := removedTopic(t)
-	record := removed.MovedTo + ".json"
-	if err := os.WriteFile(record, []byte(`{"format":2,"topic":"rust","removed":"2026-10-01T09:30:00Z","kept":["sources"]}`+"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	for _, spec := range []TopicRestoreSpec{
-		{Topic: "rust"}, {Topic: "rust", DryRun: true}, {Topic: "rust", From: filepath.Base(removed.MovedTo)},
+	for name, newer := range map[string]string{
+		"the fields this version knows, and more": `{"format":2,"topic":"rust","removed":"2026-10-01T09:30:00Z","kept":["sources"]}` + "\n",
+		"fields of another shape":                 `{"format":2,"topic":{"id":"rust"},"removed":1790847000}` + "\n",
 	} {
-		_, err := m.RestoreTopic(ctx, spec)
-		if CodeOf(err) != CodeNewerFormat || !strings.Contains(err.Error(), record) || !strings.Contains(err.Error(), "upgrade study") {
-			t.Errorf("RestoreTopic(%+v) = %v, want newer_format naming the record", spec, err)
-		}
-	}
-	if exists(filepath.Join(m.home, "rust")) || !exists(removed.MovedTo) {
-		t.Fatal("a removal with a newer record was moved")
-	}
-	// The list still shows it, saying what to do, with no id and no command.
-	list, err := m.ListRemovedTopics(ctx)
-	if err != nil || len(list.Removed) != 1 {
-		t.Fatalf("removed Topics = %+v, %v", list, err)
-	}
-	if got := list.Removed[0]; got.Topic != "" || got.Restore != "" || !strings.Contains(got.Note, "upgrade study") ||
-		got.Folder != filepath.Base(removed.MovedTo) {
-		t.Errorf("the entry of a newer record = %+v", got)
-	}
-	// Another Topic's removal is not held up by it.
-	if _, err := m.CreateTopic(ctx, TopicSpec{Title: "Go", Goal: "Write a scheduler"}); err != nil {
-		t.Fatal(err)
-	}
-	m.remove(t, "go")
-	if _, err := m.RestoreTopic(ctx, TopicRestoreSpec{Topic: "go"}); err != nil {
-		t.Errorf("restoring another Topic: %v", err)
+		t.Run(name, func(t *testing.T) {
+			m, removed := removedTopic(t)
+			record := removed.MovedTo + ".json"
+			if err := os.WriteFile(record, []byte(newer), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			for _, spec := range []TopicRestoreSpec{
+				{Topic: "rust"}, {Topic: "rust", DryRun: true}, {Topic: "rust", From: filepath.Base(removed.MovedTo)},
+			} {
+				_, err := m.RestoreTopic(ctx, spec)
+				if CodeOf(err) != CodeNewerFormat || !strings.Contains(err.Error(), record) || !strings.Contains(err.Error(), "upgrade study") {
+					t.Errorf("RestoreTopic(%+v) = %v, want newer_format naming the record", spec, err)
+				}
+			}
+			// The list still shows it, saying what to do, with no id and no
+			// command: the id its folder's name fits is not offered.
+			list, err := m.ListRemovedTopics(ctx)
+			if err != nil || len(list.Removed) != 1 {
+				t.Fatalf("removed Topics = %+v, %v", list, err)
+			}
+			if got := list.Removed[0]; got.Topic != "" || got.Restore != "" || got.Folder != filepath.Base(removed.MovedTo) ||
+				!strings.Contains(got.Note, "has format 2") || !strings.Contains(got.Note, "upgrade study") || strings.Contains(got.Note, "damaged") {
+				t.Errorf("the entry of a newer record = %+v", got)
+			}
+			// Nothing was moved, and the record is as the newer version wrote it.
+			left, err := os.ReadFile(record)
+			if err != nil || string(left) != newer {
+				t.Errorf("the newer record = %q, %v; want it left as it was", left, err)
+			}
+			if exists(filepath.Join(m.home, "rust")) || !exists(filepath.Join(removed.MovedTo, "topic.toml")) {
+				t.Fatal("a removal with a newer record was moved")
+			}
+
+			// Another Topic's removal is not held up by it.
+			if _, err := m.CreateTopic(ctx, TopicSpec{Title: "Go", Goal: "Write a scheduler"}); err != nil {
+				t.Fatal(err)
+			}
+			m.remove(t, "go")
+			if _, err := m.RestoreTopic(ctx, TopicRestoreSpec{Topic: "go"}); err != nil {
+				t.Errorf("restoring another Topic: %v", err)
+			}
+			// Nor is a removal of the same Topic that is certainly newer than
+			// its folder: the time in a record this version cannot read is
+			// not trusted, but the folder's name bounds it to its second.
+			if _, err := m.CreateTopic(ctx, TopicSpec{Title: "Rust", Goal: "Write a web server"}); err != nil {
+				t.Fatal(err)
+			}
+			m.setClock(t0.Add(time.Hour))
+			later := m.remove(t, "rust")
+			got, err := m.RestoreTopic(ctx, TopicRestoreSpec{Topic: "rust"})
+			if err != nil || got.RestoredFrom != later.MovedTo {
+				t.Fatalf("restore by id with an older newer-format removal = %+v, %v; want %s", got, err, later.MovedTo)
+			}
+			if left, err := os.ReadFile(record); err != nil || string(left) != newer || !exists(removed.MovedTo) {
+				t.Errorf("the newer record or its folder was touched: %q, %v", left, err)
+			}
+			// One in the same second as its folder may be older, so the newer
+			// record is refused again.
+			m.setClock(t0.Add(500 * time.Millisecond))
+			m.remove(t, "rust")
+			if _, err := m.RestoreTopic(ctx, TopicRestoreSpec{Topic: "rust"}); CodeOf(err) != CodeNewerFormat {
+				t.Errorf("restore by id with a newer-format removal of the same second = %v, want newer_format", err)
+			}
+		})
 	}
 }
 

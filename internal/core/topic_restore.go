@@ -490,6 +490,13 @@ func (c *Core) readRemoved(home *os.Root, folder string) (removedEntry, bool) {
 	r := removedEntry{folder: folder, when: when, byName: true, ids: ids}
 	recordPath := filepath.Join(c.home, removalRecordPath(folder))
 
+	// The format is read first, on its own: a newer version of study may
+	// have changed the shape of any other field, and a record this version
+	// cannot decode for that reason is newer, not damaged. Only once the
+	// format is one this version knows are the other fields decoded.
+	var header struct {
+		Format int `json:"format"`
+	}
 	var rec removalRecord
 	var unusable string
 	switch data, err := home.ReadFile(removalRecordPath(folder)); {
@@ -497,12 +504,14 @@ func (c *Core) readRemoved(home *os.Root, folder string) (removedEntry, bool) {
 		unusable = "its record is missing"
 	case err != nil:
 		unusable = "its record, " + recordPath + ", cannot be read (" + err.Error() + ")"
-	case json.Unmarshal(data, &rec) != nil || rec.Format < 1:
+	case json.Unmarshal(data, &header) != nil || header.Format < 1:
 		unusable = "its record, " + recordPath + ", is damaged"
-	case rec.Format > FormatVersion:
-		r.newer = rec.Format
+	case header.Format > FormatVersion:
+		r.newer = header.Format
 		r.note = fmt.Sprintf("its record, %s, has format %d, but this version of study only understands format %d: "+
-			"upgrade study to restore it", recordPath, rec.Format, FormatVersion)
+			"upgrade study to restore it", recordPath, header.Format, FormatVersion)
+	case json.Unmarshal(data, &rec) != nil:
+		unusable = "its record, " + recordPath + ", is damaged"
 	case !slices.Contains(ids, rec.Topic):
 		unusable = "its record, " + recordPath + ", names a Topic its folder's name does not fit"
 	default:
