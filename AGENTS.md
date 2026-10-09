@@ -57,13 +57,19 @@ GOOS=darwin go vet ./...            # macOS is supported too
   the Topic's lock. Event types are versioned by name: a new payload shape is a new type.
   Domain time is the Event's `wall`; `time` only orders Events. `study topic remove` and
   `study topic restore` record none: they move a Topic's folder on one computer and change
-  nothing inside it.
+  nothing inside it. Nor do `study knowledge-base add` and `remove`: the registry they
+  change is one computer's and no Topic's.
 - Conflicts between machines are flagged in `status`, never resolved silently.
 - Files in a Topic are read and written through `os.Root`. git runs only through the
   hardened `internal/checkpoint` package or `gitCommand`, never with the caller's `GIT_*`
   environment, and never runs a program the repository's configuration names (ADR-0009).
 - No MCP tool runs learner or agent code; Checks run only through `study check` in the
   agent's own shell (ADR-0009). A test enforces it.
+- The Knowledge base plugin registry says which program or URL each plugin's name stands
+  for. It is a file in Lamplight's configuration folder, read only from outside the Study
+  home, and a program inside the Study home is never registered. No MCP tool registers,
+  changes or removes a plugin, or takes a command line or a URL for one (ADR-0012). Tests
+  enforce it.
 - Every file Lamplight owns carries a `format` number, and newer formats are refused.
 - Text from files or the History goes through `printable()` before it reaches a terminal;
   `--json` output never triggers terminal queries.
@@ -103,7 +109,8 @@ GOOS=darwin go vet ./...            # macOS is supported too
   and `status`, the History engine (`history.go`, `replay.go`, `write.go`, `items.go`),
   the Syllabus and Revisions, Sessions and the Resume point, Checks and Attempts, Cards and
   FSRS scheduling (`schedule.go`), Sources and Evidence, Goal and Pace, Assessments and
-  signals, the read views, and `study import`.
+  signals, the read views, and `study import`. Also the Knowledge base plugin registry
+  (`plugin_registry.go`), which is the computer's and not the Study home's.
 - `internal/checkpoint`: hardened git: Checkpoints, work snapshots for Attempts, changes
   since a Checkpoint, and reading history.
 - `internal/library`: building and searching the Library index.
@@ -128,6 +135,7 @@ GOOS=darwin go vet ./...            # macOS is supported too
   it in the skill if agents should use it. Some operations are CLI-only on purpose and get
   no MCP tool: `study check`, which runs code (ADR-0009), and what is for the learner or the
   installation alone, such as `study topic remove`, `study topic restore`, `study import`,
+  `study knowledge-base add`, `study knowledge-base list`, `study knowledge-base remove`,
   `study setup`, `study doctor`, `study completion`, `study library build` and terminal
   `study review`.
 - New file or Event format: bump nothing silently; add a `format` field and a test that

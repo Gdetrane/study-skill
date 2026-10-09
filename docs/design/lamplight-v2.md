@@ -582,8 +582,33 @@ hours before any learning happens is exactly what v1 produced.
     stops when the request is cancelled.
   - `status` marks the Lessons started or done that cite no Evidence, once the Topic has
     Sources (`lessons_without_evidence`); they are never blocked.
-- **Still to build for v2.0** (ADR-0012): Knowledge base plugins, so the agent can search a
-  Topic's Sources with no account anywhere.
+- **Built** (ADR-0012): the registry of the Knowledge base plugins a machine has, and
+  `study knowledge-base add`, `list` and `remove` to change it. Nothing starts or contacts
+  a plugin yet, and no Topic names one.
+  - The registry is `knowledge-base-plugins.json`, with a `format` number, in Lamplight's
+    configuration folder beside `config.toml`. An entry is a name and either a command, as
+    an argument list, or an http or https URL. A name follows the rule of a Topic's id and
+    is neither `none` nor `plugin`, the kinds of Knowledge base a Topic records.
+  - A command's program is resolved when it is registered, on `PATH` or from the folder
+    `study` started in, and stored as an absolute path with its symbolic links unresolved.
+    A program inside the Study home is refused, by its path and by where its links lead.
+    Only absolute folders of `PATH` are searched.
+  - The registry decides which programs run, so it is read only where the agent cannot
+    write it: when the configuration folder is the Study home or inside it, or is not an
+    absolute path, the registry is not read at all and the commands say why. A registry
+    that is a symbolic link is not followed. One in a newer format is refused before
+    anything else in it is read; one this version cannot vouch for whole, an unknown key
+    included, is `corrupt`.
+  - The registry is the machine's and no Topic's, so changing it records no Event. A change
+    takes the lock of a file beside the registry, reads the registry again under it and
+    replaces the file whole. Registering a plugin as it is registered changes nothing;
+    another command or URL under a registered name needs `--replace`.
+  - The commands are CLI-only. No MCP tool registers, changes or removes a plugin or takes
+    a command line or a URL for one, and tests enforce it: the server's source names none
+    of the core's operations that change the registry and touches no file itself, and no
+    tool's input has a field for a program or an address beyond the ones listed there.
+- **Still to build for v2.0** (ADR-0012): the rest of Knowledge base plugins, so the agent
+  can search a Topic's Sources with no account anywhere.
   - The agent talks to `study`, and `study` is the MCP client of the Topic's plugin. `study`
     ships no retrieval and still never parses a document.
   - The contract is six tools with fixed names: `contract` (the version, and what the
@@ -595,14 +620,13 @@ hours before any learning happens is exactly what v1 produced.
     now, others such as a time range later, without a new contract version; a Passage from
     a web page has none. A file is indexed by its content hash; a URL gets one when the
     plugin fetches it.
-  - A plugin is registered per machine with `study knowledge-base add`, by a command or a
-    URL, in a file in the learner's configuration folder, outside the Study home. A Topic
-    records only its name (`kind = "plugin"`, `plugin = "<name>"`), so nothing a Topic
-    holds decides which program runs (ADR-0009). Registering is CLI-only. A Topic whose
-    plugin this machine lacks is treated as `none`, and `status` says how to fix it. A
-    command is started by the absolute path recorded at registration, from the registry's
-    folder and never from the Topic. A plugin reached by URL is a service outside any
-    sandbox, so it must itself be told what it may read and fetch.
+  - A plugin is registered per machine with `study knowledge-base add` (built, above). A
+    Topic records only its name (`kind = "plugin"`, `plugin = "<name>"`), so nothing a Topic
+    holds decides which program runs (ADR-0009). A Topic whose plugin this machine lacks is
+    treated as `none`, and `status` says how to fix it. A command is started by the
+    absolute path recorded at registration, from the registry's folder and never from the
+    Topic. A plugin reached by URL is a service outside any sandbox, so it must itself be
+    told what it may read and fetch.
   - `study source index` is the one thing that asks a plugin to index, and it is CLI-only,
     like `study check`: run in the agent's shell or by the learner, so the sandbox and
     approval prompts apply to what a command plugin reads and fetches. No MCP tool starts

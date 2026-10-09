@@ -202,7 +202,10 @@ func userHomeDir(getenv func(string) string) (string, error) {
 	return h, nil
 }
 
-func configPath(getenv func(string) string) (string, error) {
+// configDir is Lamplight's configuration folder: lamplight in
+// XDG_CONFIG_HOME, or in ~/.config. It holds config.toml and the Knowledge
+// base plugin registry.
+func configDir(getenv func(string) string) (string, error) {
 	base := getenv("XDG_CONFIG_HOME")
 	if base == "" {
 		h, err := userHomeDir(getenv)
@@ -211,7 +214,15 @@ func configPath(getenv func(string) string) (string, error) {
 		}
 		base = filepath.Join(h, ".config")
 	}
-	return filepath.Join(base, "lamplight", "config.toml"), nil
+	return filepath.Join(base, "lamplight"), nil
+}
+
+func configPath(getenv func(string) string) (string, error) {
+	dir, err := configDir(getenv)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "config.toml"), nil
 }
 
 func loadConfig(path string) (config, error) {

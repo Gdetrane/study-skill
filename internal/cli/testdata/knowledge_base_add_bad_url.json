@@ -1,0 +1,7 @@
+{
+  "ok": false,
+  "error": {
+    "code": "invalid_argument",
+    "message": "\"file:///usr/bin/study-shelf\" is not a web address: give an absolute http or https URL"
+  }
+}
