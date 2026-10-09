@@ -44,7 +44,7 @@ func TestCheckCommandTakesTextATerminalShowsAsItIs(t *testing.T) {
 		append([]string{"/bin/sh"}, make([]string, MaxArgs)...),
 		{"/bin/sh", strings.Repeat("語", MaxWordRunes)},
 		// A zero-width joiner is part of how some scripts are written.
-		{"/bin/sh", "क्‍ष"},
+		{"/bin/sh", "क्\u200dष"},
 	}
 	for _, command := range ok {
 		if err := CheckCommand(command); err != nil {
@@ -64,13 +64,13 @@ func TestCheckCommandTakesTextATerminalShowsAsItIs(t *testing.T) {
 		{[]string{"/bin/s\x1bh"}, "the program's path contains a control character"},
 		// Every character that changes the direction text is shown in: the
 		// ones the command line quotes before it prints anything.
-		{[]string{"/bin/sh", "a‮b"}, "bidirectional control character (U+202E)"},
-		{[]string{"/bin/sh", "a‪b"}, "bidirectional control character (U+202A)"},
-		{[]string{"/bin/sh", "a⁦b"}, "bidirectional control character (U+2066)"},
-		{[]string{"/bin/sh", "a⁩b"}, "bidirectional control character (U+2069)"},
-		{[]string{"/bin/sh", "a‎b"}, "bidirectional control character (U+200E)"},
-		{[]string{"/bin/sh", "a‏b"}, "bidirectional control character (U+200F)"},
-		{[]string{"/bin/sh", "a؜b"}, "bidirectional control character (U+061C)"},
+		{[]string{"/bin/sh", "a\u202eb"}, "bidirectional control character (U+202E)"},
+		{[]string{"/bin/sh", "a\u202ab"}, "bidirectional control character (U+202A)"},
+		{[]string{"/bin/sh", "a\u2066b"}, "bidirectional control character (U+2066)"},
+		{[]string{"/bin/sh", "a\u2069b"}, "bidirectional control character (U+2069)"},
+		{[]string{"/bin/sh", "a\u200eb"}, "bidirectional control character (U+200E)"},
+		{[]string{"/bin/sh", "a\u200fb"}, "bidirectional control character (U+200F)"},
+		{[]string{"/bin/sh", "a\u061cb"}, "bidirectional control character (U+061C)"},
 		{[]string{"/bin/sh", "a�b"}, "replacement character"},
 		{[]string{"/bin/sh", strings.Repeat("a", MaxWordRunes+1)}, "longer than 4096"},
 		{append([]string{"/bin/sh"}, make([]string, MaxArgs+1)...), "more than 100 arguments"},
@@ -129,7 +129,7 @@ func TestCleanURL(t *testing.T) {
 		"http://localhost:65536/mcp":                    "port from 1 to 65535",
 		"http://localhost:99999999999999/mcp":           "port from 1 to 65535",
 		"http://localhost/\x1b[2J":                      "control character",
-		"http://localhost/a‮b":                          "bidirectional control character",
+		"http://localhost/a\u202eb":                     "bidirectional control character",
 		"http://localhost/" + strings.Repeat("a", 2000): "longer than 2000",
 		// A port that is no number is refused by the parser itself, whose
 		// error would repeat the address.

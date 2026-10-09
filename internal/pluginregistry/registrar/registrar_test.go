@@ -153,8 +153,8 @@ func TestAddRefusals(t *testing.T) {
 
 		{"an argument that is not text", Spec{Name: "kb", Command: []string{shelf, "\xff"}}, "invalid_argument", "argument 1 of the command is not valid UTF-8"},
 		{"an argument with a line break", Spec{Name: "kb", Command: []string{shelf, "ok", "a\nb"}}, "invalid_argument", "argument 2 of the command contains a control character"},
-		{"an argument that reorders text", Spec{Name: "kb", Command: []string{shelf, "a‮b"}}, "invalid_argument", "bidirectional control character"},
-		{"an argument with a left-to-right mark", Spec{Name: "kb", Command: []string{shelf, "a‎b"}}, "invalid_argument", "bidirectional control character"},
+		{"an argument that reorders text", Spec{Name: "kb", Command: []string{shelf, "a\u202eb"}}, "invalid_argument", "bidirectional control character"},
+		{"an argument with a left-to-right mark", Spec{Name: "kb", Command: []string{shelf, "a\u200eb"}}, "invalid_argument", "bidirectional control character"},
 		{"an argument too long", Spec{Name: "kb", Command: []string{shelf, strings.Repeat("a", 4097)}}, "invalid_argument", "longer than 4096"},
 		{"too many arguments", Spec{Name: "kb", Command: manyArgs}, "invalid_argument", "more than 100 arguments"},
 
@@ -795,7 +795,7 @@ func TestADamagedRegistryIsCorruptWithAdvice(t *testing.T) {
 		{"an argument that is null", registryFor(`{"name": "shelf", "command": ["/bin/sh", null]}`), "holds a null"},
 		{"an argument that is not text", registryFor(`{"name": "shelf", "command": ["/bin/sh", "a` + "\xff" + `b"]}`), "not valid UTF-8"},
 		{"a program by a path that is not clean", registryFor(`{"name": "shelf", "command": ["/usr/local/../bin/sh"]}`), "not an absolute path as study writes one"},
-		{"an argument with a right-to-left mark", registryFor(`{"name": "shelf", "command": ["/bin/sh", "a‏b"]}`), "bidirectional control character"},
+		{"an argument with a right-to-left mark", registryFor(`{"name": "shelf", "command": ["/bin/sh", "a\u200fb"]}`), "bidirectional control character"},
 		{"a URL with a password", registryFor(`{"name": "shelf", "url": "http://ada:secret@localhost/"}`), "user name or password"},
 		{"larger than a registry is", `{"format": 1, "plugins": [` + strings.Repeat(" ", 1<<20) + `]}`, "larger than"},
 	} {
