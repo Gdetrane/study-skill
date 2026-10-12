@@ -399,3 +399,34 @@ func TestTwoStudyShelvesShareOneIndex(t *testing.T) {
 	}
 	integrity(t, computer.DataFolder("conformance"), "shared")
 }
+
+// A session that ends for a reason study did not give is said, last on
+// standard error, where study looks for the reason, and the program does not
+// exit as if nothing had happened. A session that study ends, by closing
+// the program's input, ends without a word.
+func TestAStudyShelfSaysWhyItsSessionEnded(t *testing.T) {
+	for name, tc := range map[string]struct {
+		input string
+		code  int
+		says  string
+	}{
+		"what it is sent is no MCP message": {"this is no MCP message\n", 1, "study-shelf: the session ended:"},
+		"its input is closed":               {"", 0, ""},
+	} {
+		cmd := exec.Command(shelftest.Shelf(t))
+		cmd.Env = []string{plugincontract.DataFolderEnv + "=" + t.TempDir()}
+		cmd.Stdin = strings.NewReader(tc.input)
+		var stderr strings.Builder
+		cmd.Stderr = &stderr
+		err := cmd.Run()
+		code := 0
+		if exit, ok := err.(*exec.ExitError); ok {
+			code = exit.ExitCode()
+		} else if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if code != tc.code || !strings.Contains(stderr.String(), tc.says) || (tc.says == "" && stderr.Len() != 0) {
+			t.Errorf("%s: study-shelf exited with %d and said %q; want %d and %q", name, code, stderr.String(), tc.code, tc.says)
+		}
+	}
+}

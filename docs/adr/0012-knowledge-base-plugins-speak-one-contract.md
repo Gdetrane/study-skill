@@ -485,13 +485,17 @@ where two of its lines needed more than they say:
   or the credentials a cloud hands its machines at `169.254.169.254`. Shelf refuses both,
   for the page, for every address it redirects to, and by the number a name leads to as
   the connection is made, which is the only place that is known. The link-local addresses
-  are refused always. The computer itself is allowed by `--allow-loopback`, given where the
+  are refused always, and with them the three addresses where a cloud hands out the same
+  outside that range, named one by one, since the ranges they are in hold learners' own
+  networks. The computer itself is allowed by `--allow-loopback`, given where the
   learner registers Shelf, for a learner who serves the pages they study from to
   themselves: the registry is outside the Study home, so the agent cannot turn it on.
   Addresses of the learner's own network are fetched, which the service is not to do: a
   wiki there is a Source like any other, and the command shows each address before it is
   fetched. A proxy the learner sets makes the connections itself, so there Shelf refuses
-  only what is written as such a number.
+  only what is written as such a number. The connection to the proxy is let through for
+  the request that goes through it and for no other: a proxy on the learner's own
+  computer is not thereby an address Shelf fetches pages from.
 - **Indexing that was stopped starts over.** A book is read in seconds, and its content
   is put in the index in one transaction, so there is nothing half done to carry on from.
   Embedding a book takes minutes, and will carry on.
