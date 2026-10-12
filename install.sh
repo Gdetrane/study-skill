@@ -1,15 +1,16 @@
 #!/bin/sh
-# Installs Lamplight's study binary from a release (ADR-0010):
+# Installs Lamplight's programs from a release (ADR-0010): study, and
+# study-shelf, the Knowledge base plugin that ships with it (ADR-0012).
 #
 #   curl -fsSL https://raw.githubusercontent.com/mordor-forge/lamplight/main/install.sh | sh
 #
 # It downloads the archive for this machine, checks it against the release's
-# checksums.txt, and puts study in ~/.local/bin without sudo. Running it again
-# upgrades. docs/release.md lists the files a release holds.
+# checksums.txt, and puts study and study-shelf in ~/.local/bin without sudo.
+# Running it again upgrades. docs/release.md lists the files a release holds.
 #
 # Environment:
 #   STUDY_VERSION       the release to install, such as v2.0.0 (default: the latest)
-#   STUDY_INSTALL_DIR   the folder study goes in (default: $HOME/.local/bin)
+#   STUDY_INSTALL_DIR   the folder they go in (default: $HOME/.local/bin)
 #   STUDY_DOWNLOAD_URL  a folder of release files to download from instead of
 #                       the GitHub release, as an https:// or file:// address,
 #                       such as file:///path/to/dist
@@ -37,10 +38,10 @@ need() {
 usage() {
 	say "Usage: sh install.sh"
 	say ""
-	say "Installs study from a Lamplight release into ~/.local/bin."
+	say "Installs study and study-shelf from a Lamplight release into ~/.local/bin."
 	say ""
 	say "  STUDY_VERSION       the release to install, such as v2.0.0 (default: the latest)"
-	say "  STUDY_INSTALL_DIR   the folder study goes in (default: \$HOME/.local/bin)"
+	say "  STUDY_INSTALL_DIR   the folder they go in (default: \$HOME/.local/bin)"
 	say "  STUDY_DOWNLOAD_URL  a folder of release files to download from instead of GitHub"
 }
 
@@ -116,6 +117,8 @@ put() {
 cleanup() {
 	rm -rf "$tmp"
 	[ -z "$staged" ] || rm -f "$staged"
+	[ -z "$new_study" ] || rm -f "$new_study"
+	[ -z "$new_shelf" ] || rm -f "$new_shelf"
 }
 
 main() {
@@ -166,6 +169,8 @@ main() {
 	fi
 
 	staged=
+	new_study=
+	new_shelf=
 	tmp=$(mktemp -d)
 	trap cleanup EXIT
 	trap 'exit 1' HUP INT TERM
@@ -190,15 +195,38 @@ main() {
 	mkdir -p "$dir" || fail "could not create $dir; nothing was installed"
 	dir=$(CDPATH='' cd -- "$dir" && pwd) || fail "could not open $dir; nothing was installed"
 	dest=$dir/study
+	shelf=$dir/study-shelf
 	[ ! -d "$dest" ] || fail "$dest is a folder; nothing was installed"
 	# The new study must run before it takes the place of the one that is
 	# there. It is tried in the install folder, since a temporary folder may
 	# not allow running programs.
 	stage "$tmp/files/study" "$dest" 755 || fail "could not write $dest; nothing was installed"
-	installed=$("$staged" --version 2>&1) ||
+	new_study=$staged
+	staged=
+	installed=$("$new_study" --version 2>&1) ||
 		fail "the study in $archive does not run on this machine ($installed); nothing was installed"
-	place "$dest" || fail "could not write $dest; nothing was installed"
+	# study-shelf is held to the same before either takes its place: the two
+	# are one release, and a study beside a study-shelf of another is not what
+	# was asked for. A release from before study-shelf holds none.
+	if [ -f "$tmp/files/study-shelf" ]; then
+		[ ! -d "$shelf" ] || fail "$shelf is a folder; nothing was installed"
+		stage "$tmp/files/study-shelf" "$shelf" 755 || fail "could not write $shelf; nothing was installed"
+		new_shelf=$staged
+		staged=
+		shelved=$("$new_shelf" --version 2>&1) ||
+			fail "the study-shelf in $archive does not run on this machine ($shelved); nothing was installed"
+	fi
+	mv -f "$new_study" "$dest" || fail "could not write $dest; nothing was installed"
+	new_study=
 	say "Installed $dest ($installed)"
+	if [ -n "$new_shelf" ]; then
+		mv -f "$new_shelf" "$shelf" ||
+			fail "could not write $shelf: study was installed, and study-shelf was not. Run the script again"
+		new_shelf=
+		say "Installed $shelf ($shelved)"
+	else
+		say "This release holds no study-shelf: Shelf, the Knowledge base plugin, was not installed."
+	fi
 
 	# man looks beside each folder on PATH: for <prefix>/bin, in <prefix>/share/man.
 	case $dir in

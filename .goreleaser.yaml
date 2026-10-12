@@ -1,4 +1,5 @@
-# GoReleaser configuration for Lamplight's `study` binary (ADR-0010).
+# GoReleaser configuration for Lamplight's two programs (ADR-0010): `study`,
+# and `study-shelf`, the Knowledge base plugin that ships with it (ADR-0012).
 # docs/release.md explains how to cut a release. The GitHub release is the
 # only place a release is published, so it needs no secret of our own.
 version: 2
@@ -24,9 +25,27 @@ builds:
     ldflags:
       - -s -w -X github.com/mordor-forge/lamplight/v2/internal/cli.Version=v{{ .Version }}
     mod_timestamp: "{{ .CommitTimestamp }}"
+  # Shelf is a program of its own, of which study links nothing: SQLite, the
+  # PDF reader and the WebAssembly runtime it runs in are in this binary
+  # alone. It is built without cgo, like study, for the same four targets.
+  - id: study-shelf
+    main: ./cmd/study-shelf
+    binary: study-shelf
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X github.com/mordor-forge/lamplight/v2/internal/shelf.Version=v{{ .Version }}
+    mod_timestamp: "{{ .CommitTimestamp }}"
 
 archives:
   - id: default
+    # Both programs, side by side at the top of the archive: install.sh
+    # looks for study and study-shelf there.
+    ids: [study, study-shelf]
     formats: [tar.gz]
     # No version in the name: install.sh downloads the newest archive from
     # releases/latest/download/<name> without having to ask which release
@@ -54,6 +73,8 @@ release:
 
 nfpms:
   - id: packages
+    # /usr/bin/study and /usr/bin/study-shelf.
+    ids: [study, study-shelf]
     package_name: lamplight
     file_name_template: "{{ .ConventionalFileName }}"
     homepage: https://github.com/mordor-forge/lamplight

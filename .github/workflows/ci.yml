@@ -50,21 +50,29 @@ jobs:
           distribution: goreleaser
           version: "~> v2"
           args: release --snapshot --clean --skip=publish
-      - name: Check that packages ship completions, the man page and the licence
+      - name: Check that packages ship both programs, completions, the man page and the licence
         run: |
           set -eu
           archive=dist/lamplight_linux_amd64.tar.gz
           for f in study LICENSE completions/study.bash completions/study.zsh completions/study.fish manpages/study.1.gz; do
             tar tzf "$archive" | grep -qx "$f" || { echo "missing $f in $archive"; exit 1; }
           done
+          # study-shelf is built for every platform study is, without cgo.
+          for archive in dist/lamplight_linux_amd64.tar.gz dist/lamplight_linux_arm64.tar.gz dist/lamplight_darwin_amd64.tar.gz dist/lamplight_darwin_arm64.tar.gz; do
+            for f in study study-shelf; do
+              tar tzf "$archive" | grep -qx "$f" || { echo "missing $f in $archive"; exit 1; }
+            done
+          done
           deb=$(ls dist/lamplight_*_amd64.deb)
+          ar p "$deb" data.tar.gz | tar tz | grep -q '^./usr/bin/study$'
+          ar p "$deb" data.tar.gz | tar tz | grep -q '^./usr/bin/study-shelf$'
           ar p "$deb" data.tar.gz | tar tz | grep -q '^./usr/share/man/man1/study.1.gz$'
           ar p "$deb" data.tar.gz | tar tz | grep -q '^./usr/share/zsh/vendor-completions/_study$'
           ar p "$deb" data.tar.gz | tar tz | grep -q '^./usr/share/doc/lamplight/copyright$'
           # The rpm has paths of its own for zsh and the licence.
           rpm=$(ls dist/lamplight-*x86_64.rpm)
           command -v rpm >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq rpm; }
-          for f in /usr/share/man/man1/study.1.gz /usr/share/zsh/site-functions/_study /usr/share/licenses/lamplight/LICENSE; do
+          for f in /usr/bin/study /usr/bin/study-shelf /usr/share/man/man1/study.1.gz /usr/share/zsh/site-functions/_study /usr/share/licenses/lamplight/LICENSE; do
             rpm -qlp "$rpm" | grep -qx "$f" || { echo "missing $f in $rpm"; exit 1; }
           done
       - name: Install the snapshot with install.sh
@@ -76,5 +84,62 @@ jobs:
           export XDG_STATE_HOME="$home/.local/state" XDG_CACHE_HOME="$home/.cache"
           STUDY_DOWNLOAD_URL="file://$PWD/dist" sh install.sh
           "$home/.local/bin/study" --version | grep -F snapshot
+          "$home/.local/bin/study-shelf" --version | grep -F snapshot
           test -s "$home/.local/share/man/man1/study.1.gz"
           test -s "$home/.local/share/bash-completion/completions/study"
+          # study links nothing of Shelf's (ADR-0012), in the release's builds too.
+          if go version -m "$home/.local/bin/study" | grep -E 'modernc.org/sqlite|go-pdfium|wazero|go-readability'; then
+            echo "the released study links what only study-shelf may"; exit 1
+          fi
+          go version -m "$home/.local/bin/study-shelf" | grep -q 'modernc.org/sqlite'
+          # The two that were installed work together: study starts study-shelf
+          # as it starts any plugin, and they speak the contract.
+          export STUDY_HOME="$home/study" PATH="$home/.local/bin:$PATH"
+          study knowledge-base add shelf -- study-shelf
+          study knowledge-base check shelf
+      - name: Keep the archives for the macOS job
+        uses: actions/upload-artifact@v4
+        with:
+          name: snapshot-archives
+          path: |
+            dist/lamplight_*.tar.gz
+            dist/checksums.txt
+          if-no-files-found: error
+          retention-days: 1
+
+  macos:
+    # Not a required check either. A snapshot is built on Linux for every
+    # platform; this job is the one place its macOS programs are run, and
+    # the one place Shelf's tests run on macOS: the PDF reader is compiled to
+    # machine code when Shelf first reads a PDF, which no other system can
+    # stand in for.
+    name: Shelf and the snapshot on macOS
+    needs: release
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+      - name: Test Shelf
+        run: go test ./internal/shelf/... ./cmd/study-shelf
+      - name: Fetch the archives
+        uses: actions/download-artifact@v4
+        with:
+          name: snapshot-archives
+          path: dist
+      - name: Install the snapshot with install.sh
+        run: |
+          set -eu
+          home=$(mktemp -d)
+          export HOME="$home" SHELL=/bin/zsh
+          export XDG_CONFIG_HOME="$home/.config" XDG_DATA_HOME="$home/.local/share"
+          export XDG_STATE_HOME="$home/.local/state" XDG_CACHE_HOME="$home/.cache"
+          STUDY_DOWNLOAD_URL="file://$PWD/dist" sh install.sh
+          "$home/.local/bin/study" --version | grep -F snapshot
+          "$home/.local/bin/study-shelf" --version | grep -F snapshot
+          export STUDY_HOME="$home/study" PATH="$home/.local/bin:$PATH"
+          study knowledge-base add shelf -- study-shelf
+          study knowledge-base check shelf
