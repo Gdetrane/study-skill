@@ -1,0 +1,163 @@
+# Shelf
+
+Shelf is the Knowledge base plugin that ships with Lamplight: the `study-shelf` program,
+installed beside `study`. It indexes a Topic's Sources on your own computer, PDFs and web
+pages, and searches them by keyword, so that the agent can find the Passage a Lesson's
+Evidence quotes from. It needs no account and sends your books nowhere.
+
+`study` links none of it ([ADR-0012](adr/0012-knowledge-base-plugins-speak-one-contract.md)):
+it starts `study-shelf` each time it has something to ask it, and speaks the
+[Knowledge base plugin contract](knowledge-base-contract.md) with it, as it would with any
+other plugin. Terms follow [GLOSSARY.md](../GLOSSARY.md).
+
+## Registering it
+
+`install.sh` and the deb and rpm packages install `study-shelf` next to `study`. Register it
+once on each computer, under the name your Topics will use:
+
+```bash
+study knowledge-base add shelf -- study-shelf
+study knowledge-base check shelf
+```
+
+`check` starts Shelf as `study` starts it for a Topic, and reports the contract it speaks:
+version 1, Sources that are files and web pages, keyword search, and pages as locations.
+`study-shelf --version` prints its version, which is the version of the `study` it was
+released with.
+
+You never start `study-shelf` yourself. Started by hand it has no folder to keep its index
+in, says so, and exits.
+
+## What it reads
+
+| A Source that is | Shelf |
+|---|---|
+| A PDF with a text layer | Reads it page by page. Each Passage carries the pages it is on. |
+| A PDF that is protected against changes and opens without a password | Reads it like any other. |
+| A web page, by its `http` or `https` address | Fetches it once, when it is indexed, and takes the article's text: without the menus, the footer and the page's title. HTML and plain text are read. |
+
+And what it does not read, with the reason `study` shows for the Source:
+
+| A Source that is | Fails with |
+|---|---|
+| A scanned book, whose pages are pictures | `the file has no text layer`. Run it through a program that recognises the text (OCR), such as `ocrmypdf`, and add the file it makes. |
+| A PDF that asks for a password to open | `the file is protected by a password`. Save a copy without the password and add that. |
+| A PDF that is cut short or broken | `the file is damaged`. Download or export it again. |
+| Any other file: EPUB, Word, Markdown, plain text, a web page saved under a book's name | `the file is not a PDF`. |
+| A file that was moved or removed | `the file is not there`. |
+| A file that changed since `study` read it, or while Shelf read it | `the file changed`. Index it again: a Source is indexed as the content `study` saw, or not at all. |
+| A web address that sends a PDF, a picture or anything else that is no page | `Shelf reads web pages, which are HTML or plain text`. Download the file and add it as a file Source. |
+| A page that shows nothing until a script has run, or that needs you to sign in | `the page has no text to read`, or the server's refusal. Shelf runs no script and has none of your browser's sessions. |
+
+Shelf reads a file and fetches an address only when it is asked to index it, which is what
+`study source index` does, from your shell or your agent's. It fetches the address it is
+given, from your computer, as your browser would: one on your own network too. A PDF is
+recognised by how it begins, not by its name, so no other kind of file is read as one.
+
+Three more things to know about what comes out:
+
+- **A Passage is the Source's own text**, about 1,500 characters of it, ending where a
+  paragraph or a sentence does. Shelf writes no word of its own into one. It does tidy what
+  a PDF holds: a word divided at the end of a line is joined, a ligature becomes its
+  letters, and characters that show nothing are dropped.
+- **A Passage keeps to one page.** The exception is a sentence that runs over the end of a
+  page: the Passage it begins in holds all of it, and is on both pages, so that a quote of
+  the sentence can be checked.
+- **Formulas come out as the PDF holds them**, which is often not as they look: a book
+  typeset without a table of its symbols gives letters and odd characters where the page
+  shows a sum. Quote the words around a formula, or record that Evidence without a Passage.
+
+## Searching
+
+Shelf finds Passages by their words (SQLite's full-text index, ranked by BM25). A query is
+words to look for, and any of them is enough: the Passages that hold more of them, and
+rarer ones, come first. Words match without their case and their accents, and by their
+English stem, so `eliminating` finds `elimination`. Nothing in a query is an operator.
+
+Searching reads the index and never a Source: a book that was moved away is still found,
+and a search is answered while another book is being indexed.
+
+Search by meaning, through an embedding model you run, and reranking are the next step
+(issue #84). Until then keyword search is what Shelf has.
+
+## Where the index is
+
+In your state folder, outside the Study home, one file for each Topic:
+
+```
+~/.local/state/lamplight/knowledge-base-plugins/shelf/<collection>.sqlite
+```
+
+(`$XDG_STATE_HOME` instead of `~/.local/state` when it is set; `shelf` is the name you
+registered it under, and the collection is the name `study` gives the Topic's Sources when
+it speaks to a plugin: it begins with the Topic's id.) Beside it are `<collection>.lock`,
+which says which Sources are being indexed now, and, while a Shelf runs, two files of
+SQLite's, ending in `-wal` and `-shm`.
+
+- It is that computer's state. It is not synced with the Topic, and it is rebuilt by
+  indexing the Topic's Sources again. To have a Topic indexed from nothing, remove its
+  files.
+- Indexing a Source whose content is indexed already does nothing. Content that changed
+  replaces what was indexed, in one step: a search finds the old text until the new text is
+  all there, and never half of either. Stopping an indexing, or losing power in the middle
+  of one, leaves what was indexed before, and the Source is indexed when you ask again.
+- `study` starts Shelf for each thing it asks and stops it again, so several run at once:
+  a `study status` in one terminal while `study source index` works in another. Each
+  finds what another indexed, and says of a Source another is indexing that it is being
+  indexed, and how far. Why a Source failed is kept in the collection, so it is still
+  said the next day.
+- Each file carries a format number. A file written by a newer Shelf is refused, with the
+  reason, and left as it is.
+- **A sandbox that `study source index` runs in must allow that folder**, since Shelf is
+  then started inside the sandbox
+  ([the contract](knowledge-base-contract.md#the-plugins-folder)). Or index from a shell of
+  your own. Where Shelf may read the folder and not write in it, what is indexed is still
+  said and still found, and indexing fails with that as its reason.
+
+Shelf opens that folder once and follows no link out of it. It writes nowhere else: not in
+the folder it is started in, and not in a temporary folder.
+
+## What it costs
+
+Asking what is indexed and searching are quick and small: Shelf starts, answers and is gone
+in a few hundredths of a second. Indexing a PDF is the work:
+
+- The PDF reader is compiled for your computer each time `study source index` has a PDF to
+  index, which takes about three seconds.
+- A book of a thousand pages then takes ten to fifteen seconds, and one with a drawing on
+  every page a minute or more. Shelf holds a few hundred megabytes while it reads.
+- One file may take 15 minutes and 64 MB of text, and the PDF reader 1 GB of memory. A
+  file that needs more fails with the reason. A web page may be 16 MB, take 60 seconds, and
+  redirect five times.
+
+## Settings
+
+This version has none. Shelf takes no key and no address of a model yet: those arrive with
+embedding search, in a settings file of Shelf's own and never on its command line, which
+shows in the process list.
+
+**Behind a proxy**, Shelf needs to be told, to fetch web pages. `study` starts a plugin
+with a small environment of its own making, in which no proxy variable arrives. Register a
+script of your own, kept outside the Study home, that sets it:
+
+```sh
+#!/bin/sh
+export HTTPS_PROXY=http://proxy.example:3128
+exec study-shelf "$@"
+```
+
+## What is inside
+
+Shelf is one program without dependencies to install. It is built from:
+
+| Part | Is | Licence |
+|---|---|---|
+| The index | SQLite, through `modernc.org/sqlite`, a translation of SQLite to Go | Public domain; BSD-3-Clause |
+| The PDF reader | PDFium, the reader Chrome uses, compiled to WebAssembly and packaged by `github.com/klippa-app/go-pdfium` | BSD-3-Clause and Apache-2.0; MIT |
+| What runs the PDF reader | `github.com/tetratelabs/wazero`, a WebAssembly runtime | Apache-2.0 |
+| The text of a web page | `codeberg.org/readeck/go-readability`, after the reader view of Firefox | MIT |
+
+The PDF reader runs inside Shelf, shut in: it is given the one file to read, and can open
+no other file, reach no network, and take no more memory than it is allowed. Why PDFium was
+chosen over `pdftotext` is in
+[ADR-0012](adr/0012-knowledge-base-plugins-speak-one-contract.md).

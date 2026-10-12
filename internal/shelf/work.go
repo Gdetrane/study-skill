@@ -266,7 +266,7 @@ func (s *Shelf) readFile(ctx context.Context, asked plugincontract.Source, advan
 	}
 	if !text {
 		return nil, "", wrong("the file has no text layer: its pages are pictures, as in a scanned book, and Shelf reads text. " +
-			"Run it through a program that recognises the text (OCR), and add the result")
+			"Run it through a program that recognises the text (OCR), and add the file it makes")
 	}
 	return pages, before, nil
 }

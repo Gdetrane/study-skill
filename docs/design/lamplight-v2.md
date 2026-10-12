@@ -714,6 +714,81 @@ hours before any learning happens is exactly what v1 produced.
     link out of its folder. A plugin that stops answering ends the suite at that call. A
     test runs the suite against plugins that each break the contract in one way, so the
     suite is known to fail them.
+- **Built** (ADR-0012): Shelf with keyword search, the `study-shelf` program
+  (`cmd/study-shelf`, `internal/shelf`). [docs/shelf.md](../shelf.md) is the learner's page.
+  - It is a second program in this repository and release, and `study` links none of it:
+    not Shelf's packages, not SQLite, not the PDF reader. A test lists what `study`, the
+    core and the MCP server are built from and fails when any of it is there. The release
+    archives and packages hold both programs, and `install.sh` installs both, each only
+    once both have run.
+  - It is an MCP server over its standard input and output with the contract's six tools,
+    and the conformance suite passes against the built program, started as `study` starts
+    it, with PDFs and with web pages.
+  - **The PDF reader is PDFium, compiled to WebAssembly and run inside Shelf by wazero**,
+    which the prototype on real books chose over `pdftotext` (ADR-0012 has the
+    measurements). Nothing is installed beside `study-shelf`, a book gives the same text
+    on every computer, and the reader is shut in: it is handed the one file, and can open
+    no other, reach no network, and hold no more than 1 GB. It is compiled to machine code
+    when the first PDF is indexed, about three seconds, so a Shelf that only searches
+    never pays for it.
+  - A web page is fetched only by `index`, within limits (60 seconds, 16 MB, five
+    redirects, `http` and `https`, HTML or plain text), and its readable text is taken by
+    a library that follows Firefox's reader view. `status` gives the hash of the bytes
+    fetched.
+  - **Passages** are about 1,500 characters of the Source's own text, ending where a
+    paragraph or a sentence does, and keep to one page. The exception is a sentence that
+    runs over the end of a page, which the Passage it begins in holds whole, on both
+    pages, so that a quote of it can be checked. What a reader extracted is tidied and
+    never rewritten: a word divided at a line's end is joined, a ligature becomes its
+    letters, characters that are no text are dropped.
+  - **A Passage's id** is the first 16 hexadecimal digits of the SHA-256 of the Source's
+    id, the content's hash, the Passage's place and its text. So it is the same wherever
+    and whenever that content is indexed, and it never comes to name another text: content
+    that changed, or is cut another way, gives ids that were never used.
+  - **The index** is one SQLite file for each collection, in the folder `study` gives
+    Shelf, in WAL mode: `sources` (id, kind, title, the hash of the content that is
+    indexed, a web page's address, why the last indexing failed and what it was asked
+    with), `passages` (id, Source, place, pages), a full-text table of their text (FTS5,
+    ranked by BM25, words without case and accents and by their English stem) and `work`
+    (the Sources being indexed now, below). The file's header carries the format, 1, and
+    a file in a newer format is refused and left as it is.
+  - **A Source is in the index whole or not at all.** `index` answers at once and the work
+    goes on: the Source is read and cut in memory, and then replaces what was indexed in
+    one transaction. A search finds the earlier content until that commits. `cancel`, a
+    Shelf that is stopped and a Shelf that is killed leave what was indexed before, and
+    asked again Shelf starts over. A test kills Shelf at each point of the write, and
+    another kills the program itself while it indexes.
+  - **A file is indexed only when its bytes are the hash `study` handed over.** `study`
+    counts a Source as indexed when Shelf gives that hash. Shelf takes it of the open file
+    the pages are read from, before they are read and after, and a file that is not, or no
+    longer, what `study` read fails with that as its reason, with nothing of it indexed.
+  - **`study` starts Shelf for every question it has, and stops it**, so the Shelf that is
+    asked is seldom the one that indexed, several are at one collection at once, and what
+    one has to tell the next is in the collection.
+    - Each finds what another indexed, and a search is answered while another writes:
+      readers do not wait for the one writer. Two that index the same Source at once each
+      write it whole, and the later one stays.
+    - A failure is written there with its reason, beside the earlier content, until the
+      Source is indexed again.
+    - A Source being indexed is written there with how far the work is, and counts only
+      while the Shelf that indexes it holds a lock on the collection's lock file, which
+      the system lets go of when the program ends. So every Shelf says `indexing` of what
+      another is indexing, and none says it of work a killed Shelf left halfway.
+    - Starting, answering `contract` and `status`, and exiting take a few milliseconds:
+      nothing slow is done before it is needed, the PDF reader least of all.
+    - A collection is read where Shelf may not write, as when `study status` is typed in
+      an agent's sandbox. Indexing there fails with the reason and what to do.
+  - **Shelf's folder is opened once and held.** What Shelf itself does there goes through
+    the open folder. SQLite opens its files by name, so before every connection the names
+    it will open are looked at through the open folder (a plain file with one name, or
+    not there), Shelf makes a collection's file itself and SQLite only opens it, SQLite
+    follows no link at the last name of a path, and once open it is asked which file it
+    opened before anything is written. What that leaves is a folder above Shelf's
+    exchanged for a link between two of SQLite's own system calls: closing it takes an
+    SQLite whose file access is ours to write, which the pure-Go translation does not
+    offer.
+  - It takes no settings yet. Whatever it comes to need, an endpoint, a Recipe, a key, is
+    read from a settings file of its own and never from its command line.
 - **Still to build for v2.0** (ADR-0012): the rest of Knowledge base plugins, so the agent
   can search a Topic's Sources with no account anywhere.
   - The agent talks to `study`, and `study` is the MCP client of the Topic's plugin. `study`
@@ -738,13 +813,12 @@ hours before any learning happens is exactly what v1 produced.
     `study` reads the Passage again, refuses a quote that is not in it, and takes the
     location from it. That is a new Event type. Evidence without a Passage stays possible,
     unchecked.
-  - Shelf (`study-shelf`) is the plugin that ships with Lamplight: a second program in this
-    repository and release, of which `study` links nothing. Go without cgo, one SQLite file
-    per collection for keyword search and vectors, PDFs read page by page, embeddings from
-    any endpoint that speaks the OpenAI embeddings API, keyword and embedding results
-    merged by rank, and keyword alone when there is no endpoint. When a reranking endpoint
-    is given, it reorders the best Passages before they are returned. A Recipe names
-    Shelf's settings for one embedding model; the first is for EmbeddingGemma 2.
+  - Shelf's embedding search (keyword search is built, above): vectors beside the
+    full-text index in the same SQLite file, embeddings from any endpoint that speaks the
+    OpenAI embeddings API, keyword and embedding results merged by rank, and keyword alone
+    when there is no endpoint. When a reranking endpoint is given, it reorders the best
+    Passages before they are returned. A Recipe names Shelf's settings for one embedding
+    model; the first is for EmbeddingGemma 2.
 - **Later**: a context written by a language model for each Passage, used for indexing
   only; layout-aware conversion for formulas, tables and scans; recordings, video and
   images as Sources.

@@ -5,8 +5,10 @@
 This repository holds Lamplight v2: a Go program, `study`, whose core owns all study state
 (Topics, the Syllabus, Checks and Attempts, Cards, the History) in plain files inside the
 learner's Study home. A command line and an MCP server are thin adapters over the core, and
-the `lamplight` skill, embedded in the binary, teaches agents to tutor with them. Until v2.0
-is released it lives on the `v2` branch, and `main` keeps v1, the Markdown study skill.
+the `lamplight` skill, embedded in the binary, teaches agents to tutor with them. A second
+program, `study-shelf`, is Shelf, the Knowledge base plugin that ships with Lamplight:
+`study` starts it and links none of it. Until v2.0 is released it all lives on the `v2`
+branch, and `main` keeps v1, the Markdown study skill.
 
 Read these before changing behaviour:
 
@@ -25,6 +27,8 @@ Read these before changing behaviour:
 - `docs/knowledge-base-contract.md`: the contract a Knowledge base plugin speaks, for
   whoever writes one. `internal/plugincontract` is the same contract in Go, and a test
   keeps the two in step: every field, kind, code and limit, and every example on the page.
+- `docs/shelf.md`: Shelf for the learner: what it reads and what it does not, with the
+  reason it gives for each, and where its index is. Keep it true when Shelf changes.
 
 ## Development Commands
 
@@ -34,7 +38,7 @@ Use the root `Makefile` as the stable entrypoint:
 make test         # go test -race ./...
 make lint         # gofmt check and go vet
 make coverage     # tests with a coverage profile
-make build        # build ./study
+make build        # build ./study and ./study-shelf
 ```
 
 Narrow checks:
@@ -45,6 +49,8 @@ go test ./internal/cli -run TestJSONOutput
 go test ./internal/cli -update      # rewrite CLI golden files, then review the diff
 go test ./skills/...                # the skill against the real tools and commands
 go test ./internal/e2e              # the learner loop, the v2.0 acceptance walkthrough, install.sh
+go test ./internal/shelf/...        # Shelf, and the conformance suite against a built study-shelf
+go test -short ./internal/shelf/... # the same without what builds study-shelf: seconds, not minutes
 go test -shuffle=on ./...           # no test may depend on another's order
 GOOS=darwin go vet ./...            # macOS is supported too
 ```
@@ -105,7 +111,50 @@ GOOS=darwin go vet ./...            # macOS is supported too
   (`plugincontract`'s `Validate`), and text a plugin wrote reaches an error only through
   the client's `clean`. A Passage's text is returned as it is: print it through
   `printable()`.
-- Every file Lamplight owns carries a `format` number, and newer formats are refused.
+- `study` links nothing of Shelf's (ADR-0012): not `internal/shelf`, not SQLite, not the
+  PDF reader, not what reads web pages. `TestStudyLinksNothingOfShelf` fails when
+  `go list -deps` of `cmd/study`, the core, the command line, the MCP server or the plugin
+  client contains any of them: a library added for Shelf is added to that test's list.
+  Shelf imports `internal/plugincontract` and nothing else of `study`'s.
+- Shelf is held to the contract page like any plugin, and to these besides:
+  - `study` keeps no plugin running: it starts Shelf for every question it has, a glance
+    at what is indexed among them, and stops it. So Shelf does nothing slow when it
+    starts, no PDF reader set up and no collection opened before it is asked about
+    (`TestAGlanceIsQuick`), and whatever one Shelf has to tell the next is in the
+    collection: what is indexed, why an indexing failed, what is being indexed now.
+  - Only MCP goes to its standard output, it sends `study` no request, and it exits when
+    its input closes, within the quarter of a second `study` gives it after a glance,
+    whatever it is indexing (`shelf.StopsWithin`, and no longer: the index is whole
+    wherever the work was).
+  - A Source that another copy of Shelf is indexing is `indexing` to every copy
+    (`index.Work`): a row in the collection, which counts only while the copy that wrote
+    it holds a lock the system lets go of when the program ends. Never record work in
+    progress without that lock: a Shelf that was killed would be indexing for ever.
+  - A file is indexed only when its bytes are the hash `study` handed over, hashed from
+    the open file its pages are read from, before and after. `study` counts a Source as
+    indexed when Shelf gives that hash.
+  - It reads where it may not write: a glance from an agent's sandbox opens a collection
+    for reading (`index`'s connector), and what would write fails with the reason.
+  - It writes in its own folder and nowhere else: not where it is started, not in a
+    temporary folder. Everything Shelf itself does there goes through the folder as it was
+    opened (`index.Folder`, an `os.Root`). SQLite opens its files by name, so every
+    connection goes through `index`'s connector, which looks at the names first, has
+    SQLite open the file Shelf made (`mode=rw`, never `rwc`), and asks SQLite which file
+    it opened before anything is written. Never open a collection's file another way.
+  - A Source is read only by `index`, and a web page fetched only then. `search`,
+    `passage` and `status` read the index.
+  - A Source's content is in the index whole or not at all: new content replaces the old
+    in one transaction (`Collection.Replace`). A Passage's id is made of its Source, the
+    content's hash, its place and its text (`index.PassageID`), so it never comes to name
+    another text: do not change how it is made.
+  - A Passage is the Source's own text. `cut.Clean` drops what is no text and writes no
+    word; nothing summarises or rewrites.
+  - A PDF is read by PDFium inside wazero (`pdf.Read`), which can open no file and reach
+    no network. Never read a Source with a program found on the `PATH`.
+  - A key, when Shelf comes to need one, is read from a settings file of its own, never
+    from an argument or the environment.
+- Every file Lamplight owns carries a `format` number, and newer formats are refused. A
+  collection's file carries `index.Format` in its header.
 - Text from files or the History goes through `printable()` before it reaches a terminal;
   `--json` output never triggers terminal queries.
 - The learner never sees overdue counts, "behind" or streaks: show where they are and one
@@ -135,12 +184,18 @@ GOOS=darwin go vet ./...            # macOS is supported too
   `GIT_DIR`, which point those commands at the repository being committed.
   `TestTheTestsIgnoreTheCallersGitEnvironment` checks it in each such package. Tests that
   build `study` pass `-buildvcs=false`, so the build never needs git to report on the checkout.
-- The test plugin (`internal/plugintest`) is the only Knowledge base plugin a test starts,
-  and it is the test binary itself: call `plugintest.Main()` first in `TestMain`, and
-  register `plugintest.Command(...)`, whose flags make the plugin misbehave. Never start a
-  real plugin, and never reach an address that is not a test server on this computer. Give
-  the plugin the test's environment (`core.Options.Plugins.Environ`) and short deadlines.
-  A plugin of any kind is held to the contract with `plugintest.Conformance`.
+- The test plugin (`internal/plugintest`) is the only Knowledge base plugin a test of
+  `study` starts, and it is the test binary itself: call `plugintest.Main()` first in
+  `TestMain`, and register `plugintest.Command(...)`, whose flags make the plugin
+  misbehave. Never start a plugin that is installed on the computer, and never reach an
+  address that is not a test server on this computer. Give the plugin the test's
+  environment (`core.Options.Plugins.Environ`) and short deadlines. A plugin of any kind
+  is held to the contract with `plugintest.Conformance`.
+- Shelf's own tests, and the test of `install.sh`, start the `study-shelf` built from the
+  checkout (`shelftest.Shelf`, which a `-short` run skips), on a `plugintest.Computer`.
+  No test reads a real book: a PDF is written for the test (`shelftest.PDF`), and a web
+  page is served by the test. A new point where a write of the index could be cut short
+  gets a name in `index` and a row in the test that kills Shelf there.
 - Tests must pass with no git identity configured (CI has none), and in any order.
 
 ## Important Paths
@@ -161,6 +216,15 @@ GOOS=darwin go vet ./...            # macOS is supported too
   tools as methods.
 - `internal/plugintest`: for tests only: the test plugin, a learner's computer made of
   temporary folders (`Computer`), and the conformance suite.
+- `cmd/study-shelf`: Shelf's entry point: its few flags, and the MCP server over the
+  standard streams.
+- `internal/shelf`: Shelf. The package itself holds the six tools (`shelf.go`) and the
+  indexing of one Source, which goes on after `index` has answered (`work.go`). Below it:
+  `index`, one SQLite file for each collection, with the format, the full-text search and
+  what keeps SQLite inside Shelf's folder; `pdf`, a PDF's pages through PDFium;
+  `web`, a web page fetched within limits and its readable text; `cut`, text tidied and
+  cut into Passages; and `shelftest`, for tests only: PDFs written for a test, and the
+  built `study-shelf`.
 - `internal/pluginregistry`: the Knowledge base plugin registry, which is the computer's
   and not the Study home's. The package itself only reads (`Read`, and `OpenCommand`,
   `OpenFolder` and `Guard` for starting a plugin). `registrar` below it registers and removes
@@ -179,13 +243,14 @@ GOOS=darwin go vet ./...            # macOS is supported too
   generated by `study claude-plugin-path`.
 - `internal/e2e`: end-to-end tests: the learner loop driven by a scripted agent, the
   v2.0 acceptance walkthrough from `study setup` to an imported v1 Topic, `install.sh`
-  run against a local folder of release files, and a built `study` that starts the test
-  plugin and stops it when it exits or is signalled.
+  run against a local folder of release files, which holds both programs, and a built
+  `study` that starts the test plugin and stops it when it exits or is signalled.
 - `skills/lamplight`: the `lamplight` skill, embedded in the binary.
-- `install.sh`: the install script the README gives (ADR-0010), in POSIX `sh`. It relies on
-  the names of the release files and of the files in an archive, set in `.goreleaser.yaml`
-  and described in `docs/release.md`: change them together. CI runs `shellcheck` on it and
-  installs every release snapshot with it.
+- `install.sh`: the install script the README gives (ADR-0010), in POSIX `sh`. It installs
+  `study` and `study-shelf`, and relies on the names of the release files and of the files
+  in an archive, set in `.goreleaser.yaml` and described in `docs/release.md`: change them
+  together. CI runs `shellcheck` on it and installs every release snapshot with it, on
+  Linux and on macOS.
 - `docs/release-checklist.md`: the maintainer's steps to ship v2.0.
 
 ## Patterns

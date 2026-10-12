@@ -1047,7 +1047,9 @@ computer registers the plugins it has, each under a name, with `study knowledge-
 [docs/knowledge-base-contract.md](knowledge-base-contract.md) is the contract a plugin
 speaks. This version registers plugins and checks them (`study knowledge-base check`, below):
 no Topic names one yet, so a Topic's Knowledge base is still `none`, and nothing is indexed
-or searched.
+or searched. The plugin that ships with Lamplight is Shelf, the `study-shelf` program
+installed beside `study`: [docs/shelf.md](shelf.md) says what it reads and where it keeps
+its index.
 
 - **The registry** is `knowledge-base-plugins.json` in Lamplight's configuration folder,
   beside `config.toml`: `$XDG_CONFIG_HOME/lamplight`, or `~/.config/lamplight`. It is this
