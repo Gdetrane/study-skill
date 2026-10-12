@@ -87,7 +87,7 @@ func private(folder *os.File) error {
 	if info.Mode().Perm() == 0o700 {
 		return nil
 	}
-	changed := folder.Chmod(0o700)
+	changed := chmodFolder(folder, 0o700)
 	if now, err := folder.Stat(); err == nil {
 		if info = now; info.Mode().Perm()&0o077 == 0 {
 			return nil

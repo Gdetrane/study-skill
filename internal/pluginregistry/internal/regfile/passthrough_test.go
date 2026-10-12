@@ -168,6 +168,74 @@ func TestWalkOpensTheFolderItLookedAtBelowAFolderItMayNotList(t *testing.T) {
 	}
 }
 
+// A folder study may not list is opened twice: to list it, which is
+// refused, and then to pass through it. Whatever takes the folder's place
+// between the two is opened by the second, and is not the folder the walk
+// looked at: so the walk stops, whatever it is.
+func TestWalkStopsWhenAFolderChangesBetweenItsTwoOpens(t *testing.T) {
+	for _, put := range []string{"another folder that may not be listed", "another folder that may be listed",
+		"a folder of the Study home, moved there", "a link into the Study home", "a file", "nothing"} {
+		t.Run(put, func(t *testing.T) {
+			c := regtest.New(t)
+			dir := regtest.Mkdir(t, c.ConfigDir())
+			regtest.WriteFile(t, filepath.Join(dir, "marker"), "the folder that was looked at")
+			inside := regtest.Mkdir(t, filepath.Join(c.Study, "topic", "cfg"))
+			regtest.WriteFile(t, filepath.Join(inside, "marker"), "the agent's")
+			regtest.PassThrough(t, dir)
+			w := NewWalker(c.Study)
+			defer w.Close()
+			swapped := false
+			betweenOpens = func(name string) {
+				if name != filepath.Base(dir) || swapped {
+					return
+				}
+				swapped = true
+				if err := os.Rename(dir, dir+".moved"); err != nil {
+					t.Fatal(err)
+				}
+				// Folders that changed mode get it back under the names
+				// they have by then, so that the test can remove them.
+				t.Cleanup(func() {
+					_ = os.Chmod(dir+".moved", 0o755)
+					_ = os.Chmod(dir, 0o755)
+				})
+				switch put {
+				case "another folder that may not be listed", "another folder that may be listed":
+					regtest.WriteFile(t, filepath.Join(regtest.Mkdir(t, dir), "marker"), "another")
+					if put == "another folder that may not be listed" {
+						if err := os.Chmod(dir, 0o311); err != nil {
+							t.Fatal(err)
+						}
+					}
+				case "a folder of the Study home, moved there":
+					if err := os.Chmod(inside, 0o311); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.Rename(inside, dir); err != nil {
+						t.Fatal(err)
+					}
+				case "a link into the Study home":
+					regtest.Symlink(t, inside, dir)
+				case "a file":
+					regtest.WriteFile(t, dir, "")
+				}
+			}
+			t.Cleanup(func() { betweenOpens = nil })
+			place, err := w.Walk(filepath.Join(dir, "marker"))
+			if !swapped {
+				t.Fatal("the folder was never opened a second time, so this test proves nothing")
+			}
+			if err == nil {
+				place.Close()
+				t.Fatalf("the walk went on into what took the folder's place")
+			}
+			if !strings.Contains(err.Error(), "changed while study was reading it") {
+				t.Errorf("Walk = %v; want it to stop because the folder changed", err)
+			}
+		})
+	}
+}
+
 // A folder opened only to be passed through is used as it was opened, like
 // any other: the program that is opened is the one in it, even when the
 // folder's path comes to lead into the Study home between the check and
@@ -350,6 +418,43 @@ func TestAnOpenFolderTakesOneNameAtATime(t *testing.T) {
 	if dir, err := home.OpenDir("notes.txt"); err == nil {
 		dir.Close()
 		t.Error("OpenDir opened a file")
+	}
+	// Nor is a link to a folder: whoever makes a folder and opens it at
+	// once (MakeFolder, the configuration folder) would otherwise go where
+	// a link put under the name meanwhile leads.
+	regtest.Symlink(t, regtest.Mkdir(t, filepath.Join(c.Base, "elsewhere")), filepath.Join(c.Home, "away"))
+	if dir, err := home.OpenDir("away"); err == nil {
+		dir.Close()
+		t.Error("OpenDir followed a link to a folder")
+	}
+}
+
+// Two files are one file when they are on one device and have one number
+// there. The number alone is shared by files on different devices: the top
+// folder of every file system has the same one on many of them.
+func TestTwoFilesWithOneNumberOnTwoDevicesAreNotTheSame(t *testing.T) {
+	looks := map[string]os.FileInfo{}
+	for _, path := range []string{"/", "/proc", "/sys", "/dev", "/run", "/tmp", "/home", "/boot", "/var", "/System/Volumes/Data"} {
+		if info, err := os.Stat(path); err == nil {
+			looks[path] = info
+		}
+	}
+	compared := 0
+	for a, one := range looks {
+		for b, other := range looks {
+			x, _ := identityOf(one)
+			y, _ := identityOf(other)
+			if a >= b || x.number != y.number || x.device == y.device {
+				continue
+			}
+			compared++
+			if same(one, other) {
+				t.Errorf("%s and %s have the number %d on two devices, and are taken for one file", a, b, x.number)
+			}
+		}
+	}
+	if compared == 0 {
+		t.Skip("no two folders here have one number on two devices")
 	}
 }
 

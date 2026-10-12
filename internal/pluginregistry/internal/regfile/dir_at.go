@@ -57,12 +57,24 @@ func openDir(path string) (*Dir, error) {
 	return dir, nil
 }
 
+// betweenOpens, when a test sets it, is called with a folder's name after
+// study was refused to list the folder and before it opens it to pass
+// through: where another program could put something else under the name.
+var betweenOpens func(name string)
+
 // openFolder opens the folder called name beside the descriptor at: to list
 // it, and where that is refused, to pass through it.
+//
+// The name is looked up twice then, and may name something else the second
+// time. Whoever opens a folder so compares what was opened with what they
+// looked at before, as the walk does.
 func openFolder(at int, name, path string, flags int) (*Dir, error) {
 	flags |= unix.O_DIRECTORY | unix.O_CLOEXEC
 	fd, err := unix.Openat(at, name, unix.O_RDONLY|flags, 0)
 	if errors.Is(err, fs.ErrPermission) {
+		if betweenOpens != nil {
+			betweenOpens(name)
+		}
 		fd, err = unix.Openat(at, name, passThrough|flags, 0)
 	}
 	if err != nil {

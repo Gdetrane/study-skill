@@ -202,3 +202,69 @@ func TestAPluginIsNotStartedWhenStudyCannotFollowWhatItNeeds(t *testing.T) {
 		})
 	}
 }
+
+// A folder the learner made for a plugin and may not list themselves is
+// still made theirs alone and used, as one they may list is. It is open
+// only to pass through, and its mode is changed by its name beside that.
+func TestAPluginsFolderThatMayNotBeListedIsMadePrivate(t *testing.T) {
+	c := plugintest.NewComputer(t)
+	folder := c.DataFolder("kb")
+	if err := os.MkdirAll(folder, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	plugintest.PassThrough(t, folder)
+	s, err := pluginclient.Start(context.Background(), c.Env(""), c.Register(t, "kb", plugintest.Command()...), quick(c))
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer s.Close()
+	if info, err := os.Lstat(s.DataFolder()); err != nil || info.Mode().Perm() != 0o700 {
+		t.Errorf("the plugin's folder, %s: %v, %v; want it for the learner alone", s.DataFolder(), info, err)
+	}
+}
+
+// A script started through env is run by the first program of that name
+// in the plugin's PATH. When study cannot follow where that one leads, it
+// cannot say that it is outside the Study home, and a good one later in
+// PATH changes nothing: env would never come to it.
+func TestEnvStopsAtAProgramStudyCannotFollow(t *testing.T) {
+	const env = "/usr/bin/env"
+	if _, err := os.Stat(env); err != nil {
+		t.Skipf("there is no %s here", env)
+	}
+	c := plugintest.NewComputer(t)
+	bin, beyond, tools := filepath.Join(c.Home, "bin"), filepath.Join(c.Home, "beyond"), filepath.Join(c.Home, "tools")
+	shut := filepath.Join(c.Base(), "shut")
+	for _, dir := range []string{bin, beyond, tools, shut} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	words := plugintest.Command()
+	if err := os.Symlink(words[0], filepath.Join(tools, "kb-python")); err != nil {
+		t.Fatal(err)
+	}
+	// The first one PATH has leads through a folder nobody may pass.
+	if err := os.Symlink(filepath.Join(shut, "kb-python"), filepath.Join(beyond, "kb-python")); err != nil {
+		t.Fatal(err)
+	}
+	script := filepath.Join(bin, "kb")
+	if err := os.WriteFile(script, []byte("#!"+env+" -S kb-python "+words[1]+"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	record := filepath.Join(t.TempDir(), "record.json")
+	plugin := c.Register(t, "kb", script, "--record", record)
+	plugintest.Shut(t, shut)
+	s, err := pluginclient.Start(context.Background(), c.Env(""), plugin,
+		quick(c, "PATH="+strings.Join([]string{beyond, tools}, string(os.PathListSeparator))))
+	if err == nil {
+		s.Close()
+		t.Fatal("the plugin was started: the look for its interpreter went on past a name study could not follow")
+	}
+	if codeOf(err) != pluginclient.CodeFailedPrecondition || !strings.Contains(err.Error(), filepath.Join(beyond, "kb-python")) {
+		t.Errorf("Start = %v; want failed_precondition, naming what could not be followed", err)
+	}
+	if _, err := os.Stat(record); err == nil {
+		t.Error("a program was started")
+	}
+}
