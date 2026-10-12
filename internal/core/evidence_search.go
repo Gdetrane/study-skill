@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -54,8 +55,9 @@ const (
 	// it, and its answers, all of it together.
 	//
 	// It is less than a minute because the agent's tool call waits for it:
-	// many MCP clients give a call up after sixty seconds, and study must
-	// have stopped the plugin and said what is wrong before that. It is more
+	// a client decides for itself how long it waits for a tool, and study
+	// is to have stopped the plugin and said what is wrong while whoever
+	// asked is still waiting. It is more
 	// than the thirty seconds a plugin has to start because a plugin that
 	// needs most of those still has a search to answer, which may have a
 	// model embed the query and another reorder what was found. Nothing here
@@ -91,8 +93,9 @@ type FoundPassage struct {
 	// Source is the id of the Source the text is from, and Title its title.
 	Source string `json:"source"`
 	Title  string `json:"title"`
-	// Text is the Source's own text. It is the plugin's, as it gave it:
-	// print it as text from a file.
+	// Text is the Source's own text. It is the plugin's, as it gave it,
+	// without the characters that show nothing and can hold text only a
+	// program reads (withoutTags): print it as text from a file.
 	Text string `json:"text"`
 	// Location is where the text is in the Source, when the plugin knows:
 	// "p. 46" or "pp. 46–47", counted from the start of the file.
@@ -114,12 +117,16 @@ type PassageSearch struct {
 	// plugin holds indexed on this computer, as the Topic records them.
 	Searched []string `json:"searched"`
 	// LeftOut are the Sources that were not searched, each with its index
-	// state and why.
+	// state, why, and for one that failed the command that has it tried
+	// again, as a listing of the Topic's Sources gives them.
 	LeftOut []IndexedSource `json:"left_out,omitempty"`
 	// Note says, when Sources were left out or there was nothing to search,
 	// that it is so.
 	Note string `json:"note,omitempty"`
-	// Action is the command that has what was left out indexed.
+	// Action is the one command to run next for what was left out, as
+	// status gives it: study source index when that would have the plugin
+	// index one of them, study source list when a file is missing, changed
+	// or unreadable, and nothing when all that is left out failed.
 	Action string `json:"action,omitempty"`
 }
 
@@ -213,16 +220,17 @@ func (c *Core) SearchEvidence(ctx context.Context, q PassageQuery) (PassageSearc
 		return PassageSearch{}, err
 	}
 	defer p.stop()
-	held, leftOut, toIndex, err := p.indexed(ctx, sources)
+	held, leftOut, action, err := p.indexed(ctx, sources, c.fileStateIn(home, q.Topic))
 	if err != nil {
 		return PassageSearch{}, err
 	}
-	res.LeftOut = leftOut
+	res.LeftOut, res.Action = leftOut, action
 	titles := map[string]string{}
 	for _, src := range held {
 		res.Searched = append(res.Searched, src.ID)
 		titles[src.ID] = src.Title
 	}
+	size, cut := 0, 0
 	if len(held) > 0 {
 		found, err := p.searchPassages(ctx, query, limit, res.Searched)
 		if err != nil {
@@ -236,8 +244,15 @@ func (c *Core) SearchEvidence(ctx context.Context, q PassageQuery) (PassageSearc
 				// here all the same, it is not the Topic's to return.
 				continue
 			}
+			text := withoutTags(passage.Text)
+			// A result is kept to a size an agent can take in: the best
+			// Passages, as many as fit. The first always does.
+			if size += len(text); size > MaxSearchTextBytes {
+				cut = len(found) - len(res.Passages)
+				break
+			}
 			res.Passages = append(res.Passages, FoundPassage{ID: passage.ID, Source: passage.Source, Title: title,
-				Text: passage.Text, Location: placeOf(passage.Location), Score: passage.Score})
+				Text: text, Location: placeOf(passage.Location), Score: passage.Score})
 		}
 	}
 	switch n := len(leftOut); {
@@ -254,11 +269,45 @@ func (c *Core) SearchEvidence(ctx context.Context, q PassageQuery) (PassageSearc
 		res.Note = strconv.Itoa(n) + " of the " + strconv.Itoa(len(sources)) + " Sources were not searched: Knowledge base " +
 			"plugin " + name + " does not hold them indexed on this computer as the Topic records them"
 	}
-	if toIndex {
-		res.Action = "study source index " + q.Topic
+	if cut > 0 {
+		more := strconv.Itoa(cut) + " more Passages were found and are left out, to keep the answer under " +
+			strconv.Itoa(MaxSearchTextBytes>>10) + " KiB of text: ask for fewer, or in words that say more closely what the " +
+			"Lesson needs"
+		if cut == 1 {
+			more = strings.Replace(strings.Replace(more, "Passages were", "Passage was", 1), "are left", "is left", 1)
+		}
+		if res.Note != "" {
+			res.Note += ". "
+		}
+		res.Note += more
 	}
 	return res, nil
 }
+
+// MaxSearchTextBytes is how much text of Passages one search returns: the
+// best ones, as many as fit. A plugin may give fifty Passages of thirty-two
+// kibibytes each, and an answer of that size is no help to whoever asked.
+// It is several times the longest Passage, so the best one always fits.
+const MaxSearchTextBytes = 256 << 10
+
+// withoutTags is a Passage's text without the characters of Unicode's tag
+// block. They show nothing, anywhere, and spell out text that a program
+// reads and a person does not: a page can hold a sentence for the agent
+// that the learner never sees. They are no part of what a Source says, and
+// a quote is compared without them.
+func withoutTags(text string) string {
+	if !strings.ContainsFunc(text, isTag) {
+		return text
+	}
+	return strings.Map(func(r rune) rune {
+		if isTag(r) {
+			return -1
+		}
+		return r
+	}, text)
+}
+
+func isTag(r rune) bool { return r >= 0xE0000 && r <= 0xE007F }
 
 // cleanQuery checks what a search looks for: text a plugin can be handed,
 // as the contract has a query. It may span lines; other control characters,
@@ -323,6 +372,8 @@ type topicPlugin struct {
 	doing, otherwise string
 	// late says that the plugin missed the deadline.
 	late bool
+	// release gives back the turn this use of the plugin took (takeTurn).
+	release func()
 }
 
 // startTopicPlugin starts the Knowledge base plugin a Topic names, or
@@ -349,6 +400,16 @@ func (c *Core) startTopicPlugin(ctx context.Context, topicID, name, doing, other
 		otherwise: otherwise}
 	list, began, err := c.registryInTime(ctx, limit)
 	p.deadline = began.Add(limit)
+	// No more than a few of one plugin at a time: a client may call a tool
+	// that changes nothing many times at once, and each call is a program
+	// started. One that waits for its turn waits inside its own time.
+	if err == nil && ctx.Err() == nil {
+		if p.release, err = c.takeTurn(ctx, name, p.deadline); err != nil && ctx.Err() == nil {
+			p.late = true
+			return nil, &Error{Code: CodeFailedPrecondition, Err: err, Message: "Knowledge base plugin " + name + " was busy " +
+				"with other searches for " + limit.String() + ", so this one was not started. " + otherwise}
+		}
+	}
 	switch {
 	case ctx.Err() != nil:
 		return nil, &Error{Code: CodeCanceled, Err: ctx.Err(), Message: "the command was stopped before Knowledge base plugin " +
@@ -356,23 +417,63 @@ func (c *Core) startTopicPlugin(ctx context.Context, topicID, name, doing, other
 	case err != nil:
 		// The registry could not be read, in time or at all: no plugin was
 		// started, and none is to blame.
+		p.done()
 		return nil, p.meanwhile(err)
 	}
 	plugin, err := registered(list, name)
 	if err != nil {
+		p.done()
 		return nil, &Error{Code: CodeFailedPrecondition, Err: err, Message: "Topic " + topicID + " names the Knowledge base " +
 			"plugin " + name + ", which is not registered on this computer: register it with study knowledge-base add " +
 			name + " -- <command>, or name another with study topic update " + topicID + " --knowledge-base <name>. " + otherwise}
 	}
 	if p.conn, err = c.startPlugin(ctx, plugin, began, pluginUse{within: limit}); err != nil {
+		p.done()
 		return nil, p.failed(ctx, err)
 	}
 	return p, nil
 }
 
+// mostAtOnce is how many copies of one plugin study has searching, or
+// giving Passages again, at the same time.
+const mostAtOnce = 2
+
+// takeTurn waits until fewer than mostAtOnce searches of the plugin are
+// under way, no longer than until deadline, and returns what gives the turn
+// back.
+func (c *Core) takeTurn(ctx context.Context, name string, deadline time.Time) (release func(), err error) {
+	c.turnsMu.Lock()
+	if c.turns == nil {
+		c.turns = map[string]chan struct{}{}
+	}
+	turns := c.turns[name]
+	if turns == nil {
+		turns = make(chan struct{}, mostAtOnce)
+		c.turns[name] = turns
+	}
+	c.turnsMu.Unlock()
+	waiting, cancel := context.WithDeadline(ctx, deadline)
+	defer cancel()
+	select {
+	case turns <- struct{}{}:
+		var once sync.Once
+		return func() { once.Do(func() { <-turns }) }, nil
+	case <-waiting.Done():
+		return nil, waiting.Err()
+	}
+}
+
+// done gives the plugin's turn back.
+func (p *topicPlugin) done() {
+	if p.release != nil {
+		p.release()
+	}
+}
+
 // stop stops the plugin: at once when it missed its deadline, since it was
 // given its time already.
 func (p *topicPlugin) stop() {
+	defer p.done()
 	if p.late {
 		p.conn.GiveUp()
 	}
@@ -414,32 +515,37 @@ func (p *topicPlugin) meanwhile(err error) error {
 
 // indexed asks the plugin what it holds of the Topic's Sources, and says
 // which of sources it holds indexed as the Topic records them (held), which
-// it does not (leftOut, each with its state and why), and whether study
-// source index would ask the plugin for one of those (toIndex).
+// it does not (leftOut, each with its state, why, and what has it tried
+// again), and the one command to run next for those (action).
 //
-// Indexed is what a listing of the Sources calls indexed: the plugin says
-// so, and for a file the hash of what it holds is the Source's own.
-func (p *topicPlugin) indexed(ctx context.Context, sources []Source) (held []Source, leftOut []IndexedSource, toIndex bool, err error) {
+// All of it is as status and a listing of the Sources say it, by the same
+// rule (indexAsk): indexed is what the plugin says is, with the Source's own
+// hash for a file; study source index is the action only for a Source it
+// would hand the plugin and the plugin has not tried, never for one that
+// failed, or whose file is missing, changed or unreadable. fileState says
+// which a file is.
+func (p *topicPlugin) indexed(ctx context.Context, sources []Source, fileState func(context.Context, Source) string) (held []Source, leftOut []IndexedSource, action string, err error) {
 	asking, cancel := p.asking(ctx)
 	defer cancel()
 	said, err := p.conn.Status(asking, p.collection)
 	if err != nil {
-		return nil, nil, false, p.failed(ctx, err)
+		return nil, nil, "", p.failed(ctx, err)
 	}
-	contract := p.conn.Contract()
-	for _, src := range sources {
-		index, wanted := indexOf(src, statusOf(said, src.ID), contract, p.name)
-		if index.State == IndexIndexed {
-			held = append(held, src)
+	ask := newIndexAsk(p.topic, &KnowledgeBase{Kind: KnowledgeBasePlugin, Plugin: p.name}, sources)
+	ask.fileState = fileState
+	ask.answered(asking, p.name, p.conn.Contract(), said)
+	for i, src := range sources {
+		if state := ask.indexing.Sources[i]; state.State != IndexIndexed {
+			leftOut = append(leftOut, state)
 			continue
 		}
-		index.Reason = shorten(index.Reason, maxIndexTextBytes)
-		leftOut = append(leftOut, IndexedSource{ID: src.ID, Title: src.Title, SourceIndex: index})
-		// A Source that failed is tried again by whoever runs the command,
-		// when the plugin indexes Sources of its kind at all.
-		toIndex = toIndex || wanted || index.State == IndexFailed && slices.Contains(contract.Sources, src.Kind)
+		held = append(held, src)
 	}
-	return held, leftOut, toIndex, nil
+	action = ask.indexing.Action
+	if action == "" && ask.held && validateTopicID(p.topic) == nil {
+		action = "study source list " + p.topic
+	}
+	return held, leftOut, action, nil
 }
 
 // searchPassages asks the plugin for the Passages of some of the Topic's
@@ -476,9 +582,8 @@ func (p *topicPlugin) readPassage(ctx context.Context, id string) (plugincontrac
 // and says so through the hash of what it holds. The first keeps out the
 // Passages of a Topic that was removed, which share the collection of the
 // one made later under its id.
-func (p *topicPlugin) quotedPassages(ctx context.Context, src Source, ids []string) ([]plugincontract.Passage, error) {
-	const unchecked = "or record the Evidence without a Passage, which is then not checked"
-	held, leftOut, _, err := p.indexed(ctx, []Source{src})
+func (p *topicPlugin) quotedPassages(ctx context.Context, src Source, ids []string, fileState func(context.Context, Source) string) ([]plugincontract.Passage, error) {
+	held, leftOut, action, err := p.indexed(ctx, []Source{src}, fileState)
 	if err != nil {
 		return nil, err
 	}
@@ -488,9 +593,18 @@ func (p *topicPlugin) quotedPassages(ctx context.Context, src Source, ids []stri
 		if state.Reason != "" {
 			why += ": " + state.Reason
 		}
+		// What to do is what a listing of the Sources would say: the
+		// command that indexes it only when that would come to anything.
+		todo := "study source list " + p.topic + " says what keeps it from being indexed"
+		switch {
+		case state.Retry != "":
+			todo = "once what the reason names is put right, run " + state.Retry + " and search again"
+		case action == "study source index "+p.topic:
+			todo = "run study source index " + p.topic + " " + src.ID + " and search again"
+		}
 		return nil, &Error{Code: CodeFailedPrecondition, Message: "Knowledge base plugin " + p.name + " does not hold Source " +
 			src.ID + " indexed on this computer as the Topic records it (" + why + "), so a quote cannot be checked against " +
-			"its Passages: run study source index " + p.topic + " " + src.ID + " and search again, " + unchecked}
+			"its Passages, and nothing was recorded: " + todo}
 	}
 	passages := make([]plugincontract.Passage, 0, len(ids))
 	for _, id := range ids {
@@ -498,8 +612,9 @@ func (p *topicPlugin) quotedPassages(ctx context.Context, src Source, ids []stri
 		switch {
 		case CodeOf(err) == CodeNotFound:
 			return nil, &Error{Code: CodeNotFound, Err: err, Message: "Knowledge base plugin " + p.name + " has no Passage " + id +
-				" for Topic " + p.topic + ": a Passage's id is the one a search gave, and names nothing once its Source is " +
-				"indexed anew. Search again with study evidence search " + p.topic + " <query>, " + unchecked}
+				" for Topic " + p.topic + ", so nothing was recorded: a Passage's id is the one a search gave, and names " +
+				"nothing once its Source is indexed anew. Search again with study evidence search " + p.topic + " <query>, and " +
+				"record the quote with the id that search gives"}
 		case err != nil:
 			return nil, err
 		case passage.Source != src.ID:

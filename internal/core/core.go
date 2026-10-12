@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -92,6 +93,10 @@ type Core struct {
 	// are started (see plugin_client.go).
 	version string
 	plugins PluginOptions
+	// turns holds, for each Knowledge base plugin, the turns that searches
+	// of it take (takeTurn).
+	turnsMu sync.Mutex
+	turns   map[string]chan struct{}
 }
 
 // Open resolves the Study home and returns a Core for it. The Study home is

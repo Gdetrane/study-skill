@@ -814,25 +814,30 @@ hours before any learning happens is exactly what v1 produced.
     for a file with the hash of the Source's own content. A removed Topic and a later one
     of the same id share a collection, and a plugin that breaks the contract may hold
     another file's text under a Source's id. Asked in that order, the Passages returned
-    are the best of what may be returned. The result names the Sources that were left out,
-    why, and `study source index` as the command that puts it right. A Topic without
+    are the best of what may be returned. The result names the Sources that were left out
+    and why, and its one next action is decided as `status` decides it: `study source
+    index` only when that would hand the plugin a Source it has not tried. A Topic without
     Sources, or with none indexed, is searched for nothing, which is no error; a Topic
     without a plugin, and a plugin that cannot be had, are `failed_precondition`.
   - **One deadline for all of it**: 45 seconds (`core.PluginEvidenceTimeout`) for reading
     the registry, starting the plugin, and its answers, for a search and for the Passages
-    of a quote alike. An agent's tool call waits for it, and many MCP clients give a call
-    up after a minute; a plugin has 30 seconds to start, and a search may have a model
-    embed the query. A plugin that misses it is stopped at once.
+    of a quote alike. An agent's tool call waits for it, so it is under a minute; a plugin
+    has 30 seconds to start, and a search may have a model embed the query. A plugin that
+    misses it is stopped at once. One `study` process has at most two copies of a plugin
+    searching at a time, and an answer holds at most 256 KiB of Passages' text.
   - **Evidence recorded with its Passages is checked.** `study` asks what the plugin has
     indexed, then for each Passage again, refuses a Passage of another Source and a Source
     that is not indexed as the Topic records it, and refuses a quote that is not in the
     Passages' text. The location is the Passages', with `knowledge_base` as its origin. The
     plugin is asked before the Topic's lock is taken, and a dry run asks it too.
-  - **What "in its text" allows**: Unicode written in another form (both are read as
-    NFKC), any difference in white space and in characters that are not shown, quotation
-    marks of another shape and dashes of another length, and the hyphen of a word cut at a
-    line's end. Nothing else: not a word, not a letter's case, not another mark. The quote
-    is recorded as it was given.
+  - **What "in its text" allows**: how much white space there is and of which kind, where
+    the Passage has white space; an accent written apart, a ligature, an ellipsis
+    character; the shape of a quotation mark and the length of a dash; a character that is
+    not shown, in the Passage; and the hyphen of a word cut at a line's end. A quote begins
+    and ends where a word of the Passage does. Nothing else: not a word, not a part of
+    one, not a space added or left out, not a letter's case, not a superscript for its
+    digit. The quote is recorded as it was given, and holds no character that is not
+    shown.
   - **A quote can run through up to five Passages**, named in order: a plugin may keep
     every Passage on one page. It is looked for in their texts read one after the other,
     and must begin in the first and end in the last. The contract does not say which

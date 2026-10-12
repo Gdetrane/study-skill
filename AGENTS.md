@@ -97,26 +97,31 @@ GOOS=darwin go vet ./...            # macOS is supported too
   `pluginregistry.Guard` knows it leads nowhere inside the Study home), with a folder of
   its own in the learner's state folder, outside the Study home, and stopped with its
   process group when its Connection is closed.
-- Three things in the core start a plugin, each through `startPlugin`, and each stops it
+- Four things in the core start a plugin, each through `startPlugin`, and each stops it
   before it returns: `CheckPlugin` (`study knowledge-base check`), `IndexSources`
-  (`study source index`) and `askPlugins`, which `Status` and `ListSources` use to ask what
-  a Topic's plugin has indexed. Only the last is reached by an MCP tool, and it asks a
-  plugin's `status` tool and nothing else. **No MCP tool has a plugin index**: the server
-  runs outside the agent's sandbox, and a plugin that indexed for it would read any file
-  the agent named as a Source. Three tests in `internal/mcpserver` keep it so.
+  (`study source index`), `askPlugins`, which `Status` and `ListSources` use to ask what a
+  Topic's plugin has indexed, and `startTopicPlugin`, which `SearchEvidence` and
+  `recordQuoted` use to search a Topic's Sources and to read the Passages a quote is
+  checked against. The last two are reached by MCP tools, and they ask a plugin's
+  `status`, `search` and `passage` tools and nothing else. **No MCP tool has a plugin
+  index, or stop indexing**: the server runs outside the agent's sandbox, and a plugin
+  that indexed for it would read any file the agent named as a Source. Three tests in
+  `internal/mcpserver` keep it so.
   `TestNoToolHasAPluginIndex` registers plugins that record what they are asked, has the
   Topic name one and hold a Source it has not indexed from before the first tool is
   called, calls every tool (`everyToolOn`: add a new tool there) and fails when the plugin
-  was asked anything but `contract` and `status`, or when the registry changed; it also
-  lists the tools that ask a plugin anything (`toolsThatAskAPlugin`).
+  was asked `index` or `cancel`, or anything that is not in `askedOfAPlugin`, or when the
+  registry changed; `toolsThatAskAPlugin` says, for each tool that asks a plugin anything,
+  exactly which of its tools are asked and in which order.
   `TestTheCoreAsksAPluginToIndexInOnePlace` reads the core: a Connection's `Index` is
   called in `indexRun.askToIndex` alone, which only `IndexSources` reaches, which the
-  server cannot name, its `Cancel` in `indexRun.ended` alone, and its `Search` and
-  `Passage` nowhere yet (`askedOfAConnection`). `TestTheClientAsksEachToolInOneMethod`
-  holds the client to naming each tool in the one method called after it. Change them on
-  purpose when a tool comes to search a plugin, name nothing else in the core `Index`,
-  `Cancel`, `Search` or `Passage`, and keep `reflect` out of the core: it calls by a name
-  those tests cannot read.
+  server cannot name, its `Cancel` in `indexRun.ended` alone, its `Search` in
+  `topicPlugin.searchPassages` and its `Passage` in `topicPlugin.readPassage`
+  (`askedOfAConnection`). `TestTheClientAsksEachToolInOneMethod` holds the client to
+  naming each tool in the one method called after it. Change them on purpose when a tool
+  comes to ask a plugin something else, name nothing else in the core `Index`, `Cancel`,
+  `Search` or `Passage`, and keep `reflect` out of the core: it calls by a name those
+  tests cannot read.
 - Nothing that shows where the learner is waits for a plugin. `askPlugins` has
   `core.PluginGlanceTimeout`, two seconds, for the registry, the start and the answers
   together, and shows the Sources as not known when it is missed. Opening a Session asks
@@ -125,6 +130,14 @@ GOOS=darwin go vet ./...            # macOS is supported too
   path. The one action `status` names is a command that would help: `study source index`
   only for a Source it would hand over and the plugin has not tried, never for one that
   failed or whose file is missing, changed or unreadable.
+- A search of a Topic's Sources, and the reading of a Passage to check a quote, have
+  `core.PluginEvidenceTimeout`, forty-five seconds, for the registry, the start and every
+  answer together (`PluginOptions.EvidenceTimeout` in tests), and the plugin is asked
+  before the Topic's lock is taken. A search returns only Passages of Sources the Topic
+  has and the plugin holds indexed with the Source's own hash. Evidence is recorded as
+  checked only when its quote is in the text of the Passages it names
+  (`internal/core/quote.go` says what may differ): never widen what that lets through
+  without saying so in ADR-0012 and `docs/cli.md`.
 - A collection is named by `collectionName`: the Topic's id and a hash of the Study home's
   real path and the id, never the id alone, since a plugin's folder is one for the plugin
   on a computer. A Source is its content: a file goes to a plugin only when it is the file
@@ -187,8 +200,9 @@ GOOS=darwin go vet ./...            # macOS is supported too
   FSRS scheduling (`schedule.go`), Sources and Evidence, Goal and Pace, Assessments and
   signals, the read views, and `study import`. It reads the Knowledge base plugin registry
   (`plugin_registry.go`) and changes nothing in it, starts or reaches a plugin
-  (`plugin_client.go`), and asks a Topic's plugin what it has indexed, or to index
-  (`source_index.go`).
+  (`plugin_client.go`), asks a Topic's plugin what it has indexed, or to index
+  (`source_index.go`), searches it and reads its Passages (`evidence_search.go`), and
+  checks a quote against them (`quote.go`).
 - `internal/plugincontract`: the contract a Knowledge base plugin speaks, version 1: the
   six tools' inputs and results as Go types, the limits, the error codes, and what each
   answer must hold (`Validate`). It holds no client and no server.

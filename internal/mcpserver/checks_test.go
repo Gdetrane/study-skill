@@ -306,6 +306,30 @@ func everyToolOn(t *testing.T, home, studyHome string, options everyToolOptions)
 		use("evidence_search", with(topic, "query", "pointer variable address"), field("passage", "passages", "id"))
 		use("evidence_record", with(lesson, "source", ids["indexed.txt"], "quote", "A pointer is a variable that contains the address",
 			"passages", []any{ids["passage"]}), nil)
+		// And what is refused is refused without the plugin being asked for
+		// more: a quote that is not in the Passage, a Passage the plugin
+		// does not have, and a quote from the Source that is not indexed,
+		// which is not indexed to have the quote checked.
+		for _, refused := range []struct {
+			args map[string]any
+			says string
+		}{
+			{with(lesson, "source", ids["indexed.txt"], "quote", "A pointer holds an address", "passages", []any{ids["passage"]}),
+				"invalid_argument: the quote is not in the text of Passage " + ids["passage"]},
+			{with(lesson, "source", ids["indexed.txt"], "quote", "A pointer is a variable", "passages", []any{"0123456789abcdef01234567"}),
+				"not_found: Knowledge base plugin " + plugin + " has no Passage 0123456789abcdef01234567"},
+			{with(lesson, "source", ids["notes.txt"], "quote", "Notes the plugin has not indexed.", "passages", []any{ids["passage"]}),
+				"failed_precondition: Knowledge base plugin " + plugin + " does not hold Source " + ids["notes.txt"] + " indexed"},
+		} {
+			res, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "evidence_record", Arguments: refused.args})
+			if err != nil || !res.IsError || !strings.Contains(text(res), refused.says) {
+				t.Fatalf("evidence_record %v: %v, %s; want it refused with %q", refused.args, err, text(res), refused.says)
+			}
+			if n := runs(); n != 0 {
+				t.Fatalf("calling evidence_record ran the Check %d times", n)
+			}
+			after("evidence_record")
+		}
 	}
 	use("evidence", topic, nil)
 	use("evidence_retract", with(topic, "evidence", ids["evidence"]), nil)

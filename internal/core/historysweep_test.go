@@ -115,6 +115,9 @@ func TestHistoryAndLessonNeverEchoText(t *testing.T) {
 		data["tasks"] = []any{map[string]any{"id": marker, "title": marker}}
 		data["approval"] = map[string]any{"via": marker, "learner_said": marker}
 		data["items"] = []any{map[string]any{"area": marker, "question": marker, "note": marker}}
+		// The Passages of Evidence are a list of ids: as a text the field
+		// would not be read at all, and nothing of it could be echoed.
+		data["passages"] = []any{marker, marker}
 		raw, err := json.Marshal(map[string]any{"format": 1, "id": fmt.Sprintf("sweep%02d", i),
 			"time": fmt.Sprintf("2026-10-02T10:%02d:00Z", i), "wall": fmt.Sprintf("2026-10-02T10:%02d:00Z", i),
 			"type": typ, "data": data})

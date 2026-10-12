@@ -175,10 +175,12 @@ func TestEvidenceSearchCommands(t *testing.T) {
 // every character a terminal acts on is an escape of the document, which
 // says the same text all the same.
 func TestEvidenceTextIsNeverATerminalsToInterpret(t *testing.T) {
-	// An escape sequence, a C1 control that begins one, DEL, and a
-	// character that changes the direction text is shown in.
-	const raw = "\x1b\U0000009b\x7f\U0000202e"
-	const text = "The pivot\x1b[2J is\U0000009b6n the\U0000202e first\x7f entry."
+	// An escape sequence, a C1 control that begins one, DEL, a character
+	// that changes the direction text is shown in, a separator of lines,
+	// and a tag character, which shows nothing and is read by a program.
+	const tag = "\U000E0041"
+	const raw = "\x1b\U0000009b\x7f\U0000202e\U00002028" + tag
+	const text = "The pivot\x1b[2J is\U0000009b6n the\U0000202e first\x7f entry.\U00002028Not" + tag + " a line."
 	s := newShelfComputer(t)
 	strang := s.book(t, "strang.txt", text+"\n")
 	s.ok(t, "source", "index", "linear-algebra")
@@ -204,8 +206,9 @@ func TestEvidenceTextIsNeverATerminalsToInterpret(t *testing.T) {
 		"study evidence list":   {"evidence", "list", "linear-algebra"},
 	} {
 		r := s.ok(t, args...)
-		if strings.ContainsAny(r.stdout, raw) || !strings.Contains(r.stdout, `The pivot\x1b[2J is`) {
-			t.Errorf("%s printed text a terminal interprets: %q", name, r.stdout)
+		if strings.ContainsAny(r.stdout, raw) || !strings.Contains(r.stdout, `The pivot\x1b[2J is`) ||
+			!strings.Contains(r.stdout, `entry.\u2028Not`) {
+			t.Errorf("%s printed text a terminal interprets, or does not show: %q", name, r.stdout)
 		}
 		r = s.ok(t, append(args, "--json")...)
 		if strings.ContainsAny(r.stdout, raw) || r.stderr != "" {
@@ -223,8 +226,9 @@ func TestEvidenceTextIsNeverATerminalsToInterpret(t *testing.T) {
 		}
 		switch {
 		case len(out.Data.Passages) == 1:
-			if out.Data.Passages[0].Text != text {
-				t.Errorf("%s --json gives the Passage's text as %q, want %q", name, out.Data.Passages[0].Text, text)
+			// A Passage is handed on without its tag characters.
+			if want := strings.ReplaceAll(text, tag, ""); out.Data.Passages[0].Text != want {
+				t.Errorf("%s --json gives the Passage's text as %q, want %q", name, out.Data.Passages[0].Text, want)
 			}
 		case len(out.Data.Evidence) == 1:
 			if e := out.Data.Evidence[0]; e.Quote != text || e.Lesson != "pivots\x1b[2J" || e.Location != "p. 1\U0000009b6n" {
@@ -233,5 +237,50 @@ func TestEvidenceTextIsNeverATerminalsToInterpret(t *testing.T) {
 		default:
 			t.Errorf("%s --json = %s; want one Passage, or one piece of Evidence", name, r.stdout)
 		}
+	}
+}
+
+// --passage names one Passage each time it is given. An id is never cut at
+// a comma, and one that is given and empty is a mistake, of a script whose
+// variable holds nothing: it is refused, and not recorded as Evidence that
+// was not checked.
+func TestThePassageFlagNamesOnePassageEachTime(t *testing.T) {
+	s := newShelfComputer(t)
+	strang := s.book(t, "strang.txt", eliminationBook)
+	s.ok(t, "source", "index", "linear-algebra")
+	ids := s.passages(t, "elimination produces triangular")
+	if len(ids) != 3 {
+		t.Fatalf("the search found the Passages %v, want three", ids)
+	}
+	record := []string{"evidence", "record", "linear-algebra", "--lesson", "elimination", "--source", strang,
+		"--quote", "Elimination produces an upper triangular system."}
+	before := len(s.calls(t))
+	for name, passages := range map[string][]string{
+		"an empty id":             {"--passage", ""},
+		"an id of spaces":         {"--passage", "  "},
+		"an empty id after one":   {"--passage", ids[0], "--passage", ""},
+		"an empty id with =":      {"--passage="},
+		"an empty id, in a trial": {"--passage", "", "--dry-run"},
+	} {
+		r := s.run(t, append(slices.Clone(record), passages...)...)
+		if r.code != cli.ExitUsage || r.stdout != "" || !strings.Contains(r.stderr, "--passage is given without a Passage's id") {
+			t.Errorf("%s: exit %d, stdout %q, stderr %q; want it refused", name, r.code, r.stdout, r.stderr)
+		}
+		r = s.run(t, append(append(slices.Clone(record), passages...), "--json")...)
+		if r.code != cli.ExitUsage || r.stderr != "" || !strings.Contains(r.stdout, `"code": "usage"`) ||
+			!strings.Contains(r.stdout, "--passage is given without a Passage's id") {
+			t.Errorf("%s --json: exit %d, stdout %q, stderr %q; want it refused", name, r.code, r.stdout, r.stderr)
+		}
+	}
+	// Two ids with a comma between them are one id, which is none.
+	r := s.run(t, append(slices.Clone(record), "--passage", ids[0]+","+ids[1])...)
+	if r.code != cli.ExitUsage || !strings.Contains(r.stderr, "is not a Passage's id") {
+		t.Errorf("two ids in one --passage: exit %d, stdout %q, stderr %q; want them taken as one id, and refused", r.code, r.stdout, r.stderr)
+	}
+	if got := plugintest.Tools(s.calls(t)[before:]); len(got) != 0 {
+		t.Errorf("what was refused asked the plugin %v", got)
+	}
+	if r := s.ok(t, "evidence", "list", "linear-algebra"); !strings.Contains(r.stdout, "No Evidence recorded yet.") {
+		t.Errorf("what was refused was recorded: %s", r.stdout)
 	}
 }

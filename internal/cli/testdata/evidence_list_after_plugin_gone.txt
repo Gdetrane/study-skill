@@ -11,4 +11,3 @@
 <id>  Lesson elimination, Source notes.<id>
   > A sentence the agent read itself.
   §2 (location from source)
-  not checked against a Passage

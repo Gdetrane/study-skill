@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -178,20 +179,26 @@ func TestASearchLeavesOutWhatIsNotIndexed(t *testing.T) {
 	}
 
 	// One is indexed, and the other failed: the first is searched, and the
-	// plugin is asked to search it alone.
+	// plugin is asked to search it alone. The one that failed is left out
+	// as a listing of the Sources shows it, with the plugin's reason and the
+	// command that has it tried again, and is no next action: indexing it
+	// again would fail again, after every search.
 	s.index(t, core.IndexSpec{})
 	before := len(s.calls(t))
 	some := s.search(t, core.PassageQuery{Query: "elimination"})
 	wantLeft = []core.IndexedSource{{ID: blank.ID, Title: blank.Title,
-		SourceIndex: core.SourceIndex{State: core.IndexFailed, Reason: "there is no text in it"}}}
+		SourceIndex: core.SourceIndex{State: core.IndexFailed, Reason: "there is no text in it", Retry: "study source index c " + blank.ID}}}
 	if len(some.Passages) != 2 || !slices.Equal(some.Searched, []string{strang.ID}) || !reflect.DeepEqual(some.LeftOut, wantLeft) ||
 		some.Note != "1 of the 2 Sources was not searched: Knowledge base plugin kb does not hold it indexed on this computer as the Topic records it" ||
-		some.Action != "study source index c" {
+		some.Action != "" {
 		t.Errorf("a search with one Source of two indexed = %+v", some)
 	}
 	tools, calls := s.newCalls(t, before)
 	if !slices.Equal(tools, []string{"contract", "status", "search"}) || !slices.Equal(searched(t, calls[2]).Sources, []string{strang.ID}) {
 		t.Errorf("the plugin was asked %v", calls)
+	}
+	if list := s.sources(t); list.Indexing == nil || list.Indexing.Action != some.Action {
+		t.Errorf("the search names the action %q, and a listing of the Sources %+v", some.Action, list.Indexing)
 	}
 	// Asked for the Source that is not indexed alone, nothing is searched.
 	only := s.search(t, core.PassageQuery{Query: "elimination", Sources: []string{blank.ID}})
@@ -580,7 +587,15 @@ func TestEvidenceIsCheckedAgainstItsPassage(t *testing.T) {
 		"more Passages than a quote runs through": {core.EvidenceSpec{Quote: "Elimination produces", Passages: []string{"a", "b", "c", "d", "e", "f"}},
 			core.CodeInvalidArgument, "at most 5 Passages"},
 		"a quote of nothing that is shown": {core.EvidenceSpec{Quote: "\U0000200b\U0000200b", Passages: []string{first}},
-			core.CodeInvalidArgument, "the quote holds nothing to check"},
+			core.CodeInvalidArgument, "a character that is not shown (U+200B)"},
+		"a quote with a direction override in it": {core.EvidenceSpec{Quote: "Elimination \U0000202Eproduces\U0000202C", Passages: []string{first}},
+			core.CodeInvalidArgument, "a character that is not shown (U+202E)"},
+		"a quote with a tag character in it": {core.EvidenceSpec{Quote: "Elimination\U000E0041 produces", Passages: []string{first}},
+			core.CodeInvalidArgument, "a character that is not shown (U+E0041)"},
+		"a quote of marks alone": {core.EvidenceSpec{Quote: ". , ;", Passages: []string{first}},
+			core.CodeInvalidArgument, "the quote holds no word to check"},
+		"the end of a word": {core.EvidenceSpec{Quote: "limination produces", Passages: []string{first}},
+			core.CodeInvalidArgument, "It begins and ends where a word of the Passage does"},
 	} {
 		got, err := record(tc.spec)
 		if core.CodeOf(err) != tc.code || !strings.Contains(err.Error(), tc.says) || got.Changed {
@@ -674,7 +689,22 @@ func TestEvidenceIsNotRecordedWhenItCannotBeChecked(t *testing.T) {
 		of := spec
 		of.Source = other.ID
 		refused(t, s.k, of, "Knowledge base plugin kb does not hold Source "+other.ID+" indexed on this computer as the Topic records it (not indexed)",
-			"study source index c "+other.ID, unchecked)
+			"nothing was recorded", "run study source index c "+other.ID+" and search again")
+	})
+	t.Run("a Source whose file is gone", func(t *testing.T) {
+		// The command that indexes would skip it, so it is not what the
+		// error says to run.
+		gone := s.book(t, "gone.txt", "A book that is taken away.\n")
+		if err := os.Remove(filepath.Join(s.Home, "Books", "gone.txt")); err != nil {
+			t.Fatal(err)
+		}
+		of := spec
+		of.Source = gone.ID
+		refused(t, s.k, of, "its file is not on this computer", "study source list c says what keeps it from being indexed")
+		if res := s.search(t, core.PassageQuery{Query: "elimination", Sources: []string{gone.ID}}); res.Action != "study source list c" ||
+			len(res.LeftOut) != 1 || res.LeftOut[0].Reason != "its file is not on this computer" {
+			t.Errorf("a search of the Source whose file is gone = %+v; want the listing as the action", res)
+		}
 	})
 	t.Run("a plugin that is gone", func(t *testing.T) {
 		s.registerWith(t, "--exit", "3")
@@ -756,5 +786,138 @@ func TestAPassagesTextIsReturnedAsItIsAndARefusalIsCleaned(t *testing.T) {
 		if err == nil || strings.ContainsAny(err.Error(), "\x1b\n\U0000202e") || !strings.Contains(err.Error(), `\u001b[2J is`) {
 			t.Errorf("%s, refused by the plugin = %q; want the plugin's words on one line, with what a terminal would interpret escaped", name, err)
 		}
+	}
+}
+
+// A search has one deadline for all of it: starting the plugin, asking what
+// it holds and searching are not each given the time anew.
+func TestASearchHasOneDeadlineForAllOfIt(t *testing.T) {
+	s := newShelf(t)
+	s.book(t, "strang.txt", elimination)
+	s.index(t, core.IndexSpec{})
+	// Each of the three answers comes inside the time, and the three
+	// together do not.
+	s.registerWith(t, "--delay", "contract=700ms", "--delay", "status=700ms", "--delay", "search=700ms")
+	k := studyOn(t, s.Computer, "", core.PluginOptions{EvidenceTimeout: 1500 * time.Millisecond})
+	began := time.Now()
+	res, err := k.SearchEvidence(context.Background(), core.PassageQuery{Topic: "c", Query: "elimination"})
+	took := time.Since(began).Round(10 * time.Millisecond)
+	if core.CodeOf(err) != core.CodeFailedPrecondition || !strings.Contains(err.Error(), "within 1.5s, starting it included") {
+		t.Errorf("after %s SearchEvidence = %d Passages, %v; want the plugin late: its three answers take 2.1s, and all of it has 1.5s",
+			took, len(res.Passages), err)
+	}
+	if took > busy {
+		t.Errorf("the search took %s over a plugin that had a second and a half", took)
+	}
+	s.stopped(t)
+}
+
+// A search returns no more text than whoever asked can take in: the best
+// Passages, as many as fit, and its note says how many more were found.
+func TestASearchReturnsNoMoreTextThanFits(t *testing.T) {
+	s := newShelf(t)
+	// Ten paragraphs of thirty thousand bytes, each a Passage with the word
+	// that is asked for: eight of them fit.
+	var book strings.Builder
+	for i := range 10 {
+		book.WriteString("pivot " + strconv.Itoa(i) + " " + strings.Repeat("word ", 5998) + "end\n\n")
+	}
+	strang := s.book(t, "strang.txt", book.String())
+	s.index(t, core.IndexSpec{})
+	res := s.search(t, core.PassageQuery{Query: "pivot", Limit: 10})
+	size := 0
+	for i, p := range res.Passages {
+		size += len(p.Text)
+		if !strings.HasPrefix(p.Text, "pivot "+strconv.Itoa(i)+" ") || !strings.HasSuffix(p.Text, " end") {
+			t.Errorf("Passage %d is not the book's paragraph %d, whole: %.20q … %d bytes", i, i, p.Text, len(p.Text))
+		}
+	}
+	const note = "2 more Passages were found and are left out, to keep the answer under 256 KiB of text: ask for fewer, " +
+		"or in words that say more closely what the Lesson needs"
+	if len(res.Passages) != 8 || size > core.MaxSearchTextBytes || size+len(res.Passages[0].Text) <= core.MaxSearchTextBytes ||
+		res.Note != note || !slices.Equal(res.Searched, []string{strang.ID}) || res.Action != "" {
+		t.Errorf("SearchEvidence = %d Passages of %d bytes, note %q, action %q; want the 8 that fit in %d bytes", len(res.Passages),
+			size, res.Note, res.Action, core.MaxSearchTextBytes)
+	}
+	// One more than fits is one Passage, and is said so.
+	if res := s.search(t, core.PassageQuery{Query: "pivot", Limit: 9}); len(res.Passages) != 8 ||
+		!strings.HasPrefix(res.Note, "1 more Passage was found and is left out, to keep") {
+		t.Errorf("a search for nine = %d Passages, note %q", len(res.Passages), res.Note)
+	}
+	// What fits is returned whole, with no note.
+	if res := s.search(t, core.PassageQuery{Query: "pivot", Limit: 8}); len(res.Passages) != 8 || res.Note != "" {
+		t.Errorf("a search for eight = %d Passages, note %q", len(res.Passages), res.Note)
+	}
+	// The note of what was left out for its size follows the note of what
+	// was not searched.
+	blank := s.book(t, "blank.txt", "\n")
+	res = s.search(t, core.PassageQuery{Query: "pivot", Limit: 10})
+	if want := "1 of the 2 Sources was not searched: Knowledge base plugin kb does not hold it indexed on this computer as the " +
+		"Topic records it. " + note; res.Note != want || len(res.LeftOut) != 1 || res.LeftOut[0].ID != blank.ID {
+		t.Errorf("with a Source left out, the note is %q and what is left out %+v", res.Note, res.LeftOut)
+	}
+}
+
+// A Passage is handed on without the characters of Unicode's tag block,
+// which show nothing anywhere and can spell out text that only a program
+// reads. What a quote is checked against is the Passage without them too.
+func TestAPassageIsHandedOnWithoutTheCharactersThatShowNothing(t *testing.T) {
+	s := newShelf(t)
+	// "Ignore" in tag characters, between two words of the book.
+	const hidden = "\U000E0049\U000E0067\U000E006E\U000E006F\U000E0072\U000E0065"
+	strang := s.book(t, "strang.txt", "Elimination produces"+hidden+" an upper triangular system.\n")
+	s.index(t, core.IndexSpec{})
+	res := s.search(t, core.PassageQuery{Query: "elimination"})
+	if len(res.Passages) != 1 || res.Passages[0].Text != "Elimination produces an upper triangular system." {
+		t.Fatalf("SearchEvidence = %+v; want the Passage without the tag characters", res.Passages)
+	}
+	got, err := s.k.RecordEvidence(context.Background(), core.EvidenceSpec{Topic: "c", Lesson: "elimination", Source: strang.ID,
+		Quote: res.Passages[0].Text, Passages: []string{res.Passages[0].ID}})
+	if err != nil || !got.Evidence.Checked {
+		t.Errorf("the Passage's text as the search gave it, quoted = %+v, %v; want it checked", got.Evidence, err)
+	}
+	// A quote may not hold them: what is recorded is what is shown.
+	_, err = s.k.RecordEvidence(context.Background(), core.EvidenceSpec{Topic: "c", Lesson: "elimination", Source: strang.ID,
+		Quote: "Elimination produces" + hidden + " an upper", Passages: []string{res.Passages[0].ID}})
+	if core.CodeOf(err) != core.CodeInvalidArgument || !strings.Contains(err.Error(), "a character that is not shown (U+E0049)") {
+		t.Errorf("a quote with tag characters = %v (%s); want it refused", err, core.CodeOf(err))
+	}
+}
+
+// A plugin that missed its deadline was given its time already: it is
+// stopped at once, and not waited for as one that answered is, however long
+// a plugin is otherwise given to leave.
+func TestALatePluginIsStoppedAtOnce(t *testing.T) {
+	ctx := context.Background()
+	s := newShelf(t)
+	strang := s.book(t, "strang.txt", elimination)
+	s.index(t, core.IndexSpec{})
+	first := s.search(t, core.PassageQuery{Query: "elimination produces triangular"}).Passages[0].ID
+	for where, ask := range map[string]func(*core.Core) error{
+		"search": func(k *core.Core) error {
+			_, err := k.SearchEvidence(ctx, core.PassageQuery{Topic: "c", Query: "elimination"})
+			return err
+		},
+		"passage": func(k *core.Core) error {
+			_, err := k.RecordEvidence(ctx, core.EvidenceSpec{Topic: "c", Lesson: "elimination", Source: strang.ID,
+				Quote: "Elimination produces an upper triangular system.", Passages: []string{first}})
+			return err
+		},
+	} {
+		t.Run(where, func(t *testing.T) {
+			// The plugin never answers, and stays when its input closes
+			// until it is signalled.
+			s.registerWith(t, "--hang", where, "--linger")
+			k := studyOn(t, s.Computer, "", core.PluginOptions{EvidenceTimeout: 500 * time.Millisecond, StopGrace: 2 * busy})
+			began := time.Now()
+			err := ask(k)
+			if core.CodeOf(err) != core.CodeFailedPrecondition || !strings.Contains(err.Error(), "within 500ms, starting it included, so study stopped it") {
+				t.Errorf("%v (%s); want the plugin late", err, core.CodeOf(err))
+			}
+			if took := time.Since(began); took > busy {
+				t.Errorf("study took %s over a plugin that had half a second: a late plugin is not given %s more to leave", took, 2*busy)
+			}
+			s.stopped(t)
+		})
 	}
 }

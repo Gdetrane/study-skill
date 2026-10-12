@@ -192,9 +192,16 @@ func TestSourceTitlesAndKnowledgeBaseLocations(t *testing.T) {
 	if got := m.sources(t).Sources; len(got) != 1 || got[0].Title != "UNIX" || got[0].Path != book {
 		t.Errorf("ListSources = %+v", got)
 	}
-	cited := m.recordEvidence(t, EvidenceSpec{Lesson: "processes", Source: src.ID, Quote: "fork creates a process.",
+	// A location is the Knowledge base's only with the Passage it is the
+	// location of: said by hand, nothing checked it.
+	_, err := m.RecordEvidence(ctx, EvidenceSpec{Topic: "c", Lesson: "processes", Source: src.ID, Quote: "fork creates a process.",
 		Location: "citation 3", LocationFrom: LocationFromKnowledgeBase})
-	if cited.Evidence.Location != "citation 3" || cited.Evidence.LocationFrom != LocationFromKnowledgeBase {
+	if CodeOf(err) != CodeInvalidArgument || !strings.Contains(err.Error(), "comes with its Passage") {
+		t.Errorf("Evidence whose location is said to be the Knowledge base's, without a Passage: %v", err)
+	}
+	cited := m.recordEvidence(t, EvidenceSpec{Lesson: "processes", Source: src.ID, Quote: "fork creates a process.",
+		Location: "p. 3", LocationFrom: LocationFromSource})
+	if cited.Evidence.Location != "p. 3" || cited.Evidence.LocationFrom != LocationFromSource {
 		t.Errorf("Evidence = %+v", cited.Evidence)
 	}
 	checkChain(t, filepath.Join(m.home, "c"))

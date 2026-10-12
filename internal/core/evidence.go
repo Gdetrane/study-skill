@@ -194,9 +194,16 @@ func (c *Core) RecordEvidence(ctx context.Context, spec EvidenceSpec) (EvidenceR
 	switch {
 	case location == "" && from != "":
 		return EvidenceResult{}, invalidf("location_from says where a location came from: give the location too")
+	case from == LocationFromKnowledgeBase:
+		// What the Knowledge base says of a location it says of a Passage,
+		// and Evidence recorded with the Passage takes it from there: said
+		// by hand it would be a claim nothing checked.
+		return EvidenceResult{}, invalidf("a location from the Knowledge base comes with its Passage: record the Evidence "+
+			"with the Passage's id, which gives the location, or say where else the location is from: %s, %s or %s",
+			LocationFromSource, LocationFromLearner, LocationFromEstimate)
 	case location != "" && !validLocationFrom(from):
-		return EvidenceResult{}, invalidf("say where the location came from: %s, %s, %s or %s",
-			LocationFromSource, LocationFromKnowledgeBase, LocationFromLearner, LocationFromEstimate)
+		return EvidenceResult{}, invalidf("say where the location came from: %s, %s or %s",
+			LocationFromSource, LocationFromLearner, LocationFromEstimate)
 	}
 	want := evidenceData{Lesson: spec.Lesson, Source: spec.Source, Quote: quote, Location: location, LocationFrom: from}
 
@@ -267,8 +274,9 @@ func (c *Core) recordQuoted(ctx context.Context, spec EvidenceSpec, quote string
 			"the location, and where it came from, out")
 	}
 	switch folded := foldQuote(quote); {
-	case len(folded) == 0:
-		return EvidenceResult{}, invalidf("the quote holds nothing to check: only white space and characters that are not shown")
+	case !quotable(folded):
+		return EvidenceResult{}, invalidf("the quote holds no word to check: quote the words of the Passage that the Lesson " +
+			"relies on")
 	case len(folded) > maxQuoteRunes:
 		return EvidenceResult{}, invalidf("the quote is longer than %d characters once its ligatures and the like are "+
 			"written out: quote the passage that matters", maxQuoteRunes)
@@ -295,7 +303,13 @@ func (c *Core) recordQuoted(ctx context.Context, spec EvidenceSpec, quote string
 	if err != nil {
 		return EvidenceResult{}, err
 	}
-	src, known := replayHistory(h).knowledge().sources[spec.Source]
+	read := replayHistory(h)
+	// A Topic this version cannot write is refused before its plugin is
+	// started for nothing.
+	if err := refuseNewer(spec.Topic, read); err != nil {
+		return EvidenceResult{}, err
+	}
+	src, known := read.knowledge().sources[spec.Source]
 	if !known {
 		return EvidenceResult{}, noSuchSource(spec.Topic, spec.Source)
 	}
@@ -305,7 +319,7 @@ func (c *Core) recordQuoted(ctx context.Context, spec EvidenceSpec, quote string
 	if err != nil {
 		return EvidenceResult{}, err
 	}
-	passages, err := p.quotedPassages(ctx, *src, spec.Passages)
+	passages, err := p.quotedPassages(ctx, *src, spec.Passages, c.fileStateIn(home, spec.Topic))
 	p.stop()
 	if err != nil {
 		return EvidenceResult{}, err
@@ -321,15 +335,23 @@ func (c *Core) recordQuoted(ctx context.Context, spec EvidenceSpec, quote string
 	want := evidencePassagesData{Lesson: spec.Lesson, Source: spec.Source, Quote: quote, Passages: spec.Passages, Plugin: name,
 		Location: placeOf(locations...)}
 
+	// The plugin's time is this operation's time: waiting for another
+	// process that writes the Topic has what is left of it, and no time of
+	// its own on top.
+	within, cancel := context.WithDeadline(ctx, p.deadline)
+	defer cancel()
+	// The same quote, as a quote is compared: white space of another kind
+	// or length makes no second piece of Evidence.
+	same := string(foldQuote(quote))
 	var existing *Evidence
-	ev, err := c.writeOpenedTopic(ctx, home, topic, spec.Topic, func(s *replayed, _ *topicView) (*change, error) {
+	ev, err := c.writeOpenedTopic(within, home, topic, spec.Topic, func(s *replayed, _ *topicView) (*change, error) {
 		k := s.knowledge()
 		if _, ok := k.sources[spec.Source]; !ok {
 			return nil, noSuchSource(spec.Topic, spec.Source)
 		}
 		for i, e := range k.evidence {
-			if !e.Retracted && e.Checked && e.Lesson == want.Lesson && e.Source == want.Source && e.Quote == want.Quote &&
-				e.Plugin == want.Plugin && slices.Equal(e.Passages, want.Passages) {
+			if !e.Retracted && e.Checked && e.Lesson == want.Lesson && e.Source == want.Source &&
+				string(foldQuote(e.Quote)) == same && e.Plugin == want.Plugin && slices.Equal(e.Passages, want.Passages) {
 				existing = &k.evidence[i]
 				return nil, nil
 			}
@@ -362,8 +384,9 @@ func noSuchSource(topicID, sourceID string) error {
 // Passages it was recorded with. alone is the place of the one Passage that
 // holds it whole, among several, or -1.
 func notInItsPassages(passages []string, alone int) error {
-	const allowed = "Line breaks and other white space, a word cut at a line's end, another form of the same characters, and " +
-		"quotation marks and dashes of another shape may differ, and nothing else: not a word, not a letter's case"
+	const allowed = "It begins and ends where a word of the Passage does. How much white space there is and of which kind, " +
+		"a word cut at a line's end, a letter's accent written apart, and the shape of a quotation mark or the length of a " +
+		"dash may differ, and nothing else: not a word, not a space added or left out, not a letter's case"
 	switch {
 	case alone >= 0:
 		return invalidf("the quote is all in Passage %s, and does not run through the other Passages named: record it "+
@@ -497,7 +520,11 @@ func checkLessonID(id string) error {
 }
 
 // cleanQuote checks an exact quote. It may span lines, so newlines and tabs
-// are kept; invalid UTF-8 and other control characters are refused.
+// are kept; invalid UTF-8 and other control characters are refused, and so
+// are characters that are not shown: a direction override makes a quote
+// read as another than it is, and a tag character holds text that only a
+// program reads. The three a script needs to be written stay: the soft
+// hyphen and the two joiners.
 func cleanQuote(s string) (string, error) {
 	if !utf8.ValidString(s) {
 		return "", invalidf("the quote is not valid UTF-8 text")
@@ -507,8 +534,13 @@ func cleanQuote(s string) (string, error) {
 		return "", invalidf("give the exact quote, as the Source has it")
 	}
 	for _, r := range s {
-		if unicode.IsControl(r) && r != '\n' && r != '\t' {
+		switch {
+		case unicode.IsControl(r) && r != '\n' && r != '\t':
 			return "", invalidf("the quote contains a control character")
+		case r == '\u00AD' || r == '\u200C' || r == '\u200D':
+		case unicode.Is(unicode.Cf, r) || r == '\u2028' || r == '\u2029':
+			return "", invalidf("the quote contains a character that is not shown (U+%04X): quote the words as they are read, "+
+				"without it", r)
 		}
 	}
 	if utf8.RuneCountInString(s) > maxQuoteRunes {

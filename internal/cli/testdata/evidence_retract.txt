@@ -1,3 +1,2 @@
 Retracted Evidence <id> for Lesson pivots
   > A misquote.
-  not checked against a Passage

@@ -18,7 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode"
+	"unicode/utf16"
 
 	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/fang"
@@ -693,11 +693,17 @@ func (a *app) writeJSON(v envelope) error {
 	for _, r := range doc.String() {
 		// Outside a string the document holds no such character: its line
 		// breaks are the only control characters there.
-		if r != '\n' && (unicode.IsControl(r) || unicode.Is(unicode.Bidi_Control, r)) {
+		switch {
+		case r == '\n' || !unshown(r):
+			out.WriteRune(r)
+		case r > 0xFFFF:
+			// JSON writes a character above U+FFFF as the two halves it
+			// has in UTF-16.
+			high, low := utf16.EncodeRune(r)
+			fmt.Fprintf(&out, `\u%04x\u%04x`, high, low)
+		default:
 			fmt.Fprintf(&out, `\u%04x`, r)
-			continue
 		}
-		out.WriteRune(r)
 	}
 	_, err := a.stdout.Write(out.Bytes())
 	return err

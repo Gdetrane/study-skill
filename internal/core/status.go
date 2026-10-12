@@ -107,21 +107,7 @@ func (c *Core) where(ctx context.Context, indexing bool) (Status, error) {
 				return
 			}
 			ask := newIndexAsk(t.ID, t.KnowledgeBase, sources)
-			// A Source the plugin has not indexed is looked for on this
-			// computer, as a listing of the Sources looks for it, within the
-			// time the plugin had. Where it is found is not written down:
-			// status changes nothing.
-			var l *locator
-			ask.fileState = func(ctx context.Context, src Source) string {
-				if l == nil {
-					l = c.newLocator(ctx, home, t.ID)
-				}
-				path, state, err := l.locate(src)
-				if err != nil {
-					return ""
-				}
-				return fileStateAt(path, state)
-			}
+			ask.fileState = c.fileStateIn(home, t.ID)
 			asks[t.ID] = ask
 		}
 	}
