@@ -6,15 +6,24 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/mordor-forge/lamplight/v2/internal/plugincontract"
+	"github.com/mordor-forge/lamplight/v2/internal/pluginregistry"
 )
 
 const (
-	eventEvidenceRecorded  = "evidence.recorded"
-	eventEvidenceRetracted = "evidence.retracted"
+	eventEvidenceRecorded = "evidence.recorded"
+	// eventEvidencePassagesRecorded records Evidence that was checked
+	// against the Passages it quotes. The Passages make another payload
+	// than a quote alone, so it is another type: an evidence.recorded Event
+	// carries Evidence nobody checked, as it always has.
+	eventEvidencePassagesRecorded = "evidence_passages.recorded"
+	eventEvidenceRetracted        = "evidence.retracted"
 
 	maxQuoteRunes = 4000 // an Evidence quote
 	maxPlaceRunes = 200  // an Evidence location
@@ -26,7 +35,8 @@ const (
 	// number or a section heading.
 	LocationFromSource = "source"
 	// LocationFromKnowledgeBase: reported by the Knowledge base with the
-	// passage, recorded as given.
+	// Passage. Evidence recorded with its Passages has its location from
+	// them, and no other: pages counted from the start of the file.
 	LocationFromKnowledgeBase = "knowledge_base"
 	// LocationFromLearner: given by the learner.
 	LocationFromLearner = "learner"
@@ -36,6 +46,7 @@ const (
 
 func init() {
 	eventKinds[eventEvidenceRecorded] = eventKind{apply: applyNothing, replay: replayEvidenceRecorded}
+	eventKinds[eventEvidencePassagesRecorded] = eventKind{apply: applyNothing, replay: replayEvidencePassagesRecorded}
 	eventKinds[eventEvidenceRetracted] = eventKind{apply: applyNothing, replay: replayEvidenceRetracted}
 }
 
@@ -50,6 +61,17 @@ type Evidence struct {
 	// "§3.2", when known; LocationFrom says how it is known.
 	Location     string `json:"location,omitempty"`
 	LocationFrom string `json:"location_from,omitempty"`
+	// Checked says that the quote was checked when it was recorded: it was
+	// in the text of the Passages below, as the Topic's Knowledge base plugin
+	// gave them then. Evidence recorded without a Passage is not checked.
+	Checked bool `json:"checked"`
+	// Passages are the ids of the Passages the quote was checked against, in
+	// the order it runs through them, and Plugin the name of the Knowledge
+	// base plugin that gave them. The ids are that plugin's, on the computer
+	// that recorded the Evidence: they say what was checked, and need not
+	// name anything elsewhere, or once the Source is indexed anew.
+	Passages []string `json:"passages,omitempty"`
+	Plugin   string   `json:"plugin,omitempty"`
 	// Recorded is when the Evidence was recorded, by the recording
 	// computer's clock.
 	Recorded time.Time `json:"recorded"`
@@ -68,6 +90,23 @@ type evidenceData struct {
 	LocationFrom string `json:"location_from,omitempty"`
 }
 
+// evidencePassagesData is the payload of an evidence_passages.recorded
+// Event: Evidence whose quote was checked against Passages of the Topic's
+// Knowledge base plugin.
+type evidencePassagesData struct {
+	ID     string `json:"id"`
+	Lesson string `json:"lesson"`
+	Source string `json:"source"`
+	Quote  string `json:"quote"`
+	// Passages are the ids of the Passages the quote is in, in order, and
+	// Plugin the name of the plugin that gave them.
+	Passages []string `json:"passages"`
+	Plugin   string   `json:"plugin"`
+	// Location is where the Passages are in the Source, when the plugin
+	// said. It came from the Knowledge base, always.
+	Location string `json:"location,omitempty"`
+}
+
 // evidenceRetractedData is the payload of an evidence.retracted Event.
 type evidenceRetractedData struct {
 	ID string `json:"id"`
@@ -81,7 +120,12 @@ type EvidenceSpec struct {
 	// Source is the id of the Source the quote comes from.
 	Source string
 	// Quote is the exact text, as the Source has it.
-	Quote        string
+	Quote string
+	// Passages are the ids of the Passages the quote is from, as a search
+	// gave them, in the order the quote runs through them:
+	// MaxEvidencePassages at most. With them the quote is checked against
+	// their text, and the location is theirs. Without, nothing is checked.
+	Passages     []string
 	Location     string
 	LocationFrom string
 	DryRun       bool
@@ -117,9 +161,14 @@ type EvidenceList struct {
 var evidenceIDPattern = regexp.MustCompile(`^[a-z0-9]{1,26}$`)
 
 // RecordEvidence records an exact quote from one of the Topic's Sources that
-// a Lesson cites. The core does not check the quote against the Source: it
-// never parses documents. Recording Evidence that is already recorded, and
-// not retracted, records nothing.
+// a Lesson cites. Recording Evidence that is already recorded, and not
+// retracted, records nothing.
+//
+// With the ids of the Passages the quote is from, it is checked: study asks
+// the Topic's Knowledge base plugin for those Passages again, refuses a
+// quote that is not in their text (quote.go says what that allows), and
+// takes the location from them (recordQuoted). Without a Passage the core
+// checks nothing: it never parses a document.
 func (c *Core) RecordEvidence(ctx context.Context, spec EvidenceSpec) (EvidenceResult, error) {
 	if err := checkTopicID(spec.Topic); err != nil {
 		return EvidenceResult{}, err
@@ -133,6 +182,9 @@ func (c *Core) RecordEvidence(ctx context.Context, spec EvidenceSpec) (EvidenceR
 	quote, err := cleanQuote(spec.Quote)
 	if err != nil {
 		return EvidenceResult{}, err
+	}
+	if len(spec.Passages) > 0 {
+		return c.recordQuoted(ctx, spec, quote)
 	}
 	location, err := cleanText("location", spec.Location, maxPlaceRunes)
 	if err != nil {
@@ -152,11 +204,12 @@ func (c *Core) RecordEvidence(ctx context.Context, spec EvidenceSpec) (EvidenceR
 	ev, err := c.writeTopic(ctx, spec.Topic, func(s *replayed, _ *topicView) (*change, error) {
 		k := s.knowledge()
 		if _, ok := k.sources[spec.Source]; !ok {
-			return nil, &Error{Code: CodeNotFound, Message: fmt.Sprintf(
-				"Topic %s has no Source %s: add it with study source add first", spec.Topic, spec.Source)}
+			return nil, noSuchSource(spec.Topic, spec.Source)
 		}
 		for i, e := range k.evidence {
-			if !e.Retracted && e.Lesson == want.Lesson && e.Source == want.Source && e.Quote == want.Quote &&
+			// Evidence that was checked against its Passages is another
+			// record than the same quote unchecked.
+			if !e.Retracted && !e.Checked && e.Lesson == want.Lesson && e.Source == want.Source && e.Quote == want.Quote &&
 				e.Location == want.Location && e.LocationFrom == want.LocationFrom {
 				existing = &k.evidence[i]
 				return nil, nil
@@ -177,6 +230,152 @@ func (c *Core) RecordEvidence(ctx context.Context, spec EvidenceSpec) (EvidenceR
 		result.Changed = true
 	}
 	return result, nil
+}
+
+// recordQuoted records Evidence with the Passages it quotes, once the quote
+// was found in their text.
+//
+// The plugin is asked before the Topic's lock is taken, and stopped before
+// anything is written: a plugin has most of a minute to answer, and no other
+// write waits for it. The folder that was read is the one written to, so a
+// Topic removed or replaced meanwhile receives nothing. A dry run asks the
+// plugin too, and checks the quote: it says what the real run does.
+//
+// It fails, and records nothing, with invalid_argument for a quote that is
+// not in the Passages, and for a Passage of another Source; with not_found
+// for a Passage the plugin does not have; and with failed_precondition when
+// the Topic names no plugin, when the plugin cannot be had or does not
+// answer in time, and when it does not hold the Source indexed as the Topic
+// records it.
+func (c *Core) recordQuoted(ctx context.Context, spec EvidenceSpec, quote string) (EvidenceResult, error) {
+	const unchecked = "record the Evidence without a Passage, which is then not checked"
+	if len(spec.Passages) > MaxEvidencePassages {
+		return EvidenceResult{}, invalidf("Evidence quotes from at most %d Passages: a quote that runs through more is "+
+			"two quotes", MaxEvidencePassages)
+	}
+	for i, id := range spec.Passages {
+		if plugincontract.CheckPassageID(id) != nil {
+			return EvidenceResult{}, invalidf("%q is not a Passage's id: study evidence search %s <query> gives them", id, spec.Topic)
+		}
+		if slices.Contains(spec.Passages[:i], id) {
+			return EvidenceResult{}, invalidf("Passage %s is named twice: name each Passage the quote runs through once, "+
+				"in order", id)
+		}
+	}
+	if strings.TrimSpace(spec.Location) != "" || strings.TrimSpace(spec.LocationFrom) != "" {
+		return EvidenceResult{}, invalidf("Evidence recorded with a Passage takes its location from the Passage: leave " +
+			"the location, and where it came from, out")
+	}
+	switch folded := foldQuote(quote); {
+	case len(folded) == 0:
+		return EvidenceResult{}, invalidf("the quote holds nothing to check: only white space and characters that are not shown")
+	case len(folded) > maxQuoteRunes:
+		return EvidenceResult{}, invalidf("the quote is longer than %d characters once its ligatures and the like are "+
+			"written out: quote the passage that matters", maxQuoteRunes)
+	}
+	if err := ctx.Err(); err != nil {
+		return EvidenceResult{}, err
+	}
+	home, topic, err := c.openTopicFolder(spec.Topic)
+	if err != nil {
+		return EvidenceResult{}, err
+	}
+	defer home.Close()
+	defer topic.Close()
+	kb, err := topicKnowledgeBase(&topicView{root: topic}, spec.Topic)
+	if err != nil {
+		return EvidenceResult{}, err
+	}
+	name, ok := pluginOf(kb)
+	if !ok {
+		return EvidenceResult{}, &Error{Code: CodeFailedPrecondition, Message: "Topic " + spec.Topic + " names no Knowledge " +
+			"base plugin, so there is no Passage to check a quote against: " + unchecked}
+	}
+	h, err := readHistory(topic, spec.Topic)
+	if err != nil {
+		return EvidenceResult{}, err
+	}
+	src, known := replayHistory(h).knowledge().sources[spec.Source]
+	if !known {
+		return EvidenceResult{}, noSuchSource(spec.Topic, spec.Source)
+	}
+
+	p, err := c.startTopicPlugin(ctx, spec.Topic, name, "give the Passages the quote is from",
+		"Nothing was recorded. Once that is put right, record the Evidence again, or "+unchecked)
+	if err != nil {
+		return EvidenceResult{}, err
+	}
+	passages, err := p.quotedPassages(ctx, *src, spec.Passages)
+	p.stop()
+	if err != nil {
+		return EvidenceResult{}, err
+	}
+	texts := make([]string, len(passages))
+	locations := make([]*plugincontract.Location, len(passages))
+	for i, passage := range passages {
+		texts[i], locations[i] = passage.Text, passage.Location
+	}
+	if found, alone := quoteIn(quote, texts); !found {
+		return EvidenceResult{}, notInItsPassages(spec.Passages, alone)
+	}
+	want := evidencePassagesData{Lesson: spec.Lesson, Source: spec.Source, Quote: quote, Passages: spec.Passages, Plugin: name,
+		Location: placeOf(locations...)}
+
+	var existing *Evidence
+	ev, err := c.writeOpenedTopic(ctx, home, topic, spec.Topic, func(s *replayed, _ *topicView) (*change, error) {
+		k := s.knowledge()
+		if _, ok := k.sources[spec.Source]; !ok {
+			return nil, noSuchSource(spec.Topic, spec.Source)
+		}
+		for i, e := range k.evidence {
+			if !e.Retracted && e.Checked && e.Lesson == want.Lesson && e.Source == want.Source && e.Quote == want.Quote &&
+				e.Plugin == want.Plugin && slices.Equal(e.Passages, want.Passages) {
+				existing = &k.evidence[i]
+				return nil, nil
+			}
+		}
+		want.ID = c.newEvidenceID(k)
+		return &change{Type: eventEvidencePassagesRecorded, Data: want}, nil
+	}, spec.DryRun)
+	if err != nil {
+		return EvidenceResult{}, err
+	}
+	result := EvidenceResult{Topic: spec.Topic, DryRun: spec.DryRun}
+	switch {
+	case existing != nil:
+		result.Evidence = *existing
+	case ev != nil:
+		result.Evidence = quotedEvidenceOf(want, ev.Wall)
+		result.Changed = true
+	}
+	return result, nil
+}
+
+// noSuchSource is the error for Evidence from a Source the Topic does not
+// have.
+func noSuchSource(topicID, sourceID string) error {
+	return &Error{Code: CodeNotFound, Message: fmt.Sprintf(
+		"Topic %s has no Source %s: add it with study source add first", topicID, sourceID)}
+}
+
+// notInItsPassages is the error for a quote that is not in the text of the
+// Passages it was recorded with. alone is the place of the one Passage that
+// holds it whole, among several, or -1.
+func notInItsPassages(passages []string, alone int) error {
+	const allowed = "Line breaks and other white space, a word cut at a line's end, another form of the same characters, and " +
+		"quotation marks and dashes of another shape may differ, and nothing else: not a word, not a letter's case"
+	switch {
+	case alone >= 0:
+		return invalidf("the quote is all in Passage %s, and does not run through the other Passages named: record it "+
+			"with that Passage alone", passages[alone])
+	case len(passages) == 1:
+		return invalidf("the quote is not in the text of Passage %s, so nothing was recorded. Evidence is the Source's own "+
+			"words: quote the Passage as the search gave it, never a paraphrase or a summary. %s. A quote that runs on "+
+			"into the next Passage names both, in order", passages[0], allowed)
+	}
+	return invalidf("the quote is not in the texts of Passages %s read one after the other, beginning in the first and "+
+		"ending in the last, so nothing was recorded. Evidence is the Source's own words: quote the Passages as the search "+
+		"gave them, never a paraphrase or a summary. %s", strings.Join(passages, ", "), allowed)
 }
 
 // RetractEvidence takes Evidence back, such as a quote recorded by mistake.
@@ -244,6 +443,18 @@ func (c *Core) ListEvidence(ctx context.Context, q EvidenceQuery) (EvidenceList,
 func evidenceOf(d evidenceData, recorded time.Time) Evidence {
 	return Evidence{ID: d.ID, Lesson: d.Lesson, Source: d.Source, Quote: d.Quote,
 		Location: d.Location, LocationFrom: d.LocationFrom, Recorded: recorded.UTC()}
+}
+
+// quotedEvidenceOf is the Evidence an evidence_passages.recorded Event
+// records: checked, with a location that came from the Knowledge base when
+// it has one.
+func quotedEvidenceOf(d evidencePassagesData, recorded time.Time) Evidence {
+	e := Evidence{ID: d.ID, Lesson: d.Lesson, Source: d.Source, Quote: d.Quote, Location: d.Location, Checked: true,
+		Passages: d.Passages, Plugin: d.Plugin, Recorded: recorded.UTC()}
+	if e.Location != "" {
+		e.LocationFrom = LocationFromKnowledgeBase
+	}
+	return e
 }
 
 // newEvidenceID makes a short random id for Evidence, different from every
@@ -359,6 +570,33 @@ func replayEvidenceRecorded(s *replayed, ev event) error {
 	}
 	k.byID[d.ID] = len(k.evidence)
 	k.evidence = append(k.evidence, evidenceOf(d, ev.Wall))
+	return nil
+}
+
+// replayEvidencePassagesRecorded replays Evidence that was checked against
+// its Passages. It shares its ids with Evidence that was not, so one
+// retraction takes back either, and a Card cites either.
+//
+// The payload is held to what makes it safe to show and no further: ids that
+// are a Passage's, however many, and a name a plugin can have. How many
+// Passages a quote may run through is a rule for whoever records, which a
+// later version may change.
+func replayEvidencePassagesRecorded(s *replayed, ev event) error {
+	var d evidencePassagesData
+	if err := json.Unmarshal(ev.Data, &d); err != nil || d.ID == "" || d.Lesson == "" || d.Source == "" || d.Quote == "" ||
+		len(d.Passages) == 0 || pluginregistry.CheckName(d.Plugin) != nil ||
+		slices.ContainsFunc(d.Passages, func(id string) bool { return plugincontract.CheckPassageID(id) != nil }) {
+		return errors.New("its payload is not Evidence quoted from Passages")
+	}
+	k := s.knowledge()
+	if _, ok := k.sources[d.Source]; !ok {
+		return fmt.Errorf("%w: Source %s", errUnknownItem, d.Source)
+	}
+	if _, ok := k.byID[d.ID]; ok {
+		return nil
+	}
+	k.byID[d.ID] = len(k.evidence)
+	k.evidence = append(k.evidence, quotedEvidenceOf(d, ev.Wall))
 	return nil
 }
 

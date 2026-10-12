@@ -1,0 +1,7 @@
+{
+  "ok": false,
+  "error": {
+    "code": "failed_precondition",
+    "message": "Knowledge base plugin kb stopped before it could open an MCP session (exit status 3). Run its command in a terminal to see why: study knowledge-base list shows the command. Nothing was recorded. Once that is put right, record the Evidence again, or record the Evidence without a Passage, which is then not checked"
+  }
+}

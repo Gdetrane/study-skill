@@ -1,0 +1,4 @@
+Recorded Evidence <id> for Lesson elimination from Source strang.<id>
+  > after elimination. Back substitution solves
+  pp. 1–2 (location from knowledge base)
+  checked against Passages <passage>, <passage> of Knowledge base plugin kb

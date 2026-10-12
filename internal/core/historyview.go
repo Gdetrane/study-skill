@@ -261,6 +261,8 @@ func summarizeEvent(ev event, cardLesson map[string]string) HistoryEntry {
 		text = "Source updated"
 	case eventEvidenceRecorded:
 		text = "Evidence recorded"
+	case eventEvidencePassagesRecorded:
+		text = "Evidence recorded, checked against its Passages"
 	case eventEvidenceRetracted:
 		text = "Evidence retracted"
 	case eventRevisionProposed:

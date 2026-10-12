@@ -29,7 +29,7 @@ func newSharedShelf(t *testing.T) *sharedShelf {
 	s.plugins = core.PluginOptions{
 		Environ:      func() []string { return []string{"HOME=" + s.home, "STUDY_HOME=" + s.env["STUDY_HOME"]} },
 		StartTimeout: 20 * time.Second, StopGrace: 300 * time.Millisecond, GlanceTimeout: 20 * time.Second,
-		IndexPoll: 10 * time.Millisecond, CancelTimeout: 5 * time.Second,
+		IndexPoll: 10 * time.Millisecond, CancelTimeout: 5 * time.Second, EvidenceTimeout: 20 * time.Second,
 	}
 	s.ok(t, "knowledge-base", "add", "kb", "--", "notes-kb", plugintest.Arg, "--record", s.record)
 	s.ok(t, "topic", "create", "--title", "Linear algebra")

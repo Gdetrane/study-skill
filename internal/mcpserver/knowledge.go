@@ -12,12 +12,15 @@ import (
 )
 
 // addKnowledgeTools adds the Knowledge seam's tools (ADR-0007): Sources and
-// Evidence. The agent reads the Sources and records here what it relied on.
+// Evidence. The agent reads the Sources, or searches them through the
+// Topic's Knowledge base plugin, and records here what it relied on.
 //
 // The sources tool, like status, asks a Topic's Knowledge base plugin what
-// it has indexed, and nothing else. No tool here asks a plugin to index:
-// that is study source index, in the agent's own shell or the learner's
-// (ADR-0012), and a test calls every tool to see that none does.
+// it has indexed, and nothing else. evidence_search asks it that and then to
+// search, and evidence_record, given a Passage, asks it that and then for
+// the Passage again. No tool here asks a plugin to index: that is study
+// source index, in the agent's own shell or the learner's (ADR-0012). A
+// test calls every tool to see that none does, and what each asks.
 func addKnowledgeTools(server *mcp.Server, c *core.Core) {
 	closedWorld := false
 	notDestructive := false
@@ -88,19 +91,47 @@ func addKnowledgeTools(server *mcp.Server, c *core.Core) {
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
+		Name:  "evidence_search",
+		Title: "Search a Topic's Sources",
+		Description: "Search the Sources of a Topic that names a Knowledge base plugin for the Passages that answer a " +
+			"query, best first (Instruction 15). Each Passage is the Source's own text, as the plugin extracted it, with " +
+			"its id, its Source, its location when the plugin knows it (pages counted from the start of the file) and " +
+			"its score, which means nothing outside this search. Quote Evidence from a Passage as it is given, and " +
+			"record it with evidence_record and the Passage's id. Only the Sources the plugin holds indexed on this " +
+			"computer are searched: searched lists them, left_out the others with why, note says so in a sentence, " +
+			"and action is the command that has them indexed (Instruction 14). A Topic without Sources, or with none " +
+			"indexed, gives no Passages and a note, which is no error. It fails with failed_precondition when the Topic " +
+			"names no plugin, or the plugin cannot be had or did not answer within 45 seconds: read the Sources " +
+			"yourself then. It reads the plugin's index and never a Source, indexes nothing and records nothing.",
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, OpenWorldHint: &closedWorld},
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in evidenceSearchInput) (*mcp.CallToolResult, core.PassageSearch, error) {
+		res, err := c.SearchEvidence(ctx, core.PassageQuery{Topic: in.Topic, Query: in.Query, Limit: in.Limit, Sources: in.Sources})
+		if err != nil {
+			return nil, core.PassageSearch{}, toolError(err)
+		}
+		return nil, res, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
 		Name:  "evidence_record",
 		Title: "Record Evidence",
 		Description: "Record an exact quote from one of the Topic's Sources that a Lesson relies on: the Source's own " +
-			"words, copied word for word, never paraphrased. When a search tool or service found the passage for you, " +
-			"quote the passage of the Source, never the service's answer or summary. Give the quote's location when " +
-			"you know it, and where it came from: source (read in the Source itself, such as a printed page number), " +
-			"knowledge_base (a citation as the Knowledge base gave it, recorded as given), learner, or " +
-			"estimate. Record Evidence whenever you teach from a Source; Lessons without Evidence are marked, never " +
-			"blocked. Recording the same Evidence twice changes nothing; evidence_retract takes back a mistake.",
+			"words, copied word for word, never paraphrased. With passages, the ids of the Passages the quote is from " +
+			"as evidence_search gave them, the quote is checked: the Topic's Knowledge base plugin is asked for those " +
+			"Passages again, and a quote that is not in their text is refused (invalid_argument) and nothing is " +
+			"recorded. Line breaks and other white space, a word cut at a line's end, another form of the same " +
+			"characters, and quotation marks and dashes of another shape may differ from the Passage, and nothing " +
+			"else: quote what the Passage says, never a summary of it. The location is then the Passages': give " +
+			"none. A quote that runs from one Passage into the next names both, in order, and must begin in the " +
+			"first and end in the last. Without passages nothing is checked: give the quote's location when you know " +
+			"it, and where it came from: source (read in the Source itself, such as a printed page number), " +
+			"knowledge_base (as a search gave it with a Passage), learner, or estimate. Record Evidence " +
+			"whenever you teach from a Source; Lessons without Evidence are marked, never blocked. Recording the same " +
+			"Evidence twice changes nothing; evidence_retract takes back a mistake.",
 		Annotations: &mcp.ToolAnnotations{DestructiveHint: &notDestructive, IdempotentHint: true, OpenWorldHint: &closedWorld},
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in evidenceRecordInput) (*mcp.CallToolResult, core.EvidenceResult, error) {
 		res, err := c.RecordEvidence(ctx, core.EvidenceSpec{Topic: in.Topic, Lesson: in.Lesson, Source: in.Source,
-			Quote: in.Quote, Location: in.Location, LocationFrom: in.LocationFrom})
+			Quote: in.Quote, Passages: in.Passages, Location: in.Location, LocationFrom: in.LocationFrom})
 		if err != nil {
 			return nil, core.EvidenceResult{}, toolError(err)
 		}
@@ -111,7 +142,8 @@ func addKnowledgeTools(server *mcp.Server, c *core.Core) {
 		Name:  "evidence",
 		Title: "Evidence in a Topic",
 		Description: "List the Evidence recorded in a Topic, in the order it was recorded, or only what one Lesson " +
-			"cites. Retracted Evidence is left out unless all is set.",
+			"cites. Each says whether its quote was checked against the Passages it is from when it was recorded " +
+			"(checked), and then which Passages of which plugin. Retracted Evidence is left out unless all is set.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, OpenWorldHint: &closedWorld},
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in evidenceListInput) (*mcp.CallToolResult, core.EvidenceList, error) {
 		list, err := c.ListEvidence(ctx, core.EvidenceQuery{Topic: in.Topic, Lesson: in.Lesson, All: in.All})
@@ -150,13 +182,21 @@ type sourceUpdateInput struct {
 	Path   *string `json:"path,omitempty" jsonschema:"where the file is on this computer: an absolute path, or one starting with ~/"`
 }
 
+type evidenceSearchInput struct {
+	Topic   string   `json:"topic" jsonschema:"the Topic's id, from status"`
+	Query   string   `json:"query" jsonschema:"what to look for, in words: a question, or the terms the Lesson is about"`
+	Limit   int      `json:"limit,omitempty" jsonschema:"most Passages to return; default 5, at most 50"`
+	Sources []string `json:"sources,omitempty" jsonschema:"search only these Sources, by their ids from the sources tool; all of the Topic's when omitted"`
+}
+
 type evidenceRecordInput struct {
-	Topic        string `json:"topic" jsonschema:"the Topic's id, from status"`
-	Lesson       string `json:"lesson" jsonschema:"the id of the Lesson that cites the Evidence"`
-	Source       string `json:"source" jsonschema:"the id of the Source the quote comes from"`
-	Quote        string `json:"quote" jsonschema:"the exact quote, word for word as the Source has it"`
-	Location     string `json:"location,omitempty" jsonschema:"where the quote is, such as p. 93 or §5.1"`
-	LocationFrom string `json:"location_from,omitempty" jsonschema:"where the location came from: source, knowledge_base, learner or estimate"`
+	Topic        string   `json:"topic" jsonschema:"the Topic's id, from status"`
+	Lesson       string   `json:"lesson" jsonschema:"the id of the Lesson that cites the Evidence"`
+	Source       string   `json:"source" jsonschema:"the id of the Source the quote comes from"`
+	Quote        string   `json:"quote" jsonschema:"the exact quote, word for word as the Source has it"`
+	Passages     []string `json:"passages,omitempty" jsonschema:"the ids of the Passages the quote is from, as evidence_search gave them, in the order the quote runs through them, five at most; the quote is then checked against their text"`
+	Location     string   `json:"location,omitempty" jsonschema:"where the quote is, such as p. 93 or §5.1; leave it out with passages"`
+	LocationFrom string   `json:"location_from,omitempty" jsonschema:"where the location came from: source, knowledge_base, learner or estimate; leave it out with passages"`
 }
 
 type evidenceListInput struct {

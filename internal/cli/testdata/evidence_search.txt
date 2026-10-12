@@ -1,0 +1,22 @@
+Knowledge base plugin kb found 3 Passages for "elimination produces triangular" in linear-algebra, best first:
+
+<passage>  Strang, p. 1
+  Source strang.<id>, score 3
+  > Elimination produces an upper triangular system.
+
+<passage>  Strang, p. 1
+  Source strang.<id>, score 1
+  > The pivots are on the diagonal of the triangle after elimination.
+
+<passage>  Strang, p. 2
+  Source strang.<id>, score 1
+  > Back substitution solves the triangular
+  > system from the last equation up.
+
+Quote a Passage as it is given, and record the quote with the Passage's id:
+  study evidence record linear-algebra --lesson <lesson> --source <source> --passage <passage> --quote <quote>
+
+! 1 of the 2 Sources was not searched: Knowledge base plugin kb does not hold it indexed on this computer as the Topic records it
+  notes.<id>  Notes: not indexed
+To have Knowledge base plugin kb index what it can of them, run:
+  study source index linear-algebra

@@ -261,7 +261,11 @@ func TestThePageGivesEveryLimitAndDeadline(t *testing.T) {
 		"the time to say what is indexed": "when `study` shows what is indexed | " + seconds(core.PluginGlanceTimeout),
 		"the grace after saying it": "Exiting then, once standard input is closed, and again after `SIGTERM` | " +
 			strconv.Itoa(int(core.PluginGlanceGrace/time.Millisecond)) + " milliseconds",
-		"the time to stop indexing":         "when `study source index` was stopped | " + seconds(core.DefaultIndexCancelTimeout),
+		"the time to stop indexing": "when `study source index` was stopped | " + seconds(core.DefaultIndexCancelTimeout),
+		// What the core gives a plugin that is searched, and one that is asked
+		// for the Passages of a quote.
+		"the time to answer a search, starting included": "every `passage`, together, when it checks a quote | " +
+			seconds(core.PluginEvidenceTimeout),
 		"the size of a message":             "| " + number(plugincontract.MaxMessageBytes) + " bytes |",
 		"the values of a message":           "| Values in one MCP message from the plugin | " + number(plugincontract.MaxMessageValues) + " |",
 		"the length of a Passage":           "| " + number(plugincontract.MaxPassageBytes) + " bytes of UTF-8 |",

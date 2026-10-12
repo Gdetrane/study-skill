@@ -9,6 +9,7 @@
         "lesson": "pivots",
         "source": "strang-linear-algebra.<id>",
         "quote": "The pivots are on the diagonal.\nThey must not be zero.",
+        "checked": false,
         "recorded": "2026-10-01T09:30:00Z"
       }
     ]

@@ -44,6 +44,15 @@ have **2 seconds, all of them together**, and the plugin is started anew each ti
 that takes longer is stopped, and its Sources are shown as not known. So load what is slow
 to load, a model say, when `index` or `search` first needs it, and not when you start.
 
+**A search has 45 seconds, starting included.** When the learner's agent searches a
+Topic's Sources, starting the plugin and the answers of `contract`, `status` and `search`
+have 45 seconds, **all of them together**. So have starting, `contract`, `status` and every
+`passage` when `study` checks a quote against the Passages it is from. The agent's tool
+call waits for the answer, and many MCP clients give a call up after a minute. A plugin
+that takes longer is stopped, and the search fails. The plugin is started anew each time,
+so what is slow to load is loaded again for every search: keep a model in a service that
+stays up, as an embedding endpoint does, and not in the plugin's own program.
+
 **A plugin answers what it is asked, and sends `study` no requests.** `study` offers a
 plugin nothing to call back: no roots, no sampling and no questions to the learner. The first
 request a plugin sends, a `ping` or a `roots/list` as much as any other, ends the session:
@@ -242,6 +251,7 @@ with `application/json` or with a stream of server-sent events.
 | `search` | 60 seconds |
 | Exiting once standard input is closed, and again after `SIGTERM` | 2 seconds |
 | Starting, `contract` and every `status`, together, when `study` shows what is indexed | 2 seconds |
+| Starting, `contract`, `status` and `search`, together, when `study` searches a Topic's Sources; and starting, `contract`, `status` and every `passage`, together, when it checks a quote | 45 seconds |
 | Exiting then, once standard input is closed, and again after `SIGTERM` | 250 milliseconds |
 | Answering `cancel`, when `study source index` was stopped | 10 seconds |
 | One MCP message from the plugin | 16,777,216 bytes |
@@ -543,6 +553,11 @@ Finds the Passages of a collection that answer a query, **best first**.
 
 - A search reads the index and never a Source, and never waits for indexing: it finds what
   is indexed now, and answers as quickly while a Source is being indexed as otherwise.
+- **`study` always gives `sources`**, and asks `status` first: it searches the Sources the
+  Topic has, and of those the ones `status` says are `indexed`, for a file with the `hash`
+  of the content the Topic records. A collection can hold more: the Sources of a Topic
+  that was removed stay in it. **A Passage of a Source that `sources` does not list is
+  refused** by `study`, with the whole answer.
 - **A score belongs to one search**, so `search` gives it and `passage` does not.
 - A location's kind decides its other fields. Version 1 has `pages`. A plugin that lists
   another kind in its `contract` gives that kind its own fields, which this version of
@@ -574,6 +589,18 @@ from the Passage, to check the quote against its text.
 
 - The Passage is the one the search gave: the same text, Source and location.
 - An id the collection does not have is refused with `not_found`.
+- **What `study` does with it.** It asks `status` first, and for a Passage only when the
+  Source the quote is from is `indexed` with the content the Topic records; a Passage of
+  another Source is refused. The quote must then be in the Passage's `text`, with nothing
+  differing but white space, the form its characters are written in, the shape of its
+  quotation marks and dashes, and the hyphen of a word cut at a line's end. So **give a
+  Passage's text as it was extracted**: a word cut at a line's end is known by the white
+  space after its hyphen, a line break or the space a plugin made of it, and a plugin that
+  joins the two halves and keeps the hyphen has the whole word refused.
+- **A quote can run from one Passage into the next.** `study` then asks for each, up to
+  five, and looks for the quote in their texts read one after the other, in the order the
+  learner's agent gave. Nothing in this version says which Passage follows which in a
+  Source, so `study` cannot tell that the Passages it is given are adjacent.
 
 ## Checking a plugin
 
@@ -628,3 +655,5 @@ The same package holds a small plugin that passes the suite, to read beside this
 - A plugin is handed no environment of the learner's but the few variables above, and no
   way to ask `study`, or the learner, for anything.
 - A plugin is told nothing of Topics, Lessons or the learner.
+- A Passage does not say which Passage comes before it or after it in its Source, nor
+  whether it overlaps another.

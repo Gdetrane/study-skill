@@ -6,6 +6,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -17,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/fang"
@@ -669,11 +671,36 @@ type errorBody struct {
 	Message string `json:"message"`
 }
 
+// writeJSON prints the one JSON document of a --json result.
+//
+// A result can hold text study did not write, a Passage's above all, which
+// is a Knowledge base plugin's and is given as it is. The encoder escapes
+// the control characters of ASCII in a string. It writes every other
+// character as it is, among them the ones a terminal still acts on: DEL,
+// the C1 controls, which some terminals take for the start of an escape
+// sequence, and the ones that change the direction text is shown in. So
+// those are written as \u escapes too: the document says the same, and
+// printed on a terminal it is text.
 func (a *app) writeJSON(v envelope) error {
-	enc := json.NewEncoder(a.stdout)
+	var doc bytes.Buffer
+	enc := json.NewEncoder(&doc)
 	enc.SetIndent("", "  ")
 	enc.SetEscapeHTML(false)
-	return enc.Encode(v)
+	if err := enc.Encode(v); err != nil {
+		return err
+	}
+	var out bytes.Buffer
+	for _, r := range doc.String() {
+		// Outside a string the document holds no such character: its line
+		// breaks are the only control characters there.
+		if r != '\n' && (unicode.IsControl(r) || unicode.Is(unicode.Bidi_Control, r)) {
+			fmt.Fprintf(&out, `\u%04x`, r)
+			continue
+		}
+		out.WriteRune(r)
+	}
+	_, err := a.stdout.Write(out.Bytes())
+	return err
 }
 
 // fail reports err. With --json the error envelope goes to stdout and the

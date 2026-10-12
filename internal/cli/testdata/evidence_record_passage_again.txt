@@ -1,0 +1,4 @@
+Evidence <id> was already recorded: nothing changed
+  > Elimination produces an upper triangular system.
+  p. 1 (location from knowledge base)
+  checked against Passage <passage> of Knowledge base plugin kb
