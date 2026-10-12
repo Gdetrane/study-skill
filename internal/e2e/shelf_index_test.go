@@ -19,6 +19,8 @@ import (
 // index has it index the Topic's Sources, a book that is a PDF and a scan
 // that has no text. What is indexed is then said by a study-shelf other
 // than the one that indexed it, since study starts one for every question.
+// And what is indexed is then searched, and a quote checked against the
+// Passage it is from: each by a study-shelf of its own again.
 func TestABuiltStudyHasTheBuiltShelfIndexABook(t *testing.T) {
 	study, shelf := buildStudy(t), shelftest.Shelf(t)
 	home := t.TempDir()
@@ -130,6 +132,84 @@ func TestABuiltStudyHasTheBuiltShelfIndexABook(t *testing.T) {
 	}
 	if got := again.Data.Sources; len(got) != 2 || got[0].Asked || got[0].State != core.IndexIndexed || !got[1].Asked {
 		t.Errorf("run again, study source index = %+v; want the book left alone and the scan tried again", got)
+	}
+
+	// And what the index is for: a search finds the book's own text, by a
+	// Shelf started for the question, and a quote is checked against the
+	// Passage it is from, by another.
+	search := func(query string) core.PassageSearch {
+		t.Helper()
+		var found struct {
+			Data core.PassageSearch `json:"data"`
+		}
+		if err := json.Unmarshal([]byte(must("evidence", "search", "linear-algebra", query, "--json")), &found); err != nil {
+			t.Fatal(err)
+		}
+		return found.Data
+	}
+	bookID := after.Sources[0].ID
+	first := search("why does elimination give a triangular system?")
+	if len(first.Passages) == 0 || first.Passages[0].Source != bookID || first.Passages[0].Location != "p. 1" ||
+		first.Passages[0].Text != "Elimination turns a system of equations into a triangular one." {
+		t.Fatalf("study evidence search = %+v; want the book's first page first, as the book has it", first.Passages)
+	}
+	// The scan is left out, with why, and is nothing to run a command for.
+	if len(first.Searched) != 1 || first.Searched[0] != bookID || len(first.LeftOut) != 1 || first.LeftOut[0].State != core.IndexFailed ||
+		!strings.Contains(first.LeftOut[0].Reason, "no text layer") || first.Action != "" {
+		t.Errorf("the search searched %v, left out %+v and names the action %q; want the book searched and the scan left out, "+
+			"with nothing to run", first.Searched, first.LeftOut, first.Action)
+	}
+	second := search("back substitution unknowns")
+	if len(second.Passages) == 0 || second.Passages[0].Location != "p. 2" {
+		t.Fatalf("study evidence search = %+v; want the book's second page first", second.Passages)
+	}
+	one, two := first.Passages[0].ID, second.Passages[0].ID
+	record := func(quote string, passages ...string) (core.Evidence, string, error) {
+		t.Helper()
+		args := []string{"evidence", "record", "linear-algebra", "--lesson", "elimination", "--source", bookID, "--quote", quote, "--json"}
+		for _, id := range passages {
+			args = append(args, "--passage", id)
+		}
+		out, err := run(args...)
+		var res struct {
+			Data core.EvidenceResult `json:"data"`
+		}
+		if err == nil {
+			if err := json.Unmarshal([]byte(out), &res); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return res.Data.Evidence, out, err
+	}
+	// Typed with a line break and curly quotes it is the same words.
+	if got, out, err := record("Elimination turns a system of equations\ninto a triangular one.", one); err != nil || !got.Checked ||
+		got.Location != "p. 1" || got.LocationFrom != core.LocationFromKnowledgeBase || got.Plugin != "shelf" {
+		t.Errorf("a quote of the first page = %+v, %v; want it checked, on p. 1\n%s", got, err, out)
+	}
+	// A quote that runs over the end of the page names both Passages.
+	if got, out, err := record("into a triangular one. Back substitution then gives the unknowns", one, two); err != nil || !got.Checked ||
+		got.Location != "pp. 1–2" {
+		t.Errorf("a quote that runs over the page = %+v, %v; want it checked, on pp. 1–2\n%s", got, err, out)
+	}
+	// What the book does not say is refused, and nothing is recorded.
+	for name, quote := range map[string]string{
+		"a paraphrase":     "Elimination makes the system triangular.",
+		"a part of a word": "limination turns a system",
+		"two words as one": "Elimination turns asystem of equations",
+	} {
+		if _, out, err := record(quote, one); err == nil || !strings.Contains(out, `"code": "invalid_argument"`) ||
+			!strings.Contains(out, "the quote is not in the text of Passage "+one) {
+			t.Errorf("%s: %v\n%s\nwant it refused as not in the Passage", name, err, out)
+		}
+	}
+	var list struct {
+		Data core.EvidenceList `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(must("evidence", "list", "linear-algebra", "--json")), &list); err != nil {
+		t.Fatal(err)
+	}
+	if got := list.Data.Evidence; len(got) != 2 || !got[0].Checked || !got[1].Checked {
+		t.Errorf("study evidence list = %+v; want the two quotes that were checked, and nothing else", got)
 	}
 }
 

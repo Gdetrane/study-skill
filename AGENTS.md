@@ -118,13 +118,15 @@ GOOS=darwin go vet ./...            # macOS is supported too
   called, calls every tool (`everyToolOn`: add a new tool there) and fails when the plugin
   was asked `index` or `cancel`, or anything that is not in `askedOfAPlugin`, or when the
   registry changed; `toolsThatAskAPlugin` says, for each tool that asks a plugin anything,
-  exactly which of its tools are asked and in which order.
+  exactly which of its tools are asked and in which order, in each way the session takes,
+  and the session takes the ways that end in a refusal too.
   `TestTheCoreAsksAPluginToIndexInOnePlace` reads the core: a Connection's `Index` is
   called in `indexRun.askToIndex` alone, which only `IndexSources` reaches, which the
   server cannot name, its `Cancel` in `indexRun.ended` alone, its `Search` in
   `topicPlugin.searchPassages` and its `Passage` in `topicPlugin.readPassage`
   (`askedOfAConnection`). `TestTheClientAsksEachToolInOneMethod` holds the client to
-  naming each tool in the one method called after it. Change them on purpose when a tool
+  naming each tool in the one method called after it, and a Connection to the methods
+  those tests know: say there what a new one is. Change them on purpose when a tool
   comes to ask a plugin something else, name nothing else in the core `Index`, `Cancel`,
   `Search` or `Passage`, and keep `reflect` out of the core: it calls by a name those
   tests cannot read.
@@ -135,7 +137,8 @@ GOOS=darwin go vet ./...            # macOS is supported too
   `ActiveTopic`, not `Status`. Never give a plugin the client's thirty seconds on such a
   path. The one action `status` names is a command that would help: `study source index`
   only for a Source it would hand over and the plugin has not tried, never for one that
-  failed or whose file is missing, changed or unreadable.
+  failed or whose file is missing, changed or unreadable. A search, and a refused
+  recording, decide it by the same code (`indexAsk`): never write that rule a second time.
 - A search of a Topic's Sources, and the reading of a Passage to check a quote, have
   `core.PluginEvidenceTimeout`, forty-five seconds, for the registry, the start and every
   answer together (`PluginOptions.EvidenceTimeout` in tests), and the plugin is asked
@@ -143,7 +146,10 @@ GOOS=darwin go vet ./...            # macOS is supported too
   has and the plugin holds indexed with the Source's own hash. Evidence is recorded as
   checked only when its quote is in the text of the Passages it names
   (`internal/core/quote.go` says what may differ): never widen what that lets through
-  without saying so in ADR-0012 and `docs/cli.md`.
+  without saying so in ADR-0012 and `docs/cli.md`. One process has at most `mostAtOnce`
+  copies of a plugin searching (`takeTurn`): whatever takes a turn gives it back on every
+  way out, and `TestATurnIsGivenBackHoweverItEnds` lists the ways. A search's answer is
+  bounded (`MaxSearchTextBytes`), and a Passage is handed on through `withoutTags`.
 - A collection is named by `collectionName`: the Topic's id and a hash of the Study home's
   real path and the id, never the id alone, since a plugin's folder is one for the plugin
   on a computer. A Source is its content: a file goes to a plugin only when it is the file
