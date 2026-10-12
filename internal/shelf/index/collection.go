@@ -213,6 +213,14 @@ func (c *Collection) wrap(err error) error {
 	return fmt.Errorf("the index of collection %s: %w", c.name, err)
 }
 
+// Count returns how many Sources the index holds anything of: content, or
+// that their last indexing failed.
+func (c *Collection) Count(ctx context.Context) (int, error) {
+	var n int
+	err := c.db.QueryRowContext(ctx, `SELECT count(*) FROM sources`).Scan(&n)
+	return n, c.wrap(err)
+}
+
 // Sources returns what the index says of the collection's Sources, by id,
 // and no more of them than a status may list.
 func (c *Collection) Sources(ctx context.Context) ([]Source, error) {

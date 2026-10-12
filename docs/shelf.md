@@ -179,6 +179,8 @@ in a few hundredths of a second. Indexing a PDF is the work:
 - One file may take 15 minutes and 64 MB of text, and the PDF reader 1 GB of memory. A
   file that needs more fails with the reason. A web page may be 16 MB, take 60 seconds, and
   redirect five times.
+- A Topic's collection holds 10,000 Sources, as many as `study` can be told the state of. A
+  further one is refused with that as the reason.
 
 ## Settings
 

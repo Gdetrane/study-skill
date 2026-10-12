@@ -83,11 +83,15 @@ type Settings struct {
 	// Workers is how many Sources are worked on at once. Two PDFs are never
 	// read at once, whatever it says.
 	Workers int
+	// MostSources is how many Sources a collection holds: as many as the
+	// contract lets a status list, and never more. A test sets fewer.
+	MostSources int
 }
 
 // DefaultSettings are the settings Shelf runs with.
 func DefaultSettings() Settings {
-	return Settings{PassageSize: cut.DefaultSize, Fetch: web.DefaultLimits, FileTime: 15 * time.Minute, Workers: 4}
+	return Settings{PassageSize: cut.DefaultSize, Fetch: web.DefaultLimits, FileTime: 15 * time.Minute, Workers: 4,
+		MostSources: plugincontract.MaxSources}
 }
 
 // orDefault returns the settings with the default in the place of each that
@@ -113,6 +117,9 @@ func (s Settings) orDefault() Settings {
 	}
 	if s.Workers < 1 {
 		s.Workers = d.Workers
+	}
+	if s.MostSources < 1 || s.MostSources > d.MostSources {
+		s.MostSources = d.MostSources
 	}
 	return s
 }
@@ -381,6 +388,20 @@ func (s *Shelf) index(ctx context.Context, args json.RawMessage) (any, *pluginco
 		return plugincontract.IndexResult{Source: plugincontract.SourceStatus{ID: k.source, State: plugincontract.StateIndexed, Hash: have.Hash}}, nil
 	}
 
+	// A collection holds no more Sources than its status can list: one more
+	// would be indexed and never said to be, and study, which follows a
+	// Source by asking status, would take it for stopped. So a Source the
+	// index holds nothing of is refused when the collection is full, with
+	// the ones this Shelf is indexing now counted in.
+	if have == nil {
+		if full, err := s.full(ctx, k.collection); err != nil {
+			return nil, refuse(plugincontract.CodeInternal, "%v", err)
+		} else if full {
+			return nil, refuse(plugincontract.CodeUnsupported, "the collection holds %d Sources, the most Shelf keeps for one "+
+				"Topic: no further Source can be indexed for it", s.settings.MostSources)
+		}
+	}
+
 	work, stop := context.WithCancel(context.Background())
 	j := &job{source: in.Source, ctx: work, stop: stop, done: make(chan struct{})}
 	s.mu.Lock()
@@ -396,6 +417,27 @@ func (s *Shelf) index(ctx context.Context, args json.RawMessage) (any, *pluginco
 	go s.work(k, in, j)
 	status, _ := statusOf(have, working{job: j}, "")
 	return plugincontract.IndexResult{Source: status}, nil
+}
+
+// full reports whether a collection holds as many Sources as a status may
+// list, with the ones being indexed now that may be new to it.
+func (s *Shelf) full(ctx context.Context, collection string) (bool, error) {
+	c, err := s.collection(ctx, collection, false)
+	if err != nil || c == nil {
+		return false, err
+	}
+	held, err := c.Count(ctx)
+	if err != nil {
+		return false, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for running := range s.jobs {
+		if running.collection == collection {
+			held++
+		}
+	}
+	return held >= s.settings.MostSources, nil
 }
 
 // indexed reports whether what the index holds for a Source is the content
