@@ -222,6 +222,31 @@ func TestAPluginThatBabblesWhenIdleIsStopped(t *testing.T) {
 	}
 }
 
+// And so is one that closes its output when nothing is asked of it, and
+// stays: no call is under way to find the session dead, and the program did
+// not exit to say so itself.
+func TestAPluginThatClosesItsOutputWhenIdleIsStopped(t *testing.T) {
+	ctx := context.Background()
+	c := plugintest.NewComputer(t)
+	record := filepath.Join(t.TempDir(), "record.json")
+	plugin := c.Register(t, "kb", plugintest.Command("--record", record, "--hush", "--stubborn")...)
+	s, err := pluginclient.Start(ctx, c.Env(""), plugin, quick(c))
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer s.Close()
+	for deadline := time.Now().Add(10 * time.Second); !s.Ended(); time.Sleep(5 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("the Connection has not ended, although the plugin closed its output")
+		}
+	}
+	gone(t, record)
+	_, err = s.Status(ctx, "c")
+	if want := "Knowledge base plugin kb can no longer be asked: it closed its output while nothing was asked of it, and study stopped it"; codeOf(err) != pluginclient.CodeFailedPrecondition || !strings.Contains(err.Error(), want) {
+		t.Errorf("Status afterwards = %v\nwant failed_precondition with %q", err, want)
+	}
+}
+
 // A program that cannot be run at all says why, and how to look.
 func TestAProgramThatCannotBeRun(t *testing.T) {
 	c := plugintest.NewComputer(t)
@@ -608,6 +633,11 @@ func TestAnAnswerThatBreaksTheContractIsRefused(t *testing.T) {
 		{"a key both ways", `search={"passages": [], "Passages": [{"id": "a", "source": "s.1", "text": "x"}]}`,
 			func(s *pluginclient.Connection) error { _, err := s.Search(ctx, "c", "q", 5, nil); return err },
 			`what its search tool gave back is not what the contract describes: "passages" is spelled "Passages"`},
+		// A field that is optional is left out. Given as null it would be
+		// read as left out, whatever it was meant to say.
+		{"a location that is null", `search={"passages": [{"id": "a", "source": "s.1", "text": "x", "score": 2, "location": null}]}`,
+			func(s *pluginclient.Connection) error { _, err := s.Search(ctx, "c", "q", 5, nil); return err },
+			`what its search tool gave back is not what the contract describes: passages[0]: "location" is null`},
 		{"a status without its list", `status={}`,
 			func(s *pluginclient.Connection) error { _, err := s.Status(ctx, "c"); return err },
 			`what its status tool gave back is not what the contract describes: "sources" is missing`},

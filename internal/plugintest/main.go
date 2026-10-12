@@ -59,6 +59,7 @@ const Arg = "lamplight-test-plugin"
 //	--garbage           write a line that is no MCP message, and wait
 //	--babble            write such a line once contract was answered, when
 //	                    study asks nothing
+//	--hush              close its standard output then, and stay
 //	--close-output      close its standard output, and stay
 //	--hang WHERE        "start": answer nothing; a tool: it never answers
 //	--wait TOOL         TOOL answers only once its call is cancelled
@@ -180,6 +181,7 @@ func run(args []string) int {
 		exit        = flags.Int("exit", -1, "")
 		garbage     = flags.Bool("garbage", false, "")
 		babble      = flags.Bool("babble", false, "")
+		hush        = flags.Bool("hush", false, "")
 		closeOutput = flags.Bool("close-output", false, "")
 		hang        = flags.String("hang", "", "")
 		wait        = flags.String("wait", "", "")
@@ -312,10 +314,14 @@ func run(args []string) int {
 				forever()
 			}
 		}
-		if *babble && tool == plugincontract.ToolContract {
+		if (*babble || *hush) && tool == plugincontract.ToolContract {
 			// Once the answer to this call has gone out.
 			go func() {
 				time.Sleep(150 * time.Millisecond)
+				if *hush {
+					_ = os.Stdout.Close()
+					return
+				}
 				_, _ = os.Stdout.WriteString("Indexing finished: this is no MCP message\n")
 			}()
 		}

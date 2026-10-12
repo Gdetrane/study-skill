@@ -259,6 +259,9 @@ Every tool takes one JSON object as its arguments and gives back one JSON object
   Arguments that lack a required field, or hold a value this page does not allow, are
   refused with `invalid_argument`. `study` checks what it sends before it sends it, so a
   plugin sees such arguments only from another client; it refuses them all the same.
+- **An optional field is left out, never given as `null`**, in arguments and in results.
+  A search whose `sources` is `null` is refused, not taken for a search in every Source,
+  and `study` refuses a Passage whose `location` is `null`.
 - **Every field of a result is required too, unless its row says otherwise, under exactly
   its name.** `study` refuses a result that leaves one out, gives it as `null`, or spells
   it in another letter case: a `cancel` that answers `{}` has not said that it stopped

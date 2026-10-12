@@ -43,6 +43,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -184,6 +185,10 @@ type Connection struct {
 	// message, if there was one.
 	misread   error
 	closeOnce sync.Once
+	// asking counts what is being asked of the plugin at this moment: the
+	// handshake, or a tool's call, until whatever went wrong with it has
+	// been told.
+	asking atomic.Int32
 }
 
 // Start starts the plugin, when it is registered by a command, or reaches
@@ -255,7 +260,7 @@ func Start(ctx context.Context, env pluginregistry.Env, plugin pluginregistry.Pl
 	default:
 		return nil, errorf(CodeInternal, "Knowledge base plugin %s is registered with neither a command nor a URL", plugin.Name)
 	}
-	guarded := &answersOnly{inner: transport, asked: s.wasAsked, tooMuch: s.heldTooMuch, misread: s.readNoMCP}
+	guarded := &answersOnly{inner: transport, asked: s.wasAsked, tooMuch: s.heldTooMuch, misread: s.readNoMCP, closed: s.outputEnded}
 	if s.http != nil {
 		guarded.speaks = s.http.speaks
 	}
@@ -287,6 +292,8 @@ type answersOnly struct {
 	// misread is told what reading failed with, when that was what the
 	// plugin wrote and not that it went away.
 	misread func(error)
+	// closed is told that reading ended because the plugin's output did.
+	closed func()
 	// speaks, when set, is told the MCP revision the plugin answered
 	// initialize with, before the library goes on to its next message.
 	//
@@ -307,7 +314,8 @@ func AnswersOnly(transport mcp.Transport, asked func(method string)) mcp.Transpo
 	// gives one, is told whom to tell. A second one around it would see that
 	// the first hung up, and never the request.
 	if inner, ok := transport.(*answersOnly); ok {
-		return &answersOnly{inner: inner.inner, asked: asked, tooMuch: inner.tooMuch, misread: inner.misread, speaks: inner.speaks}
+		return &answersOnly{inner: inner.inner, asked: asked, tooMuch: inner.tooMuch, misread: inner.misread, closed: inner.closed,
+			speaks: inner.speaks}
 	}
 	return &answersOnly{inner: transport, asked: asked}
 }
@@ -326,7 +334,7 @@ func (t *answersOnly) Connect(ctx context.Context) (mcp.Connection, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &answering{Connection: conn, asked: t.asked, tooMuch: t.tooMuch, misread: t.misread, speaks: t.speaks}, nil
+	return &answering{Connection: conn, asked: t.asked, tooMuch: t.tooMuch, misread: t.misread, closed: t.closed, speaks: t.speaks}, nil
 }
 
 type answering struct {
@@ -334,6 +342,7 @@ type answering struct {
 	asked   func(method string)
 	tooMuch func()
 	misread func(error)
+	closed  func()
 	speaks  func(revision string)
 	once    sync.Once
 	first   sync.Once
@@ -352,8 +361,16 @@ func (c *answering) Read(ctx context.Context) (jsonrpc.Message, error) {
 		// Whoever waits for an answer is told by the library that the
 		// connection closed, or what was read, whichever it comes to first.
 		// What was read is known here, and says more.
-		if c.misread != nil && ctx.Err() == nil && !hungUp(err) {
-			c.misread(err)
+		switch {
+		case ctx.Err() != nil:
+		case !hungUp(err):
+			if c.misread != nil {
+				c.misread(err)
+			}
+		case c.closed != nil:
+			// Not waited for here: whoever waits for an answer is told
+			// first, and says what happened in the words of what it asked.
+			go c.closed()
 		}
 		return nil, err
 	}
@@ -441,6 +458,36 @@ func (s *Connection) readNoMCP(err error) {
 	}
 }
 
+// outputEnded is told that the plugin's output ended: a command closed its
+// standard output, or a service its connection. Nothing more can be read
+// from it, so the Connection is over.
+//
+// It is for the plugin that goes quiet while nothing is asked of it and
+// stays: whoever holds the Connection must find it ended, and a command
+// must not be left running behind it. The other two ways an output ends are
+// said better by who sees them. A call that is under way reports it with
+// what it asked, and stops the plugin itself: so nothing is done here while
+// anything is being asked. And a command that exited is reported with how
+// it ended, a moment after its output closed: so that moment is waited.
+func (s *Connection) outputEnded() {
+	const why = "it closed its output while nothing was asked of it, and study stopped it"
+	if s.asking.Load() > 0 {
+		return
+	}
+	if s.proc != nil && s.proc.hasExited(collectWait) {
+		return
+	}
+	s.mu.Lock()
+	over := s.ended != ""
+	if !over {
+		s.ended = why
+	}
+	s.mu.Unlock()
+	if !over {
+		s.drop(why)
+	}
+}
+
 // heldTooMuch is told that the plugin sent a message of more values than
 // one may hold. It ends the Connection, as a request does.
 func (s *Connection) heldTooMuch() {
@@ -479,6 +526,8 @@ func (s *Connection) askedWhy() string {
 // version this study knows. parent is the caller's context and limited the
 // same with the deadline of limit, which the whole start has.
 func (s *Connection) handshake(parent, limited context.Context, limit time.Duration, transport mcp.Transport) error {
+	s.asking.Add(1)
+	defer s.asking.Add(-1)
 	client := mcp.NewClient(&mcp.Implementation{Name: "study", Title: "Lamplight", Version: s.opts.Version}, &mcp.ClientOptions{
 		// The library's own Log would carry text the plugin wrote.
 		Logger: slog.New(slog.DiscardHandler),
@@ -850,6 +899,8 @@ func (s *Connection) callWithin(parent, limited context.Context, tool, doing str
 	if over := s.over(); over != nil {
 		return nil, over
 	}
+	s.asking.Add(1)
+	defer s.asking.Add(-1)
 	res, err := within(s, limited, func(ctx context.Context) (*mcp.CallToolResult, error) {
 		return s.cs.CallTool(ctx, &mcp.CallToolParams{Name: tool, Arguments: in})
 	})

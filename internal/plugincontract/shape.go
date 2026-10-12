@@ -65,7 +65,11 @@ func shape(path string, raw json.RawMessage, typ reflect.Type) []string {
 				}
 				continue
 			}
+			// An optional field is left out. Given as null it would read
+			// as left out, whatever it was meant to say: a search in a list
+			// of Sources that is null is no search in all of them.
 			if f.optional && string(bytes.TrimSpace(value)) == "null" {
+				problems = append(problems, at(fmt.Sprintf("%q is null: a field that is optional is left out, not given as null", f.name)))
 				continue
 			}
 			problems = append(problems, shape(strings.TrimPrefix(path+"."+f.name, "."), value, f.typ)...)

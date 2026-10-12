@@ -101,7 +101,9 @@ func AsCommand(c *Computer, command ...string) func(*testing.T) *Link {
 			// Whatever became of the test, nothing is left running.
 			started.Stop()
 			if said := started.Wrote(); t.Failed() && said != "" {
-				t.Logf("the plugin wrote on its standard error:\n%s", said)
+				// Quoted: it is the plugin's text, and a terminal would act
+				// on what is in it.
+				t.Logf("the plugin wrote on its standard error: %q", said)
 			}
 		})
 		return &Link{Transport: started.Transport(), Command: started}
@@ -264,6 +266,7 @@ func Conformance(t *testing.T, target Target) {
 			"search with a limit of none":          {plugincontract.ToolSearch, map[string]any{"collection": collection, "query": "anything", "limit": 0}},
 			"search with a limit over the highest": {plugincontract.ToolSearch, map[string]any{"collection": collection, "query": "anything", "limit": plugincontract.MaxSearchLimit + 1}},
 			"search in a list of no Sources":       {plugincontract.ToolSearch, map[string]any{"collection": collection, "query": "anything", "limit": 5, "sources": []string{}}},
+			"search in a list that is null":        {plugincontract.ToolSearch, map[string]any{"collection": collection, "query": "anything", "limit": 5, "sources": nil}},
 			"passage without an id":                {plugincontract.ToolPassage, map[string]any{"collection": collection}},
 			"passage without a collection":         {plugincontract.ToolPassage, map[string]any{"id": "nothing"}},
 		}
