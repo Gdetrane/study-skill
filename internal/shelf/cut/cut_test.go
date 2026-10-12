@@ -256,6 +256,15 @@ func TestADividedWordIsJoinedOrKeepsItsHyphenAsTheSourceWritesIt(t *testing.T) {
 			"NASA launched it. The NA" + mark + "SA budget.", "NASA launched it. The NASA budget."},
 		"before a capital, with nothing in the Source to say what it is": {
 			"The sum" + mark + "X of a formula.", "The sum X of a formula."},
+		"a pair with a number, which the Source writes with a hyphen": {
+			"COVID-19 spread. The COVID" + mark + "19 years, and SHA-256 or SHA" + mark + "256.",
+			"COVID-19 spread. The COVID-19 years, and SHA-256 or SHA-256."},
+		"a number before a word": {
+			"A 2-dimensional space is a 2" + mark + "dimensional one.", "A 2-dimensional space is a 2-dimensional one."},
+		"a word with a number that the Source holds whole": {
+			"The key is base64 text, in base" + mark + "64.", "The key is base64 text, in base64."},
+		"beside a digit, with nothing in the Source to say what it is": {
+			"The term x" + mark + "2 of a formula.", "The term x 2 of a formula."},
 		"a word set with a ligature": {
 			"To con\ufb01gure it. A con" + mark + "\ufb01gured system and a configured one.", "To configure it. A configured system and a configured one."},
 	} {

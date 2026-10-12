@@ -420,7 +420,14 @@ func (s *Shelf) index(ctx context.Context, args json.RawMessage) (any, *pluginco
 }
 
 // full reports whether a collection holds as many Sources as a status may
-// list, with the ones being indexed now that may be new to it.
+// list, with the ones being indexed now that may be new to it: by this
+// Shelf, and by every other copy of it that is at the collection.
+//
+// Each Source being indexed is counted as one more, though it may be one
+// the collection holds already, so a collection is called full a few
+// Sources early and never late for what is under way. Two copies that ask
+// at the same moment, each before the other's work shows, can still both
+// be let in: status then keeps the Sources being indexed (listed).
 func (s *Shelf) full(ctx context.Context, collection string) (bool, error) {
 	c, err := s.collection(ctx, collection, false)
 	if err != nil || c == nil {
@@ -430,6 +437,11 @@ func (s *Shelf) full(ctx context.Context, collection string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	elsewhere, err := c.Working(ctx)
+	if err != nil {
+		return false, err
+	}
+	held += len(elsewhere)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for running := range s.jobs {
@@ -438,6 +450,38 @@ func (s *Shelf) full(ctx context.Context, collection string) (bool, error) {
 		}
 	}
 	return held >= s.settings.MostSources, nil
+}
+
+// listed cuts what a status says to as many Sources as it may list. A
+// collection is kept from holding more (full), so there is something to cut
+// only when two copies of Shelf let a Source in at the same moment. A
+// Source that is being indexed is never the one left out: study follows it
+// by asking status, and would take its absence for its having been
+// stopped. One that is left out is said to be indexed as soon as it is
+// asked for again.
+func listed(sources []plugincontract.SourceStatus, most int) []plugincontract.SourceStatus {
+	if len(sources) <= most {
+		return sources
+	}
+	under := 0
+	for _, src := range sources {
+		if src.State == plugincontract.StateIndexing {
+			under++
+		}
+	}
+	settled := max(most-under, 0)
+	out := make([]plugincontract.SourceStatus, 0, most)
+	for _, src := range sources {
+		switch {
+		case len(out) == most:
+		case src.State == plugincontract.StateIndexing:
+			out = append(out, src)
+		case settled > 0:
+			out = append(out, src)
+			settled--
+		}
+	}
+	return out
 }
 
 // indexed reports whether what the index holds for a Source is the content
@@ -551,9 +595,7 @@ func (s *Shelf) status(ctx context.Context, args json.RawMessage) (any, *pluginc
 		add(nil, id)
 	}
 	sort.Slice(out.Sources, func(i, j int) bool { return out.Sources[i].ID < out.Sources[j].ID })
-	if len(out.Sources) > plugincontract.MaxSources {
-		out.Sources = out.Sources[:plugincontract.MaxSources]
-	}
+	out.Sources = listed(out.Sources, plugincontract.MaxSources)
 	return out, nil
 }
 
