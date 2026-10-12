@@ -1,0 +1,7 @@
+{
+  "ok": false,
+  "error": {
+    "code": "failed_precondition",
+    "message": "Knowledge base plugin kb sent study a request (ping), and study stopped it: a plugin answers what it is asked and asks nothing, since study offers it nothing to call. docs/knowledge-base-contract.md describes the contract"
+  }
+}

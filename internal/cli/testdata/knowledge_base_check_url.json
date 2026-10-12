@@ -1,0 +1,24 @@
+{
+  "ok": true,
+  "data": {
+    "name": "remote",
+    "address": "http://127.0.0.1:PORT",
+    "contract": {
+      "version": 1,
+      "sources": [
+        "file",
+        "url"
+      ],
+      "search": [
+        "keyword"
+      ],
+      "locations": [
+        "pages"
+      ]
+    },
+    "server": {
+      "name": "a-service",
+      "version": "0.9"
+    }
+  }
+}

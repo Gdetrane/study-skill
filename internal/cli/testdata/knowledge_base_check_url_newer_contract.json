@@ -1,0 +1,7 @@
+{
+  "ok": false,
+  "error": {
+    "code": "newer_format",
+    "message": "Knowledge base plugin remote speaks version 3 of Lamplight's contract, and this version of study knows version 1: upgrade study"
+  }
+}

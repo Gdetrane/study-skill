@@ -1,0 +1,7 @@
+{
+  "ok": false,
+  "error": {
+    "code": "failed_precondition",
+    "message": "Knowledge base plugin kb does not speak Lamplight's contract: what its contract tool gave back is not what the contract describes: search lists none of keyword, embedding. docs/knowledge-base-contract.md describes the contract"
+  }
+}

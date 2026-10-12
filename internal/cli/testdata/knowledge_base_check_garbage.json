@@ -1,0 +1,7 @@
+{
+  "ok": false,
+  "error": {
+    "code": "failed_precondition",
+    "message": "Knowledge base plugin kb does not speak MCP on its standard output: study read something there that is no MCP message (invalid character 'L' looking for beginning of value), and stopped it. A plugin writes only MCP messages on its standard output, each of 16 MiB at most, and anything else on its standard error"
+  }
+}

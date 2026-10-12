@@ -1,0 +1,7 @@
+{
+  "ok": false,
+  "error": {
+    "code": "failed_precondition",
+    "message": "Knowledge base plugin kb did not open an MCP session within 400ms, so study stopped it. Run its command in a terminal to see what it waits for: study knowledge-base list shows the command"
+  }
+}

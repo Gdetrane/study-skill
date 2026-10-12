@@ -1,0 +1,7 @@
+{
+  "ok": false,
+  "error": {
+    "code": "newer_format",
+    "message": "Knowledge base plugin kb speaks version 2 of Lamplight's contract, and this version of study knows version 1: upgrade study"
+  }
+}

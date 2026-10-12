@@ -38,6 +38,7 @@ that scripts and agents can rely on. Terms follow [GLOSSARY.md](../GLOSSARY.md).
 | `study knowledge-base add <name> [--allow-study-home-arguments] [--replace] [--dry-run] (--url URL \| -- <command> [args...])` | Registers a Knowledge base plugin on this computer under a name, by the command that starts it, given after `--`, or by the http or https URL it answers at. The command's program is found on `PATH`, or at the path given, and registered by its absolute path. A program inside the Study home, or reached through it, is `invalid_argument`; so is an argument that names something there, unless `--allow-study-home-arguments` is given, and one that names a file relative to the folder `study` is started in. Registering a plugin as it is registered already changes nothing (`changed: false`); a name registered as something else is `already_exists` unless `--replace` is given. It records no Event, and agents have no tool for it. See [Knowledge base plugins](#knowledge-base-plugins). |
 | `study knowledge-base list` | Lists the Knowledge base plugins registered on this computer, by name, and where the registry is. A plugin `study` does not use as it is registered carries a `problem`. |
 | `study knowledge-base remove <name> [--dry-run]` | Removes a Knowledge base plugin from this computer's registry, leaving its program or service as it is; a name that is not registered is `not_found`. It records no Event, and agents have no tool for it. |
+| `study knowledge-base check <name>` | Starts the Knowledge base plugin registered under the name, or reaches it at its URL, asks which version of Lamplight's contract it speaks and what it can do, and stops it again. The result is `{"name", "command"?, "address"?, "contract": {"version", "sources", "search", "locations"}, "server": {"name", "version"?}, "data_folder"?}`. A name that is not registered is `not_found`; a plugin that cannot be started, does not start, does not answer in time, is no MCP server or does not speak the contract is `failed_precondition`, with what to do; one that speaks a newer contract is `newer_format`. Nothing is left running. It indexes and searches nothing, records no Event, and agents have no tool for it. See [Knowledge base plugins](#knowledge-base-plugins). |
 | `study syllabus [topic]` | Shows a Topic's Syllabus (the Active topic's when none is named): Milestones and Lessons with their display numbers and status, the Revisions waiting for the learner with their change, and a hand edit of `syllabus.toml` (see [The Syllabus](#the-syllabus)). |
 | `study revision propose <topic> --summary S (--syllabus FILE \| --from-file) [--dry-run]` | Proposes a change to the Syllabus, the first one included. `--syllabus` names a file holding the whole Syllabus as it would be afterwards, as TOML like `syllabus.toml` or as JSON; `--from-file` proposes `syllabus.toml` as edited by hand. Nothing changes until the learner approves. |
 | `study revision apply <topic> <revision> [--learner-said S] [--dry-run]` | Applies a proposed Revision once the learner approves. On a terminal, study shows the change and asks the learner directly; an agent relaying their answer from the conversation passes their words with `--learner-said`. Answering no records a decline. |
@@ -131,10 +132,10 @@ Error codes:
 | `invalid_argument` | The request was understood but its values are invalid, such as an empty title. |
 | `already_exists` | The thing to create exists already. |
 | `not_found` | The thing named does not exist. |
-| `newer_format` | A file was written by a newer version of `study`; upgrade to read it. |
+| `newer_format` | A file was written by a newer version of `study`, or a Knowledge base plugin speaks a newer version of the contract than this `study` knows; upgrade `study`. |
 | `corrupt` | A file Lamplight reads is damaged or missing, for example invalid TOML after a hand edit, or a Topic's git repository is missing, was replaced during a Checkpoint, or leads outside the Topic. Fix or restore it; the message names it. |
-| `failed_precondition` | The request is valid but the Topic is not ready for it, for example a git merge is in progress or git has no identity; or the Knowledge base plugin registry is where study does not read it, such as inside the Study home. The message says what to do. |
-| `canceled` | The command was stopped, by SIGTERM or Ctrl-C, before it finished; what it would have recorded was not recorded. A command reports it wherever it was stopped: while it waited for another `study` process to finish writing to the Topic, too. `study check` stops every program the Check started. A few commands do not report it, by design. `study review`, once its session has begun, takes a stop as it takes `q`: the Reviews made so far are kept and it exits with 0 (see [Cards and Reviews](#cards-and-reviews)). `study doctor` and `study setup --check` report a diagnosis whatever happens, so what a stop kept them from examining is a Finding in it, and can make it `unhealthy`. `study mcp` prints no result of its own and exits with 1 when it is stopped, and the session-start hook of the Claude Code plugin never fails. |
+| `failed_precondition` | The request is valid but the Topic is not ready for it, for example a git merge is in progress or git has no identity; or the Knowledge base plugin registry is where study does not read it, such as inside the Study home; or a Knowledge base plugin cannot be started, does not start, does not answer in time, does not speak the contract, or failed at what it was asked. The message says what to do. |
+| `canceled` | The command was stopped, by SIGTERM or Ctrl-C, before it finished; what it would have recorded was not recorded. A command reports it wherever it was stopped: while it waited for another `study` process to finish writing to the Topic, too. `study check` stops every program the Check started, and a Knowledge base plugin that was started is stopped with everything it started. A few commands do not report it, by design. `study review`, once its session has begun, takes a stop as it takes `q`: the Reviews made so far are kept and it exits with 0 (see [Cards and Reviews](#cards-and-reviews)). `study doctor` and `study setup --check` report a diagnosis whatever happens, so what a stop kept them from examining is a Finding in it, and can make it `unhealthy`. `study mcp` prints no result of its own and exits with 1 when it is stopped, and the session-start hook of the Claude Code plugin never fails. |
 | `busy` | Another program is using the Topic: another `study` process writing to it for too long, an editor using its git repository, or files that kept changing while they were being saved. Also another `study` process changing the Knowledge base plugin registry for too long. Try again shortly; the message says what to do if it persists. |
 | `unhealthy` | `study doctor` only: a Finding failed. `data` still holds the full diagnosis. |
 | `internal` | Anything else, such as a file that cannot be read. |
@@ -960,7 +961,10 @@ place, and the move is refused when a folder that holds anything is there.
 
 `study knowledge-base add` and `study knowledge-base remove` record no Event either, and
 write nothing in the Study home: the registry they change is this computer's and no
-Topic's (see [Knowledge base plugins](#knowledge-base-plugins)).
+Topic's (see [Knowledge base plugins](#knowledge-base-plugins)). Nor does
+`study knowledge-base check`, which writes nothing in the Study home at all: starting a
+plugin that is a command makes its folder, `lamplight/knowledge-base-plugins/<name>` in the
+learner's state folder, when it is not there, and that is this computer's state too.
 
 ## Sources and Evidence
 
@@ -1039,8 +1043,11 @@ service: the agent reads the Sources itself and records the quotes it relied on.
 A Knowledge base plugin is a program, or a service the learner runs, that indexes Sources
 and searches them ([ADR-0012](adr/0012-knowledge-base-plugins-speak-one-contract.md)). Each
 computer registers the plugins it has, each under a name, with `study knowledge-base`.
-Registering is all this version does with a plugin: it starts and contacts none yet, and a
-Topic's Knowledge base is still `none`.
+`study` is the MCP client of a plugin, and
+[docs/knowledge-base-contract.md](knowledge-base-contract.md) is the contract a plugin
+speaks. This version registers plugins and checks them (`study knowledge-base check`, below):
+no Topic names one yet, so a Topic's Knowledge base is still `none`, and nothing is indexed
+or searched.
 
 - **The registry** is `knowledge-base-plugins.json` in Lamplight's configuration folder,
   beside `config.toml`: `$XDG_CONFIG_HOME/lamplight`, or `~/.config/lamplight`. It is this
@@ -1179,12 +1186,130 @@ checked at every listing, because the Study home can be another than when the pl
 registered, and a link can come to lead elsewhere. `study` does not use such a plugin;
 the `problem` says how to register it again.
 
-Shell completion offers the registered names to `study knowledge-base remove`, and to
-`study knowledge-base add --replace`.
+### study knowledge-base check
+
+`study knowledge-base check <name>` starts the plugin registered under the name, or reaches
+it at its URL, as `study` does when it needs the plugin: it opens an MCP session, checks
+that the six tools of the contract are there, asks the `contract` tool which version the
+plugin speaks and what it can do, and stops the plugin again. It asks nothing else, so
+nothing is indexed and nothing is searched.
+
+```json
+{
+  "name": "shelf",
+  "command": ["/usr/local/bin/study-shelf", "--stdio"],
+  "contract": {"version": 1, "sources": ["file", "url"], "search": ["keyword", "embedding"],
+               "locations": ["pages"]},
+  "server": {"name": "study-shelf", "version": "2.0.0"},
+  "data_folder": "/home/ada/.local/state/lamplight/knowledge-base-plugins/shelf"
+}
+```
+
+`name` is the name the plugin is registered under. `command` is the command that starts
+it, as it is registered; a plugin reached by URL has `address` instead, **the scheme and
+host of its registered address and no more**, such as `http://localhost:8765`: the rest of
+an address, a path or a query, may be a key, and `study knowledge-base list` is the one
+command that shows it. `contract` is what the plugin's `contract` tool said: the contract
+version, the kinds of Source it indexes (`file`, `url`), how it searches (`keyword`,
+`embedding`) and the kinds of location its Passages carry (`pages`); a kind this version
+does not know is given as the plugin wrote it. `server` is what the plugin calls itself,
+with anything a terminal would interpret escaped. `data_folder` is there for a plugin that
+is a command.
+
+- **A command is started** by the program that is registered, opened and checked at that
+  moment as `study knowledge-base list` checks it: without a shell, with the arguments as
+  they are registered, in the registry's folder and never in the Topic or the Study home
+  `study` was started in, in a session of its own, and with pipes of its own, never the
+  standard input `study` itself has. It inherits no other file `study` has open, the ones
+  `study` was itself started with included. On Linux the program is run by its own name in
+  the folder that holds it, which `study` opened when it checked the program, and the
+  working folder is entered by its descriptor, so no folder on the way to either is found
+  by name again after the check; the plugin has that one folder open as descriptor 3.
+  Elsewhere it is started by its path, after a last look that the path still names the file
+  that was checked. A name that came to lead to something else is `failed_precondition`.
+- **A script** is run by the program its first line names, so that interpreter is checked
+  as the program is, and its own interpreter if it is a script too: one that is inside
+  the Study home, or reached through it, or that is not there, or that is named by a
+  relative path, is `failed_precondition`. A first line such as `#!/usr/bin/env python3`,
+  or `#!/usr/bin/env -S python3 -u`, has `env` find the interpreter in the plugin's `PATH`:
+  `study` finds it the same way and checks the first one found. An option or a setting
+  given to `env` there is `failed_precondition` too, since `study` cannot tell what it
+  would start. So is an interpreter you may run and not read, which could name another
+  that nobody checked, a fifth script in a row, and a first line of more than 255 bytes
+  or with a carriage return in it, which systems do not all read alike.
+- **Its environment is a small one `study` makes**, not the one `study` has. A plugin gets
+  `PATH`, `HOME`, `USER`, `LOGNAME`, `LANG`, the `LC_*` variables, `TZ`, `TMPDIR`, the XDG
+  base folders (`XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME`, `XDG_CACHE_HOME`,
+  `XDG_RUNTIME_DIR`, `XDG_DATA_DIRS`, `XDG_CONFIG_DIRS`) and `LAMPLIGHT_PLUGIN_DATA`, which
+  names its folder. Each is given only when it leads nowhere inside the Study home: of a
+  list of folders, the absolute ones outside the Study home are kept; a folder is given
+  when it is an absolute path outside the Study home; and a path `study` cannot follow
+  counts as inside. Nothing else is given. An agent started in a Topic with its virtual
+  environment switched on hands `study mcp` a `PATH`, a `PYTHONPATH` and much else that
+  leads into the Topic, and a plugin started with those, outside the agent's sandbox, would
+  run what the agent wrote there; a list of what to take out is never finished, so the list
+  is of what goes in. **A plugin that needs more**, a key or a proxy, takes it in its
+  arguments, such as the path of a file that holds the key, or you register a small script
+  of your own, kept outside the Study home, that sets the variable and starts the plugin:
+
+  ```sh
+  study knowledge-base add notes -- ~/bin/notes-kb-with-key
+  ```
+- **Its folder** is `lamplight/knowledge-base-plugins/<name>` in your state folder,
+  `$XDG_STATE_HOME`, or `~/.local/state` when that is not set or is not an absolute path:
+  this computer's state, never synced, where the plugin keeps its index. It is made when it
+  is not there, for you alone to read, and one that is there is made so; a folder that
+  others can read or write, and that `study` cannot change, is `failed_precondition`. **It
+  is outside the Study home**, where your agent writes: when the state folder is the Study
+  home, is inside it or is reached through it by a link, the plugin is not started
+  (`failed_precondition`), and the message says to set `XDG_STATE_HOME`. The cost is that a
+  sandbox which lets `study` write in the Study home alone does not let a plugin started
+  inside it write its index: allow that folder in the sandbox, or index from your own
+  shell. A plugin reached by URL gets no folder.
+- **It is stopped** when the command is done, and when the command is stopped
+  (`canceled`): its standard input and output are closed, which asks it to exit; after 2
+  seconds its process group gets `SIGTERM`, and after 2 more it is killed. Whatever a
+  plugin started goes with it, unless the plugin moved it to a process group or a session
+  of its own.
+- **A URL** is reached over streamable HTTP. A redirect is not followed. A message says
+  where the service is by the scheme and host of its address, and repeats nothing else of
+  it, and what the service itself wrote is shown without the path and the query of its
+  address: they may be a key. A service that refuses says why, and the message repeats
+  that beside the revision of MCP `study` speaks, `2025-11-25`.
+- **Deadlines**: `study` has 30 seconds to start a plugin, or to reach it, and the plugin
+  to answer `contract`. One that takes longer is stopped and reported, so the command never
+  hangs. The 30 seconds cover finding the plugin in the registry as well, and the command
+  ends when it is stopped: a drive that does not answer does not hold it.
+- **What a plugin answers is bounded and held to the contract**: a message of more than
+  16 MiB or of more than 250,000 values ends the session, and a result that lacks a field
+  the contract requires is `failed_precondition`.
+- **A plugin answers, and asks nothing.** One that sends `study` a request, a `ping` as
+  much as any other, is stopped at the first, and reported. So is one that writes
+  something on its standard output that is no MCP message, whether or not it was asked
+  anything.
+- **What a plugin writes** never reaches the terminal as it is. Its standard error is
+  read by `study`, which repeats the end of it, 600 bytes at most, on one line and with
+  control characters escaped, when the plugin fails; so are its name for itself and its
+  error messages.
+
+What is wrong is `failed_precondition`, and the message says which of these it is and what
+to do: the program is gone, is no program, or is inside the Study home; it is a script
+whose interpreter is, or is named by a relative path; the state folder is inside the Study
+home; it could not be run; it exited before it answered, with its exit status and the last
+it wrote on its standard error; it wrote something on its standard output that is no MCP
+message; it sent `study` a request; it did not answer in time; it is an MCP server without
+the contract's tools; its `contract` tool gave back something else than the contract
+describes; or nothing answers as an MCP server at its address. A plugin that speaks a newer version of the contract than this `study`
+knows is `newer_format`: upgrade `study`. A name that is not registered is `not_found`, and
+one that could not be a name is `invalid_argument`.
+
+Shell completion offers the registered names to `study knowledge-base remove`,
+`study knowledge-base check`, and `study knowledge-base add --replace`.
 
 These commands are for the learner. No MCP tool registers, changes or removes a plugin, and
 none takes a command line or a URL for one: what changes the registry is in a part of
-`study` the MCP server is not built from.
+`study` the MCP server is not built from. No MCP tool starts or reaches a plugin either,
+until a Topic can name one.
 
 ## study doctor
 

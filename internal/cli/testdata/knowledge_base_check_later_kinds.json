@@ -1,0 +1,32 @@
+{
+  "ok": true,
+  "data": {
+    "name": "kb",
+    "command": [
+      "$PLUGIN",
+      "lamplight-test-plugin",
+      "--contract",
+      "{\"version\": 1, \"sources\": [\"file\", \"recording\"], \"search\": [\"embedding\", \"keyword\"], \"locations\": [\"pages\", \"time\"]}"
+    ],
+    "contract": {
+      "version": 1,
+      "sources": [
+        "file",
+        "recording"
+      ],
+      "search": [
+        "embedding",
+        "keyword"
+      ],
+      "locations": [
+        "pages",
+        "time"
+      ]
+    },
+    "server": {
+      "name": "test-plugin",
+      "version": "1.0.0"
+    },
+    "data_folder": "$HOME/.local/state/lamplight/knowledge-base-plugins/kb"
+  }
+}

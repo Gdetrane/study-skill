@@ -229,10 +229,7 @@ var errNotAProgram = errors.New("not a program")
 // home, or repoint a link there that leads to it, and study would then start
 // the agent's program outside the agent's sandbox.
 func (w *Walker) CheckProgram(path string) error {
-	file, err := w.openProgram(path, false)
-	if file != nil {
-		_ = file.Close()
-	}
+	_, err := w.openProgram(path, false)
 	return err
 }
 
@@ -241,10 +238,41 @@ func (w *Walker) CheckProgram(path string) error {
 // must not resolve the path again after this check, since the name can lead
 // elsewhere by then.
 func (w *Walker) OpenProgram(path string) (*os.File, error) {
+	program, err := w.openProgram(path, true)
+	if err != nil {
+		return nil, err
+	}
+	_ = program.Folder.Close()
+	return program.File, nil
+}
+
+// Program is a program the walk found and checked, open, in the folder that
+// holds it.
+type Program struct {
+	// File is the program: the file that was looked at and checked.
+	File *os.File
+	// Folder is the folder that really holds the program, open, and Name
+	// the program's name in it. The walk followed every symbolic link on
+	// the way itself, so Name is the file's own name there and no link.
+	Folder *os.File
+	Name   string
+}
+
+// Close closes the program and its folder.
+func (p *Program) Close() {
+	_ = p.File.Close()
+	_ = p.Folder.Close()
+}
+
+// OpenProgramIn checks the program as CheckProgram does and returns it open
+// together with the folder that holds it. Whoever starts the program names
+// it through that folder, by the folder's descriptor, or runs the open
+// file: never through the path again.
+func (w *Walker) OpenProgramIn(path string) (*Program, error) {
 	return w.openProgram(path, true)
 }
 
-func (w *Walker) openProgram(path string, open bool) (*os.File, error) {
+func (w *Walker) openProgram(path string, open bool) (*Program, error) {
 	place, err := w.Walk(path)
 	var inside *InsideError
 	switch {
@@ -292,7 +320,13 @@ func (w *Walker) openProgram(path string, open bool) (*os.File, error) {
 		_ = file.Close()
 		return nil, notReadyf("%s changed while study was checking it: try again", path)
 	}
-	return file, nil
+	folder, err := place.Folder().Open(".")
+	if err != nil {
+		_ = file.Close()
+		return nil, &Error{Code: CodeFailedPrecondition, Err: err, Message: "study cannot open the folder of " + path +
+			" to start it (" + Reason(err) + ")"}
+	}
+	return &Program{File: file, Folder: folder, Name: place.Leaf}, nil
 }
 
 // An argument names a path as a whole, or after the = of an option or of a

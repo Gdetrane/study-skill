@@ -23,12 +23,17 @@ import (
 // removing go to the registrar package, which this package alone imports:
 // the core does not hold what changes the registry, so that the MCP server,
 // which links the core, cannot be made to change it.
+//
+// Checking a plugin goes through the core too, which starts it or reaches
+// it as study does for a Topic. It is CLI-only like the rest: until a Topic
+// can name a plugin, no MCP tool starts one.
 func (a *app) knowledgeBaseCommand() *cobra.Command {
 	group := &cobra.Command{
 		Use:   "knowledge-base",
-		Short: "Register the Knowledge base plugins this computer has",
+		Short: "Register and check the Knowledge base plugins this computer has",
 		Long: "Register Knowledge base plugins on this computer, each under a name: a program, or a\n" +
-			"service you run, that indexes Sources and searches them.\n\n" +
+			"service you run, that indexes Sources and searches them. And check that one starts, or\n" +
+			"answers, and speaks Lamplight's contract.\n\n" +
 			"The registry says what each name stands for, a command or a URL. It is\n" +
 			"knowledge-base-plugins.json in Lamplight's configuration folder ($XDG_CONFIG_HOME/lamplight,\n" +
 			"or ~/.config/lamplight): this computer's, outside the Study home, and never part of a\n" +
@@ -182,7 +187,51 @@ func (a *app) knowledgeBaseCommand() *cobra.Command {
 	}
 	remove.Flags().BoolVar(&removeDryRun, "dry-run", false, "show what would be removed without writing anything")
 
-	group.AddCommand(add, list, remove)
+	check := &cobra.Command{
+		Use:   "check <name>",
+		Short: "Start or reach a Knowledge base plugin and see which contract it speaks",
+		Long: "Start the Knowledge base plugin registered under a name, or reach it at its URL, ask\n" +
+			"which version of Lamplight's contract it speaks and what it can do, and stop it again.\n\n" +
+			"A command is started as study starts it for a Topic: the program that is registered,\n" +
+			"without a shell, in the registry's folder, and with a folder of its own, which\n" +
+			"LAMPLIGHT_PLUGIN_DATA names. That folder is in Lamplight's state folder\n" +
+			"($XDG_STATE_HOME/lamplight, or ~/.local/state/lamplight), outside the Study home, and is\n" +
+			"made when it is not there; nothing else is written, and nothing is indexed or searched.\n\n" +
+			"A plugin does not get your environment. It gets PATH, HOME, USER, LOGNAME, LANG, the\n" +
+			"LC_* variables, TZ, TMPDIR and the XDG base folders, each only when it leads nowhere\n" +
+			"inside the Study home, and nothing else: your agent writes in the Study home, and a\n" +
+			"plugin runs outside its sandbox. Give a plugin what else it needs, a key or a proxy, in\n" +
+			"its arguments, or register a small script of yours, outside the Study home, that sets it\n" +
+			"and starts the plugin.\n\n" +
+			"A plugin reached by URL is shown by the scheme and host of its address: the rest may be\n" +
+			"a key, and study knowledge-base list shows it.\n\n" +
+			"A plugin that does not start, does not answer in time, answers something that is no\n" +
+			"MCP, or speaks another contract is reported with what to do, and is not left running.",
+		Example: "  study knowledge-base check shelf\n  study knowledge-base check remote --json",
+		Args:    exactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := core.Open(a.opts)
+			if err != nil {
+				return a.fail(err)
+			}
+			res, err := c.CheckPlugin(cmd.Context(), args[0])
+			if err != nil {
+				return a.fail(err)
+			}
+			if a.json {
+				return a.writeJSON(envelope{OK: true, Data: res})
+			}
+			return writePluginCheck(a.out, res)
+		},
+		ValidArgsFunction: func(cmd *cobra.Command, args []string, _ string) ([]string, cobra.ShellCompDirective) {
+			if len(args) > 0 {
+				return nil, cobra.ShellCompDirectiveNoFileComp
+			}
+			return a.completePluginNames(cmd)
+		},
+	}
+
+	group.AddCommand(add, list, remove, check)
 	return group
 }
 
@@ -265,6 +314,62 @@ func writePluginRemoval(w io.Writer, r registrar.Removal) error {
 	}
 	_, err := fmt.Fprintf(w, "%s Knowledge base plugin %s from this computer's registry: %s\n",
 		verb, styleAccent.Render(printable(r.Plugin.Name)), describePlugin(r.Plugin))
+	return err
+}
+
+// The kinds a plugin's contract can list, in the learner's words. A kind
+// this version does not know is shown as the plugin wrote it.
+var pluginKinds = map[string]string{
+	"file":      "files",
+	"url":       "web pages",
+	"keyword":   "by keyword",
+	"embedding": "by embedding",
+	"pages":     "pages",
+}
+
+// describeKinds lists what a plugin's contract lists, or none.
+func describeKinds(kinds []string, none string) string {
+	if len(kinds) == 0 {
+		return none
+	}
+	words := make([]string, 0, len(kinds))
+	for _, kind := range kinds {
+		if word, known := pluginKinds[kind]; known {
+			kind = word
+		}
+		words = append(words, printable(kind))
+	}
+	return strings.Join(words, ", ")
+}
+
+func writePluginCheck(w io.Writer, r core.PluginCheck) error {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s Knowledge base plugin %s speaks version %d of Lamplight's contract.\n", styleOK.Render("✓"),
+		styleAccent.Render(printable(r.Name)), r.Contract.Version)
+	rows := [][2]string{{"Started by", describePlugin(core.Plugin{Command: r.Command})}}
+	if r.Address != "" {
+		// Its scheme and host: the rest of the address may be a key.
+		rows = [][2]string{{"Reached at", printable(r.Address)}}
+	}
+	if r.Server.Name != "" {
+		rows = append(rows, [2]string{"Calls itself", strings.TrimSpace(printable(r.Server.Name) + " " + printable(r.Server.Version))})
+	}
+	rows = append(rows,
+		[2]string{"Indexes", describeKinds(r.Contract.Sources, "nothing")},
+		[2]string{"Searches", describeKinds(r.Contract.Search, "not at all")},
+		[2]string{"Locations", describeKinds(r.Contract.Locations, "none")})
+	if r.DataFolder != "" {
+		rows = append(rows, [2]string{"Its folder", printable(r.DataFolder)})
+	}
+	labels := make([]string, 0, len(rows))
+	for _, row := range rows {
+		labels = append(labels, row[0]+":")
+	}
+	width := widest(labels)
+	for i, row := range rows {
+		fmt.Fprintf(&b, "  %s  %s\n", styleDim.Render(pad(labels[i], width)), row[1])
+	}
+	_, err := io.WriteString(w, b.String())
 	return err
 }
 

@@ -1,0 +1,29 @@
+{
+  "ok": true,
+  "data": {
+    "name": "kb",
+    "command": [
+      "$PLUGIN",
+      "lamplight-test-plugin",
+      "--sources",
+      "file"
+    ],
+    "contract": {
+      "version": 1,
+      "sources": [
+        "file"
+      ],
+      "search": [
+        "keyword"
+      ],
+      "locations": [
+        "pages"
+      ]
+    },
+    "server": {
+      "name": "test-plugin",
+      "version": "1.0.0"
+    },
+    "data_folder": "$HOME/.local/state/lamplight/knowledge-base-plugins/kb"
+  }
+}

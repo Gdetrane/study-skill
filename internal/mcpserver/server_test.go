@@ -37,11 +37,21 @@ func connectWith(t *testing.T, home string, opts *mcp.ClientOptions, session *mc
 func connectServer(t *testing.T, home string, opts *mcp.ClientOptions, session *mcp.ClientSessionOptions,
 	prepare func(*mcp.Server)) *mcp.ClientSession {
 	t.Helper()
+	getenv := func(key string) string { return map[string]string{"STUDY_HOME": home, "HOME": home}[key] }
+	return connectOn(t, getenv, home, opts, session, prepare)
+}
+
+// connectOn is connectServer for a study that has the environment getenv
+// gives and was started in dir: for a computer whose home folder is not its
+// Study home.
+func connectOn(t *testing.T, getenv func(string) string, dir string, opts *mcp.ClientOptions, session *mcp.ClientSessionOptions,
+	prepare func(*mcp.Server)) *mcp.ClientSession {
+	t.Helper()
 	ctx := context.Background()
 	var n atomic.Int64
 	c, err := core.Open(core.Options{
-		Getenv: func(key string) string { return map[string]string{"STUDY_HOME": home, "HOME": home}[key] },
-		Dir:    home,
+		Getenv: getenv,
+		Dir:    dir,
 		Now:    func() time.Time { return time.Date(2026, 10, 1, 9, 30, 0, 0, time.UTC) },
 		NewID:  func() string { return fmt.Sprintf("id%03d", n.Add(1)) },
 	})
