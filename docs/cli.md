@@ -1564,7 +1564,9 @@ speaks. A Topic names the plugin it uses (`study topic update --knowledge-base <
 `study source index` has the plugin index the Topic's Sources, `status` and
 `study source list` say what it has indexed, `study evidence search` searches it, and
 `study evidence record --passage` checks a quote against a Passage of it (see
-[Sources and Evidence](#sources-and-evidence)).
+[Sources and Evidence](#sources-and-evidence)). The plugin that ships with Lamplight is
+Shelf, the `study-shelf` program installed beside `study`: [docs/shelf.md](shelf.md) says
+what it reads and where it keeps its index.
 
 - **The registry** is `knowledge-base-plugins.json` in Lamplight's configuration folder,
   beside `config.toml`: `$XDG_CONFIG_HOME/lamplight`, or `~/.config/lamplight`. It is this

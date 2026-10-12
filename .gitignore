@@ -1,5 +1,6 @@
 # Build and test output
 /study
+/study-shelf
 coverage.out
 dist/
 /completions/

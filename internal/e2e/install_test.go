@@ -6,13 +6,18 @@ import (
 	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/mordor-forge/lamplight/v2/internal/core"
+	"github.com/mordor-forge/lamplight/v2/internal/shelf/shelftest"
 )
 
 // TestTheInstallScript runs install.sh the way its one-line command does, as
@@ -20,30 +25,46 @@ import (
 // on a GitHub release (ADR-0010). The script's PATH holds only the programs
 // it is meant to need, and its HOME is the test's.
 //
-// Two cases install the study built from this checkout. The others are about
-// the script alone and install a stand-in, which starts faster than a study
-// built with the race detector.
+// Two cases install the study and the study-shelf built from this checkout.
+// The others are about the script alone and install stand-ins, which start
+// faster than a study built with the race detector.
 func TestTheInstallScript(t *testing.T) {
 	if testing.Short() {
-		t.Skip("builds the study binary")
+		t.Skip("builds the study and study-shelf binaries")
 	}
 	binary, err := os.ReadFile(buildStudy(t))
 	if err != nil {
 		t.Fatal(err)
 	}
-	built := newRelease(t, binary, "dev")
-	rel := newRelease(t, []byte(standInStudy), "v0.0.0-standin")
+	shelf, err := os.ReadFile(shelftest.Shelf(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	built := newRelease(t, binary, shelf, "dev")
+	rel := newRelease(t, []byte(standInStudy), []byte(standInShelf), "v0.0.0-standin")
 	host := "lamplight_" + runtime.GOOS + "_" + runtime.GOARCH + ".tar.gz"
 
-	t.Run("installs study, its man page and completions", func(t *testing.T) {
+	t.Run("installs study and study-shelf, the man page and completions", func(t *testing.T) {
 		in := newInstall(t, built.folder(t, host))
 		out := in.mustRun()
 		t.Logf("install.sh printed:\n%s", out)
 
 		dest := filepath.Join(in.home, ".local", "bin", "study")
 		in.wantStudy(dest, built.version)
-		if got := names(t, filepath.Dir(dest)); len(got) != 1 {
-			t.Errorf("the install folder holds %v, want study alone", got)
+		in.wantShelf(dest+"-shelf", built.version)
+		if got := names(t, filepath.Dir(dest)); !slices.Equal(got, []string{"study", "study-shelf"}) {
+			t.Errorf("the install folder holds %v, want study and study-shelf alone", got)
+		}
+		// The two are installed to work together: the study that was
+		// installed starts the study-shelf beside it, and they speak the
+		// contract.
+		in.wantShelfChecked(dest)
+		// And the script says how: nothing else tells a learner that Shelf
+		// is there to be registered.
+		for _, want := range []string{"knowledge-base add shelf -- \"" + dest + "-shelf\"", "knowledge-base check shelf"} {
+			if !strings.Contains(out, want) {
+				t.Errorf("install.sh does not print %q", want)
+			}
 		}
 		page, err := os.ReadFile(filepath.Join(in.home, ".local", "share", "man", "man1", "study.1.gz"))
 		if err != nil || !bytes.Equal(page, built.manPage) {
@@ -58,6 +79,7 @@ func TestTheInstallScript(t *testing.T) {
 		// The PATH here does not hold the install folder.
 		for _, want := range []string{
 			"Installed " + dest + " (study version dev)",
+			"Installed " + dest + "-shelf (study-shelf version dev)",
 			filepath.Dir(dest) + " is not on your PATH. Run this once in fish:",
 			`fish_add_path "` + filepath.Dir(dest) + `"`,
 			"  " + dest + " setup\n",
@@ -186,6 +208,7 @@ func TestTheInstallScript(t *testing.T) {
 		in := newInstall(t, rel.folder(t, host))
 		dest := filepath.Join(in.home, ".local", "bin", "study")
 		writeExecutable(t, dest, "#!/bin/sh\necho study version v0.0.1\n")
+		writeExecutable(t, dest+"-shelf", "#!/bin/sh\necho study-shelf version v0.0.1\n")
 		// A second name for the file that is there, as a study that is
 		// running has: it must keep its content.
 		was := filepath.Join(in.home, "the-study-that-was")
@@ -198,23 +221,26 @@ func TestTheInstallScript(t *testing.T) {
 		good := in.dist
 		in.dist = bad
 		in.mustFail()
-		if data, err := os.ReadFile(dest); err != nil || !strings.Contains(string(data), "v0.0.1") {
-			t.Errorf("a refused download changed the study that was installed: %v", err)
+		for _, file := range []string{dest, dest + "-shelf"} {
+			if data, err := os.ReadFile(file); err != nil || !strings.Contains(string(data), "v0.0.1") {
+				t.Errorf("a refused download changed the %s that was installed: %v", filepath.Base(file), err)
+			}
 		}
 
 		in.dist = good
 		in.mustRun()
 		in.wantStudy(dest, rel.version)
+		in.wantShelf(dest+"-shelf", rel.version)
 		if data, err := os.ReadFile(was); err != nil || !strings.Contains(string(data), "v0.0.1") {
 			t.Errorf("the upgrade wrote into the study that was there, instead of replacing it: %v", err)
 		}
-		if got := names(t, filepath.Dir(dest)); len(got) != 1 {
-			t.Errorf("the install folder holds %v, want study alone", got)
+		if got := names(t, filepath.Dir(dest)); !slices.Equal(got, []string{"study", "study-shelf"}) {
+			t.Errorf("the install folder holds %v, want study and study-shelf alone", got)
 		}
 	})
 
 	t.Run("installs nothing when the new study does not run, and keeps the one that is there", func(t *testing.T) {
-		broken := newRelease(t, []byte("#!/bin/sh\necho cannot start >&2\nexit 1\n"), "none")
+		broken := newRelease(t, []byte("#!/bin/sh\necho cannot start >&2\nexit 1\n"), []byte(standInShelf), "none")
 		in := newInstall(t, broken.folder(t, host))
 		dest := filepath.Join(in.home, ".local", "bin", "study")
 		refused := func() {
@@ -240,12 +266,68 @@ func TestTheInstallScript(t *testing.T) {
 		}
 	})
 
+	t.Run("installs neither program when the new study-shelf does not run", func(t *testing.T) {
+		// A study that runs, beside a study-shelf that does not: the two are
+		// one release, and half of one is not installed.
+		broken := newRelease(t, []byte(standInStudy), []byte("#!/bin/sh\necho no such library >&2\nexit 127\n"), "v0.0.0-standin")
+		in := newInstall(t, broken.folder(t, host))
+		dest := filepath.Join(in.home, ".local", "bin", "study")
+		refused := func() {
+			t.Helper()
+			out := in.mustFail()
+			for _, want := range []string{"the study-shelf in " + host + " does not run", "no such library", "nothing was installed"} {
+				if !strings.Contains(out, want) {
+					t.Errorf("the refusal lacks %q:\n%s", want, out)
+				}
+			}
+		}
+
+		refused()
+		if got := names(t, filepath.Dir(dest)); len(got) != 0 {
+			t.Errorf("the install folder holds %v after a study-shelf that does not run, want nothing", got)
+		}
+
+		writeExecutable(t, dest, "#!/bin/sh\necho study version v0.0.1\n")
+		writeExecutable(t, dest+"-shelf", "#!/bin/sh\necho study-shelf version v0.0.1\n")
+		refused()
+		in.wantStudy(dest, "v0.0.1")
+		in.wantShelf(dest+"-shelf", "v0.0.1")
+		if got := names(t, filepath.Dir(dest)); !slices.Equal(got, []string{"study", "study-shelf"}) {
+			t.Errorf("the install folder holds %v, want the two programs that were there alone", got)
+		}
+
+		// A folder where study-shelf is to go.
+		in = newInstall(t, rel.folder(t, host))
+		if err := os.MkdirAll(filepath.Join(in.home, ".local", "bin", "study-shelf"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if out := in.mustFail(); !strings.Contains(out, "study-shelf is a folder; nothing was installed") {
+			t.Errorf("the output does not say study-shelf is a folder:\n%s", out)
+		}
+		if got := names(t, filepath.Join(in.home, ".local", "bin")); !slices.Equal(got, []string{"study-shelf"}) {
+			t.Errorf("the install folder holds %v, want the folder that was there alone", got)
+		}
+	})
+
+	t.Run("installs nothing from an archive that holds no study-shelf", func(t *testing.T) {
+		// Every release holds both: an archive with study alone is not one.
+		half := newRelease(t, []byte(standInStudy), nil, "v0.0.0-standin")
+		in := newInstall(t, half.folder(t, host))
+		if out := in.mustFail(); !strings.Contains(out, "holds no study-shelf") || !strings.Contains(out, "nothing was installed") {
+			t.Errorf("the output does not say that the archive holds no study-shelf:\n%s", out)
+		}
+		if got := names(t, filepath.Join(in.home, ".local", "bin")); len(got) != 0 {
+			t.Errorf("the install folder holds %v, want nothing", got)
+		}
+	})
+
 	t.Run("installs into the folder STUDY_INSTALL_DIR names", func(t *testing.T) {
 		in := newInstall(t, rel.folder(t, host))
 		dir := filepath.Join(in.home, "tools")
 		in.env = append(in.env, "STUDY_INSTALL_DIR="+dir)
 		out := in.mustRun()
 		in.wantStudy(filepath.Join(dir, "study"), rel.version)
+		in.wantShelf(filepath.Join(dir, "study-shelf"), rel.version)
 		// man would not look beside a folder that is not a bin folder.
 		if strings.Contains(out, "study.1.gz") {
 			t.Errorf("a man page was installed for a folder man does not look beside:\n%s", out)
@@ -438,16 +520,29 @@ case "$*" in
 esac
 `
 
+// standInShelf answers the one thing install.sh asks of study-shelf.
+const standInShelf = `#!/bin/sh
+case "$*" in
+--version) echo "study-shelf version v0.0.0-standin" ;;
+*)
+	echo "the stand-in for study-shelf was run with: $*" >&2
+	exit 64
+	;;
+esac
+`
+
 // release is what the test puts in a folder of release files: one archive,
-// holding a study that runs on this machine whatever platform the archive's
-// name claims, and checksums.txt.
+// holding a study and a study-shelf that run on this machine whatever
+// platform the archive's name claims, and checksums.txt.
 type release struct {
 	archive []byte
 	manPage []byte
 	version string // what its study --version prints after "study version "
 }
 
-func newRelease(t *testing.T, binary []byte, version string) release {
+// newRelease makes a release of a study and a study-shelf. A nil shelf makes
+// a release that holds none, as one from before Shelf does.
+func newRelease(t *testing.T, binary, shelf []byte, version string) release {
 	t.Helper()
 	var page bytes.Buffer
 	zw := gzip.NewWriter(&page)
@@ -461,17 +556,22 @@ func newRelease(t *testing.T, binary []byte, version string) release {
 	var buf bytes.Buffer
 	zw = gzip.NewWriter(&buf)
 	tw := tar.NewWriter(zw)
-	for _, f := range []struct {
+	type file struct {
 		name string
 		mode int64
 		data []byte
-	}{
+	}
+	files := []file{
 		{"LICENSE", 0o644, []byte("MIT License\n")},
 		{"README.md", 0o644, []byte("# Lamplight\n")},
 		{"completions/study.fish", 0o644, []byte("# not what the script installs\n")},
 		{"manpages/study.1.gz", 0o644, rel.manPage},
 		{"study", 0o755, binary},
-	} {
+	}
+	if shelf != nil {
+		files = append(files, file{"study-shelf", 0o755, shelf})
+	}
+	for _, f := range files {
 		if err := tw.WriteHeader(&tar.Header{Name: f.name, Mode: f.mode, Size: int64(len(f.data)), Typeflag: tar.TypeReg}); err != nil {
 			t.Fatal(err)
 		}
@@ -637,6 +737,71 @@ func (in *install) wantStudy(dest, version string) {
 	cmd.Env = []string{"HOME=" + in.home, "PATH=" + in.path}
 	if out, err := cmd.CombinedOutput(); err != nil || strings.TrimSpace(string(out)) != "study version "+version {
 		in.t.Errorf("the installed study does not run as version %s: %v\n%s", version, err, out)
+	}
+}
+
+// wantShelf checks that the release's study-shelf is installed at dest and
+// runs.
+func (in *install) wantShelf(dest, version string) {
+	in.t.Helper()
+	info, err := os.Stat(dest)
+	if err != nil {
+		in.t.Fatalf("study-shelf was not installed: %v", err)
+	}
+	if info.Mode().Perm() != 0o755 {
+		in.t.Errorf("study-shelf has mode %v, want 0755", info.Mode().Perm())
+	}
+	cmd := exec.Command(dest, "--version")
+	cmd.Env = []string{"HOME=" + in.home, "PATH=" + in.path}
+	if out, err := cmd.CombinedOutput(); err != nil || strings.TrimSpace(string(out)) != "study-shelf version "+version {
+		in.t.Errorf("the installed study-shelf does not run as version %s: %v\n%s", version, err, out)
+	}
+}
+
+// wantShelfChecked registers the installed study-shelf with the installed
+// study, as the learner does, and has study check it: study starts it as it
+// starts any plugin, and they speak the contract.
+func (in *install) wantShelfChecked(study string) {
+	in.t.Helper()
+	env := []string{"HOME=" + in.home, "PATH=" + filepath.Dir(study) + string(os.PathListSeparator) + in.path,
+		"STUDY_HOME=" + filepath.Join(in.home, "study"),
+		"XDG_CONFIG_HOME=" + filepath.Join(in.home, ".config"), "XDG_STATE_HOME=" + filepath.Join(in.home, ".local", "state")}
+	for _, args := range [][]string{
+		{"knowledge-base", "add", "shelf", "--", "study-shelf"},
+		{"knowledge-base", "check", "shelf", "--json"},
+	} {
+		cmd := exec.Command(study, args...)
+		cmd.Env, cmd.Dir = env, in.home
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			in.t.Fatalf("study %s: %v\n%s", strings.Join(args, " "), err, out)
+		}
+		if args[1] != "check" {
+			continue
+		}
+		var checked struct {
+			OK   bool             `json:"ok"`
+			Data core.PluginCheck `json:"data"`
+		}
+		if err := json.Unmarshal(out, &checked); err != nil || !checked.OK {
+			in.t.Fatalf("study knowledge-base check shelf: %v\n%s", err, out)
+		}
+		in.t.Logf("study knowledge-base check shelf --json printed:\n%s", out)
+		got := checked.Data
+		if got.Contract.Version != 1 || !slices.Equal(got.Contract.Sources, []string{"file", "url"}) ||
+			!slices.Equal(got.Contract.Search, []string{"keyword"}) || !slices.Equal(got.Contract.Locations, []string{"pages"}) {
+			in.t.Errorf("the installed Shelf says its contract is %+v", got.Contract)
+		}
+		if got.Server.Name != "study-shelf" || len(got.Command) != 1 || got.Command[0] != study+"-shelf" {
+			in.t.Errorf("study checked %+v, started as %v; want the study-shelf that was installed", got.Server, got.Command)
+		}
+		// Its folder is in the learner's state folder, and holds nothing
+		// yet: Shelf writes when it indexes.
+		if want := filepath.Join(in.home, ".local", "state", "lamplight", "knowledge-base-plugins", "shelf"); got.DataFolder != want {
+			in.t.Errorf("Shelf's folder is %s, want %s", got.DataFolder, want)
+		} else if left := names(in.t, want); len(left) != 0 {
+			in.t.Errorf("a check left %v in Shelf's folder", left)
+		}
 	}
 }
 

@@ -5,8 +5,8 @@
 // a plugin in any language, and a test keeps the two in step.
 //
 // The package holds no client and no server. study's client
-// (internal/pluginclient) and the test plugin (internal/plugintest) are both
-// written on these types, and Shelf will be: a plugin and study agree
+// (internal/pluginclient), the test plugin (internal/plugintest) and Shelf
+// (internal/shelf) are all written on these types: a plugin and study agree
 // because they read one description.
 package plugincontract
 
