@@ -265,9 +265,15 @@ func (c *Core) RunCheck(ctx context.Context, topicID, lessonID string, opts Chec
 		report.finish(r.Outcome)
 		d.Criteria = append(d.Criteria, r)
 	}
-	if ctx.Err() != nil {
+	if stopped(ctx) {
 		return Attempt{}, &Error{Code: CodeCanceled, Err: ctx.Err(), Message: "the Check of " + lessonID +
 			" was stopped before it finished, and every program it started was stopped too; no Attempt was recorded"}
+	}
+	if err := ctx.Err(); err != nil {
+		// A deadline is not a stop (see CodeOf), but the Check did not
+		// finish either: what ran is not an Attempt.
+		return Attempt{}, &Error{Code: CodeInternal, Err: err, Message: "the Check of " + lessonID +
+			" did not finish in the time this command was given, and every program it started was stopped; no Attempt was recorded"}
 	}
 	if prev.Hash == "" {
 		if _, err := c.workAfter(ctx, topicID, dir, practice, before, &d); err != nil {

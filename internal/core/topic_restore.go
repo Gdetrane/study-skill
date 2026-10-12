@@ -198,7 +198,7 @@ func (c *Core) ListRemovedTopics(ctx context.Context) (RemovedTopicList, error) 
 // agents have no tool for it.
 func (c *Core) RestoreTopic(ctx context.Context, spec TopicRestoreSpec) (TopicRestore, error) {
 	out, err := c.restoreTopic(ctx, spec)
-	if err != nil && ctx.Err() != nil {
+	if err != nil && stopped(ctx) {
 		return TopicRestore{}, &Error{Code: CodeCanceled, Err: ctx.Err(),
 			Message: "the restore was stopped before it moved the Topic, so nothing was restored"}
 	}

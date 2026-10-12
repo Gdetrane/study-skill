@@ -2,6 +2,7 @@ package registrar
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -1340,6 +1341,68 @@ func TestAChangeWaitsForTheOneUnderWay(t *testing.T) {
 	}
 	if err != nil || !reflect.DeepEqual(list.Plugins, want) {
 		t.Errorf("Read = %+v, %v; want %+v", list.Plugins, err, want)
+	}
+}
+
+// passing is a context whose deadline passes when pass is called.
+type passing struct {
+	context.Context
+	done chan struct{}
+}
+
+func (p passing) Done() <-chan struct{} { return p.done }
+
+func (p passing) Err() error {
+	select {
+	case <-p.done:
+		return context.DeadlineExceeded
+	default:
+		return nil
+	}
+}
+
+func (p passing) pass() { close(p.done) }
+
+// A deadline that passes while a change waits is not a stop: another study
+// held the lock for too long, which is busy, as when the wait itself runs
+// out. Nothing is changed.
+func TestADeadlineThatPassesWhileAChangeWaitsIsBusy(t *testing.T) {
+	ctx := context.Background()
+	c := regtest.New(t)
+	shelf := regtest.Program(t, filepath.Join(c.Bin, "study-shelf"))
+	if _, err := Add(ctx, at(c), Spec{Name: "old", Command: []string{shelf, "old"}}); err != nil {
+		t.Fatal(err)
+	}
+	hook, locked, release := pauseAt(pointLocked)
+	firstDone := make(chan error, 1)
+	go func() {
+		_, err := add(ctx, at(c), Spec{Name: "first", Command: []string{shelf, "first"}}, hook)
+		firstDone <- err
+	}()
+	<-locked
+
+	late := passing{Context: ctx, done: make(chan struct{})}
+	lateDone := make(chan error, 1)
+	go func() {
+		_, err := Remove(late, at(c), "old", false)
+		lateDone <- err
+	}()
+	select {
+	case err := <-lateDone:
+		t.Fatalf("a removal did not wait for the change under way: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	late.pass()
+	if err := <-lateDone; pluginregistry.CodeOf(err) != "busy" || !errors.Is(err, context.DeadlineExceeded) ||
+		!strings.Contains(err.Error(), "still changing the Knowledge base plugin registry") || !strings.Contains(err.Error(), "try again") {
+		t.Fatalf("the removal whose deadline passed while it waited = %v (%s); want busy", err, pluginregistry.CodeOf(err))
+	}
+	release()
+	if err := <-firstDone; err != nil {
+		t.Fatalf("the first registration: %v", err)
+	}
+	if got := names(t, c); !slices.Equal(got, []string{"first", "old"}) {
+		t.Errorf("the registry holds %v, want first and old", got)
 	}
 }
 

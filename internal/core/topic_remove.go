@@ -58,7 +58,7 @@ type TopicRemoval struct {
 // Agents have no tool for it.
 func (c *Core) RemoveTopic(ctx context.Context, topicID string, dryRun bool) (TopicRemoval, error) {
 	out, err := c.removeTopic(ctx, topicID, dryRun)
-	if err != nil && ctx.Err() != nil {
+	if err != nil && stopped(ctx) {
 		return TopicRemoval{}, &Error{Code: CodeCanceled, Err: ctx.Err(),
 			Message: "the removal was stopped before it moved the Topic, so nothing was removed"}
 	}
