@@ -88,9 +88,10 @@ func WordsOf(texts ...string) *Words {
 func isDivision(r rune) bool { return r == hyphenMark || r == noCharacter }
 
 // inWord reports whether a character is part of a word as a Source writes
-// one: a letter or a digit, so that "COVID-19" is a pair and "SHA256" a
-// word.
-func inWord(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }
+// one: a letter, a digit, so that "COVID-19" is a pair and "SHA256" a word,
+// or a mark that is written onto a letter, as the vowel signs of the Indic
+// scripts are, which no form of the text joins to their letter.
+func inWord(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) || unicode.IsMark(r) }
 
 // plain is text with its letters as Clean writes them: a ligature as the
 // letters it draws, and an accent in one form.

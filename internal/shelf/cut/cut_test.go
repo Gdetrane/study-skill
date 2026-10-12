@@ -265,6 +265,9 @@ func TestADividedWordIsJoinedOrKeepsItsHyphenAsTheSourceWritesIt(t *testing.T) {
 			"The key is base64 text, in base" + mark + "64.", "The key is base64 text, in base64."},
 		"beside a digit, with nothing in the Source to say what it is": {
 			"The term x" + mark + "2 of a formula.", "The term x 2 of a formula."},
+		"a word of a script that writes its vowels as marks, held whole elsewhere": {
+			"\u0915\u093F\u0924\u093E\u092C \u092A\u0922\u093C\u094B\u0964 \u0915\u093F" + mark + "\u0924\u093E\u092C",
+			"\u0915\u093F\u0924\u093E\u092C \u092A\u0922\u093C\u094B\u0964 \u0915\u093F\u0924\u093E\u092C"},
 		"a word set with a ligature": {
 			"To con\ufb01gure it. A con" + mark + "\ufb01gured system and a configured one.", "To configure it. A configured system and a configured one."},
 	} {
