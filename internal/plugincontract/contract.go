@@ -83,6 +83,10 @@ const (
 const (
 	// MaxMessageBytes is how large one MCP message from a plugin may be.
 	MaxMessageBytes = 16 << 20
+	// MaxMessageValues is how many values one MCP message from a plugin may
+	// hold: its lists and objects, and what they hold. A status of
+	// MaxSources Sources holds about a quarter of it.
+	MaxMessageValues = 250000
 	// MaxPassageBytes is how long a Passage's text may be, in bytes of
 	// UTF-8.
 	MaxPassageBytes = 32 << 10

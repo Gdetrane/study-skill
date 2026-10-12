@@ -433,6 +433,8 @@ var pluginClientNames = map[string]string{
 	"Connection": "",
 	"Server":     "",
 	"Address":    "",
+	// How long a plugin has to start: a number, which starts nothing.
+	"DefaultStartTimeout": "",
 }
 
 // pluginStarts reads source files of the core and returns how often each

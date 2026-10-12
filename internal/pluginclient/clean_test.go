@@ -6,6 +6,8 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+
 	"github.com/mordor-forge/lamplight/v2/internal/pluginclient"
 	"github.com/mordor-forge/lamplight/v2/internal/plugincontract"
 )
@@ -108,6 +110,39 @@ func TestAPluginsCodeIsOneOfStudys(t *testing.T) {
 	} {
 		if got := pluginclient.StudyCode(plugin); got != study {
 			t.Errorf("StudyCode(%q) = %q, want %q", plugin, got, study)
+		}
+	}
+}
+
+// What the MCP library read of a result is written out again as it came. A
+// writer for web pages would make six bytes of each < and &, and a plugin's
+// answer that is one long text of them six times the size.
+func TestAStructuredResultIsWrittenAsItCame(t *testing.T) {
+	text := strings.Repeat("<&>", 1000)
+	data, ok := pluginclient.Payload(&mcp.CallToolResult{StructuredContent: map[string]any{"text": text}})
+	if !ok || !strings.Contains(string(data), text) {
+		t.Fatalf("the result was written as %d bytes, ok=%v, and not with its text as it came", len(data), ok)
+	}
+	if len(data) > len(text)+64 {
+		t.Errorf("a text of %d bytes was written as %d", len(text), len(data))
+	}
+}
+
+// How many values a message holds is counted before the MCP library reads
+// it: every list and object, and every member and element after the first.
+func TestTheValuesOfAMessageAreCounted(t *testing.T) {
+	for raw, want := range map[string]int{
+		``:                                 0,
+		`"text"`:                           0,
+		`{}`:                               1,
+		`[[],[],[]]`:                       6,
+		`{"a": 1, "b": [1, 2, 3]}`:         5,
+		`{"text": "a, b, [c] and {d}"}`:    1,
+		`{"text": "she said \"a, b\", c"}`: 1,
+		`{"text": "a\\", "more": [1, 2]}`:  4,
+	} {
+		if got := pluginclient.Values([]byte(raw)); got != want {
+			t.Errorf("%s holds %d values, want %d", raw, got, want)
 		}
 	}
 }

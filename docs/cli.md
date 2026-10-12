@@ -1234,7 +1234,8 @@ is a command.
   or `#!/usr/bin/env -S python3 -u`, has `env` find the interpreter in the plugin's `PATH`:
   `study` finds it the same way and checks the first one found. An option or a setting
   given to `env` there is `failed_precondition` too, since `study` cannot tell what it
-  would start.
+  would start. So is an interpreter you may run and not read, which could name another
+  that nobody checked, and a fifth script in a row.
 - **Its environment is a small one `study` makes**, not the one `study` has. A plugin gets
   `PATH`, `HOME`, `USER`, `LOGNAME`, `LANG`, the `LC_*` variables, `TZ`, `TMPDIR`, the XDG
   base folders (`XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME`, `XDG_CACHE_HOME`,
@@ -1274,7 +1275,11 @@ is a command.
   that beside the revision of MCP `study` speaks, `2025-11-25`.
 - **Deadlines**: `study` has 30 seconds to start a plugin, or to reach it, and the plugin
   to answer `contract`. One that takes longer is stopped and reported, so the command never
-  hangs.
+  hangs. Reading the registry to find the plugin has 30 seconds as well, and ends when the
+  command is stopped: a drive that does not answer does not hold the command.
+- **What a plugin answers is bounded and held to the contract**: a message of more than
+  16 MiB or of more than 250,000 values ends the session, and a result that lacks a field
+  the contract requires is `failed_precondition`.
 - **A plugin answers, and asks nothing.** One that sends `study` a request, a `ping` as
   much as any other, is stopped at the first, and reported.
 - **What a plugin writes** never reaches the terminal as it is. Its standard error is

@@ -375,6 +375,50 @@ func TestAServiceThatRepeatsItsAddressInAnAnswer(t *testing.T) {
 	}
 }
 
+// An answer is bounded in how many values it holds, as it is in bytes: the
+// MCP library makes a value in memory of each, many times the size of the
+// two bytes that can spell one. The message that goes over ends the
+// Connection before the library reads it.
+func TestAnAnswerOfTooManyValuesEndsTheConnection(t *testing.T) {
+	ctx := context.Background()
+	c := plugintest.NewComputer(t)
+	// Small in bytes, and far over in values.
+	more := strings.Repeat("[],", plugincontract.MaxMessageValues) + "[]"
+	address := service(t, plugintest.Config{Results: map[string]string{"status": `{"sources": [], "more": [` + more + `]}`}})
+	s, err := pluginclient.Start(ctx, c.Env(""), c.RegisterURL(t, "remote", address), quick(c))
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer s.Close()
+	before := heap()
+	_, err = s.Status(ctx, "c")
+	want := fmt.Sprintf("Knowledge base plugin remote can no longer be asked: it sent a message that holds more than %d values",
+		plugincontract.MaxMessageValues)
+	if codeOf(err) != pluginclient.CodeFailedPrecondition || !strings.Contains(err.Error(), want) {
+		t.Errorf("Status = %v\nwant failed_precondition with %q", err, want)
+	}
+	if !s.Ended() {
+		t.Error("the Connection has not ended")
+	}
+	if grown := heap() - before; grown > 32<<20 {
+		t.Errorf("study holds %d MiB more after an answer of %d bytes", grown>>20, len(more))
+	}
+	// An answer the size of the largest status the contract allows is read.
+	sources := make([]string, plugincontract.MaxSources)
+	for i := range sources {
+		sources[i] = fmt.Sprintf(`{"id": "s.%d", "state": "indexed", "hash": "sha256:%064d"}`, i, i)
+	}
+	address = service(t, plugintest.Config{Results: map[string]string{"status": `{"sources": [` + strings.Join(sources, ",") + `]}`}})
+	full, err := pluginclient.Start(ctx, c.Env(""), c.RegisterURL(t, "full", address), quick(c))
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer full.Close()
+	if listed, err := full.Status(ctx, "c"); err != nil || len(listed) != plugincontract.MaxSources {
+		t.Errorf("Status of %d Sources = %d, %v", plugincontract.MaxSources, len(listed), err)
+	}
+}
+
 // Whoever reaches a service as study does, and asks to be told of a request
 // it sends, is told: the conformance suite says so to the plugin's author.
 // The transport to a service already ends at the first request, and a

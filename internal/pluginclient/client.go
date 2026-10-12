@@ -32,6 +32,7 @@
 package pluginclient
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -39,6 +40,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -240,7 +242,7 @@ func Start(ctx context.Context, env pluginregistry.Env, plugin pluginregistry.Pl
 	default:
 		return nil, errorf(CodeInternal, "Knowledge base plugin %s is registered with neither a command nor a URL", plugin.Name)
 	}
-	guarded := &answersOnly{inner: transport, asked: s.wasAsked}
+	guarded := &answersOnly{inner: transport, asked: s.wasAsked, tooMuch: s.heldTooMuch}
 	if s.http != nil {
 		guarded.speaks = s.http.speaks
 	}
@@ -266,6 +268,9 @@ type answersOnly struct {
 	inner mcp.Transport
 	// asked is told the method of the request that ended the connection.
 	asked func(method string)
+	// tooMuch is told that a message held more values than one may, which
+	// ended the connection too.
+	tooMuch func()
 	// speaks, when set, is told the MCP revision the plugin answered
 	// initialize with, before the library goes on to its next message.
 	//
@@ -286,7 +291,7 @@ func AnswersOnly(transport mcp.Transport, asked func(method string)) mcp.Transpo
 	// gives one, is told whom to tell. A second one around it would see that
 	// the first hung up, and never the request.
 	if inner, ok := transport.(*answersOnly); ok {
-		return &answersOnly{inner: inner.inner, asked: asked, speaks: inner.speaks}
+		return &answersOnly{inner: inner.inner, asked: asked, tooMuch: inner.tooMuch, speaks: inner.speaks}
 	}
 	return &answersOnly{inner: transport, asked: asked}
 }
@@ -305,24 +310,45 @@ func (t *answersOnly) Connect(ctx context.Context) (mcp.Connection, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &answering{Connection: conn, asked: t.asked, speaks: t.speaks}, nil
+	return &answering{Connection: conn, asked: t.asked, tooMuch: t.tooMuch, speaks: t.speaks}, nil
 }
 
 type answering struct {
 	mcp.Connection
-	asked  func(method string)
-	speaks func(revision string)
-	once   sync.Once
-	first  sync.Once
+	asked   func(method string)
+	tooMuch func()
+	speaks  func(revision string)
+	once    sync.Once
+	first   sync.Once
 }
 
-// errAsked is how reading ends once a plugin has sent a request.
-var errAsked = errors.New("the plugin sent a request")
+// How reading ends once a plugin has sent a request, or a message that
+// holds more than one may.
+var (
+	errAsked   = errors.New("the plugin sent a request")
+	errTooMuch = fmt.Errorf("the plugin sent a message of more than %d values", plugincontract.MaxMessageValues)
+)
 
 func (c *answering) Read(ctx context.Context) (jsonrpc.Message, error) {
 	msg, err := c.Connection.Read(ctx)
 	if err != nil {
 		return nil, err
+	}
+	// The MCP library reads what a message holds into values of any kind,
+	// each many times the size of the few bytes that spell it: [] is two
+	// bytes, and a list in memory. So how many values a message holds is
+	// bounded here, before the library reads it, as its size was bounded
+	// before this.
+	held := func(raw json.RawMessage) error {
+		if values(raw) <= plugincontract.MaxMessageValues {
+			return nil
+		}
+		c.once.Do(func() {
+			if c.tooMuch != nil {
+				c.tooMuch()
+			}
+		})
+		return errTooMuch
 	}
 	switch msg := msg.(type) {
 	case *jsonrpc.Request:
@@ -334,7 +360,13 @@ func (c *answering) Read(ctx context.Context) (jsonrpc.Message, error) {
 			})
 			return nil, errAsked
 		}
+		if err := held(msg.Params); err != nil {
+			return nil, err
+		}
 	case *jsonrpc.Response:
+		if err := held(msg.Result); err != nil {
+			return nil, err
+		}
 		// The first answer is the one to initialize: the first thing asked.
 		c.first.Do(func() {
 			var init struct {
@@ -363,6 +395,33 @@ func (s *Connection) wasAsked(method string) {
 	// Ended at once, for whoever asks; stopping the program takes a moment.
 	s.end(why, false)
 	go s.drop(why)
+}
+
+// heldTooMuch is told that the plugin sent a message of more values than
+// one may hold. It ends the Connection, as a request does.
+func (s *Connection) heldTooMuch() {
+	why := fmt.Sprintf("it sent a message that holds more than %d values, which no answer of the contract does, and "+
+		"study stopped it", plugincontract.MaxMessageValues)
+	s.end(why, false)
+	go s.drop(why)
+}
+
+// values counts what a JSON document holds, generously: every list and
+// object, and every member and element after the first of each. It reads
+// the bytes once and keeps nothing.
+func values(raw []byte) int {
+	n, inText := 0, false
+	for i := 0; i < len(raw); i++ {
+		switch b := raw[i]; {
+		case inText && b == '\\':
+			i++ // whatever is escaped is text
+		case b == '"':
+			inText = !inText
+		case !inText && (b == '[' || b == '{' || b == ','):
+			n++
+		}
+	}
+	return n
 }
 
 // askedWhy says why a Connection whose plugin sent a request ended. s.mu
@@ -712,6 +771,11 @@ func (s *Connection) ask(ctx context.Context, tool string, limit time.Duration, 
 	if err := plugincontract.Decode(data, out); err != nil {
 		return s.notTheContract("what its " + tool + " tool gave back is not what the contract describes: " + err.Error())
 	}
+	// Reading passes over what is missing, and a field the contract requires
+	// then reads as nothing: a cancel that stopped nothing, a score of 0.
+	if problems := plugincontract.Shape(data, reflect.TypeOf(out).Elem()); len(problems) > 0 {
+		return s.notTheContract("what its " + tool + " tool gave back is not what the contract describes: " + s.say(problems[0], 300))
+	}
 	if check != nil {
 		if err := check(); err != nil {
 			return s.notTheContract("what its " + tool + " tool gave back is not what the contract describes: " + err.Error())
@@ -760,8 +824,15 @@ func payload(res *mcp.CallToolResult) (json.RawMessage, bool) {
 	case json.RawMessage:
 		return structured, true
 	default:
-		if data, err := json.Marshal(structured); err == nil {
-			return data, true
+		// The MCP library hands over what it read, and it is written out
+		// again to be read as the contract's. Written as it came, and not
+		// as a web page would want it: escaping each < and & makes six
+		// bytes of one.
+		var data bytes.Buffer
+		encoder := json.NewEncoder(&data)
+		encoder.SetEscapeHTML(false)
+		if err := encoder.Encode(structured); err == nil {
+			return data.Bytes(), true
 		}
 	}
 	if t := text(res); strings.HasPrefix(strings.TrimSpace(t), "{") && json.Valid([]byte(t)) {

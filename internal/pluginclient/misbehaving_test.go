@@ -4,6 +4,7 @@ package pluginclient_test
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -182,6 +183,20 @@ func TestAProgramThatCannotBeRun(t *testing.T) {
 		return path
 	}
 	write(inTopic, "")
+	// A script that may be run and not read, which hides what it names.
+	unreadable := write(filepath.Join(bin, "run-only"), "#!"+inTopic+"\n")
+	if err := os.Chmod(unreadable, 0o111); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(unreadable, 0o755) })
+	// chain writes n scripts, each the interpreter of the one before it and
+	// the last with the interpreter last, and returns the first.
+	chain := func(n int, last string) string {
+		for i := n; i >= 1; i-- {
+			last = write(filepath.Join(bin, fmt.Sprintf("chain-%d-of-%d", i, n)), "#!"+last+"\n")
+		}
+		return last
+	}
 	const notRun = "is a script, and the interpreter its first line names is not one study runs. "
 	for name, tc := range map[string]struct {
 		program string
@@ -207,8 +222,20 @@ func TestAProgramThatCannotBeRun(t *testing.T) {
 			[]string{notRun + "python3 is no absolute path"}},
 		"a script whose interpreter's interpreter is": {write(filepath.Join(bin, "twice"), "#!"+write(filepath.Join(bin, "wrapper"), "#!"+inTopic+"\n")+"\n"),
 			[]string{notRun + inTopic + " is inside the Study home"}},
+		// The system reads a program's first line whether or not this user
+		// may, and follows it: one study cannot read hides what it names.
+		"a script whose interpreter cannot be read": {write(filepath.Join(bin, "blind"), "#!"+unreadable+"\n"),
+			[]string{notRun + "study cannot read " + unreadable + " to see whether it is a script too (permission denied)",
+				"Make it readable for you"}},
+		// And it follows more scripts in a row than study does. What is left
+		// unlooked at is refused, not passed.
+		"a script at the end of too many": {chain(5, inTopic),
+			[]string{notRun + "it is a script whose interpreter is a script, 4 times over, and study follows no more"}},
 	} {
 		t.Run(name, func(t *testing.T) {
+			if strings.Contains(name, "cannot be read") && os.Geteuid() == 0 {
+				t.Skip("root reads every file")
+			}
 			_, err := pluginclient.Start(context.Background(), c.Env(""), pluginregistry.Plugin{Name: "kb", Command: []string{tc.program}}, quick(c))
 			if codeOf(err) != pluginclient.CodeFailedPrecondition {
 				t.Fatalf("Start = %v; want failed_precondition", err)
@@ -474,6 +501,24 @@ func TestAnAnswerThatBreaksTheContractIsRefused(t *testing.T) {
 		{"text where an object goes", `passage="see above"`,
 			func(s *pluginclient.Connection) error { _, err := s.Passage(ctx, "c", "a"); return err },
 			"what its passage tool gave back is not what the contract describes: it is not a JSON object"},
+		// What the contract requires is there, under its own name. Read
+		// without that look, a field that is missing is the zero of its
+		// kind: a cancel that stopped nothing, a Passage that scored 0.
+		{"a cancel that does not say whether it stopped", `cancel={}`,
+			func(s *pluginclient.Connection) error { _, err := s.Cancel(ctx, "c", "strang.k3f9a2"); return err },
+			`what its cancel tool gave back is not what the contract describes: "stopped" is missing`},
+		{"a cancel that says null", `cancel={"stopped": null}`,
+			func(s *pluginclient.Connection) error { _, err := s.Cancel(ctx, "c", "strang.k3f9a2"); return err },
+			"what its cancel tool gave back is not what the contract describes: stopped: it is not true or false"},
+		{"a Passage without a score", `search={"passages": [{"id": "a", "source": "s.1", "text": "x"}]}`,
+			func(s *pluginclient.Connection) error { _, err := s.Search(ctx, "c", "q", 5, nil); return err },
+			`what its search tool gave back is not what the contract describes: passages[0]: "score" is missing`},
+		{"a key spelled its own way", `search={"Passages": []}`,
+			func(s *pluginclient.Connection) error { _, err := s.Search(ctx, "c", "q", 5, nil); return err },
+			`what its search tool gave back is not what the contract describes: "passages" is spelled "Passages"`},
+		{"a status without its list", `status={}`,
+			func(s *pluginclient.Connection) error { _, err := s.Status(ctx, "c"); return err },
+			`what its status tool gave back is not what the contract describes: "sources" is missing`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -487,8 +532,13 @@ func TestAnAnswerThatBreaksTheContractIsRefused(t *testing.T) {
 			if err != nil {
 				safe(t, err.Error())
 			}
-			// It answered, so it is still there to ask.
-			if _, err := s.Cancel(ctx, "c", "strang.k3f9a2"); err != nil {
+			// It answered, so it is still there to ask: something else, when
+			// it is cancel that answers wrongly.
+			if strings.HasPrefix(tc.result, "cancel=") {
+				if _, err := s.Status(ctx, "c"); err != nil {
+					t.Errorf("Status afterwards = %v", err)
+				}
+			} else if _, err := s.Cancel(ctx, "c", "strang.k3f9a2"); err != nil {
 				t.Errorf("Cancel afterwards = %v", err)
 			}
 		})

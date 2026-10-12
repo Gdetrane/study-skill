@@ -127,6 +127,11 @@ Study home. So `study` starts a plugin with nothing the agent could have prepare
   whatever comes later in `PATH`. A plugin with no `PATH`, or with none that has the name,
   is not started either. Anything else given to `env` on that line, an option or a
   `NAME=value` setting, is refused: `study` cannot tell what it would start.
+
+  **Every interpreter must be readable, and four in a row is the most.** The system reads
+  a program's first line whether or not you may read the file, so an interpreter `study`
+  cannot read is refused: it could name another that nobody checked. A script whose
+  interpreter is a script is followed four times; a fifth is refused.
 - **Stopping.** `study` stops the plugin when it is done with it: it closes the plugin's
   standard input and output. **Exit when your standard input closes**, whatever you are
   doing. A plugin still running 2 seconds later gets `SIGTERM`, sent to its process group,
@@ -206,6 +211,7 @@ with `application/json` or with a stream of server-sent events.
 | `search` | 60 seconds |
 | Exiting once standard input is closed, and again after `SIGTERM` | 2 seconds |
 | One MCP message from the plugin | 16,777,216 bytes |
+| Values in one MCP message from the plugin | 250,000 |
 | A Passage's `text` | 32,768 bytes of UTF-8 |
 | A `query` | 4,096 bytes of UTF-8 |
 | `limit` of a search | 50 |
@@ -216,6 +222,10 @@ with `application/json` or with a stream of server-sent events.
 | A `path` or a `url` | 4,096 bytes |
 | Kinds in each list of a `contract` answer, and a kind's name | 16, and 32 characters |
 | A `reason` or an error's `message`, as `study` shows it | 2,000 bytes |
+
+The values of a message are counted generously: each list, each object, and each member
+or element after the first. A `status` of 10,000 Sources holds about a quarter of the
+limit. A message that goes over ends the session, as one that is too large does.
 
 A plugin that misses a deadline is stopped, when it is a command, and not asked again in
 that session. `study` never sends more than these limits allow, and refuses an answer that
@@ -240,6 +250,10 @@ Every tool takes one JSON object as its arguments and gives back one JSON object
   Arguments that lack a required field, or hold a value this page does not allow, are
   refused with `invalid_argument`. `study` checks what it sends before it sends it, so a
   plugin sees such arguments only from another client; it refuses them all the same.
+- **Every field of a result is required too, unless its row says otherwise, under exactly
+  its name.** `study` refuses a result that leaves one out, gives it as `null`, or spells
+  it in another letter case: a `cancel` that answers `{}` has not said that it stopped
+  nothing, and a Passage without a `score` has not scored 0.
 - **A refusal** is a tool result with `isError` set to `true` whose JSON object is an
   `error` with a `code` and a `message`:
 

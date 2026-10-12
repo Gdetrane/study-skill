@@ -419,7 +419,7 @@ func checkInterpreter(guard *pluginregistry.Guard, program *os.File, path []stri
 			_ = script.Close()
 		}
 	}()
-	for range 4 {
+	for range maxInterpreters {
 		words := firstLine(script)
 		if len(words) == 0 {
 			return nil
@@ -438,17 +438,32 @@ func checkInterpreter(guard *pluginregistry.Guard, program *os.File, path []stri
 			}
 			interpreter = started
 		}
+		// The system reads the interpreter's own first line whether or not
+		// this user may read the file, and follows it. One that study
+		// cannot read is one whose interpreter nobody checked.
 		next, err := os.Open(interpreter)
 		if err != nil {
-			return nil // it can be run and not read: there is no more to look at
+			return fmt.Errorf("study cannot read %s to see whether it is a script too (%s): a program you may run and not "+
+				"read can name an interpreter that nobody checked. Make it readable for you, or name another interpreter",
+				clean(interpreter, 200), pathReason(err))
 		}
 		if script != program {
 			_ = script.Close()
 		}
 		script = next
 	}
+	// The system follows a few more than anyone needs. What is left
+	// unchecked after this many is refused, not passed.
+	if len(firstLine(script)) > 0 {
+		return fmt.Errorf("it is a script whose interpreter is a script, %d times over, and study follows no more: name "+
+			"an interpreter that is a program", maxInterpreters)
+	}
 	return nil
 }
+
+// maxInterpreters is how many interpreters in a row study checks for a
+// script: the script's, that one's own when it is a script too, and so on.
+const maxInterpreters = 4
 
 func notAbsolute(interpreter string) error {
 	return fmt.Errorf("%s is no absolute path: the system would look for it from the folder the plugin is started "+

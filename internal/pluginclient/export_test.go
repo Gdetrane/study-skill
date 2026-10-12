@@ -1,6 +1,11 @@
 package pluginclient
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+)
 
 // SetBeforeStart installs a hook that runs after a plugin's program and the
 // registry's folder were opened and checked and before the program is
@@ -33,3 +38,9 @@ func Without(text, address string) string { return without(text, address) }
 func ChildEnviron(environ []string, outside func(path string) bool, dataFolder string) []string {
 	return childEnviron(environ, outside, dataFolder)
 }
+
+// Values is how many values study counts in a message.
+func Values(raw []byte) int { return values(raw) }
+
+// Payload is the JSON object study takes from a tool's result.
+func Payload(res *mcp.CallToolResult) (json.RawMessage, bool) { return payload(res) }

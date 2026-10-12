@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"os"
+	"sync/atomic"
 	"time"
 
 	"github.com/mordor-forge/lamplight/v2/internal/pluginclient"
@@ -93,7 +94,7 @@ func (c *Core) CheckPlugin(ctx context.Context, name string) (PluginCheck, error
 		return PluginCheck{}, &Error{Code: CodeCanceled, Err: ctx.Err(), Message: "the command was stopped before Knowledge base " +
 			"plugin " + name + " was started"}
 	}
-	plugin, err := c.plugin(ctx, name)
+	plugin, err := c.pluginInTime(ctx, name)
 	if err != nil {
 		return PluginCheck{}, err
 	}
@@ -125,6 +126,52 @@ func (c *Core) plugin(ctx context.Context, name string) (Plugin, error) {
 	return Plugin{}, &Error{Code: CodeNotFound, Message: "no Knowledge base plugin named " + name + " is registered on this " +
 		"computer: study knowledge-base list shows the ones that are, and study knowledge-base add registers one"}
 }
+
+// pluginInTime finds the plugin as plugin does, within the time a plugin
+// has to start, and no longer than the command lasts.
+//
+// Finding it reads the registry and looks at the program of every plugin
+// in it, each on whatever drive it is. A drive that does not answer holds
+// such a look for as long as it likes, and nothing in this program can
+// interrupt it: so the look is left to finish by itself, and the command
+// does not wait for it.
+func (c *Core) pluginInTime(ctx context.Context, name string) (Plugin, error) {
+	limit := c.plugins.StartTimeout
+	if limit <= 0 {
+		limit = pluginclient.DefaultStartTimeout
+	}
+	type found struct {
+		plugin Plugin
+		err    error
+	}
+	done := make(chan found, 1)
+	go func() {
+		if hook := beforePluginLookup.Load(); hook != nil {
+			(*hook)()
+		}
+		plugin, err := c.plugin(ctx, name)
+		done <- found{plugin, err}
+	}()
+	timer := time.NewTimer(limit)
+	defer timer.Stop()
+	select {
+	case f := <-done:
+		return f.plugin, f.err
+	case <-ctx.Done():
+		return Plugin{}, &Error{Code: CodeCanceled, Err: ctx.Err(), Message: "the command was stopped before Knowledge base " +
+			"plugin " + name + " was started"}
+	case <-timer.C:
+		return Plugin{}, &Error{Code: CodeFailedPrecondition, Message: "study could not read the Knowledge base plugin registry " +
+			"within " + limit.String() + ": reading it, or looking at the program of a plugin registered in it, took that " +
+			"long. Check that Lamplight's configuration folder and the programs study knowledge-base list shows are on " +
+			"drives that answer"}
+	}
+}
+
+// beforePluginLookup, when a test sets it, is called before the registry is
+// read to find a plugin: where a drive that does not answer would hold the
+// look.
+var beforePluginLookup atomic.Pointer[func()]
 
 // startPlugin starts a registered plugin, or reaches it, and returns the
 // Connection with it, which the caller closes: that is what stops a command.

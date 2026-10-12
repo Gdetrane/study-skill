@@ -256,6 +256,7 @@ func TestThePageGivesEveryLimitAndDeadline(t *testing.T) {
 		"the deadline for a search":         "| `search` | " + seconds(pluginclient.DefaultSearchTimeout),
 		"the grace for stopping":            "after `SIGTERM` | " + seconds(pluginclient.DefaultStopGrace),
 		"the size of a message":             "| " + number(plugincontract.MaxMessageBytes) + " bytes |",
+		"the values of a message":           "| Values in one MCP message from the plugin | " + number(plugincontract.MaxMessageValues) + " |",
 		"the length of a Passage":           "| " + number(plugincontract.MaxPassageBytes) + " bytes of UTF-8 |",
 		"the length of a query":             "| " + number(plugincontract.MaxQueryBytes) + " bytes of UTF-8 |",
 		"the highest limit of a search":     "| `limit` of a search | " + number(plugincontract.MaxSearchLimit) + " |",
