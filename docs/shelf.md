@@ -28,6 +28,17 @@ released with.
 You never start `study-shelf` yourself. Started by hand it has no folder to keep its index
 in, says so, and exits.
 
+Then a Topic names it, and its Sources are indexed:
+
+```bash
+study topic update linear-algebra --knowledge-base shelf
+study source index linear-algebra --dry-run   # which files and addresses Shelf would read
+study source index linear-algebra
+```
+
+`study source list` and `study status` say afterwards what is indexed
+([docs/cli.md](cli.md#what-is-indexed)).
+
 ## What it reads
 
 | A Source that is | Shelf |
@@ -111,8 +122,10 @@ word to the index.
 Searching reads the index and never a Source: a book that was moved away is still found,
 and a search is answered while another book is being indexed.
 
-Search by meaning, through an embedding model you run, and reranking are the next step
-(issue #84). Until then keyword search is what Shelf has.
+`study` does not search a plugin yet: `study evidence search` and the agent's
+`evidence_search` tool are the next change (issue #82), and until then what Shelf indexed
+is found by nothing but Shelf's own tests. Search by meaning, through an embedding model
+you run, and reranking follow that (issue #84).
 
 ## Where the index is
 

@@ -38,7 +38,7 @@ It is started by study, not by hand. Register it once:
   study knowledge-base check shelf
 
 A Topic that names the plugin "shelf" as its Knowledge base then has its
-PDFs and web pages indexed by study source index, and searched whenever the
+PDFs and web pages indexed by study source index, to be searched when the
 agent looks for Evidence.
 
 Usage:
