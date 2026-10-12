@@ -193,11 +193,18 @@ func (a *app) knowledgeBaseCommand() *cobra.Command {
 		Long: "Start the Knowledge base plugin registered under a name, or reach it at its URL, ask\n" +
 			"which version of Lamplight's contract it speaks and what it can do, and stop it again.\n\n" +
 			"A command is started as study starts it for a Topic: the program that is registered,\n" +
-			"without a shell, in the registry's folder, with your environment less the GIT_*\n" +
-			"variables and less whatever names something inside the Study home, and with a folder\n" +
-			"of its own under the Study home's .lamplight, which LAMPLIGHT_PLUGIN_DATA names. That\n" +
-			"folder is made when it is not there; nothing else is written, and nothing is indexed\n" +
-			"or searched.\n\n" +
+			"without a shell, in the registry's folder, and with a folder of its own, which\n" +
+			"LAMPLIGHT_PLUGIN_DATA names. That folder is in Lamplight's state folder\n" +
+			"($XDG_STATE_HOME/lamplight, or ~/.local/state/lamplight), outside the Study home, and is\n" +
+			"made when it is not there; nothing else is written, and nothing is indexed or searched.\n\n" +
+			"A plugin does not get your environment. It gets PATH, HOME, USER, LOGNAME, LANG, the\n" +
+			"LC_* variables, TZ, TMPDIR and the XDG base folders, each only when it leads nowhere\n" +
+			"inside the Study home, and nothing else: your agent writes in the Study home, and a\n" +
+			"plugin runs outside its sandbox. Give a plugin what else it needs, a key or a proxy, in\n" +
+			"its arguments, or register a small script of yours, outside the Study home, that sets it\n" +
+			"and starts the plugin.\n\n" +
+			"A plugin reached by URL is shown by the scheme and host of its address: the rest may be\n" +
+			"a key, and study knowledge-base list shows it.\n\n" +
 			"A plugin that does not start, does not answer in time, answers something that is no\n" +
 			"MCP, or speaks another contract is reported with what to do, and is not left running.",
 		Example: "  study knowledge-base check shelf\n  study knowledge-base check remote --json",
@@ -338,12 +345,12 @@ func describeKinds(kinds []string, none string) string {
 func writePluginCheck(w io.Writer, r core.PluginCheck) error {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s Knowledge base plugin %s speaks version %d of Lamplight's contract.\n", styleOK.Render("✓"),
-		styleAccent.Render(printable(r.Plugin.Name)), r.Contract.Version)
-	how := "Started by"
-	if r.Plugin.URL != "" {
-		how = "Reached at"
+		styleAccent.Render(printable(r.Name)), r.Contract.Version)
+	rows := [][2]string{{"Started by", describePlugin(core.Plugin{Command: r.Command})}}
+	if r.Address != "" {
+		// Its scheme and host: the rest of the address may be a key.
+		rows = [][2]string{{"Reached at", printable(r.Address)}}
 	}
-	rows := [][2]string{{how, describePlugin(r.Plugin)}}
 	if r.Server.Name != "" {
 		rows = append(rows, [2]string{"Calls itself", strings.TrimSpace(printable(r.Server.Name) + " " + printable(r.Server.Version))})
 	}

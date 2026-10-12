@@ -40,7 +40,8 @@ func pluginCore(t *testing.T, c *plugintest.Computer, dir string, start time.Dur
 
 // CheckPlugin starts a registered command where the registry is and never
 // where study was started, asks it which contract it speaks, and stops it.
-// It writes nothing in the Study home but the plugin's own folder.
+// It writes nothing in the Study home: the plugin's own folder is in the
+// learner's state folder.
 func TestCheckPluginStartsAsksAndStops(t *testing.T) {
 	ctx := context.Background()
 	c := plugintest.NewComputer(t)
@@ -53,10 +54,11 @@ func TestCheckPluginStartsAsksAndStops(t *testing.T) {
 	plugin := c.Register(t, "kb", plugintest.Command("--record", record, "--name", "a-plugin", "--version", "2.0.0", "--sources", "file")...)
 	got, err := pluginCore(t, c, topic, 20*time.Second).CheckPlugin(ctx, "kb")
 	want := core.PluginCheck{
-		Plugin:     plugin,
+		Name:       "kb",
+		Command:    plugin.Command,
 		Contract:   core.PluginContract{Version: 1, Sources: []string{"file"}, Search: []string{"keyword"}, Locations: []string{"pages"}},
 		Server:     core.PluginServer{Name: "a-plugin", Version: "2.0.0"},
-		DataFolder: filepath.Join(c.StudyHome, ".lamplight", "knowledge-base-plugins", "kb"),
+		DataFolder: c.DataFolder("kb"),
 	}
 	if err != nil || !reflect.DeepEqual(got, want) {
 		t.Fatalf("CheckPlugin = %+v, %v; want %+v", got, err, want)
@@ -66,16 +68,25 @@ func TestCheckPluginStartsAsksAndStops(t *testing.T) {
 		plugintest.Kill(started.PID)
 		t.Errorf("the plugin, process %d, was left running", started.PID)
 	}
-	if started.Dir != c.ConfigDir || started.Env["PWD"] != c.ConfigDir {
-		t.Errorf("the plugin was started in %s (PWD %s), want the registry's folder, %s", started.Dir, started.Env["PWD"], c.ConfigDir)
+	if started.Dir != c.ConfigDir {
+		t.Errorf("the plugin was started in %s, want the registry's folder, %s", started.Dir, c.ConfigDir)
 	}
-	if _, has := started.Env["GIT_DIR"]; has || started.Env["LAMPLIGHT_PLUGIN_DATA"] != want.DataFolder || started.Env["HOME"] != c.Home {
+	// Of the environment study has, a plugin gets a few variables.
+	for _, name := range []string{"GIT_DIR", "STUDY_HOME", "PWD"} {
+		if value, has := started.Env[name]; has {
+			t.Errorf("the plugin was given %s=%s", name, value)
+		}
+	}
+	if started.Env["LAMPLIGHT_PLUGIN_DATA"] != want.DataFolder || started.Env["HOME"] != c.Home || started.Env["PATH"] == "" {
 		t.Errorf("the plugin's environment: %v", started.Env)
 	}
-	// Nothing but the plugin's folder was made, and nothing in the Topic.
-	if left := tree(t, c.StudyHome); !reflect.DeepEqual(left, []string{".lamplight/", ".lamplight/knowledge-base-plugins/",
-		".lamplight/knowledge-base-plugins/kb/", "linear-algebra/"}) {
+	// Nothing was made in the Study home: the plugin's folder is the
+	// learner's state.
+	if left := tree(t, c.StudyHome); !reflect.DeepEqual(left, []string{"linear-algebra/"}) {
 		t.Errorf("the Study home holds %v", left)
+	}
+	if info, err := os.Stat(want.DataFolder); err != nil || !info.IsDir() || info.Mode().Perm() != 0o700 {
+		t.Errorf("the plugin's folder, %s: %v, %v; want a folder for the learner alone", want.DataFolder, info, err)
 	}
 }
 
@@ -106,14 +117,20 @@ func TestCheckPluginReachesAURL(t *testing.T) {
 	server := httptest.NewServer(service.Handler())
 	defer server.Close()
 	defer service.Close()
-	plugin := c.RegisterURL(t, "remote", server.URL+"/mcp")
+	c.RegisterURL(t, "remote", server.URL+"/t0ken-in-the-path/mcp?key=s3cr3t")
 	got, err := pluginCore(t, c, "", 20*time.Second).CheckPlugin(context.Background(), "remote")
-	if err != nil || !reflect.DeepEqual(got.Plugin, plugin) || got.Contract.Version != 1 || got.Server.Name != "a-service" || got.DataFolder != "" {
+	// It is reported by its scheme and host: the rest of an address may be
+	// a key.
+	if err != nil || got.Name != "remote" || got.Address != server.URL || got.Command != nil || got.Contract.Version != 1 ||
+		got.Server.Name != "a-service" || got.DataFolder != "" {
 		t.Errorf("CheckPlugin = %+v, %v", got, err)
 	}
-	// A service keeps its own index: study makes it no folder.
+	// A service keeps its own index: study makes it no folder, anywhere.
 	if left := tree(t, c.StudyHome); len(left) != 0 {
 		t.Errorf("the Study home holds %v", left)
+	}
+	if left := tree(t, c.Home); !reflect.DeepEqual(left, []string{".config/", ".config/lamplight/", ".config/lamplight/knowledge-base-plugins.json"}) {
+		t.Errorf("the home folder holds %v", left)
 	}
 }
 

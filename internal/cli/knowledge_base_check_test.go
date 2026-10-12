@@ -76,7 +76,7 @@ func withService(handler func(t *testing.T) http.Handler) func(*testing.T) *kbCo
 		var server *httptest.Server
 		t.Cleanup(func() { server.Close() })
 		server = httptest.NewServer(handler(t))
-		k.must(t, "knowledge-base", "add", "remote", "--url", server.URL+"/mcp?key=s3cr3t")
+		k.must(t, "knowledge-base", "add", "remote", "--url", server.URL+"/t0ken-in-the-path/mcp?key=s3cr3t")
 		return k
 	}
 }
@@ -100,7 +100,7 @@ func withNobodyAnswering(t *testing.T) *kbComputer {
 	if err != nil {
 		t.Fatal(err)
 	}
-	address := "http://" + listener.Addr().String() + "/mcp?key=s3cr3t"
+	address := "http://" + listener.Addr().String() + "/t0ken-in-the-path/mcp?key=s3cr3t"
 	listener.Close()
 	k.must(t, "knowledge-base", "add", "remote", "--url", address)
 	return k
@@ -154,6 +154,18 @@ func TestKnowledgeBaseCheckJSON(t *testing.T) {
 		}), impatient, "remote", cli.ExitError},
 		{"knowledge_base_check_url_newer_contract", withService(aPlugin(plugintest.Config{Results: map[string]string{"contract": `{"version": 3}`}})),
 			patient, "remote", cli.ExitError},
+		// A contract of a version no number of this program's holds is a
+		// newer one all the same.
+		{"knowledge_base_check_far_newer_contract", withTestPlugin("--contract", `{"version": 1e30}`), patient, "kb", cli.ExitError},
+		// A plugin answers, and asks study nothing.
+		{"knowledge_base_check_sends_requests", withTestPlugin("--ask", "start"), patient, "kb", cli.ExitError},
+		// A service that refuses says why, and study repeats it without what
+		// the service repeats of its address.
+		{"knowledge_base_check_url_refuses", withService(func(*testing.T) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				http.Error(w, "Unsupported protocol version (supported versions: 2026-07-28), asked at "+r.URL.String(), http.StatusBadRequest)
+			})
+		}), patient, "remote", cli.ExitError},
 	} {
 		t.Run(tc.golden, func(t *testing.T) {
 			k := tc.computer(t)
@@ -168,8 +180,10 @@ func TestKnowledgeBaseCheckJSON(t *testing.T) {
 			if got.stderr != "" {
 				t.Errorf("--json wrote to stderr: %q", got.stderr)
 			}
-			if strings.Contains(got.stdout, "s3cr3t") && tc.code != cli.ExitOK {
-				t.Errorf("an error repeats the address: %s", got.stdout)
+			// Whatever came of it, only the scheme and host of an address
+			// are shown: the rest may be a key.
+			if strings.Contains(got.stdout, "s3cr3t") || strings.Contains(got.stdout, "t0ken") {
+				t.Errorf("study knowledge-base check repeats the address: %s", got.stdout)
 			}
 			golden(t, tc.golden+".json", got.stdout)
 		})
@@ -183,7 +197,11 @@ func TestKnowledgeBaseCheckHumanOutput(t *testing.T) {
 	k := withTestPlugin("--version", "1.2.3")(t)
 	golden(t, "knowledge_base_check.txt", k.check(t, 20*time.Second, "knowledge-base", "check", "kb").stdout)
 	remote := withService(aPlugin(plugintest.Config{Name: "a-service", Version: "0.9", Sources: []string{"url"}}))(t)
-	golden(t, "knowledge_base_check_url.txt", remote.check(t, 20*time.Second, "knowledge-base", "check", "remote").stdout)
+	reached := remote.check(t, 20*time.Second, "knowledge-base", "check", "remote")
+	if strings.Contains(reached.stdout, "s3cr3t") || strings.Contains(reached.stdout, "t0ken") {
+		t.Errorf("study knowledge-base check repeats the address: %s", reached.stdout)
+	}
+	golden(t, "knowledge_base_check_url.txt", reached.stdout)
 
 	// A failure goes to stderr, with the advice, and nothing to stdout.
 	broken := withTestPlugin("--exit", "3", "--stderr", "cannot open the index")(t)
@@ -250,12 +268,16 @@ func TestKnowledgeBaseCheckLeavesNothingRunning(t *testing.T) {
 				t.Errorf("the plugin, process %d, was left running", got.PID)
 			}
 			// It was started in the registry's folder, with a folder of its
-			// own in the Study home.
+			// own in the learner's state folder, and nothing was made in
+			// the Study home.
 			if want := filepath.Join(k.home, ".config", "lamplight"); !sameFolder(got.Dir, want) {
 				t.Errorf("the plugin was started in %s, want %s", got.Dir, want)
 			}
-			if want := filepath.Join(k.home, "study", ".lamplight", "knowledge-base-plugins", "kb"); got.Env["LAMPLIGHT_PLUGIN_DATA"] != want {
+			if want := filepath.Join(k.home, ".local", "state", "lamplight", "knowledge-base-plugins", "kb"); !sameFolder(got.Env["LAMPLIGHT_PLUGIN_DATA"], want) {
 				t.Errorf("the plugin's folder is %q, want %q", got.Env["LAMPLIGHT_PLUGIN_DATA"], want)
+			}
+			if _, err := os.Stat(filepath.Join(k.env["STUDY_HOME"], ".lamplight")); err == nil {
+				t.Error("study made a folder in the Study home for the plugin")
 			}
 		})
 	}

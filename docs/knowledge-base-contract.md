@@ -31,65 +31,106 @@ command that starts it or by the URL it answers at.
 
 ### MCP
 
-`study` opens an MCP session with `initialize`, asking for protocol version `2025-11-25`.
-A plugin may answer with an earlier version it speaks. `study` then lists the plugin's tools
+`study` opens an MCP session with `initialize`, asking for protocol revision `2025-11-25`.
+A plugin may answer with an earlier revision it speaks. `study` then lists the plugin's tools
 (`tools/list`, following pages up to 1,000 tools), checks that the six are among them, and
-calls `contract`. All of that must be done within 30 seconds of starting the plugin.
+calls `contract`. All of that must be done within 30 seconds of `study` setting out to start
+the plugin.
 
-`study` offers a plugin nothing to call back: no roots, no sampling and no questions to the
-learner. A tool that asks for more input is not speaking the contract. `study` does not read
-the tools' descriptions or their schemas, uses no resources and no prompts, and passes over
-notifications, log messages included. When the learner stops a command, `study` sends
+**A plugin answers what it is asked, and sends `study` no requests.** `study` offers a
+plugin nothing to call back: no roots, no sampling and no questions to the learner. The first
+request a plugin sends, a `ping` or a `roots/list` as much as any other, ends the session:
+`study` stops a plugin that is a command, hangs up on one that is a service, and reports that
+the plugin does not speak the contract. Turn off whatever in your MCP library sends requests
+on its own, such as a keep-alive `ping`. A tool that asks for more input is not speaking the
+contract either.
+
+A plugin may send notifications, and `study` passes over them, log messages and progress
+included. `study` does not read the tools' descriptions or their schemas, and uses no
+resources and no prompts. When the learner stops a command, `study` sends
 `notifications/cancelled` for the call under way.
 
 ### A plugin started by a command
 
 `study` starts the program when it first needs the plugin, and speaks MCP over its standard
-input and output: one JSON-RPC message on each line, in UTF-8.
+input and output: one JSON-RPC message on each line, in UTF-8. The MCP server the agent
+uses starts a plugin **outside any sandbox the agent is in**, and the agent writes in the
+Study home. So `study` starts a plugin with nothing the agent could have prepared:
 
 - **Standard output carries MCP messages and nothing else.** Anything else there, a banner
   or a log line, ends the session. Write everything else on standard error. `study` reads
-  it, keeps the last 8 KiB, and repeats the end of it, cleaned, when the plugin fails. It
-  never reaches the learner's terminal as it is.
+  it, keeps the last 8 KiB, and repeats the last 600 bytes of that, cleaned, when the plugin
+  fails: put the reason last. It never reaches the learner's terminal as it is.
 - **No shell.** The program is started with the arguments it was registered with, word
   for word.
 - **The working folder** is the folder of the registry, Lamplight's configuration folder.
   It is never the Topic or the Study home `study` was started in. Rely on nothing in it,
-  and write nothing there.
-- **The environment** is the learner's, with these changes:
-  - every `GIT_*` variable is taken out;
-  - `PWD` names the working folder, and `OLDPWD` is taken out;
-  - **whatever names something inside the Study home is taken out.** The learner's agent
-    writes in the Study home, and the learner often starts it from a Topic with that
-    Topic's virtual environment switched on, so the environment can point there: a `PATH`
-    that begins with the Topic's `.venv/bin`, a `PYTHONPATH` into the Topic. Each value is
-    read as a list of paths divided as `PATH` is. A path that is the Study home, is inside
-    it, or is reached through it by a link, is dropped from its list, and a variable left
-    with nothing is dropped whole. A variable that names such a path among other words,
-    as `NODE_OPTIONS` does after `--require`, is dropped whole too. So a plugin does not
-    find programs or modules where the agent writes, and is not told where the Study home
-    is;
-  - `LAMPLIGHT_PLUGIN_DATA` names the plugin's folder (below), the one thing in the Study
-    home a plugin is told of.
+  and **write nothing there**.
+- **The environment is a small one `study` makes.** It is not the environment `study` was
+  started with: that one is often an agent's, started from a Topic with the Topic's virtual
+  environment switched on, and `PATH`, `PYTHONPATH`, `NODE_OPTIONS`, `PERL5OPT`, `BASH_ENV`,
+  `LD_PRELOAD` and many more could each have a plugin load what the agent wrote. A plugin
+  gets these variables, when `study` has them, and no others:
+
+  | Variable | As |
+  |---|---|
+  | `PATH`, `XDG_DATA_DIRS`, `XDG_CONFIG_DIRS` | The folders of the list that are absolute paths outside the Study home. The others are dropped from the list. |
+  | `HOME`, `TMPDIR`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME`, `XDG_CACHE_HOME`, `XDG_RUNTIME_DIR` | As it is, when it is an absolute path outside the Study home. Left out otherwise. |
+  | `USER`, `LOGNAME`, `LANG`, `LC_*` | As it is, when it is a name and no path. |
+  | `TZ` | As it is, when it names a zone or a file outside the Study home. |
+  | `LAMPLIGHT_PLUGIN_DATA` | The plugin's folder (below). |
+
+  "Outside the Study home" is decided as the registry decides it for the program: by what
+  each folder of the path is, links followed, and never by its name. A path `study` cannot
+  follow counts as inside. So a plugin does not find programs, modules or settings where
+  the agent writes, and is not told where the Study home is.
+
+  **A plugin that needs anything else takes it in its arguments**, a key file's path or a
+  proxy's address, or the learner registers a small script of their own, kept outside the
+  Study home, that sets the variable and starts the plugin. Say which in your plugin's
+  instructions. `study` warns nobody that a variable was left out.
 - **Standard input is a pipe of the plugin's own**, never the terminal and never what
   `study` itself reads. The plugin runs in a session of its own, with no terminal: it cannot
   ask the learner anything, and a Ctrl-C reaches `study`, not the plugin.
-- **On Linux the program is run from the file `study` opened and checked**, as
-  `/proc/self/fd/3`, and not from its path again. A compiled program notices nothing: its
-  first argument is still the path it is registered by. A script is handed
-  `/proc/self/fd/3` as its own name, so it must not look for its other files beside that
-  name, and the interpreter its `#!` line names must read the script itself. For a script
-  that needs either, register the interpreter with the script as an argument, such as
-  `study knowledge-base add notes -- /usr/bin/python3 /opt/notes-kb/main.py`.
+- **No other file of `study`'s is open in the plugin.** Whatever `study` itself was handed
+  by the program that started it, a descriptor for a file or a copy of its standard output,
+  is closed in the plugin.
+- **The program that runs is the one `study` checked.** `study` opens the folder that
+  really holds the program when it checks it, and on Linux runs the program by its own name
+  in that open folder, as `/proc/self/fd/3/<name>`, so that no folder on the way is looked up
+  again. What a plugin sees of that:
+  - Descriptor 3 is that folder, open for reading. It is the one thing a compiled program
+    sees that it would not see when started from a terminal: its first argument is the path
+    it is registered by, the system calls the process by the program's name, and
+    `/proc/self/exe` leads to the program.
+  - A script is handed `/proc/self/fd/3/<name>` as its own name (`$0`, `sys.argv[0]`,
+    `__file__`). What is beside the script is found through that name, as from a terminal,
+    for as long as descriptor 3 is open, in the script and in the programs it starts. A
+    script that closes the descriptors it did not open, or starts programs that do (Python's
+    `subprocess` closes them by default), asks once at the start where it really is:
+    `readlink -f "$0"`, `os.path.realpath(__file__)`.
+  - On macOS, which cannot run a program through an open folder, the program is run by the
+    path it is registered by, after a last look that the path still leads to the file that
+    was checked.
 - **A script's interpreter is held to what the program is held to.** The system runs the
   program a script's first line names, so `study` checks that program too, and the one
   its first line names if it is a script itself: an interpreter that is inside the Study
-  home, or reached through it, is not started.
-- **Stopping.** `study` stops the plugin when it is done with it, and when the learner
-  stops the command: it closes the plugin's standard input and output. **Exit when your
-  standard input closes.** A plugin still running 2 seconds later gets `SIGTERM`, sent to
-  its process group, and 2 seconds after that the group is killed. When the program exits,
-  whatever it started and left in its process group is killed with it.
+  home, or reached through it, is not started. **An interpreter named by a relative path is
+  refused**: the system would look for it from the working folder. Write
+  `#!/usr/bin/env python3`, or the interpreter's full path.
+- **Stopping.** `study` stops the plugin when it is done with it: it closes the plugin's
+  standard input and output. **Exit when your standard input closes**, whatever you are
+  doing. A plugin still running 2 seconds later gets `SIGTERM`, sent to its process group,
+  and 2 seconds after that the group is killed. When the program exits, whatever it started
+  and left in its process group is killed with it. **A program the plugin moved to a
+  process group or a session of its own is not stopped by `study`**: a plugin that starts
+  one stops it itself.
+- **Signals to `study`.** On `SIGINT`, `SIGTERM` and `SIGHUP`, `study` stops the request,
+  sends `notifications/cancelled` for the call under way, and stops the plugin as above
+  before it exits. A `study` that is killed (`SIGKILL`) stops nothing: its end of the
+  plugin's standard input closes with it, which is one more reason to exit when it does.
+  None of those signals reaches the plugin itself, which has no terminal and is in a
+  session of its own.
 - **More than one copy can run at once**, on the same folder: the MCP server the agent
   uses and a `study source index` in a shell each start their own. A copy must find what
   another indexed, and searching while another copy indexes must work.
@@ -100,15 +141,26 @@ input and output: one JSON-RPC message on each line, in UTF-8.
 
 A plugin started by a command keeps its index in the folder `LAMPLIGHT_PLUGIN_DATA` names:
 an absolute path, of a folder that exists when the plugin starts and that only the learner
-can read. It is `.lamplight/knowledge-base-plugins/<name>` in the Study home, `<name>` being
-the name the plugin is registered under. It is that computer's state, never synced, and
-rebuilt by indexing again.
+can read (mode 0700). It is `$XDG_STATE_HOME/lamplight/knowledge-base-plugins/<name>`, or
+`~/.local/state/lamplight/knowledge-base-plugins/<name>` when `XDG_STATE_HOME` is not set
+or is not an absolute path, `<name>` being the name the plugin is registered under. It is
+that computer's state, never synced, and rebuilt by indexing again.
 
-**The folder is inside the Study home, where the learner's agent can write, and the plugin
-runs outside the agent's sandbox.** So treat everything in it as data. Load no code, no
-extension and no settings from it, and follow no symbolic link out of it. `study` refuses to
-start a plugin whose folder, or a folder on the way to it, is a symbolic link; that is a
-look at one moment, and the plugin opens the name for as long as it runs.
+**The folder is outside the Study home**, where the learner's agent writes. A state folder
+that is the Study home, is inside it, or is reached through it by a link is refused, and the
+plugin is not started: an index the agent could write is one whose Passages the agent could
+write, and a quote is checked against a Passage.
+
+Two things follow for whoever writes or runs a plugin:
+
+- **Open the folder once, and stay inside it.** Follow no symbolic link in it that leads
+  out of it, and load no code, no extension and no settings from it: it holds data. The
+  conformance suite puts links in the folder and fails a plugin that writes where they lead.
+- **A sandbox that `study` itself runs in must allow the folder.** `study source index`
+  run inside an agent's sandbox starts the plugin inside that sandbox, and the plugin writes
+  its index in the learner's state folder, which a sandbox that allows only the Study home
+  does not let it do. Allow `$XDG_STATE_HOME/lamplight/knowledge-base-plugins` there, or
+  index from a shell of the learner's own.
 
 ### A plugin reached by URL
 
@@ -117,9 +169,18 @@ streamable HTTP transport: each message is a `POST` to the registered address, a
 with `application/json` or with a stream of server-sent events.
 
 - A redirect is not followed: register the address that answers.
-- `study` opens no stream for messages the service starts, and tries no request twice.
-- A session id (`Mcp-Session-Id`) is kept and sent back, and the session is ended with
+- `study` opens no stream for messages the service starts, and tries no request twice. A
+  request the service sends in the stream that answers a call ends the session, as above.
+- A session id (`Mcp-Session-Id`) is kept and sent back, every request after `initialize`
+  names the protocol revision (`Mcp-Protocol-Version`), and the session is ended with
   `DELETE` when `study` is done.
+- **A service that refuses a request says why in the body of its answer.** `study` shows
+  the learner the start of it, about 300 bytes, cleaned, beside the status: a service that
+  speaks only a later revision of MCP says which there.
+- **Only the scheme and host of the address are shown** by `study`, outside
+  `study knowledge-base list`: the rest of an address, a path or a query, may be a key.
+  Whatever a service writes, in a refusal, a `reason` or its own name, is shown without the
+  path and the query of the address it is registered at.
 - A service gets no folder from `study`, and keeps its index where it was told to.
 - **A service reads files and fetches addresses from where it runs, outside any sandbox
   the agent is in.** It is handed a file's path and must see the same file there. It must
@@ -149,7 +210,9 @@ with `application/json` or with a stream of server-sent events.
 
 A plugin that misses a deadline is stopped, when it is a command, and not asked again in
 that session. `study` never sends more than these limits allow, and refuses an answer that
-goes over them, except that a `reason` or a `message` is cut short instead.
+goes over them, except that a `reason` or a `message` is cut short instead. The 30 seconds
+of starting cover what `study` does first as well: finding the program and making the
+folder.
 
 ## Results and errors
 
@@ -160,8 +223,14 @@ Every tool takes one JSON object as its arguments and gives back one JSON object
   instead: `study` reads `structuredContent` when there is one, and that text otherwise.
 - **Names are spelled as on this page**, in lower case. A list is a JSON list even when it
   is empty.
-- **Fields this page does not name are passed over**, so a plugin may say more. `study`
-  sends none that this version does not define.
+- **Fields this page does not name are passed over, in both directions.** A plugin may
+  say more in a result, and `study` reads past it. `study` sends no field that this version
+  does not define, and a plugin passes over one it does not know all the same, without
+  refusing: a field added later must not break a plugin written now.
+- **Every field of a tool's arguments is required unless its row says it is optional.**
+  Arguments that lack a required field, or hold a value this page does not allow, are
+  refused with `invalid_argument`. `study` checks what it sends before it sends it, so a
+  plugin sees such arguments only from another client; it refuses them all the same.
 - **A refusal** is a tool result with `isError` set to `true` whose JSON object is an
   `error` with a `code` and a `message`:
 
@@ -224,7 +293,7 @@ arguments, and gives the same answer every time in a session.
 
 | Field | Is |
 |---|---|
-| `version` | The contract version: `1`. **A plugin that reports a version newer than `study` knows is refused**, like every newer format, so report the version you speak, as a whole number. |
+| `version` | The contract version: `1`. **A plugin that reports a version newer than `study` knows is refused**, like every newer format, so report the version you speak, as a whole number. Any number larger than the version `study` knows is a newer version, however large it is and however it is written. |
 | `sources` | The kinds of Source the plugin indexes: `file`, `url`, or both. At least one. |
 | `search` | How it searches now: `keyword`, `embedding`, or both. At least one. A plugin that embeds only when an endpoint is configured lists `embedding` only then. |
 | `locations` | The kinds of location its Passages can carry: `pages`. An empty list for a plugin that never knows where a Passage is. |
@@ -258,19 +327,23 @@ goes on afterwards**: `status` is asked again until the Source is no longer `ind
 | `collection` | The collection the Source belongs to. |
 | `source` | The Source to index. |
 | `id` | The Source's id. |
-| `title` | The Source's title, up to 200 characters, for the plugin's own messages. It is no content: a new title alone is nothing to index. |
-| `kind` | `file` or `url`. |
-| `path` | A file's absolute path, on the computer `study` runs on. Only with `file`. |
-| `hash` | The content hash of the file as `study` read it. Only with `file`. |
-| `url` | A web page's `http` or `https` address, without a user name or password. Only with `url`. |
-| `refetch` | `true` asks for a web page that is indexed already to be fetched again. Left out otherwise. Only with `url`. |
+| `title` | The Source's title, up to 200 characters and not empty, for the plugin's own messages. It is no content: a new title alone is nothing to index. |
+| `kind` | `file` or `url`. Anything else is refused with `invalid_argument`. |
+| `path` | A file's absolute path, on the computer `study` runs on. Required with `file`, and not allowed with `url`. A relative path is refused with `invalid_argument`. |
+| `hash` | The content hash of the file as `study` read it. Required with `file`, and not allowed with `url`. |
+| `url` | A web page's `http` or `https` address, without a user name or password. Required with `url`, and not allowed with `file`. |
+| `refetch` | Optional. `true` asks for a web page that is indexed already to be fetched again. Left out otherwise. Only with `url`. |
 
 <!-- example: index result -->
 ```json
 {"source": {"id": "strang-linear-algebra.k3f9a2", "state": "indexing", "progress": 0}}
 ```
 
-The result is `source`: what the plugin says of the Source now, shaped as in `status`.
+The result is `source`: what the plugin says of the Source now, shaped as in `status`. Its
+state is `indexed` when there was nothing to do, `indexing` when the work has begun, and
+`failed`, with the `reason`, when the plugin can tell at once that it cannot index the
+Source: `status` then says `failed` too. A plugin that finds out only later answers
+`indexing`, and `status` says `failed` once it knows.
 
 - **A file whose `hash` is the hash of what is indexed for that Source does nothing.** The
   answer is `indexed`, at once, and the Passages and their ids stay as they are.
@@ -285,8 +358,15 @@ The result is `source`: what the plugin says of the Source now, shaped as in `st
   `refetch` is `true`: otherwise the answer is `indexed`, at once.
 - A Source that is being indexed already goes on being indexed when it is asked for with
   the same content, and starts over when it is asked for with other content.
-- A kind the plugin's `contract` does not list is refused with `unsupported`.
-- Indexing reads the Source. Nothing else does: `search` and `passage` read the index.
+- A kind the plugin's `contract` does not list, of `file` and `url`, is refused with
+  `unsupported`. A kind that is neither is refused with `invalid_argument`.
+- Indexing reads the Source. Nothing else does: `search` and `passage` read the index, and
+  find what was indexed after the file has been moved away.
+- **What was indexed for a Source is there to go back to until new content has replaced
+  it.** A `cancel` that stops the indexing of new content leaves the earlier content found,
+  with its `hash`. While new content is being indexed, and after indexing it has failed, a
+  plugin either still finds the earlier content, and `status` gives its `hash`, or finds
+  none of it, and `status` gives no `hash`.
 
 ### `status`
 
@@ -315,15 +395,17 @@ Says what is indexed in a collection.
 | `state` | `indexed`, `indexing` or `failed`. |
 | `progress` | With `indexing`: how much of the work is done, from `0` to `1`. Left out when the plugin cannot tell. |
 | `reason` | With `failed`: why, in words for the learner. Required then. |
-| `hash` | The content hash of what `search` finds for this Source now. Required with `indexed`. With `indexing` or `failed` it is there when earlier content is still indexed, and left out otherwise. |
+| `hash` | The content hash of what `search` finds for this Source now. Required with `indexed`. With `indexing` or `failed` it is there when earlier content is still indexed, and left out otherwise: `hash` and `search` always agree. |
 
 - `indexed`: the Source's Passages can be found, and `hash` says of which content.
 - `indexing`: the plugin is working on the Source **now**. A plugin that was stopped
   halfway and is started again says nothing is `indexing` until `index` is called: then it
   carries on, or starts over.
-- `failed`: the last indexing failed. The Source stays `failed` until it is indexed again,
-  or at least until the plugin stops.
-- `status` answers from what the plugin knows, and never waits for indexing.
+- `failed`: the last indexing failed. The Source stays `failed`, with its `reason`,
+  however often `status` is asked, until it is indexed again, or at least until the plugin
+  stops.
+- `status` answers from what the plugin knows, and never waits for indexing: asked while a
+  Source is being indexed, it says `indexing`, at once.
 
 ### `cancel`
 
@@ -378,10 +460,10 @@ Finds the Passages of a collection that answer a query, **best first**.
 | Field | Is |
 |---|---|
 | `collection` | The collection to search. One nobody indexed gives an empty list, not an error. |
-| `query` | What to look for: text of up to 4,096 bytes, not empty. |
+| `query` | What to look for: text of up to 4,096 bytes. An empty query, and one that is white space alone, is refused with `invalid_argument`. |
 | `limit` | The most Passages to give back, from 1 to 50. |
-| `sources` | The ids of the Sources to search. Left out, the whole collection is searched. An id the collection does not have finds nothing. `study` never sends an empty list. |
-| `passages` | The Passages found, the best first, `limit` at most, none twice. |
+| `sources` | Optional. The ids of the Sources to search. Left out, the whole collection is searched. An id the collection does not have finds nothing. An empty list is refused with `invalid_argument`: `study` never sends one. |
+| `passages` | The Passages found, the best first, none twice, and never more than `limit`, however many there are to find. |
 | `id` | The Passage's id. |
 | `source` | The id of the Source the text is from. |
 | `text` | The Source's own text, as extracted: up to 32,768 bytes, not empty. |
@@ -391,11 +473,12 @@ Finds the Passages of a collection that answer a query, **best first**.
 | `score` | How well the Passage answers this query: a number, higher is better, and no Passage has a higher one than the Passage before it. It means nothing outside this search. |
 
 - A search reads the index and never a Source, and never waits for indexing: it finds what
-  is indexed now.
+  is indexed now, and answers as quickly while a Source is being indexed as otherwise.
 - **A score belongs to one search**, so `search` gives it and `passage` does not.
 - A location's kind decides its other fields. Version 1 has `pages`. A plugin that lists
   another kind in its `contract` gives that kind its own fields, which this version of
-  `study` passes over.
+  `study` passes over. **A location of a kind the plugin's `contract` does not list is
+  refused** by `study`, with the whole answer.
 
 ### `passage`
 
@@ -440,15 +523,31 @@ from a test in a checkout of Lamplight:
 ```go
 func TestMyPluginConforms(t *testing.T) {
 	plugintest.Conformance(t, plugintest.Target{
-		// Each connection starts the command again, with the same folder in
-		// LAMPLIGHT_PLUGIN_DATA. For a service: plugintest.URLTransport(address).
-		Connect:  plugintest.CommandTransport(t.TempDir(), "/opt/notes-kb/bin/notes-kb", "--stdio"),
+		// Each connection starts the command again, as study starts a registered
+		// plugin, on a computer made of temporary folders.
+		// For a service: plugintest.AsService(address).
+		Connect:  plugintest.AsCommand(plugintest.NewComputer(t), "/opt/notes-kb/bin/notes-kb", "--stdio"),
 		Restarts: true,
 		// A plugin that does not read plain text says how to write a file it reads.
 		WriteFile: writePDF,
 	})
 }
 ```
+
+- **A command is started exactly as `study` starts one**: the same environment, working
+  folder, pipes and folder as above. So the suite also sees what only a command can get
+  wrong: that it exits when its standard input closes, writes nothing in the folder it is
+  started in, and follows no link out of its own folder.
+- **The files it writes**, unless `WriteFile` says otherwise, are plain text in UTF-8 with
+  the extension `.txt`: paragraphs divided by a blank line, and pages by a form feed
+  (U+000C) at the start of a line, as `pdftotext` divides them. Most have three pages of
+  one or two short paragraphs; the ones meant to take a while have 400 pages of one
+  paragraph each. Every file holds a made-up word that is in no other, which the suite
+  searches for. `WriteFile` is given the same pages, as lists of paragraphs.
+- **The web pages it serves**, unless `ServePage` says otherwise, are HTML from
+  `127.0.0.1`: a `<title>`, an `<h1>` and one `<p>` for each paragraph.
+- **A plugin that stops answering fails the check that met it, and the suite ends there.**
+  A call has 30 seconds (`Patience`).
 
 The same package holds a small plugin that passes the suite, to read beside this page.
 
@@ -457,4 +556,6 @@ The same package holds a small plugin that passes the suite, to read beside this
 - Nothing removes a Source, or a collection, from an index. A Source the Topic no longer
   has stays indexed; `study` limits its searches to the Topic's Sources with `sources`.
 - `study` sends no file's bytes. A plugin is handed a path.
+- A plugin is handed no environment of the learner's but the few variables above, and no
+  way to ask `study`, or the learner, for anything.
 - A plugin is told nothing of Topics, Lessons or the learner.

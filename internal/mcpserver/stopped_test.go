@@ -2,6 +2,7 @@ package mcpserver_test
 
 import (
 	"context"
+	"encoding/json"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -12,10 +13,12 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/mordor-forge/lamplight/v2/internal/core"
+	"github.com/mordor-forge/lamplight/v2/internal/plugintest"
 )
 
 // TestNoStoppedOperationReportsInternal stops every operation of the core
@@ -95,10 +98,25 @@ func TestNoStoppedOperationReportsInternal(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The plugin registry is read only from outside the Study home, which is
-	// where the session's HOME is.
+	// where the session's HOME is. One plugin is registered there, for
+	// study knowledge-base check to start: this test binary, run as the test
+	// plugin.
+	apart := t.TempDir()
+	registry, err := json.Marshal(map[string]any{"format": 1, "plugins": []any{
+		map[string]any{"name": "kb", "command": plugintest.Command()},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(apart, ".config", "lamplight"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(apart, ".config", "lamplight", "knowledge-base-plugins.json"), registry, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	outside, err := core.Open(core.Options{Getenv: func(key string) string {
-		return map[string]string{"STUDY_HOME": home, "HOME": t.TempDir()}[key]
-	}, Dir: home})
+		return map[string]string{"STUDY_HOME": home, "HOME": apart}[key]
+	}, Dir: home, Plugins: core.PluginOptions{StopGrace: 300 * time.Millisecond}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,6 +135,10 @@ func TestNoStoppedOperationReportsInternal(t *testing.T) {
 		}},
 		{"Plugins", func(ctx context.Context) error {
 			_, err := outside.Plugins(ctx)
+			return err
+		}},
+		{"CheckPlugin", func(ctx context.Context) error {
+			_, err := outside.CheckPlugin(ctx, "kb")
 			return err
 		}},
 		{"ProposedRevision", func(ctx context.Context) error {

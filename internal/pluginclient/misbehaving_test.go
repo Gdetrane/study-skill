@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -98,6 +99,25 @@ func TestAPluginThatDoesNotSpeakIsRefused(t *testing.T) {
 		{"speaks a newer contract", quickOptions, []string{"--contract", `{"version": 2, "collections": {"anything": "else"}}`},
 			pluginclient.CodeNewerFormat,
 			[]string{"Knowledge base plugin kb speaks version 2 of Lamplight's contract, and this version of study knows version 1: upgrade study"}},
+		// (The MCP library reads the numbers of a result as it reads any
+		// JSON number, so a large one comes back rounded, and written its
+		// way.)
+		{"speaks a contract newer than a number holds", quickOptions, []string{"--contract", `{"version": 9223372036854775808}`},
+			pluginclient.CodeNewerFormat,
+			[]string{"Knowledge base plugin kb speaks version 9223372036854776000 of Lamplight's contract, and this version of study knows version 1: upgrade study"}},
+		{"speaks a contract of a version written large", quickOptions, []string{"--contract", `{"version": 1e30}`},
+			pluginclient.CodeNewerFormat, []string{"Knowledge base plugin kb speaks version 1e+30 of Lamplight's contract"}},
+		// Why a program failed is at the end of what it wrote, under
+		// whatever it wrote first.
+		{"fails under a long traceback", quickOptions, []string{"--exit", "1", "--stderr", "Traceback (most recent call last): " +
+			strings.Repeat("File kb.py, line 12, in main; ", 60) + "KeyError: 'the index is from another version'"},
+			pluginclient.CodeFailedPrecondition,
+			[]string{"The last it wrote on its standard error: …", "in main; KeyError: 'the index is from another version'."}},
+		{"sends study requests from the start", quickOptions, []string{"--ask", "start"}, pluginclient.CodeFailedPrecondition,
+			[]string{"Knowledge base plugin kb sent study a request (ping), and study stopped it: a plugin answers what it is asked " +
+				"and asks nothing, since study offers it nothing to call. docs/knowledge-base-contract.md describes the contract"}},
+		{"asks study for its roots", quickOptions, []string{"--ask", "contract", "--ask-method", "roots/list", "--ask-times", "1"},
+			pluginclient.CodeFailedPrecondition, []string{"Knowledge base plugin kb sent study a request (roots/list), and study stopped it"}},
 		{"is another MCP server", quickOptions, []string{"--tools", "contract,status"}, pluginclient.CodeFailedPrecondition,
 			[]string{"Knowledge base plugin kb does not speak Lamplight's contract: it is an MCP server without the index, cancel, search and passage tools",
 				"docs/knowledge-base-contract.md"}},
@@ -127,6 +147,9 @@ func TestAPluginThatDoesNotSpeakIsRefused(t *testing.T) {
 				if !strings.Contains(err.Error(), want) {
 					t.Errorf("the message lacks %q:\n%s", want, err)
 				}
+			}
+			if tc.name == "fails under a long traceback" && strings.Contains(err.Error(), "Traceback (most recent call last)") {
+				t.Errorf("the message repeats the start of what the plugin wrote, and not only the end:\n%s", err)
 			}
 			safe(t, err.Error())
 			gone(t, record)
@@ -176,6 +199,12 @@ func TestAProgramThatCannotBeRun(t *testing.T) {
 		// be the agent's to change.
 		"a script whose interpreter is in the Study home": {write(filepath.Join(bin, "in-topic"), "#! "+inTopic+" -u\n"),
 			[]string{notRun + inTopic + " is inside the Study home"}},
+		// The system would look for it from the folder the plugin is started
+		// in, where nothing was checked.
+		"a script whose interpreter is a relative path": {write(filepath.Join(bin, "relative"), "#!bin/python3 -u\n"),
+			[]string{notRun + "bin/python3 is no absolute path", "Name the interpreter by its full path"}},
+		"a script whose interpreter is a name": {write(filepath.Join(bin, "named"), "#!python3\n"),
+			[]string{notRun + "python3 is no absolute path"}},
 		"a script whose interpreter's interpreter is": {write(filepath.Join(bin, "twice"), "#!"+write(filepath.Join(bin, "wrapper"), "#!"+inTopic+"\n")+"\n"),
 			[]string{notRun + inTopic + " is inside the Study home"}},
 	} {
@@ -194,20 +223,31 @@ func TestAProgramThatCannotBeRun(t *testing.T) {
 }
 
 // A plugin that is a script is started through its interpreter, as the
-// system starts any script. On Linux the script is the file study opened,
-// so the interpreter is handed a descriptor's name for it and not the path
-// it is registered by: what docs/knowledge-base-contract.md tells whoever
-// writes one.
+// system starts any script. On Linux the script is run by its name in the
+// folder study opened, so the interpreter is handed that name through the
+// folder's descriptor: a script finds what is beside it through its own
+// name, and where it really is by asking. It is what
+// docs/knowledge-base-contract.md tells whoever writes one.
 func TestAPluginThatIsAScript(t *testing.T) {
 	c := plugintest.NewComputer(t)
 	record := filepath.Join(t.TempDir(), "record.json")
+	// The learner registered a link to it, as an installer leaves one.
+	real := filepath.Join(c.Home, "opt", "notes-kb", "kb")
 	script := filepath.Join(c.Home, "bin", "kb")
-	if err := os.MkdirAll(filepath.Dir(script), 0o755); err != nil {
-		t.Fatal(err)
+	for _, dir := range []string{filepath.Dir(real), filepath.Dir(script)} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
 	}
 	// The interpreter is the test plugin itself: nothing else is started.
 	words := plugintest.Command()
-	if err := os.WriteFile(script, []byte("#!"+words[0]+" "+words[1]+"\nnothing reads the rest\n"), 0o755); err != nil {
+	if err := os.WriteFile(real, []byte("#!"+words[0]+" "+words[1]+"\nnothing reads the rest\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(filepath.Dir(real), "helper.py"), []byte("# what the script loads\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(real, script); err != nil {
 		t.Fatal(err)
 	}
 	plugin := c.Register(t, "kb", script, "--record", record, "--name", "a-script")
@@ -220,15 +260,24 @@ func TestAPluginThatIsAScript(t *testing.T) {
 		t.Errorf("Server = %+v, Contract = %+v", s.Server(), s.Contract())
 	}
 	got := plugintest.ReadRecord(t, record)
-	want := script
-	if runtime.GOOS == "linux" {
-		want = "/proc/self/fd/3"
+	if runtime.GOOS != "linux" {
+		if got.Script != script {
+			t.Errorf("the script was handed to its interpreter as %q, want %q", got.Script, script)
+		}
+		return
 	}
-	if got.Script != want {
-		t.Errorf("the script was handed to its interpreter as %q, want %q", got.Script, want)
+	if got.Script != "/proc/self/fd/3/kb" {
+		t.Errorf("the script was handed to its interpreter as %q, want %q", got.Script, "/proc/self/fd/3/kb")
 	}
-	if runtime.GOOS == "linux" && got.Files[3] != script {
-		t.Errorf("descriptor 3 of the interpreter is %q, want the script, %s", got.Files[3], script)
+	if got.Files[3] != filepath.Dir(real) {
+		t.Errorf("descriptor 3 of the interpreter is %q, want the folder that holds the script, %s", got.Files[3], filepath.Dir(real))
+	}
+	// Through its own name it finds what is beside it, and where it is.
+	if !slices.Contains(got.Beside, "helper.py") || !slices.Contains(got.Beside, "kb") {
+		t.Errorf("beside itself the script finds %v, want its helper.py", got.Beside)
+	}
+	if got.ScriptPath != real {
+		t.Errorf("the script's name leads to %q, want %q", got.ScriptPath, real)
 	}
 }
 
@@ -268,7 +317,7 @@ func TestAnAnswerThatBreaksTheContractIsRefused(t *testing.T) {
 			`"../../etc/passwd" is not a Source's id`},
 		{"a state of the wrong type", `status={"sources": [{"id": "a.1", "state": 3}]}`,
 			func(s *pluginclient.Connection) error { _, err := s.Status(ctx, "c"); return err },
-			"what its status tool gave back is not what the contract describes: it is not the JSON the contract describes: sources.0.state is a number, not a string"},
+			"what its status tool gave back is not what the contract describes: it is not the JSON the contract describes: sources.state is a number, not a string"},
 		{"the worse Passage first", `search={"passages": [{"id": "a", "source": "s.1", "text": "x", "score": 1}, {"id": "b", "source": "s.1", "text": "y", "score": 2}]}`,
 			func(s *pluginclient.Connection) error { _, err := s.Search(ctx, "c", "q", 5, nil); return err },
 			"Passage b has a higher score than the one before it: the best comes first"},
@@ -296,6 +345,14 @@ func TestAnAnswerThatBreaksTheContractIsRefused(t *testing.T) {
 		{"an id that is a flag", `search={"passages": [{"id": "--help", "source": "s.1", "text": "x", "score": 2}]}`,
 			func(s *pluginclient.Connection) error { _, err := s.Search(ctx, "c", "q", 5, nil); return err },
 			`"--help" is not a Passage's id`},
+		// What a location means is decided by its kind, and the plugin said
+		// which kinds it gives.
+		{"a location of a kind it did not list", `search={"passages": [{"id": "a", "source": "s.1", "text": "x", "score": 2, "location": {"kind": "seconds", "first": 4, "last": 9}}]}`,
+			func(s *pluginclient.Connection) error { _, err := s.Search(ctx, "c", "q", 5, nil); return err },
+			"what its search tool gave back is not what the contract describes: Passage a has a location of the kind seconds, and the plugin's contract lists pages"},
+		{"a Passage given again with such a location", `passage={"passage": {"id": "a", "source": "s.1", "text": "x", "location": {"kind": "seconds", "first": 4, "last": 9}}}`,
+			func(s *pluginclient.Connection) error { _, err := s.Passage(ctx, "c", "a"); return err },
+			"what its passage tool gave back is not what the contract describes: Passage a has a location of the kind seconds, and the plugin's contract lists pages"},
 		{"another Passage than was asked for", `passage={"passage": {"id": "b", "source": "s.1", "text": "x"}}`,
 			func(s *pluginclient.Connection) error { _, err := s.Passage(ctx, "c", "a"); return err },
 			"it is Passage b, and Passage a was asked for"},
@@ -662,43 +719,164 @@ func TestAnAnswerOverTheLimitIsNotRead(t *testing.T) {
 	gone(t, record)
 }
 
-// The folder a plugin is given is a folder in the Study home, and never a
-// link the agent could have pointed elsewhere.
-func TestThePluginsFolderIsNoLink(t *testing.T) {
-	for _, linked := range []string{".lamplight", ".lamplight/knowledge-base-plugins", ".lamplight/knowledge-base-plugins/kb"} {
-		t.Run(linked, func(t *testing.T) {
+// The folder a plugin is given is in the learner's state folder, and never
+// where the agent writes: a state folder that is the Study home, is inside
+// it or is reached through it gives a plugin no folder, and no plugin.
+func TestThePluginsFolderIsOutsideTheStudyHome(t *testing.T) {
+	for name, vars := range map[string]func(t *testing.T, c *plugintest.Computer) (state string){
+		"the state folder is in the Study home": func(t *testing.T, c *plugintest.Computer) string {
+			return filepath.Join(c.StudyHome, ".state")
+		},
+		"the state folder is the Study home": func(t *testing.T, c *plugintest.Computer) string { return c.StudyHome },
+		"the state folder is reached through the Study home": func(t *testing.T, c *plugintest.Computer) string {
+			link := filepath.Join(c.StudyHome, "state")
+			if err := os.Symlink(t.TempDir(), link); err != nil {
+				t.Fatal(err)
+			}
+			return link
+		},
+		"the home folder's state folder leads into the Study home": func(t *testing.T, c *plugintest.Computer) string {
+			if err := os.MkdirAll(filepath.Join(c.Home, ".local"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(filepath.Join(c.StudyHome, "topic"), filepath.Join(c.Home, ".local", "state")); err != nil {
+				t.Fatal(err)
+			}
+			return ""
+		},
+		"a folder on the way is a link into the Study home": func(t *testing.T, c *plugintest.Computer) string {
+			state := filepath.Join(c.Home, "state")
+			if err := os.MkdirAll(filepath.Join(state, "lamplight"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(c.StudyHome, filepath.Join(state, "lamplight", "knowledge-base-plugins")); err != nil {
+				t.Fatal(err)
+			}
+			return state
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
 			c := plugintest.NewComputer(t)
-			elsewhere := t.TempDir()
-			link := filepath.Join(c.StudyHome, linked)
-			if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
+			if err := os.Mkdir(filepath.Join(c.StudyHome, "topic"), 0o755); err != nil {
 				t.Fatal(err)
 			}
-			if err := os.Symlink(elsewhere, link); err != nil {
-				t.Fatal(err)
+			state := vars(t, c)
+			env := c.Env("")
+			env.Getenv = func(key string) string {
+				if key == "XDG_STATE_HOME" {
+					return state
+				}
+				return c.Getenv(key)
 			}
+			before := listing(t, c.StudyHome)
 			record := filepath.Join(t.TempDir(), "record.json")
 			plugin := c.Register(t, "kb", plugintest.Command("--record", record)...)
-			s, err := pluginclient.Start(context.Background(), c.Env(""), plugin, quick(c))
+			s, err := pluginclient.Start(context.Background(), env, plugin, quick(c))
 			if err == nil {
 				s.Close()
 			}
-			if codeOf(err) != pluginclient.CodeFailedPrecondition || !strings.Contains(err.Error(), link+" is not a folder: it is a symbolic link") {
-				t.Errorf("Start = %v; want it refused", err)
+			if codeOf(err) != pluginclient.CodeFailedPrecondition || !strings.Contains(err.Error(), "is inside the Study home, "+c.StudyHome+", or is reached through it") ||
+				!strings.Contains(err.Error(), "set XDG_STATE_HOME to a folder outside the Study home") {
+				t.Errorf("Start = %v; want it refused, with what to do", err)
 			}
 			if _, err := os.Stat(record); err == nil {
 				t.Error("the plugin was started")
 			}
-			if left, _ := os.ReadDir(elsewhere); len(left) != 0 {
-				t.Errorf("study made something where the link leads: %v", left)
+			if now := listing(t, c.StudyHome); now != before {
+				t.Errorf("study made something in the Study home:\nbefore: %s\nnow:    %s", before, now)
 			}
 		})
 	}
+
+	// A state folder reached through a link outside the Study home is the
+	// folder the link leads to, and the plugin is told that path.
+	t.Run("a link outside the Study home is followed", func(t *testing.T) {
+		c := plugintest.NewComputer(t)
+		disk := t.TempDir()
+		if real, err := filepath.EvalSymlinks(disk); err == nil {
+			disk = real
+		}
+		link := filepath.Join(c.Home, "state")
+		if err := os.Symlink(disk, link); err != nil {
+			t.Fatal(err)
+		}
+		env := c.Env("")
+		env.Getenv = func(key string) string {
+			if key == "XDG_STATE_HOME" {
+				return link
+			}
+			return c.Getenv(key)
+		}
+		record := filepath.Join(t.TempDir(), "record.json")
+		plugin := c.Register(t, "kb", plugintest.Command("--record", record)...)
+		s, err := pluginclient.Start(context.Background(), env, plugin, quick(c))
+		if err != nil {
+			t.Fatalf("Start: %v", err)
+		}
+		defer s.Close()
+		want := filepath.Join(disk, "lamplight", "knowledge-base-plugins", "kb")
+		if got := plugintest.ReadRecord(t, record); s.DataFolder() != want || got.Env[plugincontract.DataFolderEnv] != want {
+			t.Errorf("DataFolder = %q, and the plugin was told %q; want the folder the link leads to, %s", s.DataFolder(),
+				got.Env[plugincontract.DataFolderEnv], want)
+		}
+	})
+
+	// Without a home folder there is no state folder to find.
+	t.Run("no state folder", func(t *testing.T) {
+		c := plugintest.NewComputer(t)
+		env := c.Env("")
+		env.Getenv = func(key string) string {
+			if key == "HOME" {
+				return "home"
+			}
+			return c.Getenv(key)
+		}
+		// The registry is found through XDG_CONFIG_HOME then.
+		config := filepath.Dir(c.ConfigDir)
+		inner := env.Getenv
+		env.Getenv = func(key string) string {
+			if key == "XDG_CONFIG_HOME" {
+				return config
+			}
+			return inner(key)
+		}
+		record := filepath.Join(t.TempDir(), "record.json")
+		plugin := c.Register(t, "kb", plugintest.Command("--record", record)...)
+		s, err := pluginclient.Start(context.Background(), env, plugin, quick(c))
+		if err == nil {
+			s.Close()
+		}
+		if codeOf(err) != pluginclient.CodeFailedPrecondition || !strings.Contains(err.Error(), "keeps its index in (HOME is \"home\", which is not "+
+			"an absolute path): set HOME, or XDG_STATE_HOME, to an absolute path") {
+			t.Errorf("Start = %v; want it refused, with what to do", err)
+		}
+		if _, err := os.Stat(record); err == nil {
+			t.Error("the plugin was started")
+		}
+	})
+}
+
+// listing names everything in a folder, links as links.
+func listing(t *testing.T, dir string) string {
+	t.Helper()
+	var names []string
+	err := filepath.WalkDir(dir, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		names = append(names, strings.TrimPrefix(path, dir)+" "+entry.Type().String())
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.Join(names, ", ")
 }
 
 // What is started is the program that was checked, in the folder that was
-// checked, whatever their names lead to by the time it starts. Linux runs
-// the open file and enters the open folder; elsewhere a last look refuses a
-// name that moved.
+// checked, whatever the folders on the way to them lead to by the time it
+// starts. Linux runs the program from the folder it opened, and enters the
+// open folder; elsewhere a last look refuses a name that moved.
 func TestWhatWasCheckedIsWhatIsStarted(t *testing.T) {
 	copyOf := func(t *testing.T, path string) string {
 		t.Helper()
@@ -717,24 +895,26 @@ func TestWhatWasCheckedIsWhatIsStarted(t *testing.T) {
 		}
 		return path
 	}
-	t.Run("the program", func(t *testing.T) {
+	t.Run("a folder on the way to the program", func(t *testing.T) {
 		c := plugintest.NewComputer(t)
 		bin := filepath.Join(c.Home, "bin")
 		if err := os.MkdirAll(bin, 0o755); err != nil {
 			t.Fatal(err)
 		}
-		checked, other := copyOf(t, filepath.Join(bin, "kb")), copyOf(t, filepath.Join(bin, "other"))
+		checked := copyOf(t, filepath.Join(bin, "kb"))
 		record := filepath.Join(t.TempDir(), "record.json")
 		plugin := c.Register(t, "kb", checked, plugintest.Arg, "--record", record)
-		// Between the check and the start, the name comes to lead to
-		// another program.
+		// Between the check and the start, the folder's name comes to lead
+		// to another folder, with another program under the same name.
+		moved := bin + ".checked"
 		defer pluginclient.SetBeforeStart(func() {
-			if err := os.Rename(checked, checked+".checked"); err != nil {
+			if err := os.Rename(bin, moved); err != nil {
 				t.Error(err)
 			}
-			if err := os.Rename(other, checked); err != nil {
+			if err := os.Mkdir(bin, 0o755); err != nil {
 				t.Error(err)
 			}
+			copyOf(t, checked)
 		})()
 		s, err := pluginclient.Start(context.Background(), c.Env(""), plugin, quick(c))
 		if runtime.GOOS != "linux" {
@@ -750,8 +930,39 @@ func TestWhatWasCheckedIsWhatIsStarted(t *testing.T) {
 			t.Fatalf("Start: %v", err)
 		}
 		defer s.Close()
-		if got := plugintest.ReadRecord(t, record); got.Files[3] != checked+".checked" {
-			t.Errorf("the program that runs is %q; want the one that was checked, now %s", got.Files[3], checked+".checked")
+		if got := plugintest.ReadRecord(t, record); got.Exe != filepath.Join(moved, "kb") || got.Files[3] != moved {
+			t.Errorf("the program that runs is %q, from the folder %q; want the one that was checked, now in %s", got.Exe, got.Files[3], moved)
+		}
+	})
+	// The program's own name, in its own folder, is looked at last: whoever
+	// can put another file there could have done so before the check. A
+	// file that took the name since is still not started.
+	t.Run("the program", func(t *testing.T) {
+		c := plugintest.NewComputer(t)
+		bin := filepath.Join(c.Home, "bin")
+		if err := os.MkdirAll(bin, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		checked, other := copyOf(t, filepath.Join(bin, "kb")), copyOf(t, filepath.Join(bin, "other"))
+		record := filepath.Join(t.TempDir(), "record.json")
+		plugin := c.Register(t, "kb", checked, plugintest.Arg, "--record", record)
+		defer pluginclient.SetBeforeStart(func() {
+			if err := os.Rename(checked, checked+".checked"); err != nil {
+				t.Error(err)
+			}
+			if err := os.Rename(other, checked); err != nil {
+				t.Error(err)
+			}
+		})()
+		s, err := pluginclient.Start(context.Background(), c.Env(""), plugin, quick(c))
+		if err == nil {
+			s.Close()
+		}
+		if codeOf(err) != pluginclient.CodeFailedPrecondition || !strings.Contains(err.Error(), checked+" came to name something else") {
+			t.Errorf("Start = %v; want it refused", err)
+		}
+		if _, err := os.Stat(record); err == nil {
+			t.Error("a program was started")
 		}
 	})
 	t.Run("the folder", func(t *testing.T) {
@@ -782,4 +993,147 @@ func TestWhatWasCheckedIsWhatIsStarted(t *testing.T) {
 			t.Errorf("the plugin was started in %s; want the folder that was checked, now %s", got.Dir, moved)
 		}
 	})
+}
+
+// A plugin that sends study requests is stopped at the first one. study
+// offers a plugin nothing to call, and the MCP library would answer each
+// request in a goroutine of its own, which a plugin that reads no answer
+// leaves waiting: without end, and with them study's memory.
+func TestAPluginThatSendsRequestsIsStopped(t *testing.T) {
+	ctx := context.Background()
+	// While study asks nothing: nobody is waiting for the plugin, and the
+	// Connection still ends, and says why to whoever asks next.
+	t.Run("while study asks nothing", func(t *testing.T) {
+		c := plugintest.NewComputer(t)
+		record := filepath.Join(t.TempDir(), "record.json")
+		plugin := c.Register(t, "kb", plugintest.Command("--record", record, "--ask", "idle")...)
+		before := heap()
+		s, err := pluginclient.Start(ctx, c.Env(""), plugin, quick(c))
+		if err != nil {
+			t.Fatalf("Start: %v", err)
+		}
+		defer s.Close()
+		for deadline := time.Now().Add(10 * time.Second); !s.Ended(); time.Sleep(5 * time.Millisecond) {
+			if time.Now().After(deadline) {
+				t.Fatal("the Connection of a plugin that sends requests did not end")
+			}
+		}
+		gone(t, record)
+		if _, err := s.Status(ctx, "c"); codeOf(err) != pluginclient.CodeFailedPrecondition || !strings.Contains(err.Error(),
+			"Knowledge base plugin kb can no longer be asked: it sent study a request (ping), which a plugin never does, and study stopped it") {
+			t.Errorf("Status afterwards = %v", err)
+		}
+		if grown := heap() - before; grown > 64<<20 {
+			t.Errorf("study holds %d MiB more after a plugin flooded it with requests", grown>>20)
+		}
+	})
+	// In the middle of a call: the call ends at once, not at its deadline.
+	t.Run("in the middle of a call", func(t *testing.T) {
+		c := plugintest.NewComputer(t)
+		record := filepath.Join(t.TempDir(), "record.json")
+		plugin := c.Register(t, "kb", plugintest.Command("--record", record, "--ask", "search")...)
+		before := heap()
+		s, err := pluginclient.Start(ctx, c.Env(""), plugin, quick(c))
+		if err != nil {
+			t.Fatalf("Start: %v", err)
+		}
+		defer s.Close()
+		began := time.Now()
+		_, err = s.Search(ctx, "c", "inverse", 5, nil)
+		if codeOf(err) != pluginclient.CodeFailedPrecondition ||
+			!strings.Contains(err.Error(), "Knowledge base plugin kb sent study a request (ping), and study stopped it") {
+			t.Errorf("Search = %v", err)
+		}
+		if took := time.Since(began); took > 5*time.Second {
+			t.Errorf("Search took %s to end: the first request ends the Connection, not the call's deadline", took)
+		}
+		if !s.Ended() {
+			t.Error("the Connection has not ended")
+		}
+		gone(t, record)
+		if grown := heap() - before; grown > 64<<20 {
+			t.Errorf("study holds %d MiB more after a plugin flooded it with requests", grown>>20)
+		}
+	})
+}
+
+// Notifications a plugin may send, and study passes over them. A flood of
+// them costs study nothing it keeps: the call still ends at its deadline.
+func TestAFloodOfNotificationsIsPassedOver(t *testing.T) {
+	c := plugintest.NewComputer(t)
+	record := filepath.Join(t.TempDir(), "record.json")
+	plugin := c.Register(t, "kb", plugintest.Command("--record", record, "--notify", "search")...)
+	opts := impatient(c)
+	opts.StartTimeout, opts.SearchTimeout = 10*time.Second, 1500*time.Millisecond
+	before := heap()
+	s, err := pluginclient.Start(context.Background(), c.Env(""), plugin, opts)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer s.Close()
+	_, err = s.Search(context.Background(), "c", "inverse", 5, nil)
+	if codeOf(err) != pluginclient.CodeFailedPrecondition || !strings.Contains(err.Error(), "did not answer its search tool within 1.5s, so study stopped it") {
+		t.Errorf("Search = %v", err)
+	}
+	gone(t, record)
+	if grown := heap() - before; grown > 256<<20 {
+		t.Errorf("study holds %d MiB more after a plugin flooded it with notifications for a second and a half", grown>>20)
+	}
+}
+
+// heap is how much memory the program holds, after collecting what it no
+// longer does.
+func heap() int64 {
+	runtime.GC()
+	var stats runtime.MemStats
+	runtime.ReadMemStats(&stats)
+	return int64(stats.HeapAlloc)
+}
+
+// A Connection has ended as soon as its program has exited, whether or not
+// anything was asked of it since: whoever keeps one starts another.
+func TestAConnectionEndsWhenItsProgramExits(t *testing.T) {
+	ctx := context.Background()
+	c := plugintest.NewComputer(t)
+	record := filepath.Join(t.TempDir(), "record.json")
+	s := start(t, c, "--record", record)
+	if s.Ended() {
+		t.Fatal("a Connection that was just started has ended")
+	}
+	// The plugin dies of something that is not study's doing.
+	plugintest.Kill(plugintest.ReadRecord(t, record).PID)
+	for deadline := time.Now().Add(10 * time.Second); !s.Ended(); time.Sleep(5 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("the Connection of a plugin that has exited did not end until it was asked something")
+		}
+	}
+	if _, err := s.Status(ctx, "c"); codeOf(err) != pluginclient.CodeFailedPrecondition ||
+		!strings.Contains(err.Error(), "Knowledge base plugin kb can no longer be asked: its program has exited (signal: killed)") {
+		t.Errorf("Status afterwards = %v", err)
+	}
+}
+
+// Everything study does to start a plugin is under the one deadline, what it
+// does before the program runs included: a drive that does not answer holds
+// up the walk to a program as surely as a plugin holds up its answer.
+func TestStartingIsUnderOneDeadline(t *testing.T) {
+	c := plugintest.NewComputer(t)
+	record := filepath.Join(t.TempDir(), "record.json")
+	plugin := c.Register(t, "kb", plugintest.Command("--record", record)...)
+	release := make(chan struct{})
+	defer pluginclient.SetBeforeStart(func() { <-release })()
+	began := time.Now()
+	s, err := pluginclient.Start(context.Background(), c.Env(""), plugin, impatient(c))
+	if err == nil {
+		s.Close()
+	}
+	if codeOf(err) != pluginclient.CodeFailedPrecondition || !strings.Contains(err.Error(), "Knowledge base plugin kb could not be started within 400ms") {
+		t.Errorf("Start = %v; want it to give up at its deadline", err)
+	}
+	if took := time.Since(began); took > 5*time.Second {
+		t.Errorf("Start took %s to give up", took)
+	}
+	// What it comes to start, late, is stopped.
+	close(release)
+	gone(t, record)
 }

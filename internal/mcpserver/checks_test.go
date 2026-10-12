@@ -19,11 +19,18 @@ import (
 	"github.com/mordor-forge/lamplight/v2/internal/core"
 )
 
-// checkTopic gives Topic c a one-Lesson Syllabus whose Check has a run
-// criterion, a rubric item and a held_out criterion, and a break point. Each
-// command of the Check adds a line to the file marker, so a test can tell
-// whether, and how often, anything ran it.
+// checkTopic gives Topic c, in the Study home home, a one-Lesson Syllabus
+// whose Check has a run criterion, a rubric item and a held_out criterion,
+// and a break point. Each command of the Check adds a line to the file
+// marker, so a test can tell whether, and how often, anything ran it.
 func checkTopic(t *testing.T, session *mcp.ClientSession, home string) (marker string) {
+	t.Helper()
+	return checkTopicIn(t, session, home, home)
+}
+
+// checkTopicIn is checkTopic for a Study home that is not the folder the
+// marker is kept in.
+func checkTopicIn(t *testing.T, session *mcp.ClientSession, home, studyHome string) (marker string) {
 	t.Helper()
 	call(t, session, "topic_create", map[string]any{"title": "C", "id": "c"})
 	var p core.RevisionProposal
@@ -39,7 +46,7 @@ func checkTopic(t *testing.T, session *mcp.ClientSession, home string) (marker s
 		"practice/answer/answer.txt":   "42\n",
 		".heldout/answer/expected.txt": "42\n",
 	} {
-		path := filepath.Join(home, "c", filepath.FromSlash(name))
+		path := filepath.Join(studyHome, "c", filepath.FromSlash(name))
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -89,9 +96,23 @@ func TestNoToolRunsACheck(t *testing.T) { everyTool(t, nil) }
 // when the server offers a tool it does not call. It returns the Study home
 // and a core opened on it.
 func everyTool(t *testing.T, prepare func(*mcp.Server)) (string, *core.Core) {
+	home := t.TempDir()
+	return home, everyToolOn(t, home, home, prepare, nil)
+}
+
+// everyToolOn is everyTool on a computer whose home folder is home and whose
+// Study home is studyHome, which may be another folder: the Knowledge base
+// plugin registry is read only when it is. after, if not nil, is called with
+// each tool's name once the tool has answered, for a test to look at what
+// the call left behind, and with "study check" once the Lesson's Check was
+// run through the core, as study check runs it.
+func everyToolOn(t *testing.T, home, studyHome string, prepare func(*mcp.Server), after func(tool string)) *core.Core {
+	t.Helper()
 	ctx := context.Background()
 	withGitIdentity(t)
-	home := t.TempDir()
+	if after == nil {
+		after = func(string) {}
+	}
 	book := filepath.Join(home, "Books", "The_C_Programming_Language.pdf")
 	if err := os.MkdirAll(filepath.Dir(book), 0o755); err != nil {
 		t.Fatal(err)
@@ -99,17 +120,18 @@ func everyTool(t *testing.T, prepare func(*mcp.Server)) (string, *core.Core) {
 	if err := os.WriteFile(book, []byte("%PDF-1.4"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	c, err := core.Open(core.Options{Getenv: func(key string) string {
-		return map[string]string{"STUDY_HOME": home, "HOME": home}[key]
-	}, Dir: home})
+	getenv := func(key string) string {
+		return map[string]string{"STUDY_HOME": studyHome, "HOME": home}[key]
+	}
+	c, err := core.Open(core.Options{Getenv: getenv, Dir: home})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := c.BuildLibrary(ctx, "Books"); err != nil {
 		t.Fatal(err)
 	}
-	session := connectServer(t, home, nil, nil, prepare)
-	marker := checkTopic(t, session, home)
+	session := connectOn(t, getenv, home, nil, nil, prepare)
+	marker := checkTopicIn(t, session, home, studyHome)
 	runs := func() int {
 		data, err := os.ReadFile(marker)
 		if errors.Is(err, fs.ErrNotExist) {
@@ -122,6 +144,9 @@ func everyTool(t *testing.T, prepare func(*mcp.Server)) (string, *core.Core) {
 	}
 	// checkTopic called these, and call fails on a tool error.
 	called := map[string]bool{"topic_create": true, "revision_propose": true, "revision_apply": true, "phase_set": true}
+	for _, tool := range []string{"topic_create", "revision_propose", "revision_apply", "phase_set"} {
+		after(tool)
+	}
 	// ids holds what earlier calls returned, for later ones to name.
 	ids := map[string]string{}
 	use := func(tool string, args map[string]any, keep func(json.RawMessage)) {
@@ -138,6 +163,7 @@ func everyTool(t *testing.T, prepare func(*mcp.Server)) (string, *core.Core) {
 		if n := runs(); n != 0 {
 			t.Fatalf("calling %s ran the Check %d times", tool, n)
 		}
+		after(tool)
 	}
 	// field keeps the string at path in a result as ids[name], taking the
 	// first element of any list on the way.
@@ -173,7 +199,7 @@ func everyTool(t *testing.T, prepare func(*mcp.Server)) (string, *core.Core) {
 
 	use("status", map[string]any{}, nil)
 	use("syllabus", topic, nil)
-	use("topic_update", with(topic, "goal", "Answer the question",
+	use("topic_update", with(topic, "goal", "Answer the question", "knowledge_base", map[string]any{"kind": "none"},
 		"add_tasks", []any{map[string]any{"title": "Book the exam"}}), field("task", "added_tasks", "id"))
 	use("tasks", topic, nil)
 	use("task_done", with(topic, "task", ids["task"]), nil)
@@ -211,7 +237,7 @@ func everyTool(t *testing.T, prepare func(*mcp.Server)) (string, *core.Core) {
 	use("phase_set", with(lesson, "phase", "feedback"), nil)
 
 	// A damaged History line raises a Flag to dismiss.
-	f, err := os.OpenFile(filepath.Join(home, "c", "history.jsonl"), os.O_APPEND|os.O_WRONLY, 0)
+	f, err := os.OpenFile(filepath.Join(studyHome, "c", "history.jsonl"), os.O_APPEND|os.O_WRONLY, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -236,12 +262,14 @@ func everyTool(t *testing.T, prepare func(*mcp.Server)) (string, *core.Core) {
 	if n := runs(); n != 2 {
 		t.Fatalf("study check ran %d commands, want 2, so this test proves nothing", n)
 	}
+	after("study check")
 	var done core.LessonCompletion
 	decode(t, call(t, session, "lesson_complete", lesson), &done)
 	called["lesson_complete"] = true
 	if n := runs(); n != 2 || !done.Changed {
 		t.Errorf("lesson_complete: %d runs, completion %+v", n, done)
 	}
+	after("lesson_complete")
 
 	tools, err := session.ListTools(ctx, nil)
 	if err != nil {
@@ -252,7 +280,7 @@ func everyTool(t *testing.T, prepare func(*mcp.Server)) (string, *core.Core) {
 			t.Errorf("%s was not called: add it to this test", tool.Name)
 		}
 	}
-	return home, c
+	return c
 }
 
 // TestTheServerCannotRunACheck reads the server's own source: it must not

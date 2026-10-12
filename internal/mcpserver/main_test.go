@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/mordor-forge/lamplight/v2/internal/plugintest"
 )
 
 // TestMain clears the caller's GIT_* variables. A commit hook that runs the
@@ -14,6 +16,9 @@ import (
 // then work on the repository being committed. The core drops these
 // variables on its own.
 func TestMain(m *testing.M) {
+	// This test binary is the test plugin when it is started as one: the
+	// plugin a test registers to see that no tool starts it.
+	plugintest.Main()
 	for _, kv := range os.Environ() {
 		if name, _, _ := strings.Cut(kv, "="); strings.HasPrefix(name, "GIT_") {
 			os.Unsetenv(name)

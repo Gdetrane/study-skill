@@ -111,26 +111,65 @@ Building the registry showed that three of these rules needed more than they say
   that the MCP server's dependencies do not contain it. A rule about names was passed by
   one wrapper function.
 
-Building the client showed that starting a command needed more than these rules say too:
+Building the client, and having it attacked in review, showed that starting a command
+needed more than these rules say too:
 
 - What the system starts for a script is the interpreter its first line names, so that
-  program is checked as the plugin's own is, and its own interpreter after it.
-- The learner's environment can point into the Study home: an agent started in a Topic
-  with its virtual environment switched on hands the MCP server a `PATH` and a
-  `PYTHONPATH` into the Topic. A plugin started with those, outside the sandbox, would run
-  what the agent wrote there. So besides `GIT_*`, whatever in the environment names
-  something inside the Study home is taken out. Like the look at arguments, this catches
-  what is written as a path and is not a guarantee.
-- Only Linux can run a file that is already open. On macOS the program is started by its
-  path after a last look that the path still names the file that was checked, which leaves
-  the moment between that look and the system's own.
-- The plugin's folder is in the Study home, where the agent writes, and the plugin is told
-  its name. `study` refuses to start a plugin whose folder, or a folder on the way to it,
-  is a symbolic link; that is a look at one moment. And an agent that can write the index
-  can write what a search finds, so a quote checked against a Passage is as good as the
-  index it came from.
+  program is checked as the plugin's own is, and its own interpreter after it. An
+  interpreter named by a relative path is refused: the system would look for it from the
+  folder the plugin is started in.
+- **A plugin gets a small environment that `study` makes, not the caller's with things
+  taken out.** The environment `study` has can point into the Study home: an agent started
+  in a Topic with its virtual environment switched on hands the MCP server a `PATH` and a
+  `PYTHONPATH` into the Topic, and a plugin started with those, outside the sandbox, would
+  run what the agent wrote there. The first client took out of the environment whatever
+  named something inside the Study home, and the review showed that this does not hold: a
+  variable has many ways to have a program load something, and a list of what to take out
+  is never finished. So a plugin gets `PATH`, `HOME`, `USER`, `LOGNAME`, `LANG`, `LC_*`, `TZ`, `TMPDIR`, the XDG base
+  folders and `LAMPLIGHT_PLUGIN_DATA`, each only when it leads nowhere inside the Study
+  home, and nothing else. A path the check cannot decide counts as inside. A plugin that
+  needs more, a key or a proxy, takes it in its arguments, or the learner registers a
+  script of their own, outside the Study home, that sets it.
+- **The plugin's folder is in the learner's state folder, outside the Study home**:
+  `$XDG_STATE_HOME/lamplight/knowledge-base-plugins/<name>`. The first client put it under
+  the Study home's `.lamplight`, where the agent writes, and refused to start a plugin
+  whose folder was a symbolic link. The review showed that this does not hold either: it is
+  a look at one moment, and the plugin opens the name for as long as it runs, so the folder
+  can be exchanged for a link afterwards and the plugin writes where the link leads. And an
+  agent that can write the index can write what a search finds, so a quote checked against
+  a Passage would be as good as the agent's word. A state folder that is the Study home, is inside it or is reached through it is
+  refused by the registry's rule, and the folder is the learner's alone to read. The cost:
+  `study source index` run inside a sandbox starts the plugin inside it, so the sandbox
+  must allow that folder, or the learner indexes from their own shell. The contract still
+  has a plugin open its folder once and follow no link out of it, and the conformance suite
+  checks that.
+- A plugin is started with no file of `study`'s but its three pipes. Whatever `study` was
+  itself started with, a descriptor for a file or a copy of its standard output, is closed
+  in the plugin: in the review a plugin wrote a line in front of the `--json` answer
+  through one.
+- Only Linux can run a program through a folder that is already open. There `study` opens
+  the folder that really holds the program when it checks it, and runs the program by its
+  own name in that folder, so no folder on the way is looked up again. Running the open
+  file itself would pin the file as well as its folder, and was the first way; but the
+  system then calls the process by a number, and a script is handed a descriptor's name
+  with nothing beside it, so a script that starts the program next to itself works in a
+  terminal and not under `study`. Whoever can put another file under the program's name in
+  its own folder could have done so before the check, and the agent cannot: the folder is
+  outside the Study home. On macOS the program is started by its path after a last look
+  that the path still names the file that was checked, which leaves the moment between
+  that look and the system's own.
+- **A plugin sends `study` no requests.** `study` offers a plugin nothing to call, and the
+  MCP library answers every request a server sends in a goroutine that then waits to write
+  its answer: a plugin that sends requests without end, and reads no answer, has `study`
+  allocate without bound. The first request ends the session, on both transports.
 - A `study` that is killed can stop nothing. Its end of the plugin's standard input closes
-  with it, and the contract has a plugin exit when that happens.
+  with it, and the contract has a plugin exit when that happens. A program a plugin moved
+  to a process group or a session of its own is not stopped by `study` either: the plugin
+  stops what it starts.
+- A rule about how the core is written was passed three ways, as the rule about names
+  above was passed by one wrapper. So what keeps a tool from starting a plugin is checked
+  by what the tools do: plugins that record being started or reached are registered, every
+  tool is called, and none of them was. Reading the source is the second line.
 
 ADR-0009 stands: the core runs nothing that a Topic's files name.
 

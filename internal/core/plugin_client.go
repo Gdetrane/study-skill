@@ -17,15 +17,17 @@ import (
 //
 // So far one operation does: CheckPlugin, for study knowledge-base check,
 // which is for the learner and CLI-only. No MCP tool starts or reaches a
-// plugin yet, and a test in internal/mcpserver keeps it so until a Topic can
-// name one.
+// plugin yet, and tests in internal/mcpserver keep it so until a Topic can
+// name one: one calls every tool with plugins registered that record being
+// started or reached, and one reads this package and that one for whatever
+// could start a plugin from anywhere but CheckPlugin.
 
 // PluginOptions says how Knowledge base plugins are started and how long
 // they have. Zero values select the production defaults.
 type PluginOptions struct {
-	// Environ returns the environment a plugin started by a command gets,
-	// before study takes out of it what a plugin must not get. Defaults to
-	// os.Environ: the learner's environment.
+	// Environ returns the environment study has, of which a plugin started
+	// by a command is given a few variables and no more
+	// (pluginclient.StartCommand). Defaults to os.Environ.
 	Environ func() []string
 	// StartTimeout is how long a plugin has to start, or be reached, and say
 	// which contract it speaks; CallTimeout how long to answer one call;
@@ -48,15 +50,23 @@ type PluginServer = pluginclient.Server
 // PluginCheck reports a Knowledge base plugin that started, or was reached,
 // and speaks the contract.
 type PluginCheck struct {
-	// Plugin is the plugin as it is registered.
-	Plugin Plugin `json:"plugin"`
+	// Name is the name the plugin is registered under.
+	Name string `json:"name"`
+	// Command is the command that starts it, as it is registered, when it
+	// is started by one.
+	Command []string `json:"command,omitempty"`
+	// Address is where a plugin reached by URL answers: the scheme and host
+	// of its registered address. The rest of that address, a path or a
+	// query, may be a key, and is shown by study knowledge-base list alone.
+	Address string `json:"address,omitempty"`
 	// Contract is the contract version it speaks and what it can do.
 	Contract PluginContract `json:"contract"`
 	// Server is what it calls itself. The text is the plugin's, with what a
 	// terminal would interpret escaped.
 	Server PluginServer `json:"server"`
 	// DataFolder is the folder a plugin started by a command is given to
-	// keep its index in, under the Study home's .lamplight.
+	// keep its index in: in Lamplight's state folder on this computer,
+	// outside the Study home.
 	DataFolder string `json:"data_folder,omitempty"`
 }
 
@@ -70,9 +80,10 @@ type PluginCheck struct {
 // canceled means the command was stopped first. In every case nothing is
 // left running.
 //
-// A command plugin gets its folder under the Study home's .lamplight, which
-// is made when it is not there. Nothing else is written, and no Event is
-// recorded: the registry and a plugin's index are this computer's.
+// A command plugin gets its folder in Lamplight's state folder, outside the
+// Study home, which is made when it is not there. Nothing else is written,
+// and no Event is recorded: the registry and a plugin's index are this
+// computer's.
 func (c *Core) CheckPlugin(ctx context.Context, name string) (PluginCheck, error) {
 	if len(name) > 64 || !topicIDPattern.MatchString(name) {
 		return PluginCheck{}, invalidf("%q is not the name of a Knowledge base plugin: a name is lowercase letters, digits and "+
@@ -91,7 +102,12 @@ func (c *Core) CheckPlugin(ctx context.Context, name string) (PluginCheck, error
 		return PluginCheck{}, err
 	}
 	defer session.Close()
-	return PluginCheck{Plugin: plugin, Contract: session.Contract(), Server: session.Server(), DataFolder: session.DataFolder()}, nil
+	check := PluginCheck{Name: plugin.Name, Command: plugin.Command, Contract: session.Contract(), Server: session.Server(),
+		DataFolder: session.DataFolder()}
+	if plugin.URL != "" {
+		check.Address = pluginclient.Address(plugin.URL)
+	}
+	return check, nil
 }
 
 // plugin finds the Knowledge base plugin registered under name on this

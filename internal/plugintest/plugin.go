@@ -13,7 +13,9 @@
 package plugintest
 
 import (
+	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -24,7 +26,6 @@ import (
 	"io/fs"
 	"net/http"
 	"os"
-	"path/filepath"
 	"regexp"
 	"slices"
 	"sort"
@@ -37,6 +38,34 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/mordor-forge/lamplight/v2/internal/plugincontract"
+)
+
+// The rules of the contract a test plugin can be told to break, each in one
+// way, for the conformance suite to catch (Config.Breaks, and --break).
+const (
+	// BreakOverLimit gives every Passage a search found, whatever its limit.
+	BreakOverLimit = "over-limit"
+	// BreakStatusWaits and BreakSearchWaits answer only once nothing is
+	// being indexed in the collection.
+	BreakStatusWaits = "status-waits"
+	BreakSearchWaits = "search-waits"
+	// BreakCancelDropsEarlier forgets what was indexed for a Source when
+	// the indexing of new content for it is stopped.
+	BreakCancelDropsEarlier = "cancel-drops-earlier"
+	// BreakNoEarlierHash leaves the hash out for a Source that is being
+	// indexed, or failed, while its earlier content is still found.
+	BreakNoEarlierHash = "no-earlier-hash"
+	// BreakSearchReadsSource finds nothing in a Source whose file is no
+	// longer there, as a plugin that reads the file to search it would.
+	BreakSearchReadsSource = "search-reads-source"
+	// BreakFailedForgotten says once that a Source failed, and then no more.
+	BreakFailedForgotten = "failed-forgotten"
+	// BreakFollowsLinks keeps the index by the folder's path, through
+	// whatever symbolic link is in it.
+	BreakFollowsLinks = "follows-links"
+	// BreakStrict refuses arguments that hold a field the contract does not
+	// name.
+	BreakStrict = "strict"
 )
 
 // Config says how a test plugin behaves.
@@ -66,6 +95,8 @@ type Config struct {
 	PlainErrors map[string]string
 	// TextOnly gives results as text alone, without structured content.
 	TextOnly bool
+	// Breaks are the rules of the contract it breaks: the Break constants.
+	Breaks []string
 	// Before, when set, is called with a tool's name before the tool
 	// answers: for a test to hold a call up.
 	Before func(ctx context.Context, tool string)
@@ -78,6 +109,13 @@ type Config struct {
 // Plugin is a test plugin: one index, served to any number of MCP sessions.
 type Plugin struct {
 	cfg Config
+
+	// root is the plugin's folder, opened once: everything the plugin reads
+	// and writes of its index goes through it, so nothing in the folder,
+	// whatever it is exchanged for while the plugin runs, leads the plugin
+	// out of it. rootErr is why it could not be opened.
+	root    *os.Root
+	rootErr error
 
 	// asking makes one request to index wait for the one before it.
 	asking sync.Mutex
@@ -99,11 +137,14 @@ type job struct {
 
 // stored is one Source in the index, as its file holds it.
 type stored struct {
-	Format   int             `json:"format"`
-	ID       string          `json:"id"`
-	Title    string          `json:"title"`
-	Kind     string          `json:"kind"`
-	Hash     string          `json:"hash"`
+	Format int    `json:"format"`
+	ID     string `json:"id"`
+	Title  string `json:"title"`
+	Kind   string `json:"kind"`
+	Hash   string `json:"hash"`
+	// Path is where a file Source was read from. Nothing reads it there
+	// again but a plugin told to break that rule.
+	Path     string          `json:"path,omitempty"`
 	Passages []storedPassage `json:"passages"`
 }
 
@@ -128,10 +169,15 @@ func New(cfg Config) *Plugin {
 	if cfg.Tools == nil {
 		cfg.Tools = plugincontract.Tools
 	}
-	return &Plugin{cfg: cfg, jobs: map[[2]string]*job{}, failed: map[[2]string]string{}}
+	p := &Plugin{cfg: cfg, jobs: map[[2]string]*job{}, failed: map[[2]string]string{}}
+	p.root, p.rootErr = os.OpenRoot(cfg.Folder)
+	return p
 }
 
-// Close stops whatever the plugin is indexing.
+// breaks reports whether the plugin was told to break a rule.
+func (p *Plugin) breaks(rule string) bool { return slices.Contains(p.cfg.Breaks, rule) }
+
+// Close stops whatever the plugin is indexing, and lets go of its folder.
 func (p *Plugin) Close() {
 	p.mu.Lock()
 	jobs := make([]*job, 0, len(p.jobs))
@@ -142,6 +188,9 @@ func (p *Plugin) Close() {
 	for _, j := range jobs {
 		j.stop()
 		<-j.done
+	}
+	if p.root != nil {
+		_ = p.root.Close()
 	}
 }
 
@@ -218,10 +267,18 @@ func refuse(code, format string, args ...any) *plugincontract.ErrorBody {
 	return &plugincontract.ErrorBody{Code: code, Message: fmt.Sprintf(format, args...)}
 }
 
-// read reads a tool's input and checks it against the contract.
-func read(args json.RawMessage, in interface{ Validate() error }) *plugincontract.ErrorBody {
+// read reads a tool's input and checks it against the contract. A field
+// the contract does not name is passed over.
+func (p *Plugin) read(args json.RawMessage, in interface{ Validate() error }) *plugincontract.ErrorBody {
 	if err := plugincontract.Decode(args, in); err != nil {
 		return refuse(plugincontract.CodeInvalidArgument, "%v", err)
+	}
+	if p.breaks(BreakStrict) {
+		strict := json.NewDecoder(bytes.NewReader(args))
+		strict.DisallowUnknownFields()
+		if err := strict.Decode(in); err != nil {
+			return refuse(plugincontract.CodeInvalidArgument, "%v", err)
+		}
 	}
 	if err := in.Validate(); err != nil {
 		return refuse(plugincontract.CodeInvalidArgument, "%v", err)
@@ -240,7 +297,7 @@ func (p *Plugin) contract(context.Context, json.RawMessage) (any, *plugincontrac
 
 func (p *Plugin) index(_ context.Context, args json.RawMessage) (any, *plugincontract.ErrorBody) {
 	var in plugincontract.IndexInput
-	if refusal := read(args, &in); refusal != nil {
+	if refusal := p.read(args, &in); refusal != nil {
 		return nil, refusal
 	}
 	if !slices.Contains(p.cfg.Sources, in.Source.Kind) {
@@ -317,7 +374,8 @@ func (p *Plugin) work(ctx context.Context, in plugincontract.IndexInput, j *job)
 		return err
 	}
 	sum := sha256.Sum256(content)
-	entry := stored{Format: 1, ID: in.Source.ID, Title: in.Source.Title, Kind: in.Source.Kind, Hash: "sha256:" + hex.EncodeToString(sum[:])}
+	entry := stored{Format: 1, ID: in.Source.ID, Title: in.Source.Title, Kind: in.Source.Kind, Hash: "sha256:" + hex.EncodeToString(sum[:]),
+		Path: in.Source.Path}
 	pages := pagesOf(in.Source.Kind, string(content))
 	if len(pages) == 0 {
 		return errors.New("there is no text in it")
@@ -425,13 +483,42 @@ func (p *Plugin) statusOf(key [2]string, have *stored) plugincontract.SourceStat
 	default:
 		status.State = plugincontract.StateIndexed
 	}
+	if status.State != plugincontract.StateIndexed && p.breaks(BreakNoEarlierHash) {
+		status.Hash = ""
+	}
 	return status
 }
 
-func (p *Plugin) status(_ context.Context, args json.RawMessage) (any, *plugincontract.ErrorBody) {
+// quiet waits until nothing is being indexed in a collection: what a
+// plugin told to wait for indexing does before it answers.
+func (p *Plugin) quiet(ctx context.Context, collection string) {
+	for {
+		var running *job
+		p.mu.Lock()
+		for key, j := range p.jobs {
+			if key[0] == collection {
+				running = j
+			}
+		}
+		p.mu.Unlock()
+		if running == nil {
+			return
+		}
+		select {
+		case <-running.done:
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+func (p *Plugin) status(ctx context.Context, args json.RawMessage) (any, *plugincontract.ErrorBody) {
 	var in plugincontract.StatusInput
-	if refusal := read(args, &in); refusal != nil {
+	if refusal := p.read(args, &in); refusal != nil {
 		return nil, refusal
+	}
+	if p.breaks(BreakStatusWaits) {
+		p.quiet(ctx, in.Collection)
 	}
 	// Read under the lock: a Source whose indexing ends meanwhile is then
 	// still listed as indexing, never left out.
@@ -457,7 +544,11 @@ func (p *Plugin) status(_ context.Context, args json.RawMessage) (any, *pluginco
 	}
 	out := plugincontract.StatusResult{Sources: []plugincontract.SourceStatus{}}
 	for id, have := range byID {
-		out.Sources = append(out.Sources, p.statusOf([2]string{in.Collection, id}, have))
+		key := [2]string{in.Collection, id}
+		out.Sources = append(out.Sources, p.statusOf(key, have))
+		if p.breaks(BreakFailedForgotten) {
+			delete(p.failed, key)
+		}
 	}
 	sort.Slice(out.Sources, func(i, j int) bool { return out.Sources[i].ID < out.Sources[j].ID })
 	return out, nil
@@ -465,7 +556,7 @@ func (p *Plugin) status(_ context.Context, args json.RawMessage) (any, *pluginco
 
 func (p *Plugin) cancel(_ context.Context, args json.RawMessage) (any, *plugincontract.ErrorBody) {
 	var in plugincontract.CancelInput
-	if refusal := read(args, &in); refusal != nil {
+	if refusal := p.read(args, &in); refusal != nil {
 		return nil, refusal
 	}
 	p.mu.Lock()
@@ -478,13 +569,19 @@ func (p *Plugin) cancel(_ context.Context, args json.RawMessage) (any, *pluginco
 	// behind a command that has exited.
 	running.stop()
 	<-running.done
+	if p.breaks(BreakCancelDropsEarlier) && p.root != nil {
+		_ = p.root.Remove(file(in.Collection, in.Source))
+	}
 	return plugincontract.CancelResult{Stopped: true}, nil
 }
 
-func (p *Plugin) search(_ context.Context, args json.RawMessage) (any, *plugincontract.ErrorBody) {
+func (p *Plugin) search(ctx context.Context, args json.RawMessage) (any, *plugincontract.ErrorBody) {
 	var in plugincontract.SearchInput
-	if refusal := read(args, &in); refusal != nil {
+	if refusal := p.read(args, &in); refusal != nil {
 		return nil, refusal
+	}
+	if p.breaks(BreakSearchWaits) {
+		p.quiet(ctx, in.Collection)
 	}
 	entries, err := p.loadAll(in.Collection)
 	if err != nil {
@@ -495,6 +592,11 @@ func (p *Plugin) search(_ context.Context, args json.RawMessage) (any, *pluginco
 	for _, entry := range entries {
 		if in.Sources != nil && !slices.Contains(in.Sources, entry.ID) {
 			continue
+		}
+		if p.breaks(BreakSearchReadsSource) && entry.Kind == plugincontract.SourceFile {
+			if _, err := os.Stat(entry.Path); err != nil {
+				continue
+			}
 		}
 		for _, passage := range entry.Passages {
 			score := 0
@@ -510,7 +612,7 @@ func (p *Plugin) search(_ context.Context, args json.RawMessage) (any, *pluginco
 	}
 	// The best first, and always in the same order.
 	sort.SliceStable(out.Passages, func(i, j int) bool { return out.Passages[i].Score > out.Passages[j].Score })
-	if len(out.Passages) > in.Limit {
+	if len(out.Passages) > in.Limit && !p.breaks(BreakOverLimit) {
 		out.Passages = out.Passages[:in.Limit]
 	}
 	return out, nil
@@ -518,7 +620,7 @@ func (p *Plugin) search(_ context.Context, args json.RawMessage) (any, *pluginco
 
 func (p *Plugin) passage(_ context.Context, args json.RawMessage) (any, *plugincontract.ErrorBody) {
 	var in plugincontract.PassageInput
-	if refusal := read(args, &in); refusal != nil {
+	if refusal := p.read(args, &in); refusal != nil {
 		return nil, refusal
 	}
 	entries, err := p.loadAll(in.Collection)
@@ -552,34 +654,86 @@ func words(text string) []string {
 // The index is one folder for each collection, with one file for each
 // Source in it. A Source's file is replaced whole, so another copy of the
 // plugin that reads the same folder sees the Source as it was or as it is.
+//
+// Every name below is taken from the plugin's folder as it was opened when
+// the plugin started (os.Root), never from the folder's path again: a
+// symbolic link in the folder that leads out of it is not followed, and the
+// call that meets one fails. The contract asks that of every plugin.
 
-func (p *Plugin) file(collection, source string) string {
-	return filepath.Join(p.cfg.Folder, collection, source+".json")
+// file is the name of a Source's file in the plugin's folder. A collection's
+// name and a Source's id are each safe as a file's name: the contract says
+// so, and read checked it.
+func file(collection, source string) string { return collection + "/" + source + ".json" }
+
+// folder returns the folder the index is in, as the plugin holds it open.
+// For a plugin told to follow links it returns nil, and the folder's path
+// is used instead.
+func (p *Plugin) folder() (*os.Root, error) {
+	if p.rootErr != nil {
+		return nil, fmt.Errorf("the plugin's folder cannot be opened: %v", reasonOf(p.rootErr))
+	}
+	if p.breaks(BreakFollowsLinks) {
+		// By its path, each time, and through whatever is there now.
+		return nil, nil
+	}
+	return p.root, nil
+}
+
+// reasonOf is an operating system error without the path it names: a
+// plugin's message is for the learner, and the path is the plugin's own.
+func reasonOf(err error) error {
+	var pathErr *fs.PathError
+	if errors.As(err, &pathErr) {
+		return pathErr.Err
+	}
+	var linkErr *os.LinkError
+	if errors.As(err, &linkErr) {
+		return linkErr.Err
+	}
+	return err
 }
 
 func (p *Plugin) load(collection, source string) (*stored, error) {
-	data, err := os.ReadFile(p.file(collection, source))
+	root, err := p.folder()
+	if err != nil {
+		return nil, err
+	}
+	var data []byte
+	if root == nil {
+		data, err = os.ReadFile(p.cfg.Folder + "/" + file(collection, source))
+	} else {
+		data, err = root.ReadFile(file(collection, source))
+	}
 	if err != nil {
 		return nil, err
 	}
 	var entry stored
 	if err := json.Unmarshal(data, &entry); err != nil || entry.Format != 1 || entry.ID != source {
-		return nil, fmt.Errorf("%s is not a Source of this plugin's index", p.file(collection, source))
+		return nil, fmt.Errorf("%s is not a Source of this plugin's index", file(collection, source))
 	}
 	return &entry, nil
 }
 
 func (p *Plugin) loadAll(collection string) ([]stored, error) {
-	files, err := os.ReadDir(filepath.Join(p.cfg.Folder, collection))
+	root, err := p.folder()
+	if err != nil {
+		return nil, err
+	}
+	var files []fs.DirEntry
+	if root == nil {
+		files, err = os.ReadDir(p.cfg.Folder + "/" + collection)
+	} else {
+		files, err = fs.ReadDir(root.FS(), collection)
+	}
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
 	}
 	if err != nil {
-		return nil, err
+		return nil, reasonOf(err)
 	}
 	var entries []stored
-	for _, file := range files {
-		id, isSource := strings.CutSuffix(file.Name(), ".json")
+	for _, f := range files {
+		id, isSource := strings.CutSuffix(f.Name(), ".json")
 		if !isSource || strings.HasPrefix(id, ".") {
 			continue
 		}
@@ -588,7 +742,7 @@ func (p *Plugin) loadAll(collection string) ([]stored, error) {
 			continue
 		}
 		if err != nil {
-			return nil, err
+			return nil, reasonOf(err)
 		}
 		entries = append(entries, *entry)
 	}
@@ -596,27 +750,44 @@ func (p *Plugin) loadAll(collection string) ([]stored, error) {
 }
 
 func (p *Plugin) save(collection string, entry stored) error {
-	dir := filepath.Join(p.cfg.Folder, collection)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	root, err := p.folder()
+	if err != nil {
 		return err
 	}
 	data, err := json.Marshal(entry)
 	if err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(dir, ".tmp-*")
-	if err != nil {
-		return err
+	name := make([]byte, 8)
+	_, _ = rand.Read(name)
+	tmp, final := collection+"/.tmp-"+hex.EncodeToString(name), file(collection, entry.ID)
+	if root == nil {
+		dir := p.cfg.Folder + "/"
+		if err := os.MkdirAll(dir+collection, 0o700); err != nil {
+			return reasonOf(err)
+		}
+		if err := os.WriteFile(dir+tmp, data, 0o600); err != nil {
+			return reasonOf(err)
+		}
+		return reasonOf(os.Rename(dir+tmp, dir+final))
 	}
-	_, err = tmp.Write(data)
-	if cerr := tmp.Close(); err == nil {
+	if err := root.MkdirAll(collection, 0o700); err != nil {
+		return fmt.Errorf("the index cannot be written: %v", reasonOf(err))
+	}
+	f, err := root.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return fmt.Errorf("the index cannot be written: %v", reasonOf(err))
+	}
+	_, err = f.Write(data)
+	if cerr := f.Close(); err == nil {
 		err = cerr
 	}
 	if err == nil {
-		err = os.Rename(tmp.Name(), p.file(collection, entry.ID))
+		err = root.Rename(tmp, final)
 	}
 	if err != nil {
-		_ = os.Remove(tmp.Name())
+		_ = root.Remove(tmp)
+		return fmt.Errorf("the index cannot be written: %v", reasonOf(err))
 	}
-	return err
+	return nil
 }

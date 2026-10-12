@@ -104,12 +104,13 @@ func Cut(s string, max int) string {
 // NewerVersionError says that a plugin speaks a contract version newer than
 // this package describes.
 type NewerVersionError struct {
-	// Version is the version the plugin reported.
-	Version int
+	// Version is the version the plugin reported, as it wrote the number: a
+	// version can be larger than any number this program counts with.
+	Version string
 }
 
 func (e *NewerVersionError) Error() string {
-	return fmt.Sprintf("the plugin speaks version %d of the contract, and this is version %d", e.Version, Version)
+	return fmt.Sprintf("the plugin speaks version %s of the contract, and this is version %d", e.Version, Version)
 }
 
 // Decode reads the JSON object of a tool's input or result into v. Fields
@@ -130,7 +131,14 @@ func Decode(data []byte, v any) error {
 func jsonProblem(err error) string {
 	var wrongType *json.UnmarshalTypeError
 	if errors.As(err, &wrongType) {
-		return fmt.Sprintf("%s is a %s, not a %s", wrongType.Field, wrongType.Value, wrongType.Type)
+		// Where in a list the value is, is left out: versions of Go differ on
+		// whether they say, and the field's name is what a plugin's author
+		// looks for.
+		field := strings.Join(slices.DeleteFunc(strings.Split(wrongType.Field, "."), func(part string) bool {
+			_, err := strconv.Atoi(part)
+			return err == nil
+		}), ".")
+		return fmt.Sprintf("%s is a %s, not a %s", field, wrongType.Value, wrongType.Type)
 	}
 	return "it is not valid JSON"
 }
@@ -145,19 +153,33 @@ func ParseContract(data []byte) (Contract, error) {
 	if err := Decode(data, &head); err != nil {
 		return Contract{}, err
 	}
-	version, err := strconv.Atoi(string(bytes.TrimSpace(head.Version)))
+	// The version is read as the number it is, however large and however
+	// written: 2, 2.0, 1e30 and a number past what an int holds are all
+	// newer than this version, not broken answers.
+	said := string(bytes.TrimSpace(head.Version))
+	version, err := strconv.ParseFloat(said, 64)
 	switch {
 	case len(head.Version) == 0:
 		return Contract{}, errors.New("version is missing")
-	case err != nil || version < 1:
+	case err != nil && !errors.Is(err, strconv.ErrRange), math.IsNaN(version), version != math.Trunc(version), version < 1:
 		return Contract{}, errors.New("version is not a whole number of 1 or more")
 	case version > Version:
-		return Contract{}, &NewerVersionError{Version: version}
+		if len(said) > 40 {
+			said = said[:40] + "…" // a number is digits: any byte is a place to cut
+		}
+		return Contract{}, &NewerVersionError{Version: said}
 	}
-	var c Contract
-	if err := Decode(data, &c); err != nil {
+	// The rest is read apart from the version, which was read above: 1.0
+	// and 1e0 are version 1 too.
+	var rest struct {
+		Contract
+		Version json.RawMessage `json:"version"`
+	}
+	if err := Decode(data, &rest); err != nil {
 		return Contract{}, err
 	}
+	c := rest.Contract
+	c.Version = int(version)
 	if err := c.Validate(); err != nil {
 		return Contract{}, err
 	}

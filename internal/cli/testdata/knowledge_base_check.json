@@ -1,17 +1,15 @@
 {
   "ok": true,
   "data": {
-    "plugin": {
-      "name": "kb",
-      "command": [
-        "$PLUGIN",
-        "lamplight-test-plugin",
-        "--name",
-        "test-plugin",
-        "--version",
-        "1.2.3"
-      ]
-    },
+    "name": "kb",
+    "command": [
+      "$PLUGIN",
+      "lamplight-test-plugin",
+      "--name",
+      "test-plugin",
+      "--version",
+      "1.2.3"
+    ],
     "contract": {
       "version": 1,
       "sources": [
@@ -29,6 +27,6 @@
       "name": "test-plugin",
       "version": "1.2.3"
     },
-    "data_folder": "$HOME/study/.lamplight/knowledge-base-plugins/kb"
+    "data_folder": "$HOME/.local/state/lamplight/knowledge-base-plugins/kb"
   }
 }

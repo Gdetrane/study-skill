@@ -47,6 +47,12 @@ func (c *Computer) Getenv(key string) string {
 	return map[string]string{"HOME": c.Home, "STUDY_HOME": c.StudyHome}[key]
 }
 
+// DataFolder is the folder study gives the plugin registered as name to
+// keep its index in: in Lamplight's state folder, in the home folder.
+func (c *Computer) DataFolder(name string) string {
+	return filepath.Join(c.Home, ".local", "state", "lamplight", "knowledge-base-plugins", name)
+}
+
 // Env is what the registry needs to know of a study started on the computer
 // in the folder dir, or in the home folder when dir is empty.
 func (c *Computer) Env(dir string) pluginregistry.Env {

@@ -61,47 +61,69 @@ func StudyCode(pluginCode string) string {
 	}
 }
 
-// toolError is the error for a call the plugin refused or failed.
-func toolError(name, tool string, body plugincontract.ErrorBody) *Error {
-	said := clean(body.Message, plugincontract.MaxTextBytes)
-	if said == "" {
-		said = "it gave no reason"
-	}
-	code := StudyCode(body.Code)
-	switch body.Code {
-	case plugincontract.CodeInvalidArgument:
-		return errorf(code, "Knowledge base plugin %s does not take what its %s tool was given: %s", name, tool, said)
-	case plugincontract.CodeNotFound:
-		return errorf(code, "Knowledge base plugin %s does not have what its %s tool was asked for: %s", name, tool, said)
-	case plugincontract.CodeUnsupported:
-		return errorf(code, "Knowledge base plugin %s cannot do what its %s tool was asked: %s", name, tool, said)
-	default:
-		return errorf(code, "Knowledge base plugin %s failed in its %s tool: %s. The plugin's own messages may say more; "+
-			"study knowledge-base check %s shows whether it still starts", name, tool, said, name)
-	}
-}
-
 // clean makes text a plugin wrote safe to put in a message and on a
 // terminal: one line, cut to max bytes, with nothing a terminal would
 // interpret. A plugin is not trusted with the learner's terminal.
+//
+// It reads the text once and stops where the cleaned text is full, so what
+// it costs is what it keeps: a plugin's message can be as long as a message
+// may be, and none of that is copied.
 func clean(s string, max int) string {
-	s = strings.Join(strings.Fields(strings.ToValidUTF8(s, string(utf8.RuneError))), " ")
-	cut := len(s) > max
-	if cut {
-		s = plugincontract.Cut(s, max)
-	}
 	var b strings.Builder
-	for _, r := range s {
-		if unicode.IsControl(r) || unicode.Is(unicode.Bidi_Control, r) {
-			fmt.Fprintf(&b, "\\u%04x", r)
+	space, wasInvalid := false, false
+	for len(s) > 0 {
+		r, size := utf8.DecodeRuneInString(s)
+		invalid := r == utf8.RuneError && size <= 1
+		s = s[size:]
+		// Bytes that are no UTF-8 become one replacement character, however
+		// many of them follow one another.
+		if invalid && wasInvalid {
 			continue
 		}
-		b.WriteRune(r)
-	}
-	if cut {
-		b.WriteString("…")
+		wasInvalid = invalid
+		if !invalid && unicode.IsSpace(r) {
+			space = b.Len() > 0
+			continue
+		}
+		piece := string(r)
+		if !invalid && (unicode.IsControl(r) || unicode.Is(unicode.Bidi_Control, r)) {
+			piece = fmt.Sprintf("\\u%04x", r)
+		}
+		need := len(piece)
+		if space {
+			need++
+		}
+		if b.Len()+need > max {
+			b.WriteString("…")
+			return b.String()
+		}
+		if space {
+			b.WriteByte(' ')
+			space = false
+		}
+		b.WriteString(piece)
 	}
 	return b.String()
+}
+
+// cleanEnd is clean for text whose end matters more than its start, such as
+// what a program wrote before it failed: the last max bytes of the cleaned
+// text are kept. The text is short already: study keeps only the end of a
+// plugin's standard error.
+func cleanEnd(s string, max int) string {
+	whole := clean(s, 8*len(s)+8)
+	if len(whole) <= max {
+		return whole
+	}
+	start := len(whole) - max
+	for start < len(whole) && !utf8.RuneStart(whole[start]) {
+		start++
+	}
+	// Not in the middle of an escape either.
+	if i := strings.IndexByte(whole[start:], ' '); i >= 0 && i < 16 {
+		start += i + 1
+	}
+	return "…" + whole[start:]
 }
 
 // libraryPrefix is what the MCP library puts in front of an error: which
@@ -116,18 +138,19 @@ func reason(err error, address string) string {
 	for errors.As(err, &withURL) {
 		err = withURL.Err
 	}
-	text := libraryPrefix.ReplaceAllString(err.Error(), "")
-	if address != "" {
-		text = strings.ReplaceAll(text, address, "its address")
-		// And the parts of it a key could be in, should a message hold one
-		// without the rest.
-		if u, perr := url.Parse(address); perr == nil {
-			for _, part := range []string{u.RequestURI(), u.RawQuery} {
-				if len(part) >= 8 {
-					text = strings.ReplaceAll(text, part, "…")
-				}
-			}
-		}
+	return clean(without(libraryPrefix.ReplaceAllString(err.Error(), ""), address), 400)
+}
+
+// without takes the parts of a registered address that may be a key out of
+// a text. The address whole is left as study itself shows it: its scheme
+// and host.
+func without(text, address string) string {
+	if address == "" {
+		return text
 	}
-	return clean(text, 400)
+	text = strings.ReplaceAll(text, address, Address(address)+"…")
+	for _, secret := range secrets(address) {
+		text = strings.ReplaceAll(text, secret, "…")
+	}
+	return text
 }

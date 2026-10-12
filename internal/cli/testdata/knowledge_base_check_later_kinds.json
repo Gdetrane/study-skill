@@ -1,15 +1,13 @@
 {
   "ok": true,
   "data": {
-    "plugin": {
-      "name": "kb",
-      "command": [
-        "$PLUGIN",
-        "lamplight-test-plugin",
-        "--contract",
-        "{\"version\": 1, \"sources\": [\"file\", \"recording\"], \"search\": [\"embedding\", \"keyword\"], \"locations\": [\"pages\", \"time\"]}"
-      ]
-    },
+    "name": "kb",
+    "command": [
+      "$PLUGIN",
+      "lamplight-test-plugin",
+      "--contract",
+      "{\"version\": 1, \"sources\": [\"file\", \"recording\"], \"search\": [\"embedding\", \"keyword\"], \"locations\": [\"pages\", \"time\"]}"
+    ],
     "contract": {
       "version": 1,
       "sources": [
@@ -29,6 +27,6 @@
       "name": "test-plugin",
       "version": "1.0.0"
     },
-    "data_folder": "$HOME/study/.lamplight/knowledge-base-plugins/kb"
+    "data_folder": "$HOME/.local/state/lamplight/knowledge-base-plugins/kb"
   }
 }

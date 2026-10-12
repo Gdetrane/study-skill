@@ -10,15 +10,17 @@ import (
 	"errors"
 	"fmt"
 	"html"
+	"io/fs"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
 	"slices"
+	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -26,18 +28,19 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/mordor-forge/lamplight/v2/internal/pluginclient"
 	"github.com/mordor-forge/lamplight/v2/internal/plugincontract"
+	"github.com/mordor-forge/lamplight/v2/internal/pluginregistry"
 )
 
 // Target is a Knowledge base plugin to hold to the contract, and what the
 // suite needs to know to try it.
 type Target struct {
-	// Connect returns the transport of a new MCP connection to the plugin.
-	// The suite connects many times, and every connection must reach the
-	// same index: for a command, start it again with the same folder in
-	// LAMPLIGHT_PLUGIN_DATA (see CommandTransport); for a service, give its
-	// address (see URLTransport).
-	Connect func(t *testing.T) mcp.Transport
+	// Connect opens a new connection to the plugin. The suite connects many
+	// times, and every connection must reach the same index: AsCommand
+	// starts a command again each time, as study starts it, and AsService
+	// reaches a service at its address.
+	Connect func(t *testing.T) *Link
 	// Restarts says that each connection is another start of the plugin, as
 	// it is for a command, so that closing a connection stops whatever the
 	// plugin was indexing. A service goes on when a connection closes.
@@ -54,44 +57,64 @@ type Target struct {
 	// given. Nil serves it from this computer's loopback interface: a
 	// plugin that fetches no such address needs a ServePage it does fetch.
 	ServePage func(t *testing.T, title string, paragraphs []string) string
-	// Patience is how long the plugin may take to index one Source of a few
-	// pages. Zero is 30 seconds.
+	// Patience is how long the plugin may take to answer one call, and to
+	// index one Source of a few pages. Zero is 30 seconds.
 	Patience time.Duration
 }
 
-// CommandTransport returns a Target's Connect for a plugin that is a
-// command: every connection starts the command again, in an empty folder,
-// with folder as its LAMPLIGHT_PLUGIN_DATA. Use Restarts with it.
+// Link is one connection to a plugin.
+type Link struct {
+	// Transport carries MCP to the plugin.
+	Transport mcp.Transport
+	// Command is the program, when the connection is a command the suite
+	// started, and nil for a service. The suite stops it, and checks what
+	// the contract asks of a command through it: that it exits when its
+	// input closes, writes nothing where it was started, and stays inside
+	// its folder.
+	Command *pluginclient.Command
+}
+
+// AsCommand returns a Target's Connect for a plugin that is a command, on a
+// computer made for the test (NewComputer). Every connection starts the
+// command again exactly as study starts a registered plugin
+// (pluginclient.StartCommand): the same program, working folder, pipes,
+// session, environment and folder. Use Restarts with it.
 //
-// The plugin gets this test's environment, with an empty folder for a home
-// and no XDG_* folders, so that it finds nothing of the real computer's and
-// leaves nothing there. Set what it needs besides with t.Setenv.
-func CommandTransport(folder string, command ...string) func(*testing.T) mcp.Transport {
-	return func(t *testing.T) mcp.Transport {
-		cmd := exec.Command(command[0], command[1:]...)
-		cmd.Dir = t.TempDir()
-		for _, kv := range os.Environ() {
-			if name, _, _ := strings.Cut(kv, "="); name != "HOME" && name != plugincontract.DataFolderEnv && !strings.HasPrefix(name, "XDG_") {
-				cmd.Env = append(cmd.Env, kv)
-			}
+// So the plugin gets the small environment study gives one, with the
+// computer's empty home folder as its HOME: it finds nothing of the real
+// computer's, and leaves nothing there. What it needs besides, give it in
+// its arguments.
+func AsCommand(c *Computer, command ...string) func(*testing.T) *Link {
+	var (
+		register sync.Once
+		plugin   pluginregistry.Plugin
+	)
+	return func(t *testing.T) *Link {
+		t.Helper()
+		// Once: the registry is in the folder the plugin is started in, and
+		// the suite checks that nothing changes there.
+		register.Do(func() { plugin = c.Register(t, "conformance", command...) })
+		started, err := pluginclient.StartCommand(c.Env(""), plugin, pluginclient.Options{Environ: c.Environ(), StopGrace: 2 * time.Second})
+		if err != nil {
+			t.Fatalf("the plugin could not be started as study starts one: %v", err)
 		}
-		cmd.Env = append(cmd.Env, "HOME="+t.TempDir(), plugincontract.DataFolderEnv+"="+folder)
-		var said bytes.Buffer
-		cmd.Stderr = &said
 		t.Cleanup(func() {
-			if t.Failed() && said.Len() > 0 {
-				t.Logf("the plugin wrote on its standard error:\n%s", said.String())
+			// Whatever became of the test, nothing is left running.
+			started.Stop()
+			if said := started.Wrote(); t.Failed() && said != "" {
+				t.Logf("the plugin wrote on its standard error:\n%s", said)
 			}
 		})
-		return &mcp.CommandTransport{Command: cmd, TerminateDuration: 2 * time.Second}
+		return &Link{Transport: started.Transport(), Command: started}
 	}
 }
 
-// URLTransport returns a Target's Connect for a plugin that is a service
-// answering at address.
-func URLTransport(address string) func(*testing.T) mcp.Transport {
-	return func(*testing.T) mcp.Transport {
-		return &mcp.StreamableClientTransport{Endpoint: address, DisableStandaloneSSE: true, MaxRetries: -1}
+// AsService returns a Target's Connect for a plugin that is a service
+// answering at address, reached as study reaches a plugin registered by
+// URL (pluginclient.ServiceTransport).
+func AsService(address string) func(*testing.T) *Link {
+	return func(*testing.T) *Link {
+		return &Link{Transport: pluginclient.ServiceTransport(address)}
 	}
 }
 
@@ -102,7 +125,12 @@ func URLTransport(address string) func(*testing.T) mcp.Transport {
 // the contract does not allow.
 //
 // A plugin passes it by being a plugin. It knows nothing of how the plugin
-// works: only what the six tools take and give back.
+// works: only what the six tools take and give back, and, of a command,
+// what can be seen of a program from outside it.
+//
+// A plugin that stops answering fails the check that met it, and the suite
+// ends there: it does not wait for the same silence once for each check
+// that follows.
 func Conformance(t *testing.T, target Target) {
 	t.Helper()
 	if target.Connect == nil {
@@ -120,14 +148,21 @@ func Conformance(t *testing.T, target Target) {
 	run := make([]byte, 4)
 	_, _ = rand.Read(run)
 	s := &suite{Target: target, run: hex.EncodeToString(run), dir: t.TempDir()}
+	defer func() {
+		if why := s.dead.Load(); why != nil {
+			t.Errorf("the suite stopped at the first call the plugin did not answer (%s): nothing after it was checked", *why)
+		}
+	}()
 
 	var contract plugincontract.Contract
-	if !t.Run("it is an MCP server with the six tools", func(t *testing.T) {
+	if !s.sub(t, "it is an MCP server with the six tools", func(t *testing.T) {
 		cs := s.connect(t)
 		var names []string
-		for tool, err := range cs.Tools(context.Background(), nil) {
+		ctx, cancel := context.WithTimeout(context.Background(), s.Patience)
+		defer cancel()
+		for tool, err := range cs.Tools(ctx, nil) {
 			if err != nil {
-				t.Fatalf("listing its tools: %v", err)
+				s.gaveUp(t, cs, fmt.Sprintf("listing its tools: %v", err))
 			}
 			names = append(names, tool.Name)
 		}
@@ -139,7 +174,7 @@ func Conformance(t *testing.T, target Target) {
 	}) {
 		return
 	}
-	if !t.Run("contract says which version it speaks and what it can do", func(t *testing.T) {
+	if !s.sub(t, "contract says which version it speaks and what it can do", func(t *testing.T) {
 		cs := s.connect(t)
 		first := s.ok(t, cs, plugincontract.ToolContract, struct{}{}, reflect.TypeFor[plugincontract.Contract]())
 		c, err := plugincontract.ParseContract(first)
@@ -162,7 +197,18 @@ func Conformance(t *testing.T, target Target) {
 	indexesFiles := slices.Contains(contract.Sources, plugincontract.SourceFile)
 	indexesPages := slices.Contains(contract.Sources, plugincontract.SourceURL)
 
-	t.Run("a collection nobody indexed is empty", func(t *testing.T) {
+	if s.command {
+		s.sub(t, "it exits when its standard input closes", func(t *testing.T) {
+			cs := s.open(t)
+			s.ok(t, cs, plugincontract.ToolContract, struct{}{}, reflect.TypeFor[plugincontract.Contract]())
+			if !s.hangUp(cs) {
+				t.Errorf("the plugin did not exit within 2 seconds of its standard input closing: study had to signal it. " +
+					"Exit when your standard input closes")
+			}
+		})
+	}
+
+	s.sub(t, "a collection nobody indexed is empty", func(t *testing.T) {
 		cs := s.connect(t)
 		collection := s.collection("empty")
 		var status plugincontract.StatusResult
@@ -180,54 +226,85 @@ func Conformance(t *testing.T, target Target) {
 		s.refused(t, cs, plugincontract.ToolPassage, plugincontract.PassageInput{Collection: collection, ID: "nothing"}, plugincontract.CodeNotFound)
 	})
 
-	t.Run("what the contract does not allow is refused", func(t *testing.T) {
+	s.sub(t, "what the contract does not allow is refused", func(t *testing.T) {
 		cs := s.connect(t)
 		collection := s.collection("refusals")
 		const hash = "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
 		file := map[string]any{"id": "book.a1", "title": "A book", "kind": "file", "path": filepath.Join(s.dir, "book"+s.Extension), "hash": hash}
-		with := func(change func(map[string]any)) map[string]any {
-			source := map[string]any{}
-			for k, v := range file {
-				source[k] = v
+		page := map[string]any{"id": "page.a1", "title": "A page", "kind": "url", "url": "https://example.org/"}
+		with := func(source map[string]any, change func(map[string]any)) map[string]any {
+			changed := map[string]any{}
+			for k, v := range source {
+				changed[k] = v
 			}
-			change(source)
-			return source
+			change(changed)
+			return changed
 		}
-		for name, call := range map[string]struct {
+		index := func(source map[string]any) any { return map[string]any{"collection": collection, "source": source} }
+		type call struct {
 			tool string
 			in   any
-		}{
+		}
+		calls := map[string]call{
 			"status without a collection":          {plugincontract.ToolStatus, map[string]any{}},
 			"a collection that is a path":          {plugincontract.ToolStatus, map[string]any{"collection": "../" + collection}},
 			"a collection in capital letters":      {plugincontract.ToolStatus, map[string]any{"collection": "Linear-Algebra"}},
 			"a collection that is no text":         {plugincontract.ToolStatus, map[string]any{"collection": 7}},
 			"index without a Source":               {plugincontract.ToolIndex, map[string]any{"collection": collection}},
-			"a Source without an id":               {plugincontract.ToolIndex, map[string]any{"collection": collection, "source": with(func(s map[string]any) { delete(s, "id") })}},
-			"a Source whose id is a path":          {plugincontract.ToolIndex, map[string]any{"collection": collection, "source": with(func(s map[string]any) { s["id"] = "../book" })}},
-			"a Source of no kind":                  {plugincontract.ToolIndex, map[string]any{"collection": collection, "source": with(func(s map[string]any) { delete(s, "kind") })}},
-			"a Source of a kind there is none of":  {plugincontract.ToolIndex, map[string]any{"collection": collection, "source": with(func(s map[string]any) { s["kind"] = "recording" })}},
-			"a file without a path":                {plugincontract.ToolIndex, map[string]any{"collection": collection, "source": with(func(s map[string]any) { delete(s, "path") })}},
-			"a file by a relative path":            {plugincontract.ToolIndex, map[string]any{"collection": collection, "source": with(func(s map[string]any) { s["path"] = "book" + target.Extension })}},
-			"a file without a hash":                {plugincontract.ToolIndex, map[string]any{"collection": collection, "source": with(func(s map[string]any) { delete(s, "hash") })}},
-			"a file whose hash is no hash":         {plugincontract.ToolIndex, map[string]any{"collection": collection, "source": with(func(s map[string]any) { s["hash"] = "md5:d41d8cd9" })}},
 			"cancel without a Source":              {plugincontract.ToolCancel, map[string]any{"collection": collection}},
+			"cancel without a collection":          {plugincontract.ToolCancel, map[string]any{"source": "book.a1"}},
+			"search without a collection":          {plugincontract.ToolSearch, map[string]any{"query": "anything", "limit": 5}},
 			"search without a query":               {plugincontract.ToolSearch, map[string]any{"collection": collection, "limit": 5}},
-			"search for nothing":                   {plugincontract.ToolSearch, map[string]any{"collection": collection, "query": "  ", "limit": 5}},
+			"search for nothing":                   {plugincontract.ToolSearch, map[string]any{"collection": collection, "query": "", "limit": 5}},
+			"search for white space":               {plugincontract.ToolSearch, map[string]any{"collection": collection, "query": " \t\n ", "limit": 5}},
 			"search without a limit":               {plugincontract.ToolSearch, map[string]any{"collection": collection, "query": "anything"}},
 			"search with a limit of none":          {plugincontract.ToolSearch, map[string]any{"collection": collection, "query": "anything", "limit": 0}},
 			"search with a limit over the highest": {plugincontract.ToolSearch, map[string]any{"collection": collection, "query": "anything", "limit": plugincontract.MaxSearchLimit + 1}},
 			"search in a list of no Sources":       {plugincontract.ToolSearch, map[string]any{"collection": collection, "query": "anything", "limit": 5, "sources": []string{}}},
 			"passage without an id":                {plugincontract.ToolPassage, map[string]any{"collection": collection}},
-		} {
-			s.refused(t, cs, call.tool, call.in, plugincontract.CodeInvalidArgument, name)
+			"passage without a collection":         {plugincontract.ToolPassage, map[string]any{"id": "nothing"}},
+		}
+		// A Source that is not what the contract describes is asked of a
+		// plugin in a kind it indexes: of a kind it does not index, it may
+		// as well say that it cannot do it at all.
+		source := page
+		if indexesFiles {
+			source = file
+		}
+		calls["index without a collection"] = call{plugincontract.ToolIndex, map[string]any{"source": source}}
+		calls["a Source without an id"] = call{plugincontract.ToolIndex, index(with(source, func(s map[string]any) { delete(s, "id") }))}
+		calls["a Source whose id is a path"] = call{plugincontract.ToolIndex, index(with(source, func(s map[string]any) { s["id"] = "../book" }))}
+		calls["a Source without a title"] = call{plugincontract.ToolIndex, index(with(source, func(s map[string]any) { delete(s, "title") }))}
+		calls["a Source of no kind"] = call{plugincontract.ToolIndex, index(with(source, func(s map[string]any) { delete(s, "kind") }))}
+		calls["a Source of a kind there is none of"] = call{plugincontract.ToolIndex, index(with(source, func(s map[string]any) { s["kind"] = "recording" }))}
+		if indexesFiles {
+			calls["a file without a path"] = call{plugincontract.ToolIndex, index(with(file, func(s map[string]any) { delete(s, "path") }))}
+			calls["a file by a relative path"] = call{plugincontract.ToolIndex, index(with(file, func(s map[string]any) { s["path"] = "book" + target.Extension }))}
+			calls["a file without a hash"] = call{plugincontract.ToolIndex, index(with(file, func(s map[string]any) { delete(s, "hash") }))}
+			calls["a file whose hash is no hash"] = call{plugincontract.ToolIndex, index(with(file, func(s map[string]any) { s["hash"] = "md5:d41d8cd9" }))}
+			calls["a file with an address"] = call{plugincontract.ToolIndex, index(with(file, func(s map[string]any) { s["url"] = "https://example.org/" }))}
+		}
+		if indexesPages {
+			calls["a web page without an address"] = call{plugincontract.ToolIndex, index(with(page, func(s map[string]any) { delete(s, "url") }))}
+			calls["a web page that is a file"] = call{plugincontract.ToolIndex, index(with(page, func(s map[string]any) { s["url"] = "file:///etc/hostname" }))}
+			calls["a web page with a password"] = call{plugincontract.ToolIndex, index(with(page, func(s map[string]any) { s["url"] = "https://ada:secret@example.org/" }))}
+			calls["a web page with a path"] = call{plugincontract.ToolIndex, index(with(page, func(s map[string]any) { s["path"] = "/tmp/page.html" }))}
+		}
+		for name, c := range calls {
+			s.refused(t, cs, c.tool, c.in, plugincontract.CodeInvalidArgument, name)
 		}
 		// What its contract does not list, it says it cannot do.
 		if !indexesFiles {
 			s.refused(t, cs, plugincontract.ToolIndex, map[string]any{"collection": collection, "source": file}, plugincontract.CodeUnsupported)
 		}
 		if !indexesPages {
-			page := map[string]any{"id": "page.a1", "title": "A page", "kind": "url", "url": "https://example.org/"}
 			s.refused(t, cs, plugincontract.ToolIndex, map[string]any{"collection": collection, "source": page}, plugincontract.CodeUnsupported)
+		}
+		// A field this version does not name is passed over, not refused:
+		// a later study may say more.
+		if a := s.call(t, cs, plugincontract.ToolStatus, map[string]any{"collection": collection, "added_later": true}); a.refused {
+			t.Errorf("status refused arguments that hold a field the contract does not name (%s): a plugin passes over what "+
+				"it does not know", a.said)
 		}
 		// Nothing of that was indexed, and the plugin still answers.
 		var status plugincontract.StatusResult
@@ -247,6 +324,19 @@ func Conformance(t *testing.T, target Target) {
 	} else {
 		t.Log("the plugin indexes no web pages: nothing about them was checked")
 	}
+	if s.command {
+		if indexesFiles {
+			// Last of what it indexes: it leaves the plugin's folder in
+			// pieces.
+			s.links(t)
+		}
+		s.sub(t, "it writes nothing in the folder it is started in", func(t *testing.T) {
+			if now := tree(t, s.workFolder); now != s.workBefore {
+				t.Errorf("the folder the plugin is started in, %s, changed while it ran: a plugin writes in its own folder, "+
+					"the one LAMPLIGHT_PLUGIN_DATA names, and nowhere else.\nbefore:\n%s\nnow:\n%s", s.workFolder, s.workBefore, now)
+			}
+		})
+	}
 }
 
 // suite is one run of the conformance suite against one plugin.
@@ -259,30 +349,132 @@ type suite struct {
 	contract plugincontract.Contract
 	// made counts the Sources this run wrote.
 	made atomic.Int64
+
+	// dead says why the suite gave up on the plugin, once it has: a call
+	// got no answer.
+	dead atomic.Pointer[string]
+	// lingers says that the plugin, a command, once did not exit when its
+	// input was closed.
+	lingers atomic.Bool
+
+	// command says that the plugin is a command the suite starts. Its
+	// folders are then known: the one it keeps its index in, and the one it
+	// is started in, with what that one held before the plugin ran.
+	first                              sync.Once
+	command                            bool
+	dataFolder, workFolder, workBefore string
 }
 
 func (s *suite) collection(name string) string { return "conformance-" + s.run + "-" + name }
 
-// connect opens an MCP session with the plugin, as study does, and closes it
+// sub runs one check, unless the plugin has stopped answering.
+func (s *suite) sub(t *testing.T, name string, check func(t *testing.T)) bool {
+	t.Helper()
+	if s.dead.Load() != nil {
+		return false
+	}
+	return t.Run(name, check)
+}
+
+// session is one MCP session with the plugin.
+type session struct {
+	*mcp.ClientSession
+	link *Link
+
+	once     sync.Once
+	onItsOwn bool
+	// asked is the method of the first request the plugin sent, if it sent
+	// one: that ended the session.
+	asked atomic.Pointer[string]
+}
+
+// connect opens an MCP session with the plugin, as study does, and ends it
 // when the test ends.
-func (s *suite) connect(t *testing.T) *mcp.ClientSession {
+func (s *suite) connect(t *testing.T) *session {
 	t.Helper()
 	cs := s.open(t)
-	t.Cleanup(func() { _ = cs.Close() })
+	t.Cleanup(func() { s.hangUp(cs) })
 	return cs
 }
 
-func (s *suite) open(t *testing.T) *mcp.ClientSession {
+func (s *suite) open(t *testing.T) *session {
 	t.Helper()
+	if why := s.dead.Load(); why != nil {
+		t.Fatalf("not checked: the plugin stopped answering (%s)", *why)
+	}
+	link := s.Connect(t)
+	if link == nil || link.Transport == nil {
+		t.Fatal("the Target's Connect gave no connection")
+	}
+	s.first.Do(func() {
+		if link.Command == nil {
+			return
+		}
+		s.command, s.dataFolder, s.workFolder = true, link.Command.DataFolder(), link.Command.WorkingFolder()
+		s.workBefore = tree(t, s.workFolder)
+	})
+	cs := &session{link: link}
 	ctx, cancel := context.WithTimeout(context.Background(), s.Patience)
 	defer cancel()
 	client := mcp.NewClient(&mcp.Implementation{Name: "lamplight-conformance", Version: "1"},
 		&mcp.ClientOptions{Capabilities: &mcp.ClientCapabilities{}, MultiRoundTrip: &mcp.MultiRoundTripOptions{Disabled: true}})
-	cs, err := client.Connect(ctx, s.Connect(t), &mcp.ClientSessionOptions{ProtocolVersion: "2025-11-25"})
+	// A plugin answers, and asks nothing: the first request it sends ends
+	// the session, as it does with study.
+	transport := pluginclient.AnswersOnly(link.Transport, func(method string) { cs.asked.CompareAndSwap(nil, &method) })
+	opened, err := client.Connect(ctx, transport, &mcp.ClientSessionOptions{ProtocolVersion: pluginclient.MCPVersion})
 	if err != nil {
-		t.Fatalf("no MCP session could be opened with the plugin: %v", err)
+		s.gaveUp(t, cs, fmt.Sprintf("no MCP session could be opened with the plugin: %v", err))
 	}
+	cs.ClientSession = opened
 	return cs
+}
+
+// hangUp ends a session as study ends one, and reports whether a command
+// then exited on its own: its input is closed, and it is signalled, and
+// then killed, only if it stays. A service is told the session is over.
+func (s *suite) hangUp(cs *session) (onItsOwn bool) {
+	cs.once.Do(func() {
+		cs.onItsOwn = true
+		if command := cs.link.Command; command != nil {
+			// A plugin that stayed once is not waited for again: the check
+			// that met it has failed, and every later connection would cost
+			// the same two seconds.
+			if s.lingers.Load() {
+				command.Kill()
+			}
+			if cs.onItsOwn = command.Stop(); !cs.onItsOwn {
+				s.lingers.Store(true)
+			}
+		}
+		if cs.ClientSession == nil {
+			return
+		}
+		// The library closes a connection once nothing is under way on it,
+		// which a plugin that stopped answering never lets it be.
+		done := make(chan struct{})
+		go func() {
+			_ = cs.ClientSession.Close()
+			close(done)
+		}()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+		}
+	})
+	return cs.onItsOwn
+}
+
+// gaveUp ends the suite at a call the plugin did not answer: the plugin is
+// stopped, and no later check waits for it again.
+func (s *suite) gaveUp(t *testing.T, cs *session, why string) {
+	t.Helper()
+	if method := cs.asked.Load(); method != nil {
+		why = fmt.Sprintf("the plugin sent a request (%s), which ended the session: a plugin answers what it is asked, and "+
+			"sends study no requests. Turn off whatever in its MCP library sends them, such as a keep-alive ping", *method)
+	}
+	s.dead.CompareAndSwap(nil, &why)
+	s.hangUp(cs)
+	t.Fatal(why)
 }
 
 // answer is what a tool call came to: the JSON object of its result, and
@@ -297,8 +489,9 @@ type answer struct {
 	said    string
 }
 
-// call calls a tool. A call that gets no answer at all fails the test.
-func (s *suite) call(t *testing.T, cs *mcp.ClientSession, tool string, in any) answer {
+// call calls a tool. A call that gets no answer at all fails the test, and
+// ends the suite.
+func (s *suite) call(t *testing.T, cs *session, tool string, in any) answer {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), s.Patience)
 	defer cancel()
@@ -310,8 +503,10 @@ func (s *suite) call(t *testing.T, cs *mcp.ClientSession, tool string, in any) a
 	// (-32001 to -32005). Those are no answer of the plugin's.
 	case errors.As(err, &protocol) && (protocol.Code > -32001 || protocol.Code < -32005) && ctx.Err() == nil:
 		return answer{refused: true, said: protocol.Message}
+	case err != nil && ctx.Err() != nil:
+		s.gaveUp(t, cs, fmt.Sprintf("%s got no answer within %s", tool, s.Patience))
 	case err != nil:
-		t.Fatalf("%s got no answer: %v", tool, err)
+		s.gaveUp(t, cs, fmt.Sprintf("%s got no answer: %v", tool, err))
 	}
 	var a answer
 	if len(res.Content) > 0 {
@@ -344,7 +539,7 @@ func (s *suite) call(t *testing.T, cs *mcp.ClientSession, tool string, in any) a
 
 // ok calls a tool that must succeed, checks that its result is spelled as
 // the contract spells it, and returns the result.
-func (s *suite) ok(t *testing.T, cs *mcp.ClientSession, tool string, in any, result reflect.Type) json.RawMessage {
+func (s *suite) ok(t *testing.T, cs *session, tool string, in any, result reflect.Type) json.RawMessage {
 	t.Helper()
 	a := s.call(t, cs, tool, in)
 	switch {
@@ -360,7 +555,7 @@ func (s *suite) ok(t *testing.T, cs *mcp.ClientSession, tool string, in any, res
 }
 
 // into calls a tool that must succeed and reads its result into out.
-func (s *suite) into(t *testing.T, cs *mcp.ClientSession, tool string, in, out any) {
+func (s *suite) into(t *testing.T, cs *session, tool string, in, out any) {
 	t.Helper()
 	data := s.ok(t, cs, tool, in, reflect.TypeOf(out).Elem())
 	if err := plugincontract.Decode(data, out); err != nil {
@@ -371,7 +566,7 @@ func (s *suite) into(t *testing.T, cs *mcp.ClientSession, tool string, in, out a
 // refused calls a tool that must refuse. A refusal shaped as the contract's
 // must carry the code; one that is plain text, or an error of the protocol,
 // is taken for invalid_argument and nothing else.
-func (s *suite) refused(t *testing.T, cs *mcp.ClientSession, tool string, in any, code string, what ...string) {
+func (s *suite) refused(t *testing.T, cs *session, tool string, in any, code string, what ...string) {
 	t.Helper()
 	name := tool + " of " + compact(in)
 	if len(what) > 0 {
@@ -398,7 +593,7 @@ func compact(v any) string {
 	return string(data)
 }
 
-func (s *suite) search(t *testing.T, cs *mcp.ClientSession, in plugincontract.SearchInput) []plugincontract.ScoredPassage {
+func (s *suite) search(t *testing.T, cs *session, in plugincontract.SearchInput) []plugincontract.ScoredPassage {
 	t.Helper()
 	var out plugincontract.SearchResult
 	s.into(t, cs, plugincontract.ToolSearch, in, &out)
@@ -408,7 +603,31 @@ func (s *suite) search(t *testing.T, cs *mcp.ClientSession, in plugincontract.Se
 	return out.Passages
 }
 
-func (s *suite) cancel(t *testing.T, cs *mcp.ClientSession, collection, source string) bool {
+// passage asks for one Passage again, and checks that what comes back is a
+// Passage and no more: a score belongs to a search.
+func (s *suite) passage(t *testing.T, cs *session, collection, id string) plugincontract.Passage {
+	t.Helper()
+	in := plugincontract.PassageInput{Collection: collection, ID: id}
+	data := s.ok(t, cs, plugincontract.ToolPassage, in, reflect.TypeFor[plugincontract.PassageResult]())
+	var out plugincontract.PassageResult
+	if err := plugincontract.Decode(data, &out); err != nil {
+		t.Fatalf("what passage gave back: %v\n%s", err, data)
+	}
+	if err := out.Validate(in); err != nil {
+		t.Fatalf("what passage gave back breaks the contract: %v", err)
+	}
+	var raw struct {
+		Passage map[string]json.RawMessage `json:"passage"`
+	}
+	if err := json.Unmarshal(data, &raw); err == nil {
+		if _, scored := raw.Passage["score"]; scored {
+			t.Errorf("passage gave Passage %s with a score: a score belongs to one search, so search gives it and passage does not", id)
+		}
+	}
+	return out.Passage
+}
+
+func (s *suite) cancel(t *testing.T, cs *session, collection, source string) bool {
 	t.Helper()
 	var out plugincontract.CancelResult
 	s.into(t, cs, plugincontract.ToolCancel, plugincontract.CancelInput{Collection: collection, Source: source}, &out)
@@ -417,7 +636,7 @@ func (s *suite) cancel(t *testing.T, cs *mcp.ClientSession, collection, source s
 
 // status asks what the plugin says of a collection, and returns it by
 // Source.
-func (s *suite) status(t *testing.T, cs *mcp.ClientSession, collection string) map[string]plugincontract.SourceStatus {
+func (s *suite) status(t *testing.T, cs *session, collection string) map[string]plugincontract.SourceStatus {
 	t.Helper()
 	var out plugincontract.StatusResult
 	s.into(t, cs, plugincontract.ToolStatus, plugincontract.StatusInput{Collection: collection}, &out)
@@ -433,7 +652,7 @@ func (s *suite) status(t *testing.T, cs *mcp.ClientSession, collection string) m
 
 // index asks for a Source to be indexed, and checks that the answer comes
 // at once and speaks of that Source.
-func (s *suite) index(t *testing.T, cs *mcp.ClientSession, collection string, source plugincontract.Source) plugincontract.SourceStatus {
+func (s *suite) index(t *testing.T, cs *session, collection string, source plugincontract.Source) plugincontract.SourceStatus {
 	t.Helper()
 	in := plugincontract.IndexInput{Collection: collection, Source: source}
 	var out plugincontract.IndexResult
@@ -450,7 +669,7 @@ func (s *suite) index(t *testing.T, cs *mcp.ClientSession, collection string, so
 
 // settled waits until the plugin is no longer indexing a Source, and
 // returns what it says of it then; ok is false when it does not list it.
-func (s *suite) settled(t *testing.T, cs *mcp.ClientSession, collection, source string) (status plugincontract.SourceStatus, ok bool) {
+func (s *suite) settled(t *testing.T, cs *session, collection, source string) (status plugincontract.SourceStatus, ok bool) {
 	t.Helper()
 	for deadline := time.Now().Add(s.Patience); ; time.Sleep(20 * time.Millisecond) {
 		status, ok = s.status(t, cs, collection)[source]
@@ -464,7 +683,7 @@ func (s *suite) settled(t *testing.T, cs *mcp.ClientSession, collection, source 
 }
 
 // indexed indexes a Source and waits for it to be indexed.
-func (s *suite) indexed(t *testing.T, cs *mcp.ClientSession, collection string, source plugincontract.Source) plugincontract.SourceStatus {
+func (s *suite) indexed(t *testing.T, cs *session, collection string, source plugincontract.Source) plugincontract.SourceStatus {
 	t.Helper()
 	s.index(t, cs, collection, source)
 	status, ok := s.settled(t, cs, collection, source.ID)
@@ -586,10 +805,24 @@ func all(pages [][]string) []string {
 	return out
 }
 
+// timed says how long a call took at its quickest, of three: what the
+// plugin needs for it when nothing else is going on.
+func timed(call func()) time.Duration {
+	quickest := time.Duration(-1)
+	for range 3 {
+		began := time.Now()
+		call()
+		if took := time.Since(began); quickest < 0 || took < quickest {
+			quickest = took
+		}
+	}
+	return quickest
+}
+
 // files checks what the contract promises of file Sources, and through them
 // of indexing, searching and Passages.
 func (s *suite) files(t *testing.T) {
-	t.Run("a file is indexed, and found by what it says", func(t *testing.T) {
+	s.sub(t, "a file is indexed, and found by what it says", func(t *testing.T) {
 		cs := s.connect(t)
 		collection := s.collection("file")
 		b := s.write(t, "found")
@@ -631,14 +864,9 @@ func (s *suite) files(t *testing.T) {
 		}
 
 		// passage gives the same Passage again, without a score.
-		var again plugincontract.PassageResult
-		ask := plugincontract.PassageInput{Collection: collection, ID: passage.ID}
-		s.into(t, cs, plugincontract.ToolPassage, ask, &again)
-		if err := again.Validate(ask); err != nil {
-			t.Fatalf("what passage gave back breaks the contract: %v", err)
-		}
-		if !reflect.DeepEqual(again.Passage, passage.Passage) {
-			t.Errorf("passage gave %+v (location %+v), and the search gave %+v (location %+v)", again.Passage, again.Passage.Location,
+		again := s.passage(t, cs, collection, passage.ID)
+		if !reflect.DeepEqual(again, passage.Passage) {
+			t.Errorf("passage gave %+v (location %+v), and the search gave %+v (location %+v)", again, again.Location,
 				passage.Passage, passage.Location)
 		}
 
@@ -650,8 +878,7 @@ func (s *suite) files(t *testing.T) {
 		if now := s.status(t, cs, collection)[b.source.ID]; now.State != plugincontract.StateIndexed {
 			t.Errorf("after indexing a file that was indexed already, status says %+v", now)
 		}
-		s.into(t, cs, plugincontract.ToolPassage, ask, &again)
-		if again.Passage.Text != passage.Text {
+		if again := s.passage(t, cs, collection, passage.ID); again.Text != passage.Text {
 			t.Errorf("Passage %s changed although nothing was indexed again", passage.ID)
 		}
 		// A new title is no new content.
@@ -670,7 +897,42 @@ func (s *suite) files(t *testing.T) {
 		s.refused(t, cs, plugincontract.ToolPassage, plugincontract.PassageInput{Collection: collection, ID: "no-such-passage"}, plugincontract.CodeNotFound)
 	})
 
-	t.Run("a search can be limited to some Sources", func(t *testing.T) {
+	s.sub(t, "a search gives no more Passages than its limit", func(t *testing.T) {
+		cs := s.connect(t)
+		collection := s.collection("limit")
+		// A word that many paragraphs hold, three on each of four pages: a
+		// search for it has more to give than a small limit allows, however
+		// the plugin cuts, by the page or by the paragraph.
+		b := book{word: unique()}
+		for n := range 4 {
+			var page []string
+			for m := range 3 {
+				page = append(page, fmt.Sprintf("Paragraph %d of page %d of this book holds the marker %s, as every one does, beside %s.",
+					m+1, n+1, b.word, unique()))
+			}
+			b.pages = append(b.pages, page)
+		}
+		b = s.save(t, "many", b)
+		s.indexed(t, cs, collection, b.source)
+		in := plugincontract.SearchInput{Collection: collection, Query: b.word, Limit: plugincontract.MaxSearchLimit}
+		every := holding(s.search(t, cs, in), b.word)
+		if len(every) < 3 {
+			t.Skipf("a search for a word that 12 paragraphs on 4 pages hold found %d Passages: the plugin cuts too coarsely for "+
+				"the limit to be tried", len(every))
+		}
+		for _, limit := range []int{1, 2, len(every) - 1} {
+			in.Limit = limit
+			// search holds the answer to the contract, the limit included;
+			// this says it in the words of the rule.
+			var out plugincontract.SearchResult
+			s.into(t, cs, plugincontract.ToolSearch, in, &out)
+			if len(out.Passages) > limit {
+				t.Errorf("a search with a limit of %d gave %d Passages: limit is the most a search gives back", limit, len(out.Passages))
+			}
+		}
+	})
+
+	s.sub(t, "a search can be limited to some Sources", func(t *testing.T) {
 		cs := s.connect(t)
 		collection := s.collection("sources")
 		one, two := s.write(t, "one"), s.write(t, "two")
@@ -693,7 +955,7 @@ func (s *suite) files(t *testing.T) {
 		}
 	})
 
-	t.Run("collections are kept apart", func(t *testing.T) {
+	s.sub(t, "collections are kept apart", func(t *testing.T) {
 		cs := s.connect(t)
 		here, there := s.collection("here"), s.collection("there")
 		mine, theirs := s.write(t, "apart"), s.write(t, "apart")
@@ -715,7 +977,7 @@ func (s *suite) files(t *testing.T) {
 		}
 	})
 
-	t.Run("content that changed is indexed anew", func(t *testing.T) {
+	s.sub(t, "content that changed is indexed anew", func(t *testing.T) {
 		cs := s.connect(t)
 		collection := s.collection("changed")
 		before := s.write(t, "changing")
@@ -746,7 +1008,7 @@ func (s *suite) files(t *testing.T) {
 		}
 	})
 
-	t.Run("the hash is of what the plugin read", func(t *testing.T) {
+	s.sub(t, "the hash is of what the plugin read", func(t *testing.T) {
 		cs := s.connect(t)
 		collection := s.collection("hash")
 		b := s.write(t, "hashed")
@@ -766,7 +1028,35 @@ func (s *suite) files(t *testing.T) {
 		}
 	})
 
-	t.Run("a file that cannot be read fails, with the reason", func(t *testing.T) {
+	s.sub(t, "search and passage read the index, never the Source", func(t *testing.T) {
+		cs := s.connect(t)
+		collection := s.collection("gone")
+		b := s.write(t, "gone")
+		s.indexed(t, cs, collection, b.source)
+		in := plugincontract.SearchInput{Collection: collection, Query: b.word, Limit: plugincontract.MaxSearchLimit}
+		before := holding(s.search(t, cs, in), b.word)
+		if len(before) == 0 {
+			t.Fatalf("no Passage holds %q", b.word)
+		}
+		// The learner moved the book away. What was indexed of it is still
+		// there to find, and to quote from.
+		if err := os.Remove(b.source.Path); err != nil {
+			t.Fatal(err)
+		}
+		after := holding(s.search(t, cs, in), b.word)
+		if len(after) == 0 || after[0].ID != before[0].ID || after[0].Text != before[0].Text {
+			t.Fatalf("once the file of an indexed Source is gone, a search for %q finds %+v, and found %+v before: a search reads "+
+				"the index and never the Source", b.word, after, before)
+		}
+		if again := s.passage(t, cs, collection, before[0].ID); again.Text != before[0].Text {
+			t.Errorf("once the file is gone, passage gives %q for a Passage that held %q", again.Text, before[0].Text)
+		}
+		if now := s.status(t, cs, collection)[b.source.ID]; now.State != plugincontract.StateIndexed || now.Hash != b.source.Hash {
+			t.Errorf("once the file is gone, status says %+v of a Source nobody asked to index again; want it indexed, with its hash", now)
+		}
+	})
+
+	s.sub(t, "a file that cannot be read fails, with the reason, and stays failed", func(t *testing.T) {
 		cs := s.connect(t)
 		collection := s.collection("missing")
 		b := s.write(t, "missing")
@@ -779,11 +1069,32 @@ func (s *suite) files(t *testing.T) {
 		if !ok || status.State != plugincontract.StateFailed || strings.TrimSpace(status.Reason) == "" {
 			t.Fatalf("status of a Source whose file is not there = %+v (listed: %v); want failed, with a reason", status, ok)
 		}
+		// It stays failed, however often it is asked about: study asks more
+		// than once, and the learner reads the reason later.
+		for range 3 {
+			time.Sleep(20 * time.Millisecond)
+			again, ok := s.status(t, cs, collection)[b.source.ID]
+			if !ok || again.State != plugincontract.StateFailed || strings.TrimSpace(again.Reason) == "" {
+				t.Fatalf("status said a Source failed, and asked again says %+v (listed: %v): a Source stays failed until it is "+
+					"indexed again", again, ok)
+			}
+		}
 		// Asked again with a file that is there, it is indexed.
 		s.indexed(t, cs, collection, good)
+
+		// A Source that was indexed, and whose new content cannot be read:
+		// what status says of it and what a search finds agree.
+		bad := good
+		bad.Path, bad.Hash = b.source.Path, "sha256:"+strings.Repeat("1", 64)
+		s.index(t, cs, collection, bad)
+		status, ok = s.settled(t, cs, collection, good.ID)
+		if !ok || status.State != plugincontract.StateFailed {
+			t.Fatalf("status of an indexed Source whose new file is not there = %+v (listed: %v); want failed", status, ok)
+		}
+		s.agrees(t, cs, collection, b, status)
 	})
 
-	t.Run("cancel stops the indexing of a Source", func(t *testing.T) {
+	s.sub(t, "cancel stops the indexing of a Source", func(t *testing.T) {
 		cs := s.connect(t)
 		collection := s.collection("cancel")
 		kept := s.write(t, "kept")
@@ -822,7 +1133,115 @@ func (s *suite) files(t *testing.T) {
 		s.indexed(t, cs, collection, long.source)
 	})
 
-	t.Run("two connections at once reach one index", func(t *testing.T) {
+	s.sub(t, "what was indexed stays until new content replaces it", func(t *testing.T) {
+		cs := s.connect(t)
+		collection := s.collection("earlier")
+		earlier := s.write(t, "earlier")
+		s.indexed(t, cs, collection, earlier.source)
+		// The same Source, with other content that takes a while.
+		later := s.long(t, "later")
+		later.source.ID = earlier.source.ID
+		if first := s.index(t, cs, collection, later.source); first.State != plugincontract.StateIndexing {
+			t.Skipf("index of new, long content answered %+v: the plugin is too quick for the time in between to be looked at", first)
+		}
+		// While the new content is being indexed, status and search agree
+		// on what is there to find.
+		before := s.status(t, cs, collection)[earlier.source.ID]
+		found := len(holding(s.search(t, cs, plugincontract.SearchInput{Collection: collection, Query: earlier.word,
+			Limit: plugincontract.MaxSearchLimit, Sources: []string{earlier.source.ID}}), earlier.word)) > 0
+		after := s.status(t, cs, collection)[earlier.source.ID]
+		if before.State == plugincontract.StateIndexing && after.State == plugincontract.StateIndexing && before.Hash == after.Hash {
+			switch {
+			case found && before.Hash == "":
+				t.Errorf("while new content is being indexed, a search still finds the earlier content of the Source, and status " +
+					"gives no hash for it: hash is the hash of what search finds now, and is there while earlier content is")
+			case found && before.Hash != earlier.source.Hash:
+				t.Errorf("while new content is being indexed, a search finds the earlier content, which hashes to %s, and status "+
+					"gives the hash %s", earlier.source.Hash, before.Hash)
+			case !found && before.Hash != "":
+				t.Errorf("while new content is being indexed, status gives the hash %s for the Source, and a search finds "+
+					"nothing of that content", before.Hash)
+			}
+		} else {
+			t.Log("the plugin had indexed the new content before it could be asked: the time in between was not checked")
+		}
+		// Stopped, the Source is as it was before index was called.
+		if !s.cancel(t, cs, collection, earlier.source.ID) {
+			t.Skip("the plugin had indexed the new content before cancel arrived: stopping over earlier content was not checked")
+		}
+		now, listed := s.status(t, cs, collection)[earlier.source.ID]
+		if !listed || now.State != plugincontract.StateIndexed || now.Hash != earlier.source.Hash {
+			t.Fatalf("after a cancel that stopped the indexing of new content, status says %+v (listed: %v) of a Source that was "+
+				"indexed before: what was indexed stays, so want it indexed with the hash %s", now, listed, earlier.source.Hash)
+		}
+		if kept := holding(s.search(t, cs, plugincontract.SearchInput{Collection: collection, Query: earlier.word, Limit: plugincontract.MaxSearchLimit}), earlier.word); len(kept) == 0 {
+			t.Errorf("after a cancel that stopped the indexing of new content, a search no longer finds the earlier content: " +
+				"what was indexed stays")
+		}
+	})
+
+	s.sub(t, "status and search never wait for indexing", func(t *testing.T) {
+		cs := s.connect(t)
+		collection := s.collection("waiting")
+		b := s.write(t, "quiet")
+		s.indexed(t, cs, collection, b.source)
+		// How long each takes when nothing is being indexed.
+		quietStatus := timed(func() { s.status(t, cs, collection) })
+		quietSearch := timed(func() {
+			s.search(t, cs, plugincontract.SearchInput{Collection: collection, Query: b.word, Limit: plugincontract.MaxSearchLimit})
+		})
+		// A call waited when it took far longer than that and came back
+		// only once the indexing was over. One slow answer can be the
+		// computer's doing, so each is tried twice.
+		slow := func(took, quiet time.Duration) bool { return took > 3*quiet+500*time.Millisecond }
+
+		waited := 0
+		for range 2 {
+			long := s.long(t, "status-meanwhile")
+			if first := s.index(t, cs, collection, long.source); first.State != plugincontract.StateIndexing {
+				t.Logf("index of a long Source answered %+v: the plugin is too quick for status to be asked meanwhile", first)
+				break
+			}
+			began := time.Now()
+			now, listed := s.status(t, cs, collection)[long.source.ID]
+			took := time.Since(began)
+			s.cancel(t, cs, collection, long.source.ID)
+			if listed && now.State == plugincontract.StateIndexing || !slow(took, quietStatus) {
+				waited = 0
+				break
+			}
+			waited++
+			t.Logf("status took %s while a Source was being indexed, and %s otherwise, and then said %+v", took, quietStatus, now)
+		}
+		if waited == 2 {
+			t.Errorf("status answers only once indexing is over: it answers from what the plugin knows, and never waits for indexing")
+		}
+
+		waited = 0
+		for range 2 {
+			long := s.long(t, "search-meanwhile")
+			if first := s.index(t, cs, collection, long.source); first.State != plugincontract.StateIndexing {
+				t.Logf("index of a long Source answered %+v: the plugin is too quick for a search to be made meanwhile", first)
+				break
+			}
+			// The word is on the last page: found, the indexing is over.
+			began := time.Now()
+			found := holding(s.search(t, cs, plugincontract.SearchInput{Collection: collection, Query: long.word, Limit: plugincontract.MaxSearchLimit}), long.word)
+			took := time.Since(began)
+			s.cancel(t, cs, collection, long.source.ID)
+			if len(found) == 0 || !slow(took, quietSearch) {
+				waited = 0
+				break
+			}
+			waited++
+			t.Logf("a search took %s while a Source was being indexed, and %s otherwise, and found what was indexed last", took, quietSearch)
+		}
+		if waited == 2 {
+			t.Errorf("search answers only once indexing is over: it finds what is indexed now, and never waits for indexing")
+		}
+	})
+
+	s.sub(t, "two connections at once reach one index", func(t *testing.T) {
 		// The MCP server an agent uses and a study source index in a shell
 		// each have a connection of their own, and, to a plugin that is a
 		// command, each a copy of the program.
@@ -844,18 +1263,17 @@ func (s *suite) files(t *testing.T) {
 		if during := holding(s.search(t, other, in), b.word); len(during) == 0 {
 			t.Errorf("a search over one connection, while a Source is being indexed over another, no longer finds what was indexed")
 		}
-		var again plugincontract.PassageResult
-		s.into(t, other, plugincontract.ToolPassage, plugincontract.PassageInput{Collection: collection, ID: found[0].ID}, &again)
-		if again.Passage.Text != found[0].Text {
-			t.Errorf("a Passage read over one connection while the other indexes is %q, and was %q", again.Passage.Text, found[0].Text)
+		if again := s.passage(t, other, collection, found[0].ID); again.Text != found[0].Text {
+			t.Errorf("a Passage read over one connection while the other indexes is %q, and was %q", again.Text, found[0].Text)
 		}
 		s.cancel(t, one, collection, long.source.ID)
 	})
 
-	t.Run("what is indexed is there when the plugin is reached again", func(t *testing.T) {
+	s.sub(t, "what is indexed is there when the plugin is reached again", func(t *testing.T) {
 		collection := s.collection("again")
 		b := s.write(t, "again")
 		first := s.open(t)
+		t.Cleanup(func() { s.hangUp(first) })
 		s.indexed(t, first, collection, b.source)
 		found := holding(s.search(t, first, plugincontract.SearchInput{Collection: collection, Query: b.word, Limit: plugincontract.MaxSearchLimit}), b.word)
 		if len(found) == 0 {
@@ -867,8 +1285,9 @@ func (s *suite) files(t *testing.T) {
 		if s.Restarts {
 			s.index(t, first, collection, long.source)
 		}
-		if err := first.Close(); err != nil {
-			t.Logf("closing the connection: %v", err)
+		if lingered := s.lingers.Load(); !s.hangUp(first) && !lingered {
+			t.Errorf("the plugin did not exit within 2 seconds of its standard input closing while it was indexing: study had " +
+				"to signal it. Exit when your standard input closes, whatever you are doing")
 		}
 
 		cs := s.connect(t)
@@ -876,10 +1295,8 @@ func (s *suite) files(t *testing.T) {
 		if now := status[b.source.ID]; now.State != plugincontract.StateIndexed || now.Hash != b.source.Hash {
 			t.Errorf("status of a Source indexed over an earlier connection = %+v; want it indexed, with its hash", now)
 		}
-		var again plugincontract.PassageResult
-		s.into(t, cs, plugincontract.ToolPassage, plugincontract.PassageInput{Collection: collection, ID: found[0].ID}, &again)
-		if !reflect.DeepEqual(again.Passage, found[0].Passage) {
-			t.Errorf("a Passage found over an earlier connection is now %+v, and was %+v", again.Passage, found[0].Passage)
+		if again := s.passage(t, cs, collection, found[0].ID); !reflect.DeepEqual(again, found[0].Passage) {
+			t.Errorf("a Passage found over an earlier connection is now %+v, and was %+v", again, found[0].Passage)
 		}
 		if s.Restarts {
 			// Nothing is being indexed until index is called: a plugin that
@@ -890,6 +1307,26 @@ func (s *suite) files(t *testing.T) {
 			s.indexed(t, cs, collection, long.source)
 		}
 	})
+}
+
+// agrees checks that what status says of a Source that is not indexed, and
+// was, agrees with what a search finds: hash is the hash of what search
+// finds for the Source now, there when its earlier content is and left out
+// when it is not.
+func (s *suite) agrees(t *testing.T, cs *session, collection string, earlier book, status plugincontract.SourceStatus) {
+	t.Helper()
+	found := len(holding(s.search(t, cs, plugincontract.SearchInput{Collection: collection, Query: earlier.word,
+		Limit: plugincontract.MaxSearchLimit}), earlier.word)) > 0
+	switch {
+	case found && status.Hash == "":
+		t.Errorf("status says %s of a Source whose earlier content a search still finds, and gives no hash for it: hash is the "+
+			"hash of what search finds now", status.State)
+	case found && status.Hash != earlier.source.Hash:
+		t.Errorf("status says %s of a Source whose earlier content, which hashes to %s, a search still finds, and gives the hash %s",
+			status.State, earlier.source.Hash, status.Hash)
+	case !found && status.Hash != "":
+		t.Errorf("status says %s of a Source and gives the hash %s, and a search finds nothing of that content", status.State, status.Hash)
+	}
 }
 
 // long writes a book of many pages, which takes a plugin a while to index.
@@ -906,7 +1343,7 @@ func (s *suite) long(t *testing.T, name string) book {
 
 // pages checks what the contract promises of web page Sources.
 func (s *suite) pages(t *testing.T) {
-	t.Run("a web page is indexed, and fetched again only when asked", func(t *testing.T) {
+	s.sub(t, "a web page is indexed, and fetched again only when asked", func(t *testing.T) {
 		cs := s.connect(t)
 		collection := s.collection("page")
 		word := unique()
@@ -960,7 +1397,7 @@ func (s *suite) pages(t *testing.T) {
 	if s.ServePage != nil {
 		return
 	}
-	t.Run("a web page that cannot be fetched fails, with the reason", func(t *testing.T) {
+	s.sub(t, "a web page that cannot be fetched fails, with the reason", func(t *testing.T) {
 		cs := s.connect(t)
 		collection := s.collection("unfetched")
 		// An address nothing answers at: the port was free a moment ago.
@@ -977,6 +1414,154 @@ func (s *suite) pages(t *testing.T) {
 			t.Errorf("status of a web page that cannot be fetched = %+v (listed: %v); want failed, with a reason", status, ok)
 		}
 	})
+}
+
+// links checks that a plugin that is a command stays inside its folder: it
+// follows no symbolic link there that leads out of it.
+//
+// The folder is outside the Study home, where the agent cannot write. Even
+// so a plugin runs outside the agent's sandbox for as long as it lives, and
+// names its folder by a path: what it does with a name there that leads
+// elsewhere is what stands between a mistake in that folder and a file of
+// the learner's being overwritten.
+func (s *suite) links(t *testing.T) {
+	// try indexes a small book and searches for it, taking whatever the
+	// plugin answers: with its folder in pieces it may refuse, or fail the
+	// Source. Only what it writes is looked at.
+	try := func(t *testing.T, collection string) {
+		cs := s.connect(t)
+		b := s.write(t, "linked")
+		if a := s.call(t, cs, plugincontract.ToolIndex, plugincontract.IndexInput{Collection: collection, Source: b.source}); a.refused {
+			return
+		}
+		for deadline := time.Now().Add(s.Patience); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
+			a := s.call(t, cs, plugincontract.ToolStatus, plugincontract.StatusInput{Collection: collection})
+			var status plugincontract.StatusResult
+			if a.refused || a.data == nil || plugincontract.Decode(a.data, &status) != nil {
+				break
+			}
+			if !slices.ContainsFunc(status.Sources, func(st plugincontract.SourceStatus) bool {
+				return st.ID == b.source.ID && st.State == plugincontract.StateIndexing
+			}) {
+				break
+			}
+		}
+		s.call(t, cs, plugincontract.ToolSearch, plugincontract.SearchInput{Collection: collection, Query: b.word, Limit: 5})
+		s.hangUp(cs)
+	}
+
+	s.sub(t, "it follows no link out of its folder that was there before it", func(t *testing.T) {
+		collection := s.collection("link")
+		outside := t.TempDir()
+		folder := filepath.Join(outside, "folder")
+		if err := os.Mkdir(folder, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		// Names a plugin is likely to give what it keeps for a collection:
+		// the collection's own, as a folder, and as a file of some kind.
+		planted := map[string]string{collection: folder}
+		for _, ending := range []string{".json", ".db", ".sqlite", ".sqlite3", ".idx", ".index", ".bin"} {
+			planted[collection+ending] = filepath.Join(outside, "file"+ending)
+		}
+		for name, leads := range planted {
+			if err := os.Symlink(leads, filepath.Join(s.dataFolder, name)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		before := tree(t, outside)
+		try(t, collection)
+		if now := tree(t, outside); now != before {
+			t.Errorf("the plugin wrote outside its folder, through a symbolic link that was in it: a plugin opens its folder "+
+				"once and follows no link out of it.\nwhere the links lead, before:\n%s\nnow:\n%s", before, now)
+		}
+		for name := range planted {
+			_ = os.Remove(filepath.Join(s.dataFolder, name))
+		}
+	})
+
+	s.sub(t, "it follows no link out of its folder that takes the place of what it made", func(t *testing.T) {
+		collection := s.collection("swap")
+		// The plugin makes what it makes for a collection, and stops.
+		cs := s.open(t)
+		t.Cleanup(func() { s.hangUp(cs) })
+		s.indexed(t, cs, collection, s.write(t, "swapped").source)
+		s.hangUp(cs)
+		// Everything in its folder is exchanged for a link to a copy of it
+		// elsewhere, as someone who can write the folder could do.
+		entries, err := os.ReadDir(s.dataFolder)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(entries) == 0 {
+			t.Skipf("the plugin's folder, %s, is empty after it indexed a Source: it keeps its index elsewhere", s.dataFolder)
+		}
+		outside := t.TempDir()
+		for _, entry := range entries {
+			from, to := filepath.Join(s.dataFolder, entry.Name()), filepath.Join(outside, entry.Name())
+			if entry.Type()&fs.ModeSymlink != 0 {
+				continue
+			}
+			if err := os.CopyFS(to, os.DirFS(from)); entry.IsDir() && err != nil {
+				t.Fatal(err)
+			}
+			if !entry.IsDir() {
+				data, err := os.ReadFile(from)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(to, data, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := os.RemoveAll(from); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(to, from); err != nil {
+				t.Fatal(err)
+			}
+		}
+		before := tree(t, outside)
+		try(t, collection)
+		if now := tree(t, outside); now != before {
+			t.Errorf("the plugin wrote outside its folder, through a symbolic link that had taken the place of what it keeps "+
+				"there: a plugin opens its folder once and follows no link out of it.\nwhere the links lead, before:\n%s\nnow:\n%s",
+				before, now)
+		}
+	})
+}
+
+// tree describes everything in a folder: each name with what it is and, for
+// a file, what it holds. Two descriptions are equal when nothing was added,
+// removed or changed.
+func tree(t *testing.T, dir string) string {
+	t.Helper()
+	var lines []string
+	err := filepath.WalkDir(dir, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(dir, path)
+		switch {
+		case entry.Type()&fs.ModeSymlink != 0:
+			leads, _ := os.Readlink(path)
+			lines = append(lines, rel+" -> "+leads)
+		case entry.IsDir():
+			lines = append(lines, rel+"/")
+		default:
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			sum := sha256.Sum256(data)
+			lines = append(lines, fmt.Sprintf("%s %d bytes %s", rel, len(data), hex.EncodeToString(sum[:6])))
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("looking at %s: %v", dir, err)
+	}
+	sort.Strings(lines)
+	return strings.Join(lines, "\n")
 }
 
 // servePage serves a web page from this computer's loopback interface and

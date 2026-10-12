@@ -49,29 +49,44 @@ func TestOpenFolderOpensTheRegistrysFolder(t *testing.T) {
 }
 
 // A Guard asks of whatever else a plugin is started with what the registry
-// asks of its program: is it the agent's to change?
+// asks of its program: is it the agent's to change? Only what is known to
+// stay outside the Study home is outside.
 func TestGuardTellsWhatTheAgentCouldChange(t *testing.T) {
 	c := regtest.New(t)
 	python := regtest.Program(t, filepath.Join(c.Bin, "python3"))
 	inside := regtest.Program(t, filepath.Join(c.Study, "topic", ".venv", "bin", "python3"))
 	link := regtest.Symlink(t, filepath.Join(c.Study, "topic"), filepath.Join(c.Home, "current-topic"))
+	// A folder nobody may look into: where a path through it leads cannot
+	// be told.
+	closed := regtest.Mkdir(t, filepath.Join(c.Home, "closed"))
+	regtest.Mkdir(t, filepath.Join(closed, "bin"))
+	if err := os.Chmod(closed, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(closed, 0o700) })
+	_, err := os.ReadDir(closed)
+	unreadable := err != nil // root reads every folder
+
 	guard := pluginregistry.NewGuard(envOf(c))
 	defer guard.Close()
 	for path, want := range map[string]bool{
-		c.Study:                              true,
-		filepath.Join(c.Study, "topic"):      true,
-		inside:                               true,
-		filepath.Join(c.Study, "not", "yet"): true,
-		link:                                 true,
-		filepath.Join(link, ".venv", "bin"):  true,
-		c.Home:                               false,
-		c.Bin:                                false,
-		python:                               false,
-		"/":                                  false,
-		filepath.Join(c.Base, "nowhere"):     false,
+		c.Study:                              false,
+		filepath.Join(c.Study, "topic"):      false,
+		inside:                               false,
+		filepath.Join(c.Study, "not", "yet"): false,
+		link:                                 false,
+		filepath.Join(link, ".venv", "bin"):  false,
+		filepath.Join(closed, "bin"):         !unreadable,
+		// A file where a folder should be.
+		filepath.Join(python, "x"):       false,
+		c.Home:                           true,
+		c.Bin:                            true,
+		python:                           true,
+		"/":                              true,
+		filepath.Join(c.Base, "nowhere"): true,
 	} {
-		if got := guard.Inside(path); got != want {
-			t.Errorf("Inside(%s) = %v, want %v", path, got, want)
+		if got := guard.Outside(path); got != want {
+			t.Errorf("Outside(%s) = %v, want %v", path, got, want)
 		}
 	}
 	if err := guard.CheckProgram(python); err != nil {
@@ -88,6 +103,152 @@ func TestGuardTellsWhatTheAgentCouldChange(t *testing.T) {
 		err := guard.CheckProgram(path)
 		if err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("CheckProgram(%s) = %v; want an error with %q", path, err, want)
+		}
+	}
+}
+
+// MakeFolder makes a folder for the learner alone, through the folders the
+// walk opened, and gives the path the links lead to.
+func TestMakeFolderMakesAFolderOutsideTheStudyHome(t *testing.T) {
+	c := regtest.New(t)
+	guard := pluginregistry.NewGuard(envOf(c))
+	defer guard.Close()
+
+	want := filepath.Join(c.Home, ".local", "state", "lamplight", "knowledge-base-plugins", "notes")
+	folder, path, err := guard.MakeFolder(want)
+	if err != nil {
+		t.Fatalf("MakeFolder: %v", err)
+	}
+	defer folder.Close()
+	if path != want {
+		t.Errorf("MakeFolder gives the path %s; want %s", path, want)
+	}
+	opened, err := folder.Stat()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if named, err := os.Stat(want); err != nil || !os.SameFile(opened, named) {
+		t.Errorf("the folder returned is not the one at %s (%v)", want, err)
+	}
+	// Every folder it made is the learner's alone.
+	for dir := want; dir != c.Home; dir = filepath.Dir(dir) {
+		if info, err := os.Stat(dir); err != nil || info.Mode().Perm() != 0o700 {
+			t.Errorf("%s was made with the mode %v (%v); want 0700", dir, info.Mode().Perm(), err)
+		}
+	}
+	// Made already, it is found, and nothing changes.
+	before := regtest.Snapshot(t, c.Base)
+	again, path, err := guard.MakeFolder(want)
+	if err != nil || path != want {
+		t.Fatalf("MakeFolder again = %s, %v", path, err)
+	}
+	again.Close()
+	if regtest.Snapshot(t, c.Base) != before {
+		t.Error("finding a folder that is there wrote something")
+	}
+
+	// Through a link outside the Study home, the path is where it leads.
+	real := regtest.Mkdir(t, filepath.Join(c.Base, "disk", "state"))
+	link := regtest.Symlink(t, real, filepath.Join(c.Home, "state"))
+	linked, path, err := guard.MakeFolder(filepath.Join(link, "lamplight", "notes"))
+	if err != nil {
+		t.Fatalf("MakeFolder through a link: %v", err)
+	}
+	linked.Close()
+	if path != filepath.Join(real, "lamplight", "notes") || !regtest.Exists(path) {
+		t.Errorf("MakeFolder through a link gives %s; want the folder the link leads to", path)
+	}
+}
+
+// Nothing is made where the agent writes, or where a link there leads.
+func TestMakeFolderRefusesTheStudyHome(t *testing.T) {
+	c := regtest.New(t)
+	outside := regtest.Mkdir(t, filepath.Join(c.Base, "outside"))
+	regtest.Mkdir(t, filepath.Join(c.Study, "topic"))
+	through := regtest.Symlink(t, outside, filepath.Join(c.Study, "topic", "state"))
+	leads := regtest.Symlink(t, filepath.Join(c.Study, "topic"), filepath.Join(c.Home, "state"))
+	guard := pluginregistry.NewGuard(envOf(c))
+	defer guard.Close()
+	before := regtest.Snapshot(t, c.Base)
+	for _, path := range []string{
+		c.Study,
+		filepath.Join(c.Study, ".lamplight", "knowledge-base-plugins", "notes"),
+		filepath.Join(through, "lamplight", "notes"),
+		filepath.Join(leads, "lamplight", "notes"),
+	} {
+		folder, resolved, err := guard.MakeFolder(path)
+		if err == nil || !pluginregistry.IsInside(err) || folder != nil || resolved != "" {
+			t.Errorf("MakeFolder(%s) = %v, %q, %v; want it refused as inside the Study home", path, folder, resolved, err)
+		}
+		if folder != nil {
+			folder.Close()
+		}
+	}
+	if regtest.Snapshot(t, c.Base) != before {
+		t.Error("a refused folder was made all the same, or part of it")
+	}
+
+	// What is no folder is no folder to make either, and that is another
+	// refusal than being inside.
+	file := filepath.Join(c.Home, "notes.txt")
+	regtest.WriteFile(t, file, "notes")
+	nowhere := regtest.Symlink(t, filepath.Join(c.Base, "gone"), filepath.Join(c.Home, "dangling"))
+	for _, path := range []string{file, filepath.Join(file, "x"), filepath.Join(nowhere, "x"), c.Home + "/new/../x"} {
+		folder, _, err := guard.MakeFolder(path)
+		if err == nil || pluginregistry.IsInside(err) || folder != nil {
+			t.Errorf("MakeFolder(%s) = %v, %v; want an error that is not about the Study home", path, folder, err)
+		}
+		if folder != nil {
+			folder.Close()
+		}
+	}
+	if regtest.Exists(filepath.Join(c.Home, "new")) || regtest.Exists(filepath.Join(c.Base, "gone")) {
+		t.Error("a folder was made on the way to a path that was refused")
+	}
+}
+
+// OpenCommand gives the program, and the folder that really holds it with
+// the program's own name there: what a plugin is started by.
+func TestOpenCommandOpensTheProgramInItsFolder(t *testing.T) {
+	c := regtest.New(t)
+	real := regtest.Program(t, filepath.Join(c.Base, "opt", "kb", "notes-kb"))
+	link := regtest.Symlink(t, real, filepath.Join(c.Bin, "kb"))
+	plugin := pluginregistry.Plugin{Name: "notes", Command: []string{link, "serve"}}
+	command, err := pluginregistry.OpenCommand(envOf(c), plugin)
+	if err != nil {
+		t.Fatalf("OpenCommand: %v", err)
+	}
+	defer command.Close()
+	want, err := os.Stat(real)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := command.Program.Stat(); err != nil || !os.SameFile(want, got) {
+		t.Errorf("the program opened is not %s (%v)", real, err)
+	}
+	holds, err := os.Stat(filepath.Dir(real))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := command.Folder.Stat(); err != nil || !os.SameFile(holds, got) || command.Name != "notes-kb" {
+		t.Errorf("the folder and name are not those of the file the link leads to: %s (%v)", command.Name, err)
+	}
+
+	// What the listing flags is not opened, and neither is a plugin with
+	// no program.
+	inside := regtest.Program(t, filepath.Join(c.Study, "topic", "kb"))
+	for _, refused := range []pluginregistry.Plugin{
+		{Name: "agent", Command: []string{inside}},
+		{Name: "gone", Command: []string{filepath.Join(c.Bin, "gone")}},
+		{Name: "argument", Command: []string{link, "--config", filepath.Join(c.Study, "topic", "config.toml")}},
+		{Name: "remote", URL: "https://kb.example/mcp"},
+	} {
+		command, err := pluginregistry.OpenCommand(envOf(c), refused)
+		if err == nil || command != nil {
+			t.Errorf("%s: OpenCommand = %v, %v; want it refused", refused.Name, command, err)
+		}
+		if command != nil {
+			command.Close()
 		}
 	}
 }

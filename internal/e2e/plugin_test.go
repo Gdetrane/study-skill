@@ -60,13 +60,17 @@ func newPluginComputer(t *testing.T, args ...string) *pluginComputer {
 
 // command is the built study, started inside the Topic, as an agent or the
 // MCP server's harness starts it: with a standard input that is its own to
-// read, and a git environment such as a hook leaves.
+// read, a git environment such as a hook leaves, and the environment of a
+// shell with the Topic's virtual environment switched on.
 func (c *pluginComputer) command(group string, args ...string) *exec.Cmd {
 	c.t.Helper()
 	cmd := exec.Command(c.study, append([]string{group}, args...)...)
 	cmd.Dir = c.topic
-	cmd.Env = []string{"HOME=" + c.home, "STUDY_HOME=" + filepath.Join(c.home, "study"), "PATH=" + os.Getenv("PATH"),
-		"XDG_STATE_HOME=" + filepath.Join(c.home, ".state"), "GIT_DIR=" + filepath.Join(c.topic, ".git"), "GIT_INDEX_FILE=/nowhere/index"}
+	cmd.Env = []string{"HOME=" + c.home, "STUDY_HOME=" + filepath.Join(c.home, "study"),
+		"PATH=" + filepath.Join(c.topic, ".venv", "bin") + string(os.PathListSeparator) + os.Getenv("PATH"),
+		"XDG_STATE_HOME=" + filepath.Join(c.home, ".state"), "GIT_DIR=" + filepath.Join(c.topic, ".git"), "GIT_INDEX_FILE=/nowhere/index",
+		"VIRTUAL_ENV=" + filepath.Join(c.topic, ".venv"), "PYTHONPATH=" + filepath.Join(c.topic, "src"), "NODE_OPTIONS=--require ./hook.js",
+		"LD_PRELOAD=" + filepath.Join(c.home, "lib", "hook.so"), "EMBEDDINGS_API_KEY=a-key-of-the-learner", "LANG=C.UTF-8"}
 	stdin, err := os.Open(c.input)
 	if err != nil {
 		c.t.Fatal(err)
@@ -109,13 +113,28 @@ func TestABuiltStudyStartsAPluginApartFromItself(t *testing.T) {
 	if st, ok := input.Sys().(*syscall.Stat_t); !got.Stdin.Pipe || (ok && uint64(st.Ino) == got.Stdin.Inode && uint64(st.Dev) == got.Stdin.Device) {
 		t.Errorf("the plugin's standard input is study's own, or no pipe: %+v", got.Stdin)
 	}
-	for name := range got.Env {
-		if strings.HasPrefix(name, "GIT_") {
-			t.Errorf("the plugin was given %s", name)
+	// Its environment is the few variables study gives a plugin, and none of
+	// the rest of what study was started with.
+	for name, value := range got.Env {
+		switch name {
+		case "HOME", "PATH", "LANG", "XDG_STATE_HOME", "LAMPLIGHT_PLUGIN_DATA":
+		default:
+			t.Errorf("the plugin was given %s=%s", name, value)
+		}
+		if strings.Contains(value, c.topic) {
+			t.Errorf("the plugin's %s leads into the Topic: %s", name, value)
 		}
 	}
-	if want := filepath.Join(c.home, "study", ".lamplight", "knowledge-base-plugins", "kb"); got.Env["LAMPLIGHT_PLUGIN_DATA"] != want || env.Data.DataFolder != want {
+	if got.Env["PATH"] == "" || got.Env["HOME"] != c.home || got.Env["LANG"] != "C.UTF-8" {
+		t.Errorf("the plugin's environment: %v", got.Env)
+	}
+	// Its folder is in the learner's state folder, and study made nothing in
+	// the Study home.
+	if want := filepath.Join(c.home, ".state", "lamplight", "knowledge-base-plugins", "kb"); got.Env["LAMPLIGHT_PLUGIN_DATA"] != want || env.Data.DataFolder != want {
 		t.Errorf("the plugin's folder is %q, and study says %q; want %q", got.Env["LAMPLIGHT_PLUGIN_DATA"], env.Data.DataFolder, want)
+	}
+	if _, err := os.Stat(filepath.Join(c.home, "study", ".lamplight")); err == nil {
+		t.Error("study made a folder in the Study home for the plugin")
 	}
 	if !got.Leader || got.Terminal {
 		t.Errorf("the plugin leads a session of its own: %v; it has a terminal: %v", got.Leader, got.Terminal)
@@ -187,5 +206,56 @@ func TestAPluginExitsWhenStudyIsKilled(t *testing.T) {
 	_ = cmd.Wait()
 	if !plugintest.Gone(plugin.PID, 5*time.Second) {
 		t.Errorf("the plugin, process %d, went on after study was killed", plugin.PID)
+	}
+}
+
+// Whoever starts study may leave it descriptors of their own: a shell that
+// ran study with 9<secret, or with a copy of its standard output. A plugin
+// inherits none of them, so it reads no file study was handed and writes
+// nothing beside what study prints: --json stays one JSON document.
+func TestAPluginInheritsNoDescriptorOfStudys(t *testing.T) {
+	c := newPluginComputer(t)
+	secret := filepath.Join(c.home, "secret")
+	if err := os.WriteFile(secret, []byte("a key of the learner's\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	held, err := os.Open(secret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer held.Close()
+	// study's standard output is a pipe, and study is handed a second
+	// descriptor for it, as 4>&1 hands one.
+	read, write, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer read.Close()
+	cmd := c.command("knowledge-base", "check", "kb", "--json")
+	cmd.Stdout = write
+	cmd.ExtraFiles = []*os.File{held, write}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	write.Close()
+	var stdout bytes.Buffer
+	if _, err := stdout.ReadFrom(read); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("study knowledge-base check: %v\n%s", err, stdout.String())
+	}
+	var env struct {
+		OK bool `json:"ok"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &env); err != nil || !env.OK {
+		t.Errorf("stdout is not the one JSON document of --json: %v\n%s", err, stdout.String())
+	}
+	got := plugintest.ReadRecord(t, c.record)
+	defer plugintest.Kill(got.PID)
+	for fd, target := range got.Files {
+		if target == secret || strings.HasPrefix(target, "pipe:") {
+			t.Errorf("the plugin inherited descriptor %d of study's: %s", fd, target)
+		}
 	}
 }

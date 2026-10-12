@@ -124,7 +124,7 @@ func TestASessionSpeaksTheContract(t *testing.T) {
 	if got := s.Server(); got != (pluginclient.Server{Name: "shelf-for-tests", Version: "0.1.0"}) {
 		t.Errorf("Server = %+v", got)
 	}
-	if s.Name() != "kb" || s.DataFolder() != filepath.Join(c.StudyHome, ".lamplight", "knowledge-base-plugins", "kb") {
+	if s.Name() != "kb" || s.DataFolder() != c.DataFolder("kb") {
 		t.Errorf("Name = %q, DataFolder = %q", s.Name(), s.DataFolder())
 	}
 
@@ -182,9 +182,10 @@ func TestASessionSpeaksTheContract(t *testing.T) {
 }
 
 // A command is started as ADR-0012 says: in the registry's folder and never
-// in the Topic study was started in, with pipes of its own, in a session of
-// its own, with the learner's environment less what would mislead it, and
-// with a folder of its own. It is gone when its Connection is closed.
+// in the Topic study was started in, with pipes of its own and no other
+// file of study's, in a session of its own, with a small environment study
+// makes, and with a folder of its own outside the Study home. It is gone
+// when its Connection is closed.
 func TestACommandIsStartedApartFromStudy(t *testing.T) {
 	c := plugintest.NewComputer(t)
 	topic := filepath.Join(c.StudyHome, "linear-algebra")
@@ -199,19 +200,42 @@ func TestACommandIsStartedApartFromStudy(t *testing.T) {
 	if err := os.Symlink(topic, link); err != nil {
 		t.Fatal(err)
 	}
-	const colours = "rs=0:di=01;34:ln=01;36"
 	opts := quick(c, "GIT_DIR="+topic+"/.git", "GIT_INDEX_FILE=/somewhere/index", "GIT_CONFIG_GLOBAL=/somewhere/config",
-		"PWD="+topic, "OLDPWD="+c.StudyHome, plugincontract.DataFolderEnv+"=/somewhere/else", "EMBEDDINGS_API_KEY=kept",
-		"PATH="+topic+"/.venv/bin:/usr/bin:"+link+"/bin:"+c.Home+"/bin::.", "VIRTUAL_ENV="+topic+"/.venv",
-		"PYTHONPATH="+topic+"/src:"+link+"/lib", "NODE_PATH="+c.Home+"/node:"+topic+"/node_modules",
-		"NODE_OPTIONS=--max-old-space-size=4096 --require "+topic+"/hook.js", "JAVA_OPTS=-Xmx1g -Dconf="+link+"/kb.conf",
-		"LESS=-R --tabs=4", "LS_COLORS="+colours, "EMPTY=", "NOTES="+c.Home+"/notes")
+		"PWD="+topic, "OLDPWD="+c.StudyHome, plugincontract.DataFolderEnv+"=/somewhere/else", "EMBEDDINGS_API_KEY=not-given",
+		"PATH="+topic+"/.venv/bin:/usr/bin:"+link+"/bin:"+c.Home+"/bin::.:relative/bin", "VIRTUAL_ENV="+topic+"/.venv",
+		"PYTHONPATH="+c.Home+"/lib", "PYTHONSTARTUP="+c.Home+"/startup.py", "NODE_PATH="+c.Home+"/node",
+		"NODE_OPTIONS=--max-old-space-size=4096", "PERL5OPT=-Mhook", "BASH_ENV="+c.Home+"/.bashenv", "LD_PRELOAD=/usr/lib/libhook.so",
+		"LD_LIBRARY_PATH=/opt/lib", "DYLD_INSERT_LIBRARIES=/opt/hook.dylib", "JAVA_TOOL_OPTIONS=-javaagent:/opt/agent.jar",
+		"HTTPS_PROXY=http://proxy.example:3128", "LESS=-R", "LS_COLORS=rs=0:di=01;34", "EMPTY=", "NOTES="+c.Home+"/notes",
+		"USER=ada", "LOGNAME=ada", "LANG=en_GB.UTF-8", "LC_ALL=C.UTF-8", "LC_MESSAGES="+topic+"/locale", "TZ=Europe/Rome",
+		"TMPDIR="+c.Home+"/tmp", "XDG_CONFIG_HOME="+topic+"/.config", "XDG_DATA_HOME="+c.Home+"/.local/share",
+		"XDG_CACHE_HOME="+link+"/.cache", "XDG_RUNTIME_DIR=run/user", "XDG_DATA_DIRS=/usr/share:"+link+"/share",
+		"XDG_CURRENT_DESKTOP=sway")
 	// study has a file of the learner's open, and was started in the Topic.
 	held, err := os.Create(filepath.Join(c.Home, "held-open"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer held.Close()
+	// And whoever started study left it descriptors of their own, which Go
+	// did not open and so does not close in a program it starts: a file
+	// (9<secret) and a copy of a stream.
+	secret := filepath.Join(c.Home, "secret")
+	if err := os.WriteFile(secret, []byte("a key"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	inherited, err := syscall.Open(secret, syscall.O_RDONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer syscall.Close(inherited)
+	var ends [2]int
+	if err := syscall.Pipe(ends[:]); err != nil {
+		t.Fatal(err)
+	}
+	defer syscall.Close(ends[0])
+	defer syscall.Close(ends[1])
+
 	s, err := pluginclient.Start(context.Background(), c.Env(topic), plugin, opts)
 	if err != nil {
 		t.Fatalf("Start: %v", err)
@@ -223,46 +247,51 @@ func TestACommandIsStartedApartFromStudy(t *testing.T) {
 	if got.Dir != c.ConfigDir {
 		t.Errorf("the plugin was started in %s, want the registry's folder, %s", got.Dir, c.ConfigDir)
 	}
-	if strings.HasPrefix(got.Dir, c.StudyHome) {
-		t.Errorf("the plugin was started inside the Study home: %s", got.Dir)
+	// Its environment is these variables and no other: a list of what goes
+	// in, since one of what to take out is never finished.
+	folder := c.DataFolder("kb")
+	want := map[string]string{
+		"HOME": c.Home, "USER": "ada", "LOGNAME": "ada", "LANG": "en_GB.UTF-8", "LC_ALL": "C.UTF-8", "TZ": "Europe/Rome",
+		"TMPDIR": c.Home + "/tmp", "XDG_DATA_HOME": c.Home + "/.local/share", "XDG_DATA_DIRS": "/usr/share",
+		// Of a list of folders, the absolute ones outside the Study home
+		// are kept, by a link too.
+		"PATH":                       "/usr/bin:" + c.Home + "/bin",
+		plugincontract.DataFolderEnv: folder,
 	}
-	for name, value := range got.Env {
-		if strings.HasPrefix(name, "GIT_") || name == "OLDPWD" {
-			t.Errorf("the plugin was given %s=%s", name, value)
-		}
-	}
-	folder := filepath.Join(c.StudyHome, ".lamplight", "knowledge-base-plugins", "kb")
-	for name, want := range map[string]string{"PWD": c.ConfigDir, plugincontract.DataFolderEnv: folder, "EMBEDDINGS_API_KEY": "kept",
-		"HOME": c.Home, "LS_COLORS": colours, "NOTES": c.Home + "/notes", "LESS": "-R --tabs=4",
-		// What leads into the Study home is taken out of a list of paths,
-		// by a link too, and the rest of the list is left as it was.
-		"PATH": "/usr/bin:" + c.Home + "/bin::.", "NODE_PATH": c.Home + "/node"} {
-		if got.Env[name] != want {
-			t.Errorf("the plugin's %s is %q, want %q", name, got.Env[name], want)
-		}
-	}
-	if value, has := got.Env["EMPTY"]; !has || value != "" {
-		t.Errorf("the plugin's EMPTY is %q (there: %v), want it empty", value, has)
-	}
-	// And a variable that names nothing else is taken out whole: the plugin
-	// is told of nothing in the Study home but its own folder.
-	// So is one that names such a path among other words.
-	for _, name := range []string{"VIRTUAL_ENV", "PYTHONPATH", "STUDY_HOME", "NODE_OPTIONS", "JAVA_OPTS"} {
-		if value, has := got.Env[name]; has {
-			t.Errorf("the plugin was given %s=%s, which names something inside the Study home", name, value)
+	for name, value := range want {
+		if got.Env[name] != value {
+			t.Errorf("the plugin's %s is %q, want %q", name, got.Env[name], value)
 		}
 	}
 	for name, value := range got.Env {
-		if name != plugincontract.DataFolderEnv && strings.Contains(value, c.StudyHome) {
+		if _, given := want[name]; !given {
+			t.Errorf("the plugin was given %s=%s, which study gives no plugin", name, value)
+		}
+		if strings.Contains(value, c.StudyHome) {
 			t.Errorf("the plugin's %s names the Study home: %s", name, value)
 		}
 	}
+	// Its folder is the learner's alone, in their state folder, and nothing
+	// was made in the Study home.
 	if info, err := os.Lstat(folder); err != nil || !info.IsDir() || info.Mode().Perm() != 0o700 {
 		t.Errorf("the plugin's folder, %s: %v, %v; want a folder for the learner alone", folder, info, err)
 	}
-	// It is told the name it is registered by, whatever it was started through.
+	if strings.HasPrefix(folder, c.StudyHome) {
+		t.Errorf("the plugin's folder, %s, is in the Study home", folder)
+	}
+	if entries, err := os.ReadDir(c.StudyHome); err != nil || len(entries) != 1 || entries[0].Name() != "linear-algebra" {
+		t.Errorf("the Study home holds %v (%v) after a plugin was started; want the Topic and nothing else", entries, err)
+	}
+	// It is told the name it is registered by, and the system knows it by
+	// its own name and its own path.
 	if got.Args[0] != plugin.Command[0] {
 		t.Errorf("the plugin's own name is %q, want %q", got.Args[0], plugin.Command[0])
+	}
+	if got.Exe != plugin.Command[0] {
+		t.Errorf("the system says the plugin runs %q, want %q", got.Exe, plugin.Command[0])
+	}
+	if runtime.GOOS == "linux" && (got.Name == "" || !strings.HasPrefix(filepath.Base(plugin.Command[0]), got.Name)) {
+		t.Errorf("the system calls the plugin's process %q, want the start of %q", got.Name, filepath.Base(plugin.Command[0]))
 	}
 
 	// Its standard input is a pipe of its own, not the one study has.
@@ -282,15 +311,22 @@ func TestACommandIsStartedApartFromStudy(t *testing.T) {
 	if got.Terminal {
 		t.Error("the plugin can open study's terminal")
 	}
-	// It inherits nothing study had open: not the file this test holds, and
-	// not the registry's folder, which study opened to start it there.
+	// It inherits nothing study had open: not the file this test holds, not
+	// what study itself inherited, and not the registry's folder, which
+	// study opened to start it there. On Linux it has the one descriptor it
+	// is run through: the folder that holds its program.
+	// (The test plugin lists what it has open, and the Go runtime it is
+	// built with opens a file of its own, under /sys, to learn how many
+	// processors it may use.)
+	inside := filepath.Dir(plugin.Command[0])
 	for fd, target := range got.Files {
-		if strings.HasPrefix(target, c.Home) || strings.HasPrefix(target, c.StudyHome) {
-			t.Errorf("the plugin inherited descriptor %d, %s", fd, target)
+		if fd == 3 && target == inside || strings.HasPrefix(target, "/sys/") {
+			continue
 		}
+		t.Errorf("the plugin inherited descriptor %d, %s", fd, target)
 	}
-	if runtime.GOOS == "linux" && got.Files[3] != plugin.Command[0] {
-		t.Errorf("the plugin does not run from the file study opened: descriptor 3 is %q, want %s", got.Files[3], plugin.Command[0])
+	if runtime.GOOS == "linux" && got.Files[3] != inside {
+		t.Errorf("descriptor 3 of the plugin is %q, want the folder that holds its program, %s", got.Files[3], inside)
 	}
 
 	s.Close()
@@ -304,6 +340,64 @@ func TestACommandIsStartedApartFromStudy(t *testing.T) {
 	// Closing again is nothing.
 	if err := s.Close(); err != nil {
 		t.Errorf("Close again = %v", err)
+	}
+}
+
+// The environment a plugin gets is a few variables of the one study has,
+// each only when it leads nowhere inside the Study home, and what a path
+// check cannot decide counts as inside.
+func TestAPluginsEnvironmentIsASmallFixedOne(t *testing.T) {
+	// A check that knows these paths, and can decide nothing of the rest.
+	known := map[string]bool{"/usr/bin": true, "/usr/local/bin": true, "/home/ada": true, "/home/ada/.config": true, "/tmp": true,
+		"/run/user/1000": true, "/usr/share/zoneinfo/Europe/Rome": true, "/usr/share": true,
+		"/home/ada/study": false, "/home/ada/study/topic/.venv/bin": false, "/home/ada/link-into-study": false}
+	outside := func(path string) bool { return known[path] }
+	for name, tc := range map[string]struct {
+		environ []string
+		want    []string
+	}{
+		"nothing": {nil, nil},
+		"the variables a plugin gets": {
+			[]string{"PATH=/usr/local/bin:/usr/bin", "HOME=/home/ada", "USER=ada", "LOGNAME=ada", "LANG=it_IT.UTF-8", "LC_ALL=C", "LC_TIME=en_GB.UTF-8",
+				"TZ=Europe/Rome", "TMPDIR=/tmp", "XDG_CONFIG_HOME=/home/ada/.config", "XDG_RUNTIME_DIR=/run/user/1000", "XDG_DATA_DIRS=/usr/share"},
+			[]string{"PATH=/usr/local/bin:/usr/bin", "HOME=/home/ada", "USER=ada", "LOGNAME=ada", "LANG=it_IT.UTF-8", "LC_ALL=C", "LC_TIME=en_GB.UTF-8",
+				"TZ=Europe/Rome", "TMPDIR=/tmp", "XDG_CONFIG_HOME=/home/ada/.config", "XDG_RUNTIME_DIR=/run/user/1000", "XDG_DATA_DIRS=/usr/share"}},
+		"everything else is left out": {
+			[]string{"PYTHONPATH=/usr/lib/python", "NODE_OPTIONS=--require /usr/lib/hook.js", "PERL5OPT=-Mhook", "PERL5LIB=/usr/lib/perl", "RUBYOPT=-rhook",
+				"BASH_ENV=/home/ada/.bashenv", "ENV=/home/ada/.env", "LD_PRELOAD=/usr/lib/hook.so", "LD_LIBRARY_PATH=/usr/lib", "DYLD_LIBRARY_PATH=/usr/lib",
+				"GIT_DIR=/home/ada/repo/.git", "PWD=/home/ada", "OLDPWD=/", "SHELL=/bin/sh", "TERM=xterm", "DISPLAY=:0", "SSH_AUTH_SOCK=/run/ssh",
+				"HTTPS_PROXY=http://proxy:3128", "OPENAI_API_KEY=sk-secret", "STUDY_HOME=/home/ada/study", "XDG_SESSION_ID=3", "XDG_CURRENT_DESKTOP=sway",
+				"LCX=1", "GOCOVERDIR=/tmp", "JAVA_HOME=/usr/lib/jvm"},
+			nil},
+		"a folder inside the Study home is left out": {
+			[]string{"HOME=/home/ada/study", "TMPDIR=/home/ada/study/tmp", "XDG_CONFIG_HOME=/home/ada/link-into-study", "XDG_STATE_HOME=/home/ada/study/.state"},
+			nil},
+		"and one that cannot be told":      {[]string{"HOME=/mnt/gone", "TMPDIR=/nowhere/tmp", "XDG_CACHE_HOME=/cannot/open"}, nil},
+		"and one that is no absolute path": {[]string{"HOME=ada", "TMPDIR=tmp", "XDG_DATA_HOME=.local/share", "XDG_CONFIG_HOME=", "HOME=./x"}, nil},
+		"of a list of folders, those outside are kept": {
+			[]string{"PATH=/home/ada/study/topic/.venv/bin:/usr/local/bin::.:bin:/home/ada/link-into-study:/usr/bin:/unknown/bin",
+				"XDG_DATA_DIRS=/home/ada/study:/usr/share", "XDG_CONFIG_DIRS=/home/ada/study:relative"},
+			[]string{"PATH=/usr/local/bin:/usr/bin", "XDG_DATA_DIRS=/usr/share"}},
+		"a name is no path": {
+			[]string{"USER=../ada", "LOGNAME=/home/ada/study", "LANG=/home/ada/study/locale", "LC_ALL=../../locale", "LC_MESSAGES=", "USER="},
+			nil},
+		"a time zone may be a file outside the Study home": {
+			[]string{"TZ=/usr/share/zoneinfo/Europe/Rome"}, []string{"TZ=/usr/share/zoneinfo/Europe/Rome"}},
+		"a time zone after a colon":           {[]string{"TZ=:/usr/share/zoneinfo/Europe/Rome"}, []string{"TZ=:/usr/share/zoneinfo/Europe/Rome"}},
+		"a time zone in the Study home":       {[]string{"TZ=/home/ada/study/zone"}, nil},
+		"a time zone after a colon in it":     {[]string{"TZ=:/home/ada/study/zone"}, nil},
+		"a time zone that climbs":             {[]string{"TZ=../../home/ada/study/zone"}, nil},
+		"a time zone that cannot be told":     {[]string{"TZ=/unknown/zone"}, nil},
+		"the last value of a name is the one": {[]string{"HOME=/home/ada/study", "LANG=C", "HOME=/home/ada"}, []string{"HOME=/home/ada", "LANG=C"}},
+		"its folder is given anew":            {[]string{"LAMPLIGHT_PLUGIN_DATA=/home/ada/study/.lamplight/kb", "LANG=C"}, []string{"LANG=C"}},
+	} {
+		got := pluginclient.ChildEnviron(tc.environ, outside, "/home/ada/.local/state/lamplight/knowledge-base-plugins/kb")
+		want := append(slices.Clone(tc.want), "LAMPLIGHT_PLUGIN_DATA=/home/ada/.local/state/lamplight/knowledge-base-plugins/kb")
+		slices.Sort(got)
+		slices.Sort(want)
+		if !slices.Equal(got, want) {
+			t.Errorf("%s:\n got %q\nwant %q", name, got, want)
+		}
 	}
 }
 
@@ -379,5 +473,9 @@ func TestAProgramInTheStudyHomeIsNotStarted(t *testing.T) {
 	}
 	if _, err := os.Stat(record); err == nil {
 		t.Error("the program in the Study home was started")
+	}
+	// And a plugin that is refused is made no folder.
+	if _, err := os.Stat(c.DataFolder("kb")); err == nil {
+		t.Error("study made a folder for a plugin it refused to start")
 	}
 }

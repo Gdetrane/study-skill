@@ -28,6 +28,8 @@ func hasTerminal() bool { return false }
 
 func inheritedFiles() map[int]string { return nil }
 
+func processName() string { return "" }
+
 // Gone reports whether a process is gone: here, it cannot tell.
 func Gone(int, time.Duration) bool { return false }
 

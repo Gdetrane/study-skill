@@ -4,4 +4,4 @@
   Indexes:       files, web pages
   Searches:      by keyword
   Locations:     pages
-  Its folder:    $HOME/study/.lamplight/knowledge-base-plugins/kb
+  Its folder:    $HOME/.local/state/lamplight/knowledge-base-plugins/kb

@@ -10,22 +10,28 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/mordor-forge/lamplight/v2/internal/plugincontract"
 	"github.com/mordor-forge/lamplight/v2/internal/pluginregistry"
 )
 
-// process is a Knowledge base plugin started by its command.
+// Command is a Knowledge base plugin started by its registered command, as
+// study starts one: see StartCommand. Start uses it, and so does the
+// conformance suite, so that a plugin is held to the contract in the
+// process study would give it.
 //
 // The MCP SDK has a command transport, and it starts any exec.Cmd. It is not
 // used, for how it stops one: it signals the program alone, so what the
 // program started lives on, and its Close runs only once the connection is
 // idle, which a plugin that stopped reading its input never lets it be.
 // study owns the pipes and the program here, and hands the SDK the two
-// streams (mcp.IOTransport).
-type process struct {
+// streams (Transport).
+type Command struct {
 	cmd *exec.Cmd
 	// stdin, stdout and stderr are study's ends of the program's three
 	// pipes. The program never has study's own standard input: a plugin
@@ -40,11 +46,17 @@ type process struct {
 	exited chan struct{}
 	grace  time.Duration
 
-	// mu guards collected. Once the program has been collected, its process
+	dataFolder, workingFolder string
+
+	// mu guards the rest. Once the program has been collected, its process
 	// id is the system's to give to another program, so no signal is sent
 	// to it or to its group after that.
 	mu        sync.Mutex
 	collected bool
+	// signalled says that study signalled the program, to stop it or to
+	// kill it: it did not exit on its own.
+	signalled bool
+	onExit    func()
 
 	stopOnce sync.Once
 }
@@ -52,39 +64,55 @@ type process struct {
 // beforeStart, when a test sets it, is called after the program and the
 // folder were opened and checked and before the program is started: where
 // another program could make their names lead elsewhere.
-var beforeStart func()
+var beforeStart atomic.Pointer[func()]
 
-// startProcess starts a registered command: the program by the file
-// pluginregistry.OpenProgram checked, without a shell, in the registry's
-// folder, with pipes of its own and in a session of its own.
-func startProcess(env pluginregistry.Env, plugin pluginregistry.Plugin, dataFolder string, environ []string, grace time.Duration) (*process, error) {
+// StartCommand starts a plugin registered by a command, and returns once the
+// program is running. The caller stops it with Stop.
+//
+//   - The program is the one pluginregistry.OpenCommand opened and checked,
+//     and a script's interpreter is checked as the program is. Nothing on
+//     the way to it is looked up again (see execNames).
+//   - It is started without a shell, with the arguments it is registered
+//     with, in the registry's folder and never in the Topic or the Study
+//     home study was started in.
+//   - Its three standard streams are pipes of its own, and it inherits no
+//     other file study has open.
+//   - It runs in a session of its own, without a terminal.
+//   - Its environment is a small one study makes (see childEnviron), not
+//     the one study was started with.
+//   - It is given a folder of its own for its index, outside the Study home
+//     (see DataFolder), which LAMPLIGHT_PLUGIN_DATA names.
+func StartCommand(env pluginregistry.Env, plugin pluginregistry.Plugin, opts Options) (*Command, error) {
+	opts = opts.withDefaults()
 	name := plugin.Name
-	program, err := pluginregistry.OpenProgram(env, plugin)
+	guard := pluginregistry.NewGuard(env)
+	defer guard.Close()
+
+	command, err := pluginregistry.OpenCommand(env, plugin)
 	if err != nil {
 		return nil, notStarted(name, err)
 	}
-	defer program.Close()
+	defer command.Close()
 	dir, dirPath, err := pluginregistry.OpenFolder(env)
 	if err != nil {
 		return nil, notStarted(name, err)
 	}
 	defer dir.Close()
-	guard := pluginregistry.NewGuard(env)
-	defer guard.Close()
-	if err := checkInterpreter(guard, program); err != nil {
+	if err := checkInterpreter(guard, command.Program); err != nil {
 		return nil, &Error{Code: CodeFailedPrecondition, Err: err, Message: "Knowledge base plugin " + name + " cannot be started: " +
 			"its program, " + clean(plugin.Command[0], 400) + ", is a script, and the interpreter its first line names is not " +
 			"one study runs. " + err.Error()}
 	}
-
-	if beforeStart != nil {
-		beforeStart()
-	}
-	path, cwd, inherited, err := execNames(program, plugin.Command[0], dir, dirPath)
+	// Its folder is made once the program is one study starts: a plugin
+	// that is refused leaves nothing behind.
+	dataFolder, err := makeDataFolder(guard, env, name)
 	if err != nil {
-		return nil, &Error{Code: CodeFailedPrecondition, Err: err, Message: "Knowledge base plugin " + name +
-			" was not started: " + err.Error()}
+		return nil, err
 	}
+	// The environment is made before the last look at the names, so that
+	// the walks it takes do not come between that look and the start.
+	environ := childEnviron(opts.Environ, guard.Outside, dataFolder)
+	sealInherited()
 
 	var pipes [3][2]*os.File // stdin, stdout, stderr: each the read end, then the write end
 	closeAll := func() {
@@ -102,13 +130,22 @@ func startProcess(env pluginregistry.Env, plugin pluginregistry.Plugin, dataFold
 			return nil, &Error{Code: CodeInternal, Err: err, Message: "making a pipe for Knowledge base plugin " + name + ": " + err.Error()}
 		}
 	}
+	if hook := beforeStart.Load(); hook != nil {
+		(*hook)()
+	}
+	path, cwd, inherited, err := execNames(command, plugin.Command[0], dir, dirPath)
+	if err != nil {
+		closeAll()
+		return nil, &Error{Code: CodeFailedPrecondition, Err: err, Message: "Knowledge base plugin " + name +
+			" was not started: " + err.Error()}
+	}
 	cmd := &exec.Cmd{
 		Path: path,
 		// The program is told the name it is registered by, whatever name it
 		// is started through.
 		Args:        slices.Clone(plugin.Command),
 		Dir:         cwd,
-		Env:         childEnviron(environ, guard.Inside, dirPath, dataFolder),
+		Env:         environ,
 		Stdin:       pipes[0][0],
 		Stdout:      pipes[1][1],
 		Stderr:      pipes[2][1],
@@ -118,7 +155,7 @@ func startProcess(env pluginregistry.Env, plugin pluginregistry.Plugin, dataFold
 	err = cmd.Start()
 	// The names given to the child are descriptors of this process: they
 	// must stay open until it has started.
-	runtime.KeepAlive(program)
+	runtime.KeepAlive(command)
 	runtime.KeepAlive(dir)
 	if err != nil {
 		closeAll()
@@ -132,26 +169,66 @@ func startProcess(env pluginregistry.Env, plugin pluginregistry.Plugin, dataFold
 	_ = pipes[1][1].Close()
 	_ = pipes[2][1].Close()
 
-	p := &process{cmd: cmd, stdin: pipes[0][1], stdout: pipes[1][0], stderr: pipes[2][0],
-		said: &tail{max: StderrKept}, saidAll: make(chan struct{}), exited: make(chan struct{}), grace: grace}
+	c := &Command{cmd: cmd, stdin: pipes[0][1], stdout: pipes[1][0], stderr: pipes[2][0],
+		said: &tail{max: StderrKept}, saidAll: make(chan struct{}), exited: make(chan struct{}), grace: opts.StopGrace,
+		dataFolder: dataFolder, workingFolder: dirPath}
 	go func() {
 		_ = cmd.Wait()
 		// The plugin is the program study started. When it exits, whatever
 		// it started and left behind goes with it: at once, while the
 		// process group can only be its own.
-		p.mu.Lock()
+		c.mu.Lock()
 		signalGroup(cmd.Process, syscall.SIGKILL)
-		p.collected = true
-		p.mu.Unlock()
-		close(p.exited)
+		c.collected = true
+		onExit := c.onExit
+		c.mu.Unlock()
+		close(c.exited)
+		if onExit != nil {
+			onExit()
+		}
 	}()
 	// What the program writes on its standard error is read, so that it
 	// never blocks on a full pipe, and only its end is kept.
 	go func() {
-		_, _ = io.Copy(p.said, p.stderr)
-		close(p.saidAll)
+		_, _ = io.Copy(c.said, c.stderr)
+		close(c.saidAll)
 	}()
-	return p, nil
+	return c, nil
+}
+
+// Transport is the MCP transport over the command's standard input and
+// output: one JSON-RPC message on each line, each up to the size a message
+// may have. Closing the connection it makes closes the two pipes, which asks
+// the program to exit; Stop makes sure it does.
+func (c *Command) Transport() mcp.Transport {
+	return &mcp.IOTransport{Reader: c.stdout, Writer: c.stdin, MaxLineLength: plugincontract.MaxMessageBytes}
+}
+
+// PID is the program's process id.
+func (c *Command) PID() int { return c.cmd.Process.Pid }
+
+// DataFolder is the folder the program was given for its index, as
+// LAMPLIGHT_PLUGIN_DATA names it.
+func (c *Command) DataFolder() string { return c.dataFolder }
+
+// WorkingFolder is the folder the program was started in: the registry's.
+func (c *Command) WorkingFolder() string { return c.workingFolder }
+
+// Wrote is the end of what the program wrote on its standard error so far,
+// as it wrote it: text of the plugin's, to clean before it is printed.
+func (c *Command) Wrote() string { return c.wrote() }
+
+// whenExited has f called once the program has exited: at once when it has
+// already.
+func (c *Command) whenExited(f func()) {
+	c.mu.Lock()
+	if !c.collected {
+		c.onExit = f
+		c.mu.Unlock()
+		return
+	}
+	c.mu.Unlock()
+	f()
 }
 
 // notStarted is the error for a plugin the registry does not let study
@@ -172,11 +249,11 @@ func notStarted(name string, err error) *Error {
 // Each must still name the file that was opened and checked. What is left
 // is the moment between this look and the system's own, when it starts the
 // program.
-func byName(program *os.File, programPath string, dir *os.File, dirPath string) (path, cwd string, inherited []*os.File, err error) {
+func byName(command *pluginregistry.Command, programPath string, dir *os.File, dirPath string) (path, cwd string, inherited []*os.File, err error) {
 	for _, f := range []struct {
 		file *os.File
 		path string
-	}{{program, programPath}, {dir, dirPath}} {
+	}{{command.Program, programPath}, {dir, dirPath}} {
 		opened, err := f.file.Stat()
 		if err != nil {
 			return "", "", nil, err
@@ -188,90 +265,112 @@ func byName(program *os.File, programPath string, dir *os.File, dirPath string) 
 	return programPath, dirPath, nil, nil
 }
 
-// childEnviron is the environment a plugin is started with: the learner's,
-// without what would mislead it and without what would have it load what
-// the agent can change.
+// The environment a plugin is started with is one study makes, of these
+// variables of the environment study has and of nothing else. A plugin runs
+// outside the agent's sandbox, and the environment study has is as likely
+// as not the one of an agent started in a Topic, with that Topic's virtual
+// environment switched on: PATH, PYTHONPATH, NODE_OPTIONS, PERL5OPT,
+// BASH_ENV, LD_LIBRARY_PATH and many more can each have a program load what
+// the agent wrote. A list of what to take out cannot be finished, so the
+// list is of what goes in.
+var (
+	// A list of folders: each folder that is an absolute path outside the
+	// Study home is kept.
+	folderLists = []string{"PATH", "XDG_DATA_DIRS", "XDG_CONFIG_DIRS"}
+	// One folder: kept when it is an absolute path outside the Study home.
+	folders = []string{"HOME", "TMPDIR", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "XDG_RUNTIME_DIR"}
+	// A name, of the user or of a locale: kept when it is no path.
+	names = []string{"USER", "LOGNAME", "LANG"}
+	// The time zone: a name such as Europe/Rome, or a file's path.
+	zones = []string{"TZ"}
+)
+
+// EnvironmentVariables names the variables of study's environment that a
+// plugin may be given, for the documents that list them. LC_* stands for
+// every variable whose name begins so.
+func EnvironmentVariables() []string {
+	return slices.Concat(folderLists, folders, names, []string{"LC_*"}, zones)
+}
+
+// childEnviron is the environment a plugin is started with: PATH, HOME,
+// USER, LOGNAME, LANG, the LC_* variables, TZ, TMPDIR and the XDG base
+// folders, each as environ has it and only when it leads nowhere inside the
+// Study home, and LAMPLIGHT_PLUGIN_DATA, which names the plugin's folder.
 //
-//   - GIT_* go: GIT_DIR, GIT_INDEX_FILE and the like, set by a commit hook
-//     or by study itself, would point a plugin that runs git at a repository
-//     it knows nothing of.
-//   - PWD and OLDPWD name the folder study was started in and the one
-//     before, a Topic as likely as not. The plugin runs elsewhere: PWD is
-//     set to where, and OLDPWD goes.
-//   - Whatever names something inside the Study home goes, by inside, which
-//     is the registry's own question (pluginregistry.Guard). The learner
-//     starts their agent in a Topic, often with that Topic's virtual
-//     environment switched on, and the MCP server inherits it: a PATH whose
-//     first folder is the Topic's .venv/bin, a PYTHONPATH into the Topic. A
-//     plugin started outside the sandbox with those would run what the
-//     agent wrote there: a script started through env, a helper found on
-//     PATH, a module imported by name. A value is a list of paths, divided
-//     as PATH is: each path that leads through the Study home is taken out
-//     of the list, and a variable left with nothing is taken out whole. So
-//     is a variable that names such a path among other words, as
-//     NODE_OPTIONS does with --require: there is no telling what is left of
-//     an option without its path. Like the registry's look at a command's
-//     arguments, this catches what is written as a path and is no
-//     guarantee.
-//   - The plugin's own folder is given anew, so that an inherited value
-//     never stands for it. It is the one thing in the Study home a plugin is
-//     told of.
-//
-// Everything else stays: the plugin is a program the learner chose, and it
-// needs their PATH, their proxy and whatever its embedding endpoint is
-// configured by.
-func childEnviron(environ []string, inside func(path string) bool, pwd, dataFolder string) []string {
+// outside says whether an absolute path is known to stay outside the Study
+// home (pluginregistry.Guard.Outside): what it cannot decide is not
+// outside, and is left out. A plugin that needs anything else, a key or a
+// proxy or a library's folder, is given it in its arguments, or is
+// registered through a wrapper that sets it.
+func childEnviron(environ []string, outside func(path string) bool, dataFolder string) []string {
+	// The last value given for a name is the one a program started with
+	// environ would see.
+	values := map[string]string{}
+	var order []string
+	for _, kv := range environ {
+		name, value, _ := strings.Cut(kv, "=")
+		if _, seen := values[name]; !seen {
+			order = append(order, name)
+		}
+		values[name] = value
+	}
 	// One look at each path is enough: the same folders are named again
 	// and again.
 	looked := map[string]bool{}
-	insideOnce := func(path string) bool {
+	isOutside := func(path string) bool {
 		is, ok := looked[path]
 		if !ok {
-			is = inside(path)
+			is = filepath.IsAbs(path) && outside(path)
 			looked[path] = is
 		}
 		return is
 	}
-	out := make([]string, 0, len(environ)+2)
-	for _, kv := range environ {
-		name, value, _ := strings.Cut(kv, "=")
-		if strings.HasPrefix(name, "GIT_") || name == "PWD" || name == "OLDPWD" || name == plugincontract.DataFolderEnv {
-			continue
-		}
-		paths := filepath.SplitList(value)
-		kept := paths[:0:0]
-		among := false
-		for _, path := range paths {
-			if filepath.IsAbs(path) && insideOnce(path) {
-				continue
+	// noPath reports whether a value names nothing by a path that could
+	// lead into the Study home: no absolute path that is not outside it,
+	// and no .. to climb there from wherever the value is taken from.
+	noPath := func(value string) bool {
+		for _, part := range strings.Split(value, ":") {
+			if filepath.IsAbs(part) && !isOutside(part) {
+				return false
 			}
-			kept = append(kept, path)
-			among = among || namesAmongWords(path, insideOnce)
+			if slices.Contains(strings.Split(part, "/"), "..") {
+				return false
+			}
 		}
+		return true
+	}
+	var out []string
+	for _, name := range order {
+		value := values[name]
 		switch {
-		case among:
-		case len(kept) == len(paths):
-			out = append(out, kv) // as it was, to the byte
-		case len(kept) > 0:
-			out = append(out, name+"="+strings.Join(kept, string(os.PathListSeparator)))
+		case name == plugincontract.DataFolderEnv:
+			// Given anew below, so that an inherited value never stands
+			// for it.
+		case slices.Contains(folderLists, name):
+			var kept []string
+			for _, folder := range filepath.SplitList(value) {
+				if isOutside(folder) {
+					kept = append(kept, folder)
+				}
+			}
+			if len(kept) > 0 {
+				out = append(out, name+"="+strings.Join(kept, string(os.PathListSeparator)))
+			}
+		case slices.Contains(folders, name):
+			if isOutside(value) {
+				out = append(out, name+"="+value)
+			}
+		case slices.Contains(names, name) || strings.HasPrefix(name, "LC_"):
+			if value != "" && !strings.Contains(value, "/") {
+				out = append(out, name+"="+value)
+			}
+		case slices.Contains(zones, name):
+			if value != "" && noPath(value) {
+				out = append(out, name+"="+value)
+			}
 		}
 	}
-	return append(out, "PWD="+pwd, plugincontract.DataFolderEnv+"="+dataFolder)
-}
-
-// namesAmongWords reports whether one of the words of a value, or what
-// follows the first = of a word, is an absolute path that leads through the
-// Study home: --require /home/ada/study/x.js, --import=/home/ada/study/x.mjs.
-func namesAmongWords(value string, inside func(string) bool) bool {
-	for _, word := range strings.Fields(value) {
-		if _, after, found := strings.Cut(word, "="); found && filepath.IsAbs(after) && inside(after) {
-			return true
-		}
-		if word != value && filepath.IsAbs(word) && inside(word) {
-			return true
-		}
-	}
-	return false
+	return append(out, plugincontract.DataFolderEnv+"="+dataFolder)
 }
 
 // checkInterpreter checks the interpreter of a program that is a script.
@@ -284,18 +383,25 @@ func namesAmongWords(value string, inside func(string) bool) bool {
 //
 // It is checked by its path, since the system finds it by its path. No hop
 // of that path is in the Study home, or the check fails: so the agent,
-// which writes there, cannot make the path lead elsewhere afterwards.
+// which writes there, cannot make the path lead elsewhere afterwards. A
+// path that is not absolute is refused: the system would find it from the
+// folder the plugin is started in, and nothing was checked there.
 func checkInterpreter(guard *pluginregistry.Guard, program *os.File) error {
 	script := program
-	for range 4 {
-		path := interpreterOf(script)
+	defer func() {
 		if script != program {
 			_ = script.Close()
 		}
-		// One that is not absolute is found from the folder the plugin is
-		// started in, the registry's, where the agent does not write.
-		if path == "" || !filepath.IsAbs(path) {
+	}()
+	for range 4 {
+		path := interpreterOf(script)
+		switch {
+		case path == "":
 			return nil
+		case !filepath.IsAbs(path):
+			return fmt.Errorf("%s is no absolute path: the system would look for it from the folder the plugin is started "+
+				"in. Name the interpreter by its full path, or register the interpreter itself with the script as an "+
+				"argument", clean(path, 200))
 		}
 		if err := guard.CheckProgram(path); err != nil {
 			return err
@@ -304,10 +410,10 @@ func checkInterpreter(guard *pluginregistry.Guard, program *os.File) error {
 		if err != nil {
 			return nil // it can be run and not read: there is no more to look at
 		}
+		if script != program {
+			_ = script.Close()
+		}
 		script = next
-	}
-	if script != program {
-		_ = script.Close()
 	}
 	return nil
 }
@@ -331,9 +437,9 @@ func interpreterOf(file *os.File) string {
 }
 
 // hasExited reports whether the program exited, waiting up to d for it.
-func (p *process) hasExited(d time.Duration) bool {
+func (c *Command) hasExited(d time.Duration) bool {
 	select {
-	case <-p.exited:
+	case <-c.exited:
 		return true
 	default:
 	}
@@ -343,7 +449,7 @@ func (p *process) hasExited(d time.Duration) bool {
 	timer := time.NewTimer(d)
 	defer timer.Stop()
 	select {
-	case <-p.exited:
+	case <-c.exited:
 		return true
 	case <-timer.C:
 		return false
@@ -352,49 +458,58 @@ func (p *process) hasExited(d time.Duration) bool {
 
 // signal sends sig to the program and to everything it started that is
 // still in its process group, unless the program was collected already.
-func (p *process) signal(sig syscall.Signal) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if !p.collected {
-		signalGroup(p.cmd.Process, sig)
+func (c *Command) signal(sig syscall.Signal) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.collected {
+		c.signalled = true
+		signalGroup(c.cmd.Process, sig)
 	}
 }
 
-// kill ends the program at once, and everything it started: for a plugin
-// that is stuck. The pipes are closed first, which frees whatever of study
-// was reading or writing them. stop still has to follow.
-func (p *process) kill() {
-	_ = p.stdin.Close()
-	_ = p.stdout.Close()
-	p.signal(syscall.SIGKILL)
+// Kill ends the program at once, and everything it started that is still
+// in its process group: for a plugin that is stuck, or was given its time
+// already. The pipes are closed first, which frees whatever was reading or
+// writing them. Stop still has to follow.
+func (c *Command) Kill() {
+	_ = c.stdin.Close()
+	_ = c.stdout.Close()
+	c.signal(syscall.SIGKILL)
 }
 
-// stop ends the program and everything it started, and waits for it: it
-// closes the program's input, which asks an MCP server to exit, and its
-// output; after the grace period it sends SIGTERM to the program's process
-// group, and after another it kills the group. It takes three grace periods
-// at most.
-func (p *process) stop() {
-	p.stopOnce.Do(func() {
-		_ = p.stdin.Close()
-		_ = p.stdout.Close()
-		if !p.hasExited(p.grace) {
-			p.signal(syscall.SIGTERM)
-			if !p.hasExited(p.grace) {
-				p.signal(syscall.SIGKILL)
-				p.hasExited(p.grace)
+// Stop ends the program and everything it started that is still in its
+// process group, and waits for it: it closes the program's input, which
+// asks an MCP server to exit, and its output; after the grace period it
+// sends SIGTERM to the program's process group, and after another it kills
+// the group. It takes three grace periods at most.
+//
+// It reports whether the program exited on its own, once its pipes were
+// closed or before, as the contract asks of a plugin: false means study had
+// to signal it.
+func (c *Command) Stop() (onItsOwn bool) {
+	c.stopOnce.Do(func() {
+		_ = c.stdin.Close()
+		_ = c.stdout.Close()
+		if !c.hasExited(c.grace) {
+			c.signal(syscall.SIGTERM)
+			if !c.hasExited(c.grace) {
+				c.signal(syscall.SIGKILL)
+				c.hasExited(c.grace)
 			}
 		}
-		_ = p.stderr.Close()
+		_ = c.stderr.Close()
 	})
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.collected && !c.signalled
 }
 
 // how says how the program ended, or that it has not.
-func (p *process) how() string {
-	if !p.hasExited(0) {
+func (c *Command) how() string {
+	if !c.hasExited(0) {
 		return "it is still running"
 	}
-	if state := p.cmd.ProcessState; state != nil {
+	if state := c.cmd.ProcessState; state != nil {
 		return state.String()
 	}
 	return "it exited"
@@ -402,16 +517,16 @@ func (p *process) how() string {
 
 // wrote is the end of what the program wrote on its standard error. For a
 // program that exited it waits, briefly, for the last of it to be read.
-func (p *process) wrote() string {
-	if p.hasExited(0) {
+func (c *Command) wrote() string {
+	if c.hasExited(0) {
 		timer := time.NewTimer(200 * time.Millisecond)
 		defer timer.Stop()
 		select {
-		case <-p.saidAll:
+		case <-c.saidAll:
 		case <-timer.C:
 		}
 	}
-	return p.said.String()
+	return c.said.String()
 }
 
 // tail keeps the end of what is written to it.

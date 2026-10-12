@@ -2,6 +2,6 @@
   "ok": false,
   "error": {
     "code": "failed_precondition",
-    "message": "Knowledge base plugin remote did not open an MCP session within 400ms. Check that the service at its address is running and is not busy: study knowledge-base list shows the address"
+    "message": "Knowledge base plugin remote did not open an MCP session within 400ms. Check that the service at http://127.0.0.1:PORT is running and is not busy: study knowledge-base list shows its whole address"
   }
 }

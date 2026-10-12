@@ -4,12 +4,14 @@ package pluginclient_test
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -80,8 +82,9 @@ func TestAURLIsReachedOverStreamableHTTP(t *testing.T) {
 }
 
 // An address that does not answer as a plugin gives a documented code with
-// advice, in good time, and no message repeats the address: it may hold a
-// key.
+// advice, in good time. A message says where the service is, by its scheme
+// and host, and repeats nothing else of the address: a path or a query may
+// be a key.
 func TestAnAddressThatIsNoPluginIsRefused(t *testing.T) {
 	// An address nothing listens at: the port was free a moment ago.
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -104,6 +107,7 @@ func TestAnAddressThatIsNoPluginIsRefused(t *testing.T) {
 		t.Cleanup(server.Close)
 		return server.URL
 	}
+	const at = "Knowledge base plugin remote does not answer as an MCP server at HOST ("
 	for _, tc := range []struct {
 		name    string
 		address string
@@ -114,17 +118,30 @@ func TestAnAddressThatIsNoPluginIsRefused(t *testing.T) {
 		want   []string
 	}{
 		{"nothing answers", nobody, false, pluginclient.CodeFailedPrecondition,
-			[]string{"Knowledge base plugin remote does not answer as an MCP server at its address (", "connection refused",
+			[]string{at, "connection refused", "study speaks MCP revision 2025-11-25 over streamable HTTP",
 				"study knowledge-base add remote --replace --url <URL> changes it"}},
 		{"a web page answers", serve(func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "text/html")
 			_, _ = w.Write([]byte("<html><body>Welcome</body></html>"))
-		}), false, pluginclient.CodeFailedPrecondition, []string{"does not answer as an MCP server at its address ("}},
+		}), false, pluginclient.CodeFailedPrecondition, []string{at}},
 		{"something that is no JSON answers", serve(func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte("\x1b]0;gotcha\x07 not json"))
-		}), false, pluginclient.CodeFailedPrecondition, []string{"does not answer as an MCP server at its address ("}},
-		{"not found", serve(http.NotFound), false, pluginclient.CodeFailedPrecondition, []string{"does not answer as an MCP server at its address (", "Not Found"}},
+		}), false, pluginclient.CodeFailedPrecondition, []string{at}},
+		{"not found", serve(http.NotFound), false, pluginclient.CodeFailedPrecondition, []string{at + "Not Found: 404 page not found)"}},
+		// A service that refuses says why, and study repeats it: one that
+		// speaks only a later revision of MCP says which.
+		{"a service of a later MCP revision", serve(func(w http.ResponseWriter, _ *http.Request) {
+			http.Error(w, "Unsupported protocol version: 2025-11-25 (supported versions: 2026-07-28)", http.StatusBadRequest)
+		}), false, pluginclient.CodeFailedPrecondition,
+			[]string{at + "Bad Request: Unsupported protocol version: 2025-11-25 (supported versions: 2026-07-28))",
+				"study speaks MCP revision 2025-11-25 over streamable HTTP. Check that the service is running, that it speaks that revision or an earlier one"}},
+		// And one that repeats the address it was asked at does not have
+		// study print the key in it.
+		{"a service that repeats what it was asked", serve(func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "no route for POST "+r.URL.String()+" on http://"+r.Host+r.URL.String()+" (key s3cr3t-k3y-of-the-learner, in t0ken-in-the-path)",
+				http.StatusUnauthorized)
+		}), false, pluginclient.CodeFailedPrecondition, []string{at + "Unauthorized: no route for POST … on http://HOSTNAME… (key …, in …))"}},
 		{"a redirect", serve(func(w http.ResponseWriter, r *http.Request) {
 			http.Redirect(w, r, other.URL+"/mcp", http.StatusTemporaryRedirect)
 		}), false, pluginclient.CodeFailedPrecondition, []string{"the address answered with a redirect to another one"}},
@@ -136,14 +153,14 @@ func TestAnAddressThatIsNoPluginIsRefused(t *testing.T) {
 					return
 				}
 			}
-		}), false, pluginclient.CodeFailedPrecondition, []string{"does not answer as an MCP server at its address (", "larger than a plugin's message may be"}},
+		}), false, pluginclient.CodeFailedPrecondition, []string{at, "larger than a plugin's message may be"}},
 		{"no answer", serve(func(_ http.ResponseWriter, r *http.Request) {
 			select {
 			case <-r.Context().Done():
 			case <-release:
 			}
 		}), true, pluginclient.CodeFailedPrecondition,
-			[]string{"Knowledge base plugin remote did not open an MCP session within 400ms. Check that the service at its address is running"}},
+			[]string{"Knowledge base plugin remote did not open an MCP session within 400ms. Check that the service at HOST is running"}},
 		{"a newer contract", service(t, plugintest.Config{Results: map[string]string{"contract": `{"version": 7}`}}), false, pluginclient.CodeNewerFormat,
 			[]string{"Knowledge base plugin remote speaks version 7 of Lamplight's contract, and this version of study knows version 1: upgrade study"}},
 		{"another MCP server", service(t, plugintest.Config{Tools: []string{"status"}}), false, pluginclient.CodeFailedPrecondition,
@@ -151,7 +168,11 @@ func TestAnAddressThatIsNoPluginIsRefused(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c := plugintest.NewComputer(t)
-			address := tc.address + "?key=s3cr3t-k3y-of-the-learner"
+			address := tc.address + "/t0ken-in-the-path/mcp?key=s3cr3t-k3y-of-the-learner&mode=fast"
+			host := pluginclient.Address(address)
+			if host != strings.TrimSuffix(tc.address, "/mcp") {
+				t.Fatalf("Address(%s) = %s", address, host)
+			}
 			opts := quick(c)
 			if tc.silent {
 				opts = impatient(c)
@@ -169,12 +190,15 @@ func TestAnAddressThatIsNoPluginIsRefused(t *testing.T) {
 				t.Errorf("code = %q, want %q: %v", codeOf(err), tc.code, err)
 			}
 			for _, want := range tc.want {
+				want = strings.ReplaceAll(strings.ReplaceAll(want, "HOSTNAME", strings.TrimPrefix(host, "http://")), "HOST", host)
 				if !strings.Contains(err.Error(), want) {
 					t.Errorf("the message lacks %q:\n%s", want, err)
 				}
 			}
-			if strings.Contains(err.Error(), "s3cr3t") || strings.Contains(err.Error(), tc.address) {
-				t.Errorf("the message repeats the address: %s", err)
+			for _, secret := range []string{"s3cr3t", "t0ken", "key=", "mode=fast", "/mcp?"} {
+				if strings.Contains(err.Error(), secret) {
+					t.Errorf("the message repeats %q of the address, which may be a key: %s", secret, err)
+				}
 			}
 			safe(t, err.Error())
 		})
@@ -272,5 +296,182 @@ func TestAServiceThatGoesSilent(t *testing.T) {
 	s.Close()
 	if took := time.Since(began); took > 2*time.Second {
 		t.Errorf("Close took %s on a Connection that was given up already", took)
+	}
+}
+
+// What is shown of a registered address is its scheme and host.
+func TestOnlyTheHostOfAnAddressIsShown(t *testing.T) {
+	for registered, want := range map[string]string{
+		"https://kb.example/mcp":                               "https://kb.example",
+		"https://kb.example:8443/v1/t0ken/mcp?key=s3cr3t#frag": "https://kb.example:8443",
+		"http://127.0.0.1:8080":                                "http://127.0.0.1:8080",
+		"http://[::1]:8080/mcp":                                "http://[::1]:8080",
+		"not an address":                                       "its address",
+		"":                                                     "its address",
+	} {
+		if got := pluginclient.Address(registered); got != want {
+			t.Errorf("Address(%q) = %q, want %q", registered, got, want)
+		}
+	}
+	// Text a service wrote is shown without what may be a key in the
+	// address, however it is written there.
+	const registered = "https://kb.example:8443/v1/t0ken-of-the-learner/mcp?key=s3cr3t%2Fk3y&mode=fast"
+	for text, want := range map[string]string{
+		"unknown session for " + registered:                           "unknown session for https://kb.example:8443…",
+		"no route for /v1/t0ken-of-the-learner/mcp":                   "no route for …",
+		"the key s3cr3t%2Fk3y is not one of ours":                     "the key … is not one of ours",
+		"the key s3cr3t/k3y is not one of ours":                       "the key … is not one of ours",
+		"GET /v1/t0ken-of-the-learner/mcp?key=s3cr3t%2Fk3y&mode=fast": "GET …",
+		"t0ken-of-the-learner has no collection c":                    "… has no collection c",
+		"the collection has no Passage 7f3a":                          "the collection has no Passage 7f3a",
+		"kb.example:8443 is busy":                                     "kb.example:8443 is busy",
+	} {
+		if got := pluginclient.Without(text, registered); got != want {
+			t.Errorf("Without(%q) = %q, want %q", text, got, want)
+		}
+	}
+	if got := pluginclient.Without("anything /at/all", ""); got != "anything /at/all" {
+		t.Errorf("Without, for a command, = %q", got)
+	}
+}
+
+// What a service says in an answer is shown without the address's key too:
+// a refusal, a reason, the name it gives itself.
+func TestAServiceThatRepeatsItsAddressInAnAnswer(t *testing.T) {
+	ctx := context.Background()
+	c := plugintest.NewComputer(t)
+	var registered atomic.Pointer[string]
+	echo := func(tool string, answer []byte, refused bool) []byte {
+		if address := registered.Load(); address != nil {
+			return []byte(strings.ReplaceAll(string(answer), "ADDRESS", *address))
+		}
+		return answer
+	}
+	address := service(t, plugintest.Config{Twist: echo,
+		Refusals: map[string]string{"passage": "internal:cannot reach the index behind ADDRESS"},
+		Results:  map[string]string{"status": `{"sources": [{"id": "a.1", "state": "failed", "reason": "ADDRESS answered 500"}]}`}})
+	address = strings.TrimSuffix(address, "/mcp") + "/t0ken-in-the-path/mcp?key=s3cr3t-k3y-of-the-learner"
+	registered.Store(&address)
+	s, err := pluginclient.Start(ctx, c.Env(""), c.RegisterURL(t, "remote", address), quick(c))
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer s.Close()
+	host := pluginclient.Address(address)
+	_, err = s.Passage(ctx, "c", "a")
+	if codeOf(err) != pluginclient.CodeFailedPrecondition || !strings.Contains(err.Error(), "failed in its passage tool: cannot reach the index behind "+host+"….") {
+		t.Errorf("Passage = %v", err)
+	}
+	sources, serr := s.Status(ctx, "c")
+	if serr != nil || len(sources) != 1 || sources[0].Reason != host+"… answered 500" {
+		t.Fatalf("Status = %+v, %v", sources, serr)
+	}
+	for _, text := range []string{err.Error(), sources[0].Reason} {
+		if strings.Contains(text, "s3cr3t") || strings.Contains(text, "t0ken") {
+			t.Errorf("what the service wrote is shown with the address's key: %s", text)
+		}
+	}
+}
+
+// A service that sends study requests is hung up on at the first, as a
+// command is stopped: over HTTP they come in the stream that answers a call.
+func TestAServiceThatSendsRequestsIsHungUpOn(t *testing.T) {
+	ctx := context.Background()
+	c := plugintest.NewComputer(t)
+	plugin := plugintest.New(plugintest.Config{Folder: t.TempDir()})
+	defer plugin.Close()
+	var flooding atomic.Bool
+	var sent atomic.Int64
+	left := make(chan struct{}, 1)
+	handler := plugin.Handler()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !flooding.Load() || r.Method != http.MethodPost {
+			handler.ServeHTTP(w, r)
+			return
+		}
+		// The call is answered with a stream of requests, without end.
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		for n := 0; ; n++ {
+			if _, err := fmt.Fprintf(w, "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":\"service-%d\",\"method\":\"sampling/createMessage\"}\n\n", n); err != nil {
+				break
+			}
+			w.(http.Flusher).Flush()
+			sent.Add(1)
+			if r.Context().Err() != nil {
+				break
+			}
+		}
+		select {
+		case left <- struct{}{}:
+		default:
+		}
+	}))
+	defer server.Close()
+	s, err := pluginclient.Start(ctx, c.Env(""), c.RegisterURL(t, "remote", server.URL+"/mcp"), quick(c))
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer s.Close()
+	flooding.Store(true)
+	before := heap()
+	began := time.Now()
+	_, err = s.Status(ctx, "c")
+	if codeOf(err) != pluginclient.CodeFailedPrecondition ||
+		!strings.Contains(err.Error(), "Knowledge base plugin remote sent study a request (sampling/createMessage), and study stopped it") {
+		t.Errorf("Status = %v", err)
+	}
+	if took := time.Since(began); took > 5*time.Second {
+		t.Errorf("Status took %s to end: the first request ends the Connection, not the call's deadline", took)
+	}
+	if !s.Ended() {
+		t.Error("the Connection has not ended")
+	}
+	// study hung up: the service's stream ends.
+	select {
+	case <-left:
+	case <-time.After(10 * time.Second):
+		t.Errorf("study still reads the stream of a service that sends it requests, %d so far", sent.Load())
+	}
+	if grown := heap() - before; grown > 64<<20 {
+		t.Errorf("study holds %d MiB more after a service flooded it with requests", grown>>20)
+	}
+}
+
+// Every request after the first names the MCP revision the session speaks,
+// as the protocol asks, the notification that ends the handshake included.
+func TestEveryRequestNamesTheRevision(t *testing.T) {
+	c := plugintest.NewComputer(t)
+	plugin := plugintest.New(plugintest.Config{Folder: t.TempDir()})
+	defer plugin.Close()
+	var mu sync.Mutex
+	var named []string
+	handler := plugin.Handler()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		named = append(named, r.Method+" "+r.Header.Get("Mcp-Protocol-Version"))
+		mu.Unlock()
+		handler.ServeHTTP(w, r)
+	}))
+	defer server.Close()
+	s, err := pluginclient.Start(context.Background(), c.Env(""), c.RegisterURL(t, "remote", server.URL+"/mcp"), quick(c))
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if _, err := s.Status(context.Background(), "c"); err != nil {
+		t.Errorf("Status = %v", err)
+	}
+	s.Close()
+	mu.Lock()
+	defer mu.Unlock()
+	// initialize, the notification that it is done, tools/list, contract,
+	// status, and the end of the session.
+	if len(named) < 6 || named[0] != "POST " {
+		t.Fatalf("the service was asked %q; want initialize first, without a revision, and five requests more", named)
+	}
+	for _, request := range named[1:] {
+		if !strings.HasSuffix(request, " "+pluginclient.MCPVersion) {
+			t.Errorf("a request after initialize names the revision %q, want %s: %q", request, pluginclient.MCPVersion, named)
+		}
 	}
 }

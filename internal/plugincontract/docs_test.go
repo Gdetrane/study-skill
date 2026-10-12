@@ -195,14 +195,46 @@ func TestThePageNamesEveryKindStateAndCode(t *testing.T) {
 	}
 	for what, word := range map[string]string{
 		"the variable that names the plugin's folder": "`" + plugincontract.DataFolderEnv + "`",
-		"the folder that holds the plugins' folders":  "`.lamplight/" + pluginclient.FoldersName + "/<name>`",
+		"the folder that holds the plugins' folders":  "`$XDG_STATE_HOME/lamplight/" + pluginclient.FoldersName + "/<name>`",
+		"where that is without XDG_STATE_HOME":        "`~/.local/state/lamplight/" + pluginclient.FoldersName + "/<name>`",
 		"the MCP version study asks for":              "`" + pluginclient.MCPVersion + "`",
 		"how many tools study lists":                  number(pluginclient.MaxTools) + " tools",
 		"how much of standard error study keeps":      strconv.Itoa(pluginclient.StderrKept>>10) + " KiB",
+		"how much of standard error study repeats":    "the last " + number(pluginclient.StderrShown) + " bytes",
 	} {
 		if !strings.Contains(doc, word) {
 			t.Errorf("the page does not give %s: %s", what, word)
 		}
+	}
+	// The folder is nowhere said to be in the Study home any more.
+	if strings.Contains(doc, ".lamplight/"+pluginclient.FoldersName) {
+		t.Errorf("the page puts a plugin's folder under the Study home's .lamplight")
+	}
+}
+
+// The page lists the environment a plugin is started with, variable by
+// variable: it is a list of what goes in, and a plugin's author plans by it.
+func TestThePageListsAPluginsEnvironment(t *testing.T) {
+	section := sections(readDoc(t))["A plugin started by a command"]
+	listed := map[string]bool{}
+	for _, row := range regexp.MustCompile("(?m)^  \\| ((?:`[A-Z0-9_*]+`(?:, )?)+) \\|").FindAllStringSubmatch(section, -1) {
+		for _, name := range backtick.FindAllStringSubmatch(row[1], -1) {
+			listed[name[1]] = true
+		}
+	}
+	given := append(pluginclient.EnvironmentVariables(), plugincontract.DataFolderEnv)
+	for _, name := range given {
+		if !listed[name] {
+			t.Errorf("the table of a plugin's environment does not list `%s`, which a plugin is given", name)
+		}
+	}
+	for name := range listed {
+		if !slices.Contains(given, name) {
+			t.Errorf("the table of a plugin's environment lists `%s`, which a plugin is not given", name)
+		}
+	}
+	if len(listed) < 10 {
+		t.Fatalf("the table of a plugin's environment is read as %v", listed)
 	}
 }
 

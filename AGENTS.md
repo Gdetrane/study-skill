@@ -83,15 +83,19 @@ GOOS=darwin go vet ./...            # macOS is supported too
   opened (`regfile.Walker`). Never decide it from a path's name, and never open by name
   again what was checked.
 - A Knowledge base plugin is started, or reached, only through `internal/pluginclient`,
-  which only the core imports; the MCP server reaches a plugin only through the core. A
-  command is the file `pluginregistry.OpenProgram` checked, run without a shell in the
-  registry's folder (`pluginregistry.OpenFolder`), never in the Topic or the Study home,
-  with pipes of its own, without the caller's `GIT_*` variables and without what in the
-  environment names something inside the Study home (`pluginregistry.Guard`), and stopped
-  with its process group when its Connection is closed. So far only
-  `study knowledge-base check` starts one: a test in `internal/mcpserver` fails when
-  anything in the core but `CheckPlugin` does. Change that test on purpose when a tool
-  comes to search a plugin.
+  which only the core imports, besides the conformance suite in `internal/plugintest`; the
+  MCP server reaches a plugin only through the core. A command is the program
+  `pluginregistry.OpenCommand` checked, run without a shell in the registry's folder
+  (`pluginregistry.OpenFolder`), never in the Topic or the Study home, with pipes of its
+  own and no other file of `study`'s, with a small environment `study` makes and never the
+  caller's (`childEnviron`: a list of what goes in, each variable only when
+  `pluginregistry.Guard` knows it leads nowhere inside the Study home), with a folder of
+  its own in the learner's state folder, outside the Study home, and stopped with its
+  process group when its Connection is closed. So far only `study knowledge-base check`
+  starts one. Two tests in `internal/mcpserver` keep it so: one registers plugins that
+  record being started or reached and calls every tool (`everyTool`: add a new tool
+  there), and one fails when anything in the core but `CheckPlugin` could start one.
+  Change them on purpose when a tool comes to search a plugin.
 - A plugin is not trusted with `study`'s time, memory or terminal. Every call has a
   deadline, a message is read up to a limit, every answer is checked against the contract
   (`plugincontract`'s `Validate`), and text a plugin wrote reaches an error only through
@@ -154,8 +158,8 @@ GOOS=darwin go vet ./...            # macOS is supported too
 - `internal/plugintest`: for tests only: the test plugin, a learner's computer made of
   temporary folders (`Computer`), and the conformance suite.
 - `internal/pluginregistry`: the Knowledge base plugin registry, which is the computer's
-  and not the Study home's. The package itself only reads (`Read`, and `OpenProgram` and
-  `OpenFolder` for starting a plugin). `registrar` below it registers and removes
+  and not the Study home's. The package itself only reads (`Read`, and `OpenCommand`,
+  `OpenFolder` and `Guard` for starting a plugin). `registrar` below it registers and removes
   plugins, for `internal/cli` alone. `internal/regfile` below it is what the two share and
   nothing else can import: the walk that keeps the Study home out, the configuration
   folder as it was opened, and the file's shape. `internal/regtest` is their tests'

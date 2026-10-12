@@ -4,23 +4,28 @@
 // index, to say what is indexed, to stop, to search and to give a Passage
 // again.
 //
-// A command is started as the registry's rules need it to be. The program is
-// the file pluginregistry.OpenProgram checked, not its path resolved again;
-// it runs without a shell, in the registry's folder and never in the Topic
-// or the Study home study was started in, with pipes of its own and never
-// study's standard input, in a session of its own, with the learner's
-// environment less GIT_* and less whatever names something inside the Study
-// home, and with a folder of its own under the Study home's .lamplight,
+// A command is started as the registry's rules need it to be (StartCommand).
+// The program is the one pluginregistry.OpenCommand checked, with nothing on
+// the way to it looked up again; it runs without a shell, in the registry's
+// folder and never in the Topic or the Study home study was started in, with
+// pipes of its own and no other file of study's, in a session of its own,
+// with a small environment study makes and not the one study has, and with a
+// folder of its own in the learner's state folder, outside the Study home,
 // which LAMPLIGHT_PLUGIN_DATA names. It is stopped when its Connection is
-// closed, with everything it started.
+// closed, with everything it started that stayed in its process group.
 //
 // A plugin is not trusted with study's time, memory or terminal. Starting,
 // every call and stopping have a deadline, so no plugin makes study hang.
-// One message is read up to a limit, and every answer is checked against
-// the contract before it is returned. Text a plugin wrote reaches an error
-// only cleaned (see clean); a Passage's text is the Source's own and is
-// returned as it is, for the adapters to print as they print any text from
-// a file.
+// One message is read up to a limit, a plugin that sends study a request is
+// stopped at the first, and every answer is checked against the contract
+// before it is returned. Text a plugin wrote reaches an error only cleaned
+// (see clean); a Passage's text is the Source's own and is returned as it
+// is, for the adapters to print as they print any text from a file.
+//
+// A call whose context is cancelled returns canceled, and one whose context
+// is cancelled already returns it without asking the plugin. So a command
+// that was stopped and still has to tell a plugin to stop indexing calls
+// Cancel with a context of its own, not with the one that was cancelled.
 //
 // The core calls this package, and the MCP server reaches a plugin only
 // through the core.
@@ -50,7 +55,8 @@ import (
 // How long a plugin has, unless Options say otherwise.
 const (
 	// DefaultStartTimeout is how long a plugin has to start, or to be
-	// reached, and to say which contract it speaks.
+	// reached, and to say which contract it speaks. What study does to
+	// start it, finding its program and its folders, is under it too.
 	DefaultStartTimeout = 30 * time.Second
 	// DefaultCallTimeout is how long it has to answer index, status, cancel
 	// or passage. None of them does the work itself: index answers at once.
@@ -63,18 +69,25 @@ const (
 	DefaultStopGrace = 2 * time.Second
 )
 
-// MCPVersion is the MCP version study asks a plugin for: the last one with
+// MCPVersion is the MCP revision study asks a plugin for: the last one with
 // the initialize handshake every MCP library has. A plugin may answer with
 // an earlier one.
 const MCPVersion = "2025-11-25"
 
 // MaxTools is how many tools of a plugin study lists before it stops
-// looking for the contract's six.
-const MaxTools = 1000
+// looking for the contract's six, and maxToolPages in how many pages.
+const (
+	MaxTools     = 1000
+	maxToolPages = 100
+)
 
 // StderrKept is how much of the end of what a command wrote on its standard
-// error study keeps, to say when the plugin fails.
-const StderrKept = 8 << 10
+// error study keeps, and StderrShown how much of the end of that it repeats
+// when the plugin fails.
+const (
+	StderrKept  = 8 << 10
+	StderrShown = 600
+)
 
 // unstick is how long the MCP library has to return once a deadline passed
 // or the request was stopped. It returns at once, unless it is stuck writing
@@ -90,9 +103,9 @@ const collectWait = 250 * time.Millisecond
 type Options struct {
 	// Version is study's version, which the plugin is told.
 	Version string
-	// Environ is the environment a command is started with, before study
-	// takes out of it what a plugin must not get (see childEnviron). Nil is
-	// the environment of this process.
+	// Environ is the environment study has, of which a command is given a
+	// few variables and no more (see childEnviron). Nil is the environment
+	// of this process.
 	Environ []string
 	// Logger receives the Log. Nil discards it.
 	Logger *slog.Logger
@@ -142,19 +155,23 @@ type Connection struct {
 	address string
 	opts    Options
 
-	// proc is the command, when the plugin is one.
-	proc *process
-	// closeIdle closes the connections kept to a plugin reached by URL.
-	closeIdle func()
-	cs        *mcp.ClientSession
+	// proc is the command, when the plugin is one, and http what carries
+	// the requests to a plugin reached by URL.
+	proc *Command
+	http *boundedTransport
+	cs   *mcp.ClientSession
 
 	contract   plugincontract.Contract
 	server     Server
 	dataFolder string
 
 	mu sync.Mutex
-	// ended says why the Connection can no longer be used, once it cannot.
-	ended     string
+	// ended says why the Connection can no longer be used, once it cannot,
+	// and exited that the reason is that the command exited by itself.
+	ended  string
+	exited bool
+	// asked is the first request the plugin sent study, if it sent one.
+	asked     string
 	closeOnce sync.Once
 }
 
@@ -173,41 +190,186 @@ func Start(ctx context.Context, env pluginregistry.Env, plugin pluginregistry.Pl
 	if ctx.Err() != nil {
 		return nil, s.canceled(ctx)
 	}
+	// One clock for all of it: what study does to start the plugin, and
+	// what the plugin does to answer.
+	limit := s.opts.StartTimeout
+	limited, cancel := context.WithTimeout(ctx, limit)
+	defer cancel()
+
 	var transport mcp.Transport
 	switch {
 	case len(plugin.Command) > 0:
-		folder, err := makeDataFolder(env.StudyHome, plugin.Name)
-		if err != nil {
-			return nil, err
+		// Finding the program and the folders is a walk through the file
+		// system, which a drive that does not answer can hold up for ever.
+		type started struct {
+			command *Command
+			err     error
 		}
-		proc, err := startProcess(env, plugin, folder, s.opts.Environ, s.opts.StopGrace)
-		if err != nil {
-			return nil, err
+		done := make(chan started, 1)
+		go func() {
+			command, err := StartCommand(env, plugin, s.opts)
+			done <- started{command, err}
+		}()
+		select {
+		case r := <-done:
+			if r.err != nil {
+				return nil, r.err
+			}
+			s.proc = r.command
+		case <-limited.Done():
+			// Whatever it comes to start, late, is stopped.
+			go func() {
+				if r := <-done; r.command != nil {
+					r.command.Stop()
+				}
+			}()
+			if ctx.Err() != nil {
+				return nil, s.canceled(ctx)
+			}
+			return nil, errorf(CodeFailedPrecondition, "Knowledge base plugin %s could not be started within %s: finding its "+
+				"program, the registry's folder or the plugin's own folder took that long. Check that none of them is on a "+
+				"drive that does not answer", s.name, limit)
 		}
-		s.proc, s.dataFolder = proc, folder
-		s.opts.Logger.Debug("started a Knowledge base plugin", "name", s.name, "pid", proc.cmd.Process.Pid)
-		transport = &mcp.IOTransport{Reader: proc.stdout, Writer: proc.stdin, MaxLineLength: plugincontract.MaxMessageBytes}
+		s.dataFolder = s.proc.DataFolder()
+		s.proc.whenExited(func() { s.end("its program has exited ("+s.proc.how()+")", true) })
+		s.opts.Logger.Debug("started a Knowledge base plugin", "name", s.name, "pid", s.proc.PID())
+		transport = s.proc.Transport()
 	case plugin.URL != "":
 		s.address = plugin.URL
-		transport, s.closeIdle = urlTransport(plugin.URL)
+		transport, s.http = urlTransport(plugin.URL)
 	default:
 		return nil, errorf(CodeInternal, "Knowledge base plugin %s is registered with neither a command nor a URL", plugin.Name)
 	}
-	if err := s.handshake(ctx, transport); err != nil {
+	guarded := &answersOnly{inner: transport, asked: s.wasAsked}
+	if s.http != nil {
+		guarded.speaks = s.http.speaks
+	}
+	if err := s.handshake(ctx, limited, limit, guarded); err != nil {
 		_ = s.Close()
 		return nil, err
 	}
 	return s, nil
 }
 
+// answersOnly is a transport over which a plugin answers and notifies, and
+// asks nothing.
+//
+// study offers a plugin nothing to call: no roots, no sampling, no
+// questions to the learner. The MCP library still answers every request a
+// server sends, each in a goroutine of its own that then waits to write its
+// answer, so a plugin that sends requests without end, and reads none of
+// the answers, makes study hold all of them: gigabytes in seconds, whether
+// or not a call is under way. So the first request a plugin sends ends the
+// connection, before the library sees it. Notifications are read and passed
+// on: the library drops them, and holds nothing for them.
+type answersOnly struct {
+	inner mcp.Transport
+	// asked is told the method of the request that ended the connection.
+	asked func(method string)
+	// speaks, when set, is told the MCP revision the plugin answered
+	// initialize with, before the library goes on to its next message.
+	//
+	// Over HTTP every request after the first names that revision in a
+	// header. The library sets it through a hook only its own connections
+	// have, and this one stands in front of its own: so the revision is read
+	// here, off the first answer, and the header is set by the HTTP client
+	// (boundedTransport).
+	speaks func(revision string)
+}
+
+// AnswersOnly returns a transport as study uses one with a plugin: the
+// first request the plugin sends ends the connection, and asked, when it is
+// not nil, is told the request's method. Notifications pass. The
+// conformance suite holds a plugin to the same rule with it.
+func AnswersOnly(transport mcp.Transport, asked func(method string)) mcp.Transport {
+	return &answersOnly{inner: transport, asked: asked}
+}
+
+// ServiceTransport is the transport study reaches a plugin registered by URL
+// over: streamable HTTP, without redirects, with every answer read up to the
+// size a message may have, and ended by the first request the service
+// sends (see urlTransport and AnswersOnly).
+func ServiceTransport(address string) mcp.Transport {
+	transport, bounded := urlTransport(address)
+	return &answersOnly{inner: transport, speaks: bounded.speaks}
+}
+
+func (t *answersOnly) Connect(ctx context.Context) (mcp.Connection, error) {
+	conn, err := t.inner.Connect(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &answering{Connection: conn, asked: t.asked, speaks: t.speaks}, nil
+}
+
+type answering struct {
+	mcp.Connection
+	asked  func(method string)
+	speaks func(revision string)
+	once   sync.Once
+	first  sync.Once
+}
+
+// errAsked is how reading ends once a plugin has sent a request.
+var errAsked = errors.New("the plugin sent a request")
+
+func (c *answering) Read(ctx context.Context) (jsonrpc.Message, error) {
+	msg, err := c.Connection.Read(ctx)
+	if err != nil {
+		return nil, err
+	}
+	switch msg := msg.(type) {
+	case *jsonrpc.Request:
+		if msg.IsCall() {
+			c.once.Do(func() {
+				if c.asked != nil {
+					c.asked(msg.Method)
+				}
+			})
+			return nil, errAsked
+		}
+	case *jsonrpc.Response:
+		// The first answer is the one to initialize: the first thing asked.
+		c.first.Do(func() {
+			var init struct {
+				ProtocolVersion string `json:"protocolVersion"`
+			}
+			if c.speaks != nil && json.Unmarshal(msg.Result, &init) == nil && init.ProtocolVersion != "" {
+				c.speaks(init.ProtocolVersion)
+			}
+		})
+	}
+	return msg, nil
+}
+
+// wasAsked is told that the plugin sent study a request. It ends the
+// Connection, off the goroutine that reads from the plugin.
+func (s *Connection) wasAsked(method string) {
+	s.mu.Lock()
+	if s.asked == "" {
+		s.asked = clean(method, 60)
+		if s.asked == "" {
+			s.asked = "without a method"
+		}
+	}
+	why := s.askedWhy()
+	s.mu.Unlock()
+	// Ended at once, for whoever asks; stopping the program takes a moment.
+	s.end(why, false)
+	go s.drop(why)
+}
+
+// askedWhy says why a Connection whose plugin sent a request ended. s.mu
+// is held.
+func (s *Connection) askedWhy() string {
+	return "it sent study a request (" + s.asked + "), which a plugin never does, and study stopped it"
+}
+
 // handshake opens the MCP session and checks that a Knowledge base plugin
 // is at the other end: it has the six tools, and its contract tool gives a
-// version this study knows. All of it has one deadline.
-func (s *Connection) handshake(ctx context.Context, transport mcp.Transport) error {
-	limit := s.opts.StartTimeout
-	limited, cancel := context.WithTimeout(ctx, limit)
-	defer cancel()
-
+// version this study knows. parent is the caller's context and limited the
+// same with the deadline of limit, which the whole start has.
+func (s *Connection) handshake(parent, limited context.Context, limit time.Duration, transport mcp.Transport) error {
 	client := mcp.NewClient(&mcp.Implementation{Name: "study", Title: "Lamplight", Version: s.opts.Version}, &mcp.ClientOptions{
 		// The library's own Log would carry text the plugin wrote.
 		Logger: slog.New(slog.DiscardHandler),
@@ -220,27 +382,35 @@ func (s *Connection) handshake(ctx context.Context, transport mcp.Transport) err
 		return client.Connect(ctx, transport, &mcp.ClientSessionOptions{ProtocolVersion: MCPVersion})
 	})
 	if err != nil {
-		return s.failure(ctx, limited, "open an MCP session", "", limit, err)
+		return s.failure(parent, limited, "open an MCP session", "", limit, err)
 	}
-	s.cs = cs
+	s.opened(cs)
 	if init := cs.InitializeResult(); init != nil && init.ServerInfo != nil {
-		s.server = Server{Name: clean(init.ServerInfo.Name, 100), Version: clean(init.ServerInfo.Version, 100)}
+		s.server = Server{Name: s.say(init.ServerInfo.Name, 100), Version: s.say(init.ServerInfo.Version, 100)}
 	}
 
 	tools, err := within(s, limited, func(ctx context.Context) ([]string, error) {
 		var names []string
-		for tool, err := range cs.Tools(ctx, nil) {
+		cursor := ""
+		for range maxToolPages {
+			page, err := cs.ListTools(ctx, &mcp.ListToolsParams{Cursor: cursor})
 			if err != nil {
 				return nil, err
 			}
-			if names = append(names, tool.Name); len(names) >= MaxTools {
+			for _, tool := range page.Tools {
+				if names = append(names, tool.Name); len(names) >= MaxTools {
+					return names, nil
+				}
+			}
+			if page.NextCursor == "" || page.NextCursor == cursor {
 				break
 			}
+			cursor = page.NextCursor
 		}
 		return names, nil
 	})
 	if err != nil {
-		return s.failure(ctx, limited, "list its tools", "", limit, err)
+		return s.failure(parent, limited, "list its tools", "", limit, err)
 	}
 	var missing []string
 	for _, tool := range plugincontract.Tools {
@@ -252,7 +422,7 @@ func (s *Connection) handshake(ctx context.Context, transport mcp.Transport) err
 		return s.notTheContract("it is an MCP server without the " + list(missing) + " " + plural(len(missing), "tool", "tools"))
 	}
 
-	data, err := s.callWithin(ctx, limited, plugincontract.ToolContract, "say which contract it speaks", limit, struct{}{})
+	data, err := s.callWithin(parent, limited, plugincontract.ToolContract, "say which contract it speaks", limit, struct{}{})
 	if err != nil {
 		return err
 	}
@@ -260,8 +430,8 @@ func (s *Connection) handshake(ctx context.Context, transport mcp.Transport) err
 	var newer *plugincontract.NewerVersionError
 	switch {
 	case errors.As(err, &newer):
-		return errorf(CodeNewerFormat, "Knowledge base plugin %s speaks version %d of Lamplight's contract, and this version of "+
-			"study knows version %d: upgrade study", s.name, newer.Version, plugincontract.Version)
+		return errorf(CodeNewerFormat, "Knowledge base plugin %s speaks version %s of Lamplight's contract, and this version of "+
+			"study knows version %d: upgrade study", s.name, clean(newer.Version, 40), plugincontract.Version)
 	case err != nil:
 		return s.notTheContract("what its contract tool gave back is not what the contract describes: " + err.Error())
 	}
@@ -282,10 +452,12 @@ func (s *Connection) Server() Server { return s.server }
 // its index in. It is empty for a plugin reached by URL.
 func (s *Connection) DataFolder() string { return s.dataFolder }
 
-// Ended reports whether the Connection can no longer be used: it was closed,
-// or study gave up on its plugin, which did not answer in time or whose
-// connection broke. Whoever keeps a Connection for more than one request
-// starts another when this one has ended.
+// Ended reports whether the Connection can no longer be used: it was
+// closed; its command has exited, or study stopped it; or study gave up on
+// its plugin, which did not answer in time, sent study a request, or whose
+// connection broke. It is true as soon as that is so, whether or not a call
+// is under way. Whoever keeps a Connection for more than one request starts
+// another when this one has ended.
 func (s *Connection) Ended() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -311,7 +483,7 @@ func (s *Connection) Index(ctx context.Context, collection string, source plugin
 	if err != nil {
 		return plugincontract.SourceStatus{}, err
 	}
-	return tidy(out.Source), nil
+	return s.tidy(out.Source), nil
 }
 
 // Status asks what the plugin says of the Sources of a collection. A Source
@@ -327,13 +499,16 @@ func (s *Connection) Status(ctx context.Context, collection string) ([]plugincon
 	}
 	sources := make([]plugincontract.SourceStatus, 0, len(out.Sources))
 	for _, source := range out.Sources {
-		sources = append(sources, tidy(source))
+		sources = append(sources, s.tidy(source))
 	}
 	return sources, nil
 }
 
 // Cancel asks the plugin to stop indexing a Source, and reports whether it
 // was indexing it. What was indexed before stays.
+//
+// Like every call, it asks nothing when ctx is cancelled already: a command
+// that was stopped cancels with a context of its own.
 func (s *Connection) Cancel(ctx context.Context, collection, source string) (stopped bool, err error) {
 	in := plugincontract.CancelInput{Collection: collection, Source: source}
 	if err := in.Validate(); err != nil {
@@ -368,7 +543,17 @@ func (s *Connection) Search(ctx context.Context, collection, query string, limit
 		return nil, s.notSent(plugincontract.ToolSearch, err)
 	}
 	var out plugincontract.SearchResult
-	err := s.ask(ctx, plugincontract.ToolSearch, s.opts.SearchTimeout, in, &out, func() error { return out.Validate(in) })
+	err := s.ask(ctx, plugincontract.ToolSearch, s.opts.SearchTimeout, in, &out, func() error {
+		if err := out.Validate(in); err != nil {
+			return err
+		}
+		for _, passage := range out.Passages {
+			if err := s.located(passage.Passage); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -386,18 +571,34 @@ func (s *Connection) Passage(ctx context.Context, collection, id string) (plugin
 		return plugincontract.Passage{}, s.notSent(plugincontract.ToolPassage, err)
 	}
 	var out plugincontract.PassageResult
-	err := s.ask(ctx, plugincontract.ToolPassage, s.opts.CallTimeout, in, &out, func() error { return out.Validate(in) })
+	err := s.ask(ctx, plugincontract.ToolPassage, s.opts.CallTimeout, in, &out, func() error {
+		if err := out.Validate(in); err != nil {
+			return err
+		}
+		return s.located(out.Passage)
+	})
 	if err != nil {
 		return plugincontract.Passage{}, err
 	}
 	return out.Passage, nil
 }
 
-// Close ends the Connection. A command is stopped, with everything it started:
-// its input is closed, which asks it to exit, and it is signalled and then
-// killed if it does not, within three times Options.StopGrace. A plugin
-// reached by URL is told the session is over. Close can be called more than
-// once, and always returns nil.
+// located checks that a Passage's location is of a kind the plugin said it
+// gives: what a location means is decided by its kind, and study was told
+// which kinds to expect.
+func (s *Connection) located(passage plugincontract.Passage) error {
+	if l := passage.Location; l != nil && !slices.Contains(s.contract.Locations, l.Kind) {
+		return fmt.Errorf("Passage %s has a location of the kind %s, and the plugin's contract lists %s", passage.ID, l.Kind,
+			list(s.contract.Locations))
+	}
+	return nil
+}
+
+// Close ends the Connection. A command is stopped, with everything it
+// started that stayed in its process group: its input is closed, which asks
+// it to exit, and it is signalled and then killed if it does not, within
+// three times Options.StopGrace. A plugin reached by URL is told the session
+// is over. Close can be called more than once, and always returns nil.
 func (s *Connection) Close() error {
 	s.shut(true)
 	return nil
@@ -408,35 +609,54 @@ func (s *Connection) Close() error {
 // may take it a moment; one that stopped answering is not waited for again.
 func (s *Connection) shut(politely bool) {
 	s.closeOnce.Do(func() {
-		s.end("its connection was closed")
+		s.end("its connection was closed", false)
 		if s.proc != nil {
-			s.proc.stop()
+			s.proc.Stop()
 			s.opts.Logger.Debug("stopped a Knowledge base plugin", "name", s.name, "how", s.proc.how())
 		}
-		if s.cs != nil {
-			// The library closes a connection once nothing is under way on
-			// it, and tells a service that the session is over. Neither may
-			// hold study up.
-			done := make(chan struct{})
-			go func() {
-				_ = s.cs.Close()
-				if s.closeIdle != nil {
-					s.closeIdle()
-				}
-				close(done)
-			}()
-			if politely {
-				timer := time.NewTimer(3 * s.opts.StopGrace)
-				defer timer.Stop()
-				select {
-				case <-done:
-				case <-timer.C:
-				}
+		closeIdle := func() {
+			if s.http != nil {
+				s.http.base.CloseIdleConnections()
 			}
-		} else if s.closeIdle != nil {
-			s.closeIdle()
+		}
+		s.mu.Lock()
+		cs := s.cs
+		s.mu.Unlock()
+		if cs == nil {
+			closeIdle()
+			return
+		}
+		// The library closes a connection once nothing is under way on it,
+		// and tells a service that the session is over. Neither may hold
+		// study up.
+		done := make(chan struct{})
+		go func() {
+			_ = cs.Close()
+			closeIdle()
+			close(done)
+		}()
+		if politely {
+			timer := time.NewTimer(3 * s.opts.StopGrace)
+			defer timer.Stop()
+			select {
+			case <-done:
+			case <-timer.C:
+			}
 		}
 	})
+}
+
+// opened records the MCP session once it is open. A Connection that ended
+// while it was being opened, because its plugin sent a request at once,
+// closes it here: nothing else would.
+func (s *Connection) opened(cs *mcp.ClientSession) {
+	s.mu.Lock()
+	s.cs = cs
+	ended := s.ended != "" && !s.exited
+	s.mu.Unlock()
+	if ended {
+		go func() { _ = cs.Close() }()
+	}
 }
 
 // over is the error for a Connection that can no longer be used, or nil for
@@ -451,21 +671,22 @@ func (s *Connection) over() *Error {
 }
 
 // end records why the Connection can no longer be used, the first time.
-func (s *Connection) end(why string) {
+// exited says that the reason is that the command exited by itself.
+func (s *Connection) end(why string, exited bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.ended == "" {
-		s.ended = why
+		s.ended, s.exited = why, exited
 	}
 }
 
 // drop ends a Connection whose plugin cannot be relied on any more: one that
-// did not answer in time, or whose connection broke. A command is killed at
-// once, since it was given its time already.
+// did not answer in time, that sent a request, or whose connection broke. A
+// command is killed at once, since it was given its time already.
 func (s *Connection) drop(why string) {
-	s.end(why)
+	s.end(why, false)
 	if s.proc != nil {
-		s.proc.kill()
+		s.proc.Kill()
 	}
 	s.shut(false)
 }
@@ -517,7 +738,7 @@ func (s *Connection) callWithin(parent, limited context.Context, tool, doing str
 			// An error that is not the contract's: the text is all there is.
 			refusal.Error = plugincontract.ErrorBody{Message: text(res)}
 		}
-		return nil, toolError(s.name, tool, refusal.Error)
+		return nil, s.toolError(tool, refusal.Error)
 	}
 	if !isJSON {
 		return nil, s.notTheContract("its " + tool + " tool gave back no JSON object: neither as structured content nor as text")
@@ -553,16 +774,44 @@ func text(res *mcp.CallToolResult) string {
 	return ""
 }
 
+// say is text the plugin wrote, as study repeats it: cleaned, cut to max
+// bytes, and without the parts of a registered address that may be a key,
+// which a service can send back as easily as anything else. Only the start
+// of a long text is looked at.
+func (s *Connection) say(text string, max int) string {
+	return clean(without(plugincontract.Cut(text, 16*max+4096), s.address), max)
+}
+
 // tidy cleans what a plugin wrote of a Source for people to read.
-func tidy(source plugincontract.SourceStatus) plugincontract.SourceStatus {
-	source.Reason = clean(source.Reason, plugincontract.MaxTextBytes)
+func (s *Connection) tidy(source plugincontract.SourceStatus) plugincontract.SourceStatus {
+	source.Reason = s.say(source.Reason, plugincontract.MaxTextBytes)
 	return source
+}
+
+// toolError is the error for a call the plugin refused or failed.
+func (s *Connection) toolError(tool string, body plugincontract.ErrorBody) *Error {
+	said := s.say(body.Message, plugincontract.MaxTextBytes)
+	if said == "" {
+		said = "it gave no reason"
+	}
+	code := StudyCode(body.Code)
+	switch body.Code {
+	case plugincontract.CodeInvalidArgument:
+		return errorf(code, "Knowledge base plugin %s does not take what its %s tool was given: %s", s.name, tool, said)
+	case plugincontract.CodeNotFound:
+		return errorf(code, "Knowledge base plugin %s does not have what its %s tool was asked for: %s", s.name, tool, said)
+	case plugincontract.CodeUnsupported:
+		return errorf(code, "Knowledge base plugin %s cannot do what its %s tool was asked: %s", s.name, tool, said)
+	default:
+		return errorf(code, "Knowledge base plugin %s failed in its %s tool: %s. The plugin's own messages may say more; "+
+			"study knowledge-base check %s shows whether it still starts", s.name, tool, said, s.name)
+	}
 }
 
 // within runs f, which talks to the plugin, and returns when f does, or
 // about a second after ctx ended when f is stuck: the library returns at
-// once then, unless it is blocked writing to a command that reads nothing,
-// and such a command is killed, which frees it.
+// once then, unless it is blocked writing to a command that reads nothing.
+// Such a command is killed, which frees it, and the Connection is over.
 func within[T any](s *Connection, ctx context.Context, f func(context.Context) (T, error)) (T, error) {
 	type result struct {
 		value T
@@ -585,9 +834,7 @@ func within[T any](s *Connection, ctx context.Context, f func(context.Context) (
 		return r.value, r.err
 	case <-timer.C:
 	}
-	if s.proc != nil {
-		s.proc.kill()
-	}
+	s.drop("it read nothing of what study wrote to it, and study stopped it")
 	var none T
 	return none, ctx.Err()
 }
@@ -618,8 +865,17 @@ func (s *Connection) notTheContract(what string) *Error {
 // what the plugin was asked to do, and tool which tool was called, if one
 // was.
 func (s *Connection) failure(parent, limited context.Context, doing, tool string, limit time.Duration, err error) *Error {
+	s.mu.Lock()
+	asked, askedWhy, ended, exited := s.asked, s.askedWhy(), s.ended, s.exited
+	s.mu.Unlock()
 	answered := protocolError(err)
 	switch {
+	case asked != "":
+		// Whatever else went wrong went wrong because of this.
+		s.drop(askedWhy)
+		return errorf(CodeFailedPrecondition, "Knowledge base plugin %s sent study a request (%s), and study stopped it: a "+
+			"plugin answers what it is asked and asks nothing, since study offers it nothing to call. "+
+			"docs/knowledge-base-contract.md describes the contract", s.name, asked)
 	case parent.Err() != nil:
 		// The request was stopped. The plugin was told, and the Connection
 		// stays as it is: whoever holds it closes it.
@@ -633,35 +889,41 @@ func (s *Connection) failure(parent, limited context.Context, doing, tool string
 				doing, limit, wrote)
 		}
 		s.drop("it did not answer in time")
-		return errorf(CodeFailedPrecondition, "Knowledge base plugin %s did not %s within %s. Check that the service at its "+
-			"address is running and is not busy: study knowledge-base list shows the address", s.name, doing, limit)
+		return errorf(CodeFailedPrecondition, "Knowledge base plugin %s did not %s within %s. Check that the service at %s "+
+			"is running and is not busy: study knowledge-base list shows its whole address", s.name, doing, limit, Address(s.address))
+	case ended != "" && !exited:
+		// The Connection was closed, or given up, under this call: that is
+		// what happened to this call too.
+		return s.over()
 	case answered != nil:
 		// The plugin answered, with an error of the protocol's own.
 		switch {
 		case tool == "":
-			return s.notTheContract("it would not " + doing + " (" + clean(answered.Message, plugincontract.MaxTextBytes) + ")")
+			return s.notTheContract("it would not " + doing + " (" + s.say(answered.Message, plugincontract.MaxTextBytes) + ")")
 		case answered.Code == jsonrpc.CodeInvalidParams:
-			return toolError(s.name, tool, plugincontract.ErrorBody{Code: plugincontract.CodeInvalidArgument, Message: answered.Message})
+			return s.toolError(tool, plugincontract.ErrorBody{Code: plugincontract.CodeInvalidArgument, Message: answered.Message})
 		default:
-			return toolError(s.name, tool, plugincontract.ErrorBody{Code: plugincontract.CodeInternal, Message: answered.Message})
+			return s.toolError(tool, plugincontract.ErrorBody{Code: plugincontract.CodeInternal, Message: answered.Message})
 		}
 	}
-	// The connection broke: nothing more can be asked on it. When it broke
-	// because the Connection was closed, or given up, under this call, that is
-	// what happened to this call too.
-	if over := s.over(); over != nil {
-		return over
-	}
+	// The connection broke: nothing more can be asked on it.
 	if s.proc == nil {
+		why := reason(err, s.address)
+		if refusal := s.http.refused(); refusal != "" {
+			// What the service itself said of why is worth more than the
+			// name of its status.
+			why = s.say(refusal, 300)
+		}
 		s.drop("its connection broke")
 		return &Error{Code: CodeFailedPrecondition, Err: err, Message: fmt.Sprintf("Knowledge base plugin %s does not answer as an "+
-			"MCP server at its address (%s). Check that the service is running and that the address is the one of its MCP "+
-			"endpoint: study knowledge-base list shows it, and study knowledge-base add %s --replace --url <URL> changes it",
-			s.name, reason(err, s.address), s.name)}
+			"MCP server at %s (%s). study speaks MCP revision %s over streamable HTTP. Check that the service is running, "+
+			"that it speaks that revision or an earlier one, and that the address is the one of its MCP endpoint: study "+
+			"knowledge-base list shows it, and study knowledge-base add %s --replace --url <URL> changes it",
+			s.name, Address(s.address), why, MCPVersion, s.name)}
 	}
 	// A command that exited closes its output, and a moment may pass before
 	// it is collected.
-	exited := s.proc.hasExited(collectWait)
+	exited = s.proc.hasExited(collectWait)
 	how, wrote := s.proc.how(), s.wrote()
 	s.drop("its connection broke")
 	const look = " Run its command in a terminal to see why: study knowledge-base list shows the command"
@@ -728,12 +990,13 @@ func rootCause(err error) error {
 }
 
 // wrote is a sentence with the end of what a command wrote on its standard
-// error, cleaned, or nothing when it wrote nothing.
+// error, cleaned, or nothing when it wrote nothing. It is the end that says
+// why a program failed: the exception under a traceback, not its first line.
 func (s *Connection) wrote() string {
 	if s.proc == nil {
 		return ""
 	}
-	said := clean(s.proc.wrote(), 600)
+	said := cleanEnd(s.proc.wrote(), StderrShown)
 	if said == "" {
 		return ""
 	}

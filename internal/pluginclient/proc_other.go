@@ -12,3 +12,5 @@ import (
 func ownSession() *syscall.SysProcAttr { return nil }
 
 func signalGroup(program *os.Process, _ syscall.Signal) { _ = program.Kill() }
+
+func sealInherited() {}

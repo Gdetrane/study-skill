@@ -632,11 +632,13 @@ hours before any learning happens is exactly what v1 produced.
     for a tool. What the two share, the opened configuration folder included, is in a
     package neither the core nor the server can import. Tests that look at names, the
     server's source and every tool's inputs, are a second line.
-  - `pluginregistry.OpenProgram` is what starting a plugin uses: it checks the program
-    and the arguments at that moment and returns the program open. The file is what is
-    started, not its path, which must not be resolved again after the check.
-    `pluginregistry.OpenFolder` opens the registry's folder the same way, to start the
-    plugin in.
+  - `pluginregistry.OpenCommand` is what starting a plugin uses: it checks the program
+    and the arguments at that moment and returns the program open, with the folder that
+    really holds it. The program is started through those, not through its path, which
+    must not be resolved again after the check. `pluginregistry.OpenFolder` opens the
+    registry's folder the same way, to start the plugin in, and a `Guard` asks the
+    registry's question, is this the agent's to change, of whatever else a plugin is
+    started with: its folder, its interpreter and each path in its environment.
 - **Built** (ADR-0012): the contract, `study` as the MCP client of a plugin, and
   `study knowledge-base check`. Nothing indexes or searches yet.
   - The contract, version 1, is `docs/knowledge-base-contract.md` for whoever writes a
@@ -659,32 +661,54 @@ hours before any learning happens is exactly what v1 produced.
     What goes wrong with a Source is not an error of `index`: `status` says `failed`.
   - `internal/pluginclient` starts a registered command, or reaches a registered URL over
     streamable HTTP, and returns a Connection with the contract's five other tools as
-    methods. A command is the file `OpenProgram` checked, run without a shell, in the
-    registry's folder, in a session of its own, with pipes of its own, and with a folder of
-    its own, `.lamplight/knowledge-base-plugins/<name>` in the Study home, which
-    `LAMPLIGHT_PLUGIN_DATA` names. Its environment is the learner's less `GIT_*` and less
-    whatever names something inside the Study home: an agent started in a Topic with its
-    virtual environment switched on hands the MCP server a `PATH` and a `PYTHONPATH` into
-    the Topic, and a plugin started with those would run what the agent wrote. A script's
-    interpreter is checked as the program is, since it is what the system runs. On Linux the program and the folder are named by their
-    descriptors (`/proc/self/fd`), so nothing is resolved by name after the check; on
-    macOS, which cannot run an open file, they are named after a last look that the names
-    still lead to what was checked. Closing the Connection stops the command, with its
-    process group: its pipes are closed, then `SIGTERM`, then `SIGKILL`.
+    methods. A command is the program `OpenCommand` checked, run without a shell, in the
+    registry's folder, in a session of its own, with pipes of its own and no other file of
+    `study`'s, and with a folder of its own, which `LAMPLIGHT_PLUGIN_DATA` names.
+  - That folder is `$XDG_STATE_HOME/lamplight/knowledge-base-plugins/<name>`, in the
+    learner's state folder and **outside the Study home**, for the learner alone to read.
+    The agent writes in the Study home: a folder there could be exchanged for a link while
+    the plugin runs, and an index the agent can write is one whose Passages the agent can
+    write. A state folder inside the Study home is refused by the registry's rule. The cost
+    is that a sandbox `study source index` runs in must allow the folder.
+  - A plugin's environment is a small one `study` makes, not the caller's with things taken
+    out: `PATH`, `HOME`, `USER`, `LOGNAME`, `LANG`, `LC_*`, `TZ`, `TMPDIR`, the XDG base
+    folders and `LAMPLIGHT_PLUGIN_DATA`, each only when it leads nowhere inside the Study
+    home, with what a path check cannot decide counted as inside. An agent started in a
+    Topic with its virtual environment switched on hands the MCP server an environment that
+    leads into the Topic in more ways than a list of removals can name. A plugin that needs
+    more takes it in its arguments, or the learner registers a script of their own, outside
+    the Study home, that sets it.
+  - A script's interpreter is checked as the program is, since it is what the system runs,
+    and one named by a relative path is refused. On Linux the program is run by its own
+    name in the folder that holds it, opened when it was checked, and the working folder is
+    entered by its descriptor (`/proc/self/fd`), so no folder on the way to either is
+    resolved by name after the check; a script still finds what is beside it. On macOS,
+    which cannot do that, they are named after a last look that the names still lead to
+    what was checked. Closing the Connection stops the command, with its process group: its
+    pipes are closed, then `SIGTERM`, then `SIGKILL`. A Connection has ended as soon as its
+    program has exited.
   - A plugin is not trusted with `study`'s time, memory or terminal. Starting, each call
-    and stopping have deadlines; a message is read up to 16 MiB; every answer is checked
-    against the contract; and what a plugin wrote reaches a message only on one line, cut
-    short, with control characters escaped. A plugin that reports a newer contract version
-    is `newer_format`.
+    and stopping have deadlines, and what `study` does before the program runs is under the
+    first; a message is read up to 16 MiB; a plugin that sends `study` a request is stopped
+    at the first, since `study` offers it nothing to call; every answer is checked against
+    the contract; and what a plugin wrote reaches a message only on one line, cut short,
+    with control characters escaped, and, for a plugin reached by URL, without the path and
+    the query of its address, of which `study` shows the scheme and host alone. A plugin
+    that reports a newer contract version is `newer_format`.
   - `study knowledge-base check <name>` starts or reaches a plugin, reports the contract it
-    speaks, and stops it. It is CLI-only. The core starts a plugin for nothing else yet,
-    and a test fails when anything but `CheckPlugin` does, so no MCP tool starts or reaches
-    a plugin until a Topic can name one.
+    speaks, and stops it. It is CLI-only. The core starts a plugin for nothing else yet, so
+    no MCP tool starts or reaches a plugin until a Topic can name one. A test checks that by
+    what the tools do: it registers a command that records being started and a service
+    that counts what reaches it, calls every tool, and finds neither touched. A second test
+    reads the core, and fails when anything but `CheckPlugin` could start a plugin.
   - `internal/plugintest` holds a small plugin that speaks the contract, which is the one
     program tests start (a test binary run as the plugin), and the conformance suite: a
     test helper that takes a way to connect to any plugin and holds it to everything the
-    contract promises. A test runs the suite against plugins that each break the contract
-    in one way, so the suite is known to fail them.
+    contract promises. It starts a command exactly as `study` does, so it also sees that a
+    plugin exits when its input closes, writes nothing where it is started, and follows no
+    link out of its folder. A plugin that stops answering ends the suite at that call. A
+    test runs the suite against plugins that each break the contract in one way, so the
+    suite is known to fail them.
 - **Still to build for v2.0** (ADR-0012): the rest of Knowledge base plugins, so the agent
   can search a Topic's Sources with no account anywhere.
   - The agent talks to `study`, and `study` is the MCP client of the Topic's plugin. `study`
@@ -703,7 +727,8 @@ hours before any learning happens is exactly what v1 produced.
     through a search. Adding a Source records it and indexes nothing. Whether a Source is
     indexed is the plugin's to say on this machine: it records no Event, and `sources` and
     `status` show it and give the command. A command plugin keeps its index in a folder
-    `study` gives it under the Study home's `.lamplight`. Nothing waits for a plugin.
+    `study` gives it in the learner's state folder, outside the Study home, so a sandbox
+    `study source index` runs in must allow that folder. Nothing waits for a plugin.
   - `evidence_search` returns Passages. Evidence recorded with a Passage's id is checked:
     `study` reads the Passage again, refuses a quote that is not in it, and takes the
     location from it. That is a new Event type. Evidence without a Passage stays possible,

@@ -6,11 +6,56 @@ import (
 	"github.com/mordor-forge/lamplight/v2/internal/pluginregistry/internal/regfile"
 )
 
-// What starting a plugin needs besides its program (OpenProgram): the
-// folder to start it in, and the same question the registry asks of a
-// program, asked of whatever else the plugin is started with. study starts a
-// plugin outside the agent's sandbox, so nothing it is started with may be
+// What starting a plugin needs: its program, in the folder that holds it;
+// the folder to start it in; and the question the registry asks of a
+// program, asked of whatever else the plugin is started with. study starts
+// a plugin outside the agent's sandbox, so nothing it is started with may be
 // the agent's to change.
+
+// Command is the program of a plugin registered by a command, opened and
+// checked at one moment, to start it.
+type Command struct {
+	// Program is the program: the file that was checked.
+	Program *os.File
+	// Folder is the folder that really holds the program, open, and Name
+	// the program's name in it: every symbolic link on the way was followed
+	// when it was checked, so the name is the file's own and no link.
+	Folder *os.File
+	Name   string
+}
+
+// Close closes the program and its folder.
+func (c *Command) Close() {
+	_ = c.Program.Close()
+	_ = c.Folder.Close()
+}
+
+// OpenCommand opens the program of a plugin registered by a command, as
+// OpenProgram does, and the folder that holds it.
+//
+// Start the program through what is returned and never through the path the
+// plugin is registered by: by its name in the open folder, named by the
+// folder's descriptor (/proc/self/fd on Linux), or by the open file itself.
+// Either way no folder on the way to the program is looked up again, so no
+// name there can come to lead elsewhere between the check and the start.
+// The caller closes the Command.
+func OpenCommand(env Env, p Plugin) (*Command, error) {
+	if len(p.Command) == 0 {
+		return nil, regfile.Errorf(regfile.CodeInvalidArgument, "Knowledge base plugin %s is reached by URL: it has no "+
+			"program to start", p.Name)
+	}
+	w := regfile.NewWalker(env.StudyHome)
+	defer w.Close()
+	program, err := w.OpenProgramIn(p.Command[0])
+	if err != nil {
+		return nil, err
+	}
+	if why := problem(w, env, p); why != "" {
+		program.Close()
+		return nil, regfile.Errorf(regfile.CodeFailedPrecondition, "Knowledge base plugin %s is not started: %s", p.Name, why)
+	}
+	return &Command{Program: program.File, Folder: program.Folder, Name: program.Name}, nil
+}
 
 // OpenFolder opens the registry's folder, Lamplight's configuration folder,
 // to start a plugin from: a plugin is started there, and never in the Topic
@@ -20,10 +65,9 @@ import (
 // The folder is found and checked as Read finds it, at that moment: it is
 // not the Study home, not inside it and not reached through it. It returns
 // the folder open for reading, and its path with every symbolic link
-// followed, which is for messages and for the plugin's PWD. Start the plugin
-// in the folder that is returned, by its descriptor where the system can
-// name one (/proc/self/fd on Linux), not in the path again. The caller
-// closes the file.
+// followed, which is for messages. Start the plugin in the folder that is
+// returned, by its descriptor where the system can name one (/proc/self/fd
+// on Linux), not in the path again. The caller closes the file.
 //
 // The folder is opened to be a working folder and nothing more: what
 // changes the registry in it stays in the registrar package.
@@ -63,14 +107,34 @@ func NewGuard(env Env) *Guard { return &Guard{walker: regfile.NewWalker(env.Stud
 // Close lets go of the Study home.
 func (g *Guard) Close() { g.walker.Close() }
 
-// Inside reports whether an absolute path leads through the Study home. A
-// path that cannot be followed for another reason does not: what stops the
-// walk stops whoever uses the path too. When the Study home cannot be
-// looked at, every path counts as inside it.
-func (g *Guard) Inside(path string) bool { return g.walker.Inside(path) }
+// Outside reports whether an absolute path is known to stay outside the
+// Study home at every hop. What cannot be decided is not outside: a path
+// that cannot be followed, because a folder on the way cannot be opened or
+// because the Study home itself cannot be looked at, may lead anywhere. A
+// path that ends in something that is not there yet is outside when what
+// is there of it is.
+func (g *Guard) Outside(path string) bool {
+	place, err := g.walker.Walk(path)
+	if err != nil {
+		return false
+	}
+	place.Close()
+	return true
+}
 
 // CheckProgram checks a program that starting a plugin would run without
 // its being the plugin's own, such as the interpreter a script's first line
-// names: it is a regular file that can be run, reached without going
-// through the Study home at any hop.
+// names: it is a regular file that the user study runs as may run, reached
+// without going through the Study home at any hop.
 func (g *Guard) CheckProgram(path string) error { return g.walker.CheckProgram(path) }
+
+// MakeFolder finds the folder at an absolute path outside the Study home,
+// makes what is missing of it for the learner alone to read, and returns it
+// open, with its path as every symbolic link on the way leads. A path that
+// is the Study home, is inside it or is reached through it is refused, as
+// IsInside tells, and nothing is made. The caller closes the folder.
+func (g *Guard) MakeFolder(path string) (*os.File, string, error) { return g.walker.MakeFolder(path) }
+
+// IsInside reports whether an error of a Guard says that a path leads
+// through the Study home.
+func IsInside(err error) bool { return regfile.IsInside(err) }

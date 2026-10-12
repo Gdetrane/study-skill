@@ -30,8 +30,9 @@ var Tools = []string{ToolContract, ToolIndex, ToolStatus, ToolCancel, ToolSearch
 
 // DataFolderEnv is the environment variable in which study tells a plugin
 // started by a command where its folder is: an absolute path, of a folder
-// that exists, under the Study home's .lamplight. A plugin reached by URL is
-// a service the learner runs, and keeps its index where it was told to.
+// that exists, in the learner's state folder and outside the Study home. A
+// plugin reached by URL is a service the learner runs, and keeps its index
+// where it was told to.
 const DataFolderEnv = "LAMPLIGHT_PLUGIN_DATA"
 
 // Kinds of Source a plugin can index.

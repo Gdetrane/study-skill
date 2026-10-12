@@ -85,9 +85,32 @@ func TestParseContract(t *testing.T) {
 	}
 	// A newer version is newer whatever else the answer holds.
 	var newer *plugincontract.NewerVersionError
-	for _, data := range []string{`{"version": 2}`, `{"version": 12, "sources": "all", "search": 7}`} {
-		if _, err := plugincontract.ParseContract([]byte(data)); !errors.As(err, &newer) || newer.Version < 2 {
-			t.Errorf("ParseContract(%s) = %v; want a NewerVersionError", data, err)
+	// And however large the number is, or however it is written: a version
+	// past what this program counts with is no broken answer.
+	for data, said := range map[string]string{
+		`{"version": 2}`: "2",
+		`{"version": 12, "sources": "all", "search": 7}`: "12",
+		`{"version": 2.0}`:                               "2.0",
+		`{"version": 9223372036854775807}`:               "9223372036854775807",
+		`{"version": 9223372036854775808}`:               "9223372036854775808",
+		`{"version": 18446744073709551616}`:              "18446744073709551616",
+		`{"version": 1e30}`:                              "1e30",
+		`{"version": 1e999}`:                             "1e999",
+		`{"version": 1` + strings.Repeat("0", 100) + `}`: "1" + strings.Repeat("0", 39) + "…",
+	} {
+		_, err := plugincontract.ParseContract([]byte(data))
+		if !errors.As(err, &newer) || newer.Version != said {
+			t.Errorf("ParseContract(%s) = %v; want a NewerVersionError for version %s", data, err, said)
+			continue
+		}
+		if want := "the plugin speaks version " + said + " of the contract, and this is version 1"; err.Error() != want {
+			t.Errorf("ParseContract(%s) says %q; want %q", data, err, want)
+		}
+	}
+	// Version 1 is version 1 however it is written.
+	for _, data := range []string{`{"version": 1.0, "sources": ["file"], "search": ["keyword"]}`, `{"version": 1e0, "sources": ["file"], "search": ["keyword"]}`} {
+		if c, err := plugincontract.ParseContract([]byte(data)); err != nil || c.Version != 1 || len(c.Sources) != 1 {
+			t.Errorf("ParseContract(%s) = %+v, %v; want version 1", data, c, err)
 		}
 	}
 	many := `"a` + strings.Repeat(`", "a`, plugincontract.MaxKinds) + `"`
@@ -98,11 +121,16 @@ func TestParseContract(t *testing.T) {
 		`{`:   "it is not valid JSON",
 		`{}`:  "version is missing",
 		`{"version": 0, "sources": ["file"], "search": ["keyword"]}`: "version is not a whole number of 1 or more",
-		`{"version": -1}`:   "version is not a whole number of 1 or more",
-		`{"version": 1.5}`:  "version is not a whole number of 1 or more",
-		`{"version": "1"}`:  "version is not a whole number of 1 or more",
-		`{"version": null}`: "version is not a whole number of 1 or more",
-		`{"version": 1}`:    "sources lists none of file, url",
+		`{"version": -1}`:     "version is not a whole number of 1 or more",
+		`{"version": -1e999}`: "version is not a whole number of 1 or more",
+		`{"version": 2.5}`:    "version is not a whole number of 1 or more",
+		`{"version": [2]}`:    "version is not a whole number of 1 or more",
+		`{"version": "2"}`:    "version is not a whole number of 1 or more",
+		`{"version": true}`:   "version is not a whole number of 1 or more",
+		`{"version": 1.5}`:    "version is not a whole number of 1 or more",
+		`{"version": "1"}`:    "version is not a whole number of 1 or more",
+		`{"version": null}`:   "version is not a whole number of 1 or more",
+		`{"version": 1}`:      "sources lists none of file, url",
 		`{"version": 1, "sources": ["recording"], "search": ["keyword"]}`:                                              "sources lists none of file, url",
 		`{"version": 1, "sources": ["file"], "search": []}`:                                                            "search lists none of keyword, embedding",
 		`{"version": 1, "sources": ["file", "file"], "search": ["keyword"]}`:                                           "sources lists file twice",

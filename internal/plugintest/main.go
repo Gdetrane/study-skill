@@ -41,7 +41,19 @@ const Arg = "lamplight-test-plugin"
 //	--refuse TOOL=CODE:MESSAGE   TOOL refuses every call
 //	--plain-error TOOL=TEXT      TOOL fails with text that is no JSON
 //	--text-only         results as text, without structured content
+//	--break RULES       the rules of the contract it breaks (the Break
+//	                    constants), divided by commas
+//	--linger            stay when its input closes, until it is signalled
+//	--litter            write a file in the folder it was started in
 //	--flood TOOL        TOOL gives back more than a message may hold
+//	--ask WHERE         send study requests, which no plugin does: "start",
+//	                    before it reads anything; "idle", once contract was
+//	                    answered; or a tool, when it is called, which then
+//	                    never answers
+//	--ask-method M      the method of those requests; "ping" otherwise
+//	--ask-times N       how many of them; without end otherwise
+//	--notify WHERE      send study notifications without end, in the same
+//	                    places
 //	--stderr TEXT       write TEXT on its standard error first
 //	--exit N            exit at once with status N
 //	--garbage           write a line that is no MCP message, and wait
@@ -78,8 +90,16 @@ type Record struct {
 	PID  int      `json:"pid"`
 	Args []string `json:"args"`
 	// Script is the name it was handed for the script it is the interpreter
-	// of, when it was started as one.
-	Script string `json:"script,omitempty"`
+	// of, when it was started as one. ScriptPath is where that name really
+	// leads, and Beside the names of the files in the script's folder, as
+	// the script finds them through its own name.
+	Script     string   `json:"script,omitempty"`
+	ScriptPath string   `json:"script_path,omitempty"`
+	Beside     []string `json:"beside,omitempty"`
+	// Name is what the system calls the process, where it can be asked, and
+	// Exe the path of the program it runs, as the system tells it.
+	Name string `json:"name,omitempty"`
+	Exe  string `json:"exe,omitempty"`
 	// Dir is the folder it was started in, and Env its whole environment.
 	Dir string            `json:"dir"`
 	Env map[string]string `json:"env"`
@@ -146,6 +166,13 @@ func run(args []string) int {
 		sources     = flags.String("sources", "", "")
 		tools       = flags.String("tools", "", "")
 		contract    = flags.String("contract", "", "")
+		breaks      = flags.String("break", "", "")
+		linger      = flags.Bool("linger", false, "")
+		litter      = flags.Bool("litter", false, "")
+		ask         = flags.String("ask", "", "")
+		askMethod   = flags.String("ask-method", "ping", "")
+		askTimes    = flags.Int("ask-times", 0, "")
+		notify      = flags.String("notify", "", "")
 		flood       = flags.String("flood", "", "")
 		stderr      = flags.String("stderr", "", "")
 		exit        = flags.Int("exit", -1, "")
@@ -180,6 +207,29 @@ func run(args []string) int {
 	}
 	if *stderr != "" {
 		fmt.Fprint(os.Stderr, *stderr)
+	}
+	if *litter {
+		_ = os.WriteFile("test-plugin.log", []byte("the test plugin was started\n"), 0o600)
+	}
+	// What a plugin never does: it sends study messages of its own, as
+	// fast as it can, and reads none of the answers.
+	pour := func(request bool) {
+		for n := 0; ; n++ {
+			line := `{"jsonrpc":"2.0","method":"notifications/message","params":{"level":"info","data":"the plugin is busy"}}`
+			if request {
+				if *askTimes > 0 && n >= *askTimes {
+					return
+				}
+				line = fmt.Sprintf(`{"jsonrpc":"2.0","id":"plugin-%d","method":%q}`, n, *askMethod)
+			}
+			if _, err := os.Stdout.WriteString(line + "\n"); err != nil {
+				return
+			}
+		}
+	}
+	if *ask == "start" || *notify == "start" {
+		pour(*ask == "start")
+		forever()
 	}
 	if *child != "" {
 		// Its pipes are the plugin's own, so it holds them open as long as
@@ -230,6 +280,9 @@ func run(args []string) int {
 	if *tools != "" {
 		cfg.Tools = strings.Split(*tools, ",")
 	}
+	if *breaks != "" {
+		cfg.Breaks = strings.Split(*breaks, ",")
+	}
 	if *contract != "" {
 		cfg.Results[plugincontract.ToolContract] = *contract
 	}
@@ -239,6 +292,23 @@ func run(args []string) int {
 			strings.Repeat("x", plugincontract.MaxMessageBytes+1024) + `"}]}`
 	}
 	cfg.Before = func(ctx context.Context, tool string) {
+		for _, messages := range []struct {
+			where   string
+			request bool
+		}{{*ask, true}, {*notify, false}} {
+			switch {
+			case messages.where == "idle" && tool == plugincontract.ToolContract:
+				// Once the answer to this call has gone out, and study
+				// asks nothing.
+				go func() {
+					time.Sleep(150 * time.Millisecond)
+					pour(messages.request)
+				}()
+			case messages.where != "" && messages.where == tool:
+				pour(messages.request)
+				forever()
+			}
+		}
 		switch tool {
 		case *hang:
 			// It answers nothing, whether or not the call is cancelled.
@@ -265,6 +335,10 @@ func run(args []string) int {
 	if *stubborn {
 		forever()
 	}
+	if *linger {
+		// Not until it is told twice: by a signal.
+		<-ctx.Done()
+	}
 	return 0
 }
 
@@ -278,7 +352,16 @@ func forever() {
 func writeRecord(path, script string) error {
 	dir, _ := os.Getwd()
 	record := Record{PID: os.Getpid(), Args: os.Args, Script: script, Dir: dir, Env: map[string]string{}, Stdin: streamOf(os.Stdin),
-		Leader: leadsSession(), Terminal: hasTerminal(), Files: inheritedFiles()}
+		Leader: leadsSession(), Terminal: hasTerminal(), Files: inheritedFiles(), Name: processName()}
+	record.Exe, _ = os.Executable()
+	if script != "" {
+		record.ScriptPath, _ = filepath.EvalSymlinks(script)
+		if beside, err := os.ReadDir(filepath.Dir(script)); err == nil {
+			for _, entry := range beside {
+				record.Beside = append(record.Beside, entry.Name())
+			}
+		}
+	}
 	for _, kv := range os.Environ() {
 		name, value, _ := strings.Cut(kv, "=")
 		record.Env[name] = value

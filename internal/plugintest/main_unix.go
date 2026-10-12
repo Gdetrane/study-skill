@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -59,6 +60,15 @@ func hasTerminal() bool {
 	}
 	_ = tty.Close()
 	return true
+}
+
+// processName is what the system calls this process, where /proc can say.
+func processName() string {
+	name, err := os.ReadFile("/proc/self/comm")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(name))
 }
 
 // inheritedFiles lists the open files after the three standard streams,
