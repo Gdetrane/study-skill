@@ -414,18 +414,20 @@ func writeSourceList(w io.Writer, l core.SourceList) error {
 			continue
 		}
 		index := *s.Indexed
-		if s.State == core.SourceMissing || s.State == core.SourceChanged {
-			// The line above says so already.
+		if index.State == core.IndexNotIndexed && (s.State == core.SourceMissing || s.State == core.SourceChanged) {
+			// The line above says so already. A Source that failed keeps
+			// its reason, which is the plugin's.
 			index.Reason = ""
 		}
 		switch text, attention := describeIndex(index); {
 		case text == "":
 		case attention:
 			fmt.Fprintf(&b, "  %s %s\n", styleWarn.Render("!"), text)
-			if s.Indexed.State == core.IndexFailed {
+			if index.Retry != "" {
 				// A failure is no next action: it is tried again by whoever
-				// put right what the reason names.
-				fmt.Fprintf(&b, "    To have it tried again, run: %s\n", styleAccent.Render("study source index "+l.Topic+" "+printable(s.ID)))
+				// put right what the reason names, and only where trying
+				// again would hand the Source to the plugin.
+				fmt.Fprintf(&b, "    To have it tried again, run: %s\n", styleAccent.Render(printable(index.Retry)))
 			}
 		default:
 			fmt.Fprintf(&b, "  %s\n", styleDim.Render(text))

@@ -49,12 +49,18 @@ indexes, and adding a Source indexes nothing.
   for it. `sources` still says what is indexed of it.
 - A Source `failed`: tell the learner the reason the plugin gave, such as a scan without
   text, and read that Source yourself. It is no `action`, and stays `failed` until it is
-  indexed again: run `study source index <topic> <source>` for it only once what the reason
-  names has been put right.
-- A Source the command skipped has a file that is missing or has changed since it was
-  added: the output says which, and what to do. `status` and `sources` show such a Source
-  as `not_indexed` with that `reason`, and do not give the command as the `action` for it:
-  ask the learner where the file is, and record it with `source_update`.
+  indexed again. Its `retry`, when it has one, is the command that has it tried again: run
+  it only once what the reason names has been put right. Without a `retry`, trying again
+  would come to nothing as things are, as for a file that is missing or has changed.
+- A Source the command skipped has a file that is missing, has changed since it was added,
+  or cannot be read: the output says which, and what to do. `status` and `sources` show
+  such a Source as `not_indexed` with that `reason`, and do not give the command as the
+  `action` for it. What puts it right depends on which it is:
+  - **missing**: ask the learner where the file is, and record it with `source_update`;
+  - **changed**: the file there is no longer this Source. The learner restores the file
+    that was added, or you add the file as it is now as a new Source with `source_add`.
+    `source_update` does not take a file with other content;
+  - **cannot be read**: the learner makes the file readable.
 
 ## Evidence
 

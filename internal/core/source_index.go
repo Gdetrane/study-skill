@@ -88,6 +88,12 @@ type SourceIndex struct {
 	// plugin does not index Sources of this kind, or holds other content
 	// for the Source than the Topic records.
 	Reason string `json:"reason,omitempty"`
+	// Retry is the command that has a failed Source tried again, when
+	// trying again can come to anything: the plugin indexes Sources of its
+	// kind, and a file is on this computer, is the one that was added and
+	// can be read. A failure is no next action, so this is beside the
+	// Source and not the Topic's action.
+	Retry string `json:"retry,omitempty"`
 }
 
 // IndexedSource is one Source of a Topic with what the Topic's Knowledge
@@ -303,16 +309,22 @@ func (a *indexAsk) answered(ctx context.Context, plugin string, contract pluginc
 	toIndex := false
 	for i, src := range a.sources {
 		index, wanted := indexOf(src, byID[src.ID], contract, plugin)
+		// Whether study source index would hand the Source over, and so
+		// whether trying a failed one again can come to anything.
+		handed := slices.Contains(contract.Sources, src.Kind) && validateTopicID(a.topic) == nil
 		if src.Kind == SourceFile && a.fileState != nil && (wanted || index.State == IndexFailed) {
 			why := map[string]string{SourceMissing: reasonFileMissing, SourceChanged: reasonFileChanged,
 				sourceUnreadable: reasonFileUnreadable}[a.fileState(ctx, src)]
 			if why != "" {
 				// A Source that failed keeps the plugin's reason: the file
 				// says the rest in a listing.
-				if a.held = true; wanted {
+				if a.held, handed = true, false; wanted {
 					index.Reason, wanted = why, false
 				}
 			}
+		}
+		if index.State == IndexFailed && handed {
+			index.Retry = "study source index " + a.topic + " " + src.ID
 		}
 		index.Reason = shorten(index.Reason, maxIndexTextBytes)
 		a.indexing.Sources[i].SourceIndex = index

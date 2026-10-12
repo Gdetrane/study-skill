@@ -426,6 +426,47 @@ func TestTheSessionStartHookSaysWhatIsIndexedAndDoesNotWait(t *testing.T) {
 	s.nothingRunning(t)
 }
 
+// A Source that failed keeps the plugin's reason in a listing, and gets the
+// command that has it tried again only when trying again would hand it to
+// the plugin: not once its file has changed, which the command skips.
+func TestAFailedSourceIsOfferedARetryOnlyWhereItCanHelp(t *testing.T) {
+	s := newShelfComputer(t)
+	id := s.book(t, "book.txt", bookOf(2, "one"))
+	answer, err := json.Marshal(map[string]any{"sources": []any{map[string]any{"id": id, "state": "failed",
+		"reason": "the file has no text layer"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := plugintest.New(plugintest.Config{Folder: t.TempDir(), Results: map[string]string{"status": string(answer)}})
+	server := httptest.NewServer(service.Handler())
+	t.Cleanup(func() {
+		server.Close()
+		service.Close()
+	})
+	s.ok(t, "knowledge-base", "add", "kb", "--replace", "--url", server.URL+"/mcp")
+	const reason, retry = "indexing failed: the file has no text layer", "To have it tried again, run: study source index linear-algebra book.<id>"
+	if out := s.ok(t, "source", "list", "linear-algebra").stdout; !strings.Contains(out, reason) || !strings.Contains(out, retry) {
+		t.Errorf("a failed Source whose file is there:\n%s", out)
+	}
+	writeFile(t, filepath.Join(s.home, "Books", "book.txt"), "Another book altogether, of another length.\n")
+	out := s.ok(t, "source", "list", "linear-algebra").stdout
+	if !strings.Contains(out, "the file here is no longer the one added") || !strings.Contains(out, reason) {
+		t.Errorf("a failed Source whose file has changed does not say both:\n%s", out)
+	}
+	if strings.Contains(out, "tried again") {
+		t.Errorf("a failed Source whose file has changed is offered a command that would skip it:\n%s", out)
+	}
+	var list struct {
+		Data core.SourceList `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(s.ok(t, "source", "list", "linear-algebra", "--json").stdout), &list); err != nil {
+		t.Fatal(err)
+	}
+	if got := list.Data.Sources[0].Indexed; got == nil || got.State != core.IndexFailed || got.Retry != "" || got.Reason == "" {
+		t.Errorf("as JSON, the failed Source whose file has changed: %+v", got)
+	}
+}
+
 // With a plugin that never answers, a Topic's Sources and status are there
 // all the same, soon, and say which command shows what is wrong.
 func TestTheCommandLineNeverWaitsForAPlugin(t *testing.T) {

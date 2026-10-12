@@ -1102,7 +1102,7 @@ the Topic it lists, whatever its state.
 
 `status` gives each such Topic the same `indexing`, with the Sources' states in it, since
 `status` lists no Sources otherwise:
-`"indexing": {"plugin", "problem"?, "action"?, "sources"?: [{"id", "title", "state", "progress"?, "reason"?}]}`.
+`"indexing": {"plugin", "problem"?, "action"?, "sources"?: [{"id", "title", "state", "progress"?, "reason"?, "retry"?}]}`.
 `sources` is left out for a Topic without Sources.
 
 | `state` | Means |
@@ -1131,9 +1131,11 @@ the Topic it lists, whatever its state.
 - **A Source that `failed` is shown, and is no next action.** The plugin tried, and said
   why: trying again helps only once what the `reason` names is put right, and a scan
   without text would otherwise be the one thing to do for ever. `status` names it with its
-  reason, and `study source list` adds the command that has it tried again,
-  `study source index <topic> <source>`. Whoever runs `study source index <topic>` has
-  every failed Source tried again with the rest.
+  reason. Its `retry` is the command that has it tried again,
+  `study source index <topic> <source>`, which `study source list` prints under it; it is
+  left out when trying again would come to nothing as things are, because the Source's
+  file is missing, has changed or cannot be read. Whoever runs
+  `study source index <topic>` has every failed Source tried again with the rest.
 - **Nothing waits for a plugin.** Reading the registry, starting the plugin or reaching
   it, and its answers have **2 seconds, all of it together**, against the 30 seconds a
   plugin has to start when it is asked to index. A plugin that takes longer is stopped,

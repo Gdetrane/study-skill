@@ -201,6 +201,11 @@ func TestAFileThatChangesWhileItIsIndexed(t *testing.T) {
 	if got := list.Sources[0]; got.State != SourceChanged || got.Indexed.State != IndexFailed || list.Indexing.Action != "" {
 		t.Errorf("ListSources = %+v, index %+v, %+v", got.State, got.Indexed, list.Indexing)
 	}
+	// The plugin's reason stays, and no command is offered to try again:
+	// the file as it is now would be skipped.
+	if got := list.Sources[0].Indexed; got.Reason != "the file changed since study read it" || got.Retry != "" {
+		t.Errorf("the failed Source whose file has changed: %+v; want the plugin's reason, and nothing to run", got)
+	}
 	status, err := k.Status(ctx)
 	if err != nil {
 		t.Fatal(err)

@@ -507,7 +507,9 @@ func TestAServicesFailureIsShownWithItsReason(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := &core.SourceIndex{State: core.IndexFailed, Reason: "there is no text in it"}
+	// With the command that has it tried again, beside the Source: the file
+	// is there to hand over.
+	want := &core.SourceIndex{State: core.IndexFailed, Reason: "there is no text in it", Retry: "study source index c " + empty.ID}
 	if len(list.Sources) != 1 || !reflect.DeepEqual(list.Sources[0].Indexed, want) || list.Indexing.Action != "" ||
 		list.Sources[0].ID != empty.ID {
 		t.Errorf("ListSources = %+v, %+v; want the Source failed, with the reason, and no action", list.Sources, list.Indexing)
