@@ -225,6 +225,9 @@ func summarizeEvent(ev event, cardLesson map[string]string) HistoryEntry {
 		text = with("Topic state set", w("state"))
 	case eventKnowledgeBaseSet:
 		text = with("Knowledge base set", w("kind"))
+	case eventKnowledgeBasePluginSet:
+		// A name a plugin can have is a word; any other text is not shown.
+		text = with("Knowledge base plugin set", w("plugin"))
 	case eventDeadlineSet:
 		if dl := w("deadline"); dl != "" {
 			text = "Deadline set to " + dl

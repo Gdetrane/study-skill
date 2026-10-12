@@ -1,0 +1,7 @@
+{
+  "ok": false,
+  "error": {
+    "code": "invalid_argument",
+    "message": "\"../strang\" is not a Source id: study source list linear-algebra shows them"
+  }
+}

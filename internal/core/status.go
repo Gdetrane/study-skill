@@ -65,7 +65,27 @@ type localState struct {
 }
 
 // Status reports where the learner is.
-func (c *Core) Status(ctx context.Context) (Status, error) {
+//
+// For each Topic that names a Knowledge base plugin it also asks the plugin
+// which of the Topic's Sources it has indexed, without waiting for it
+// (askPlugins): a plugin that is missing, slow or broken leaves its Topics'
+// Sources not known, and status as quick as it would be without it.
+func (c *Core) Status(ctx context.Context) (Status, error) { return c.where(ctx, true) }
+
+// ActiveTopic says which Topic the agent is working on, and why, or nil
+// when there is none: what Status says of it, and nothing else. It is for a
+// command that only has to know which Topic it is about, such as study
+// check run inside a Topic's folder. It asks no Knowledge base plugin
+// anything: such a command has no use for what is indexed, and must not
+// start a plugin, or wait for one, to learn it.
+func (c *Core) ActiveTopic(ctx context.Context) (*ActiveTopic, error) {
+	status, err := c.where(ctx, false)
+	return status.ActiveTopic, err
+}
+
+// where is Status, which asks each Topic's Knowledge base plugin what it has
+// indexed only when indexing is set.
+func (c *Core) where(ctx context.Context, indexing bool) (Status, error) {
 	status := Status{StudyHome: c.home, Topics: []Topic{}, Problems: []TopicProblem{}}
 	home, err := os.OpenRoot(c.home)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -76,7 +96,36 @@ func (c *Core) Status(ctx context.Context) (Status, error) {
 	}
 	defer home.Close()
 
-	if status.Topics, status.Problems, err = c.listTopics(ctx, home); err != nil {
+	asks := map[string]*indexAsk{}
+	var named func(t Topic, sources []Source)
+	if indexing {
+		named = func(t Topic, sources []Source) {
+			if t.State != TopicActive {
+				// A Topic that is paused or finished has nothing to do
+				// next, indexing included. A listing of its Sources still
+				// asks its plugin.
+				return
+			}
+			ask := newIndexAsk(t.ID, t.KnowledgeBase, sources)
+			// A Source the plugin has not indexed is looked for on this
+			// computer, as a listing of the Sources looks for it, within the
+			// time the plugin had. Where it is found is not written down:
+			// status changes nothing.
+			var l *locator
+			ask.fileState = func(ctx context.Context, src Source) string {
+				if l == nil {
+					l = c.newLocator(ctx, home, t.ID)
+				}
+				path, state, err := l.locate(src)
+				if err != nil {
+					return ""
+				}
+				return fileStateAt(path, state)
+			}
+			asks[t.ID] = ask
+		}
+	}
+	if status.Topics, status.Problems, err = c.listTopics(ctx, home, named); err != nil {
 		return status, err
 	}
 	state, err := c.readState(home)
@@ -84,13 +133,46 @@ func (c *Core) Status(ctx context.Context) (Status, error) {
 		return status, err
 	}
 	status.ActiveTopic = c.activeTopic(status.Topics, len(status.Problems), state.RecentTopic)
+	// The Topics that name one plugin share its time, and are asked one
+	// after the other: the Active topic first, since it is the one the
+	// learner is on, and then in the order of the Topics, so that the same
+	// Study home is asked about in the same order every time.
+	var asked []*indexAsk
+	first := ""
+	if status.ActiveTopic != nil {
+		first = status.ActiveTopic.ID
+	}
+	if ask := asks[first]; ask != nil {
+		asked = append(asked, ask)
+	}
+	for i := range status.Topics {
+		id := status.Topics[i].ID
+		if ask := asks[id]; ask != nil {
+			status.Topics[i].Indexing = ask.indexing
+			if id != first {
+				asked = append(asked, ask)
+			}
+		}
+	}
+	if err := c.askPlugins(ctx, asked); err != nil {
+		return status, err
+	}
+	for _, ask := range asked {
+		// Nothing to index, and a file that is missing or is another now:
+		// the listing of the Sources says what to do about each.
+		if x := ask.indexing; ask.held && x.Problem == "" && x.Action == "" && validateTopicID(ask.topic) == nil {
+			x.Action = "study source list " + ask.topic
+		}
+	}
 	c.addGuidance(home, &status)
 	return status, nil
 }
 
 // listTopics reads every Topic in the Study home, sorted by ID. Topics that
 // cannot be read are returned as problems instead of failing the listing.
-func (c *Core) listTopics(ctx context.Context, home *os.Root) ([]Topic, []TopicProblem, error) {
+// named, when it is not nil, is told each Topic whose Knowledge base is a
+// plugin, with the Topic's Sources.
+func (c *Core) listTopics(ctx context.Context, home *os.Root, named func(t Topic, sources []Source)) ([]Topic, []TopicProblem, error) {
 	topics, problems := []Topic{}, []TopicProblem{}
 	entries, err := fs.ReadDir(home.FS(), ".")
 	if err != nil {
@@ -107,10 +189,13 @@ func (c *Core) listTopics(ctx context.Context, home *os.Root) ([]Topic, []TopicP
 		if !isTopic(home, name) {
 			continue
 		}
-		topic, err := c.loadTopic(home, name)
+		topic, sources, err := c.loadTopicSources(home, name)
 		if err != nil {
 			problems = append(problems, TopicProblem{ID: name, Code: CodeOf(err), Message: err.Error()})
 			continue
+		}
+		if named != nil && topic.KnowledgeBase != nil && topic.KnowledgeBase.Kind == KnowledgeBasePlugin {
+			named(topic, sources)
 		}
 		topics = append(topics, topic)
 	}

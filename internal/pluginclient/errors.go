@@ -30,6 +30,13 @@ type Error struct {
 	Code    string
 	Message string
 	Err     error
+	// AboutTheCall says that the error is about what one call asked, and
+	// not about the plugin: the plugin answered and refused the call with
+	// the contract's error, or study did not send the call because it is
+	// not one the contract allows. The plugin works as before, and the next
+	// call is worth making. Every other error of a call says the plugin did
+	// not answer, or not as the contract has it.
+	AboutTheCall bool
 }
 
 func (e *Error) Error() string { return e.Message }

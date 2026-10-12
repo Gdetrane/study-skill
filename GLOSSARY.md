@@ -220,6 +220,18 @@ The Knowledge base plugin that ships with Lamplight, as the `study-shelf` progra
 A named set of Shelf's settings for one embedding model.
 _Avoid_: Preset, profile
 
+**Indexed**:
+Said of a Source whose content the Topic's Knowledge base plugin holds on this machine, so
+that a search finds it. Whether a Source is indexed is the plugin's to say: no Event records
+it, and another machine may say otherwise.
+_Avoid_: Ingested, embedded, synced
+
+**Collection**:
+What a Knowledge base plugin keeps for one Topic: the indexed content of the Topic's
+Sources, under a name `study` gives it. It is a word of the contract, for whoever writes a
+plugin: the learner hears of Sources that are indexed.
+_Avoid_: Namespace, corpus, index (for one Topic's part of a plugin's index)
+
 **Passage**:
 A stretch of a Source's own text that a search of the Knowledge base returns, with its
 location when known. Evidence quotes from a Passage.

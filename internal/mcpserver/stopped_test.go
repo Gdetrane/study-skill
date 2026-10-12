@@ -120,11 +120,21 @@ func TestNoStoppedOperationReportsInternal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Topic c names that plugin, for study source index to have its Source
+	// indexed.
+	if _, err := outside.UpdateTopic(ctx, "c", core.TopicChanges{
+		KnowledgeBase: &core.KnowledgeBase{Kind: core.KnowledgeBasePlugin, Plugin: "kb"}}); err != nil {
+		t.Fatal(err)
+	}
 	// In this order: the Topic removed is the one restored.
 	commandLine := []struct {
 		name string
 		call func(ctx context.Context) error
 	}{
+		{"ActiveTopic", func(ctx context.Context) error {
+			_, err := c.ActiveTopic(ctx)
+			return err
+		}},
 		{"BuildLibrary", func(ctx context.Context) error {
 			_, err := c.BuildLibrary(ctx, "Books")
 			return err
@@ -139,6 +149,10 @@ func TestNoStoppedOperationReportsInternal(t *testing.T) {
 		}},
 		{"CheckPlugin", func(ctx context.Context) error {
 			_, err := outside.CheckPlugin(ctx, "kb")
+			return err
+		}},
+		{"IndexSources", func(ctx context.Context) error {
+			_, err := outside.IndexSources(ctx, core.IndexSpec{Topic: "c"})
 			return err
 		}},
 		{"ProposedRevision", func(ctx context.Context) error {

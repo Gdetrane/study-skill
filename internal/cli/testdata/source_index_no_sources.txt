@@ -1,0 +1,2 @@
+linear-algebra has no Sources to index yet. Add one with:
+  study source add linear-algebra --file <path>

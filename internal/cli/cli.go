@@ -215,7 +215,7 @@ func (a *app) rootCommand() *cobra.Command {
 	var pace []string
 	var clearPace bool
 	var newCards int
-	var kb core.KnowledgeBase
+	var knowledgeBase string
 	update := &cobra.Command{
 		Use:   "update <topic>",
 		Short: "Change a Topic's title, goal, Knowledge base, deadline, Pace, Level, Approach or state",
@@ -223,6 +223,7 @@ func (a *app) rootCommand() *cobra.Command {
   study topic update c --title "Systems programming in C" --dry-run
   study topic update c --pace 10 --pace 3@2026-11-16
   study topic update c --level intermediate --approach project
+  study topic update c --knowledge-base shelf
   study topic update c --state paused`,
 		Args: exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -233,7 +234,13 @@ func (a *app) rootCommand() *cobra.Command {
 				changes.Goal = &newGoal
 			}
 			if cmd.Flags().Changed("knowledge-base") {
-				changes.KnowledgeBase = &kb
+				// none is the one kind without a plugin, and no plugin can
+				// be called so: anything else is a plugin's name, which the
+				// core holds to the shape of one.
+				changes.KnowledgeBase = &core.KnowledgeBase{Kind: core.KnowledgeBasePlugin, Plugin: knowledgeBase}
+				if knowledgeBase == core.KnowledgeBaseNone {
+					changes.KnowledgeBase = &core.KnowledgeBase{Kind: core.KnowledgeBaseNone}
+				}
 			}
 			if cmd.Flags().Changed("deadline") {
 				changes.Deadline = &deadline
@@ -276,10 +283,14 @@ func (a *app) rootCommand() *cobra.Command {
 	}
 	update.Flags().StringVar(&newTitle, "title", "", "the new title")
 	update.Flags().StringVar(&newGoal, "goal", "", "the new goal; an empty goal removes it")
-	update.Flags().StringVar(&kb.Kind, "knowledge-base", "",
-		"where the Topic's Sources are searched: none, the only kind this version has")
-	_ = update.RegisterFlagCompletionFunc("knowledge-base", cobra.FixedCompletions(
-		[]string{core.KnowledgeBaseNone}, cobra.ShellCompDirectiveNoFileComp))
+	update.Flags().StringVar(&knowledgeBase, "knowledge-base", "",
+		"where the Topic's Sources are searched: the name of a Knowledge base plugin (study knowledge-base list), or none")
+	// The names this computer has, and none. A name it does not have can
+	// be given all the same: another of the learner's computers may have it.
+	_ = update.RegisterFlagCompletionFunc("knowledge-base", func(cmd *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
+		names, directive := a.completePluginNames(cmd)
+		return append([]string{core.KnowledgeBaseNone}, names...), directive
+	})
 	update.Flags().StringVar(&deadline, "deadline", "", "the Goal's deadline, YYYY-MM-DD; an empty value removes it")
 	update.Flags().StringArrayVar(&pace, "pace", nil,
 		"hours a week, such as 10; repeat with HOURS@YYYY-MM-DD for a period starting that day; replaces the Pace")

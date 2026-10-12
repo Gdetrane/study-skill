@@ -149,6 +149,15 @@ func OpenProgram(env Env, p Plugin) (*os.File, error) {
 	return file, nil
 }
 
+// CheckName checks a name a plugin can be registered under: lowercase
+// letters, digits and single hyphens, up to 64 characters, and neither none
+// nor plugin, which are the kinds of Knowledge base a Topic records. A Topic
+// records a plugin's name and nothing else of it, so the name it is given
+// is held to the rule the registry holds its own names to: a name that
+// passes need not be registered on this computer, and one that fails is
+// registered on none.
+func CheckName(name string) error { return regfile.CheckName(name) }
+
 // CodeOf returns the code of a registry error, or "internal" for any other
 // error.
 func CodeOf(err error) string { return regfile.CodeOf(err) }

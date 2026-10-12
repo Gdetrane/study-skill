@@ -32,7 +32,8 @@ const Instructions = `Lamplight keeps the learner's study state. Follow these ru
 10. Show Forecasts as they are given, when a Milestone ends at the learner's Pace, never how far behind anything is. A Triage is something to consider, never the one next action: offer its options and change nothing until the learner chooses, a Revision to move Lessons, trim Stretch goals or change a target date, or topic_update for the Pace or the Goal's deadline.
 11. A paused Topic stays paused until the learner resumes it with topic_update (state active); never resume it yourself. When status recommends resume_topic or session_open says paused, offer to resume it or to pick another Topic, and teach nothing from it until it is resumed. A finished Topic offers only its Reviews.
 12. Run the placement Assessment when a Topic is created, before drafting its Syllabus, and one at the end of each Milestone, each kept to about 15 minutes; record them with assessment_record. Weak results never block anything: when next says propose_revision, propose a Revision for the weak areas. The Level is set at an Assessment; the learner can change it at any time with topic_update, and their choice holds until the next Assessment. Teach at the Topic's Level and in its Approach. Record every hint you give with hint_record, saying whether the learner asked for it or you offered it. Read signals to adapt how you teach, never to show the learner counts or scores.
-13. A Topic imported from a v1 workspace with "study import" is adopted before anything else: when status recommends adopt or session_open suggests it, go through the adoption with the learner: the import's report (imported in status: the Lessons proven done with their proofs, the open ones, what was dropped), the Goal and deadline, Pace, the Syllabus from notes/v1-plan.md, or from v1's lesson list and the learner's notes when there is no plan, approved as a Revision, Checks for open Lessons, the Sources, Cards for completed Lessons, and the Next step from where v1 stopped. Keep the Lessons the import proved done in the Syllabus, under their v1 ids; if the learner says one is not done, it is imported again with --not-done before the adoption goes on.`
+13. A Topic imported from a v1 workspace with "study import" is adopted before anything else: when status recommends adopt or session_open suggests it, go through the adoption with the learner: the import's report (imported in status: the Lessons proven done with their proofs, the open ones, what was dropped), the Goal and deadline, Pace, the Syllabus from notes/v1-plan.md, or from v1's lesson list and the learner's notes when there is no plan, approved as a Revision, Checks for open Lessons, the Sources, Cards for completed Lessons, and the Next step from where v1 stopped. Keep the Lessons the import proved done in the Syllabus, under their v1 ids; if the learner says one is not done, it is imported again with --not-done before the adoption goes on.
+14. A Topic can name a Knowledge base plugin, which indexes its Sources. No tool indexes, and adding a Source indexes nothing: index only with "study source index <topic>" in your own shell, never any other way, or have the learner run it. When status or sources gives that command as the indexing action, run it or pass it on to the learner. When the action is "study source list <topic>", call sources and tell the learner what it shows. Any other indexing action comes with a problem and is the learner's to run: pass it on as it is. With an indexing problem the Topic works as one without a Knowledge base: tell the learner the problem and its action once, and go on reading the Sources yourself, since teaching never waits for a plugin. A Source that failed is no action: tell the learner the plugin's reason, and read that Source yourself. When the command says the plugin's folder cannot be made or written in, your shell is sandboxed: tell the learner to allow that folder in the sandbox, or to run the command in a shell of their own. Registering, changing and removing a plugin are the learner's, with "study knowledge-base": never do them, and never edit the registry.`
 
 // New returns an MCP server whose tools call c. logger, if not nil, receives
 // the server's Log; it must never write to the transport's stdout.
@@ -54,7 +55,9 @@ func New(c *core.Core, version string, logger *slog.Logger) *mcp.Server {
 			"count). When recommended.action is assess, every Lesson of recommended.milestone is done: offer its " +
 			"Assessment first, before the Next step, which the resume point still shows. learner_profile and a Topic's learner_additions are files " +
 			"to read before teaching. A Topic's flags name anything that needs the learner's attention; tell the " +
-			"learner about them.",
+			"learner about them. A Topic that names a Knowledge base plugin carries indexing: for each of its Sources " +
+			"whether the plugin has it indexed, and the one action to take when it has not, or the problem that keeps " +
+			"the plugin from saying (Instruction 14). It is asked each time and never waited for.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, OpenWorldHint: &closedWorld},
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, core.Status, error) {
 		status, err := c.Status(ctx)
@@ -98,8 +101,11 @@ func New(c *core.Core, version string, logger *slog.Logger) *mcp.Server {
 		Title: "Change a Topic",
 		Description: "Change a Topic's settings: title, goal, Knowledge base, the Goal's deadline, the Pace, the daily " +
 			"cap on new Cards, Tasks, the Level, the Approach, or its state (paused, finished or active again). Fields left out stay as they " +
-			"are; an empty goal or deadline removes it, and an empty pace removes the Pace. The Knowledge base has one " +
-			"kind in this version, none, which a Topic without one behaves as too. A Pace is " +
+			"are; an empty goal or deadline removes it, and an empty pace removes the Pace. The Knowledge base is kind " +
+			"none, which a Topic without one behaves as too, or kind plugin with the name of a Knowledge base plugin " +
+			"the learner registered on their computer: a name and nothing else, never a command or an address. A " +
+			"name this computer does not have is recorded all the same, since another of the learner's computers may " +
+			"have it, and note then says what is missing here. Naming a plugin indexes nothing (Instruction 14). A Pace is " +
 			"dated periods of hours a week, such as 10 until a deadline and then 3; it gives each Milestone a Forecast. " +
 			"A paused Topic offers no Cards and no Forecasts. remove_tasks deletes Tasks for good. level is the " +
 			"learner's choice of Level, which holds until the next Assessment; set it only when they ask. The Approach " +
@@ -111,7 +117,7 @@ func New(c *core.Core, version string, logger *slog.Logger) *mcp.Server {
 			NewCardsPerDay: in.NewCardsPerDay, State: in.State, AddTasks: in.AddTasks, RemoveTasks: in.RemoveTasks,
 			Level: in.Level, Approach: in.Approach}
 		if in.KnowledgeBase != nil {
-			changes.KnowledgeBase = &core.KnowledgeBase{Kind: in.KnowledgeBase.Kind}
+			changes.KnowledgeBase = &core.KnowledgeBase{Kind: in.KnowledgeBase.Kind, Plugin: in.KnowledgeBase.Plugin}
 		}
 		updated, err := c.UpdateTopic(ctx, in.Topic, changes)
 		if err != nil {
@@ -232,7 +238,7 @@ type topicUpdateInput struct {
 	Title *string `json:"title,omitempty" jsonschema:"the new title"`
 	Goal  *string `json:"goal,omitempty" jsonschema:"the new goal; an empty string removes it"`
 	// KnowledgeBase chooses where the Topic's Sources are searched.
-	KnowledgeBase *knowledgeBaseInput `json:"knowledge_base,omitempty" jsonschema:"the Knowledge base: kind none, the only one this version has"`
+	KnowledgeBase *knowledgeBaseInput `json:"knowledge_base,omitempty" jsonschema:"the Knowledge base: kind none, or kind plugin with the name of a Knowledge base plugin"`
 	Deadline      *string             `json:"deadline,omitempty" jsonschema:"the Goal's deadline, YYYY-MM-DD; an empty string removes it"`
 	// Pace replaces the Pace periods.
 	Pace           *[]core.PacePeriod `json:"pace,omitempty" jsonschema:"the Pace as dated periods, replacing the current ones; an empty list removes the Pace"`

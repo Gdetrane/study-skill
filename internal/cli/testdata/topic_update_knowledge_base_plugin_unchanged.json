@@ -1,0 +1,18 @@
+{
+  "ok": true,
+  "data": {
+    "topic": {
+      "id": "linear-algebra",
+      "title": "Linear algebra",
+      "path": "$HOME/study/linear-algebra",
+      "created": "2026-10-01T09:30:00Z",
+      "knowledge_base": {
+        "kind": "plugin",
+        "plugin": "kb"
+      },
+      "state": "active",
+      "new_cards_per_day": 10
+    },
+    "changed": false
+  }
+}

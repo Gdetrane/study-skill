@@ -312,7 +312,8 @@ func (c *Core) diagnoseTopics(ctx context.Context, d *Diagnosis) {
 		return
 	}
 	defer home.Close()
-	topics, problems, err := c.listTopics(ctx, home)
+	// The doctor reads the Topics, and asks no plugin about them.
+	topics, problems, err := c.listTopics(ctx, home, nil)
 	if err != nil {
 		d.Add(Finding{Name: "topics", Status: FindingFail, Message: err.Error(), Fix: "make " + c.home + " readable"})
 		return

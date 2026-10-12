@@ -1014,24 +1014,56 @@ func (s *suite) files(t *testing.T) {
 		}
 	})
 
-	s.sub(t, "the hash is of what the plugin read", func(t *testing.T) {
+	s.sub(t, "a file that is not the hash it was handed is not indexed", func(t *testing.T) {
 		cs := s.connect(t)
 		collection := s.collection("hash")
 		b := s.write(t, "hashed")
-		real := b.source.Hash
-		// study hashed the file, and the file changed before the plugin
-		// read it. A plugin indexes what it read and says which content
-		// that is, or fails: it never gives the hash it was handed for
-		// content it did not hash.
+		real := b.source
+		// study hashed the file, and the file was another before the
+		// plugin read it: it changed, or the agent put a link to another
+		// file of the learner's in its place. A plugin keeps nothing of
+		// what it read then, and says the Source failed.
 		b.source.Hash = "sha256:" + strings.Repeat("0", 64)
 		s.index(t, cs, collection, b.source)
 		status, ok := s.settled(t, cs, collection, b.source.ID)
 		switch {
-		case ok && status.State == plugincontract.StateIndexed && status.Hash != real:
-			t.Errorf("status gives the hash %s for content that hashes to %s: it is the hash of what was read, not the one index was given", status.Hash, real)
 		case !ok:
-			t.Error("status does not list a Source whose file changed since study hashed it: it is indexed with the hash of what was read, or failed")
+			t.Fatal("status does not list a Source whose file is not the hash index was handed: want it failed, with a reason")
+		case status.State == plugincontract.StateIndexed && status.Hash == b.source.Hash:
+			t.Fatalf("status gives the hash %s, which index was handed, for content that hashes to %s: a plugin never gives a "+
+				"hash for content it did not hash", status.Hash, real.Hash)
+		case status.State != plugincontract.StateFailed || strings.TrimSpace(status.Reason) == "":
+			t.Fatalf("status of a Source whose file is not the hash index was handed = %+v; want failed, with a reason: the file "+
+				"is not the one study read, and a plugin indexes none of it", status)
+		case status.Hash != "":
+			t.Errorf("status gives the hash %s for a Source of which nothing was indexed before", status.Hash)
 		}
+		in := plugincontract.SearchInput{Collection: collection, Query: b.word, Limit: plugincontract.MaxSearchLimit}
+		if found := holding(s.search(t, cs, in), b.word); len(found) != 0 {
+			t.Errorf("a search finds %d Passages of a file that is not the hash index was handed: a plugin keeps nothing of "+
+				"what it read there, since it may be any file of the learner's", len(found))
+		}
+		// Handed the file's own hash, it is indexed.
+		s.indexed(t, cs, collection, real)
+
+		// Content that was indexed before stays: the file is exchanged for
+		// another, and the plugin is asked for it with a hash that is not
+		// the new file's.
+		other := s.write(t, "exchanged")
+		swapped := real
+		swapped.Path, swapped.Hash = other.source.Path, "sha256:"+strings.Repeat("2", 64)
+		s.index(t, cs, collection, swapped)
+		status, ok = s.settled(t, cs, collection, real.ID)
+		if !ok || status.State != plugincontract.StateFailed {
+			t.Fatalf("status of an indexed Source handed another file under a hash that is not that file's = %+v (listed: %v); "+
+				"want failed", status, ok)
+		}
+		in.Query = other.word
+		if found := holding(s.search(t, cs, in), other.word); len(found) != 0 {
+			t.Errorf("a search finds %d Passages of the file that was put in the Source's place", len(found))
+		}
+		b.source = real
+		s.agrees(t, cs, collection, b, status)
 	})
 
 	s.sub(t, "search and passage read the index, never the Source", func(t *testing.T) {
@@ -1084,6 +1116,16 @@ func (s *suite) files(t *testing.T) {
 				t.Fatalf("status said a Source failed, and asked again says %+v (listed: %v): a Source stays failed until it is "+
 					"indexed again", again, ok)
 			}
+		}
+		// And however often the plugin is started: study starts a command
+		// anew for each of its own commands, so the one that shows the
+		// learner what failed is never the one that saw it fail. A service
+		// is asked over another connection.
+		later := s.connect(t)
+		if again, ok := s.status(t, later, collection)[b.source.ID]; !ok || again.State != plugincontract.StateFailed ||
+			strings.TrimSpace(again.Reason) == "" {
+			t.Fatalf("a Source failed, and asked over a new connection the plugin says %+v (listed: %v): a Source stays failed, "+
+				"with its reason, until it is indexed again, however often the plugin is started", again, ok)
 		}
 		// Asked again with a file that is there, it is indexed.
 		s.indexed(t, cs, collection, good)
@@ -1313,6 +1355,53 @@ func (s *suite) files(t *testing.T) {
 			s.indexed(t, cs, collection, long.source)
 		}
 	})
+
+	s.sub(t, "names as long as study gives them", func(t *testing.T) {
+		cs := s.connect(t)
+		// study names a Topic's collection with the Topic's id and a hash,
+		// up to the most the contract allows, and a Source's id is its
+		// title cut to fit and a few letters: both are often the longest
+		// they may be.
+		collection := s.collection("long")
+		collection += "-" + strings.Repeat("n", plugincontract.MaxNameBytes-len(collection)-1)
+		b := s.write(t, "long")
+		b.source.ID = strings.Repeat("s", plugincontract.MaxIDBytes-len(b.source.ID)) + b.source.ID
+		if done := s.indexed(t, cs, collection, b.source); done.Hash != b.source.Hash {
+			t.Errorf("status gives the hash %s for a file whose content hashes to %s", done.Hash, b.source.Hash)
+		}
+		found := holding(s.search(t, cs, plugincontract.SearchInput{Collection: collection, Query: b.word,
+			Limit: plugincontract.MaxSearchLimit}), b.word)
+		if len(found) == 0 || found[0].Source != b.source.ID {
+			t.Fatalf("a search of a collection with a name of %d characters, for a Source with an id of %d, found %+v", len(collection),
+				len(b.source.ID), found)
+		}
+		if again := s.passage(t, cs, collection, found[0].ID); again.Text != found[0].Text {
+			t.Errorf("passage gives another text for the id search gave: %q, want %q", again.Text, found[0].Text)
+		}
+	})
+
+	s.sub(t, "started anew, it says what is indexed in time", func(t *testing.T) {
+		collection := s.collection("glance")
+		b := s.write(t, "glance")
+		s.indexed(t, s.connect(t), collection, b.source)
+		// study status waits for no plugin: starting it or reaching it,
+		// the answer of contract and the answer of status have two seconds
+		// between them, and a plugin that takes longer shows its Sources
+		// as not known, every time. So what is slow to load is loaded when
+		// index or search first needs it.
+		began := time.Now()
+		cs := s.connect(t)
+		s.ok(t, cs, plugincontract.ToolContract, struct{}{}, reflect.TypeFor[plugincontract.Contract]())
+		status, listed := s.status(t, cs, collection)[b.source.ID]
+		took := time.Since(began)
+		if !listed || status.State != plugincontract.StateIndexed {
+			t.Errorf("asked over a new connection, status says %+v of an indexed Source (listed: %v)", status, listed)
+		}
+		if took > plugincontract.GlanceTime {
+			t.Errorf("a new connection, contract and status took %s: study status gives a plugin %s for all of it, and shows "+
+				"its Sources as not known when that is missed", took.Round(time.Millisecond), plugincontract.GlanceTime)
+		}
+	})
 }
 
 // agrees checks that what status says of a Source that is not indexed, and
@@ -1455,6 +1544,39 @@ func (s *suite) links(t *testing.T) {
 		s.call(t, cs, plugincontract.ToolSearch, plugincontract.SearchInput{Collection: collection, Query: b.word, Limit: 5})
 		s.hangUp(cs)
 	}
+
+	// Before it starts a plugin to index, study makes an empty file whose
+	// name begins with .lamplight- in the plugin's folder and removes it
+	// again, to learn whether the folder can be written in. Another copy of
+	// the plugin may be running meanwhile, and may see the file.
+	s.sub(t, "it passes over a file study leaves in its folder for a moment", func(t *testing.T) {
+		stray := filepath.Join(s.dataFolder, ".lamplight-write-check-conformance")
+		if err := os.WriteFile(stray, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Remove(stray) })
+		collection := s.collection("stray")
+		cs := s.connect(t)
+		b := s.write(t, "stray")
+		a := s.call(t, cs, plugincontract.ToolIndex, plugincontract.IndexInput{Collection: collection, Source: b.source})
+		if a.refused {
+			t.Fatalf("with a file called %s in its folder, the plugin refused to index: a plugin passes over a name there "+
+				"that begins with .lamplight-, which study makes and removes to learn whether the folder can be written in",
+				filepath.Base(stray))
+		}
+		status, ok := s.settled(t, cs, collection, b.source.ID)
+		if !ok || status.State != plugincontract.StateIndexed {
+			t.Fatalf("with a file called %s in its folder, the plugin did not index a Source: status says %+v (listed: %v). "+
+				"A plugin passes over a name there that begins with .lamplight-", filepath.Base(stray), status, ok)
+		}
+		if listed := s.status(t, cs, collection); len(listed) != 1 {
+			t.Errorf("with a file called %s in its folder, status lists %d Sources of a collection that holds one: %v",
+				filepath.Base(stray), len(listed), listed)
+		}
+		if found := s.search(t, cs, plugincontract.SearchInput{Collection: collection, Query: b.word, Limit: 5}); len(found) == 0 {
+			t.Errorf("with a file called %s in its folder, a search finds nothing of what was indexed", filepath.Base(stray))
+		}
+	})
 
 	s.sub(t, "it follows no link out of its folder that was there before it", func(t *testing.T) {
 		collection := s.collection("link")

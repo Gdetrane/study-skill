@@ -635,6 +635,55 @@ func TestCheckCommandCatchesMistakes(t *testing.T) {
 	}
 }
 
+// Indexing has no tool: a Knowledge base plugin indexes only for study
+// source index, which the agent runs in its own shell, where its sandbox
+// applies (ADR-0012). So the skill has to teach the command, since no tool's
+// description can, and what to tell the learner when the sandbox refuses the
+// plugin's folder, which is outside the Study home: both ways out.
+func TestTheSkillTeachesIndexing(t *testing.T) {
+	shown := false
+	knowledge := ""
+	for _, f := range readSkill(t) {
+		for _, c := range studyCommands(f) {
+			if len(c.line) >= 3 && c.line[0] == "source" && c.line[1] == "index" {
+				shown = true
+			}
+		}
+		if f.name == "references/knowledge.md" {
+			knowledge = strings.Join(strings.Fields(f.text), " ")
+		}
+	}
+	if !shown {
+		t.Error("the skill never shows study source index <topic>, the one way to have a Topic's Sources indexed")
+	}
+	for _, want := range []string{
+		"run it in your own shell",
+		"No tool indexes, and adding a Source indexes nothing",
+		"allow that folder in your sandbox, or run the command in a shell of their own",
+		"Do not look for another way to index",
+		"the Topic works as one without a Knowledge base",
+	} {
+		if !strings.Contains(knowledge, want) {
+			t.Errorf("references/knowledge.md does not say %q", want)
+		}
+	}
+	// What the skill names is what the tools give.
+	s := connectServer(t)
+	for _, name := range []string{"indexing", "action", "problem", "indexed", "not_indexed", "failed", "unknown"} {
+		if !s.known(name) {
+			t.Errorf("the skill speaks of %s, which no tool gives or describes", name)
+		}
+	}
+	if !s.inputs["topic_update"]["knowledge_base"] || !s.fields["plugin"] {
+		t.Error("topic_update does not take the name of a Knowledge base plugin")
+	}
+	for _, tool := range []string{"sources", "status"} {
+		if !s.tools[tool] {
+			t.Errorf("the server has no %s tool to say what is indexed", tool)
+		}
+	}
+}
+
 func TestNoV1Leftovers(t *testing.T) {
 	for _, f := range readSkill(t) {
 		for _, pattern := range v1Leftovers {

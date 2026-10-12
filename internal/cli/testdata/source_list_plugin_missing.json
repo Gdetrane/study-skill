@@ -1,0 +1,16 @@
+{
+  "ok": true,
+  "data": {
+    "topic": "c",
+    "knowledge_base": {
+      "kind": "plugin",
+      "plugin": "shelf"
+    },
+    "indexing": {
+      "plugin": "shelf",
+      "problem": "no Knowledge base plugin named shelf is registered on this computer",
+      "action": "study knowledge-base add shelf -- <command>"
+    },
+    "sources": []
+  }
+}

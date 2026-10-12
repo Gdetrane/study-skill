@@ -34,6 +34,10 @@ Everything else in a Topic changes only through the tools (Instruction 3).
      recommended until the Assessment is recorded or the learner starts a Lesson of another
      Milestone; it is never late, and never a reason for guilt.
    - Tell them about any flags; once they accept one, `flag_dismiss` clears it.
+   - When the Topic's `indexing` gives an `action` or a `problem`, its Knowledge base
+     plugin has Sources to index, or cannot be asked:
+     [Indexing](references/knowledge.md#indexing) (Instruction 14). Teaching goes on
+     either way.
    - No Topic yet, or a new subject: [Starting a Topic](references/starting-a-topic.md).
    - When it recommends `adopt`, the Topic came from v1 with
      `study import <v1-workspace>`: open the Session on it, then follow
@@ -133,7 +137,8 @@ talk about what is due or late: Instructions 4 and 10.
   feedback, completion, writing for each Level, signals and hints.
 - [Cards and Reviews](references/cards-and-reviews.md): writing Cards, Reviews and
   Explore.
-- [Knowledge](references/knowledge.md): Sources, the Knowledge base and Evidence.
+- [Knowledge](references/knowledge.md): Sources, the Knowledge base, indexing with a
+  Knowledge base plugin, and Evidence.
 - [Goal, Pace and Forecasts](references/planning.md): deadlines, Pace, Forecasts, Triage,
   Tasks, pausing and finishing a Topic.
 - [Companions](references/companions.md): optional tools for maths, visuals, live docs and

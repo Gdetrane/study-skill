@@ -1,0 +1,8 @@
+Knowledge base: plugin kb
+  ! Knowledge base plugin kb did not say what it has indexed within 500ms, and study did not wait for it
+    Meanwhile this Topic works as one without a Knowledge base. Run:
+      study knowledge-base check kb
+
+Sources:
+book.<id>  Book
+  $HOME/Books/book.txt

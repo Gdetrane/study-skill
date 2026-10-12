@@ -2,6 +2,7 @@ package pluginclient
 
 import (
 	"encoding/json"
+	"os"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -44,3 +45,15 @@ func Values(raw []byte) int { return values(raw) }
 
 // Payload is the JSON object study takes from a tool's result.
 func Payload(res *mcp.CallToolResult) (json.RawMessage, bool) { return payload(res) }
+
+// SetCheckWritable replaces how study learns whether a plugin's folder can
+// be written in, and returns a function that restores it: for a folder that
+// refuses as a sandbox refuses, which no folder of a test's own does.
+func SetCheckWritable(check func(folder *os.File) error) func() {
+	old := checkWritable.Swap(&check)
+	return func() { checkWritable.Store(old) }
+}
+
+// ProbeName is how the name of the file study makes in a plugin's folder,
+// and removes, to learn whether it can be written in begins.
+const ProbeName = probeName

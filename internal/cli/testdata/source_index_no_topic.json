@@ -1,0 +1,7 @@
+{
+  "ok": false,
+  "error": {
+    "code": "usage",
+    "message": "\"study source index\" needs at least 1 argument(s)"
+  }
+}

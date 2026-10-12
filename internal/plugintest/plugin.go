@@ -60,6 +60,12 @@ const (
 	BreakSearchReadsSource = "search-reads-source"
 	// BreakFailedForgotten says once that a Source failed, and then no more.
 	BreakFailedForgotten = "failed-forgotten"
+	// BreakIndexesWhatItReads indexes a file whatever its bytes are, also
+	// when they are not the hash index was handed.
+	BreakIndexesWhatItReads = "indexes-what-it-reads"
+	// BreakFailedLost keeps what failed only for as long as its program
+	// runs: started again, it says nothing of a Source that failed.
+	BreakFailedLost = "failed-lost"
 	// BreakFollowsLinks keeps the index by the folder's path, through
 	// whatever symbolic link is in it.
 	BreakFollowsLinks = "follows-links"
@@ -69,6 +75,10 @@ const (
 	// BreakAnyCase takes an argument under its name in any letter case, as
 	// a JSON library that matches names loosely does.
 	BreakAnyCase = "any-case"
+	// BreakMindsStrays writes nothing into a folder that holds a name it
+	// did not make, such as the file study leaves there for a moment to
+	// learn whether the folder can be written in.
+	BreakMindsStrays = "minds-strays"
 )
 
 // Config says how a test plugin behaves.
@@ -100,6 +110,11 @@ type Config struct {
 	TextOnly bool
 	// Breaks are the rules of the contract it breaks: the Break constants.
 	Breaks []string
+	// Asked, when set, is told each call as it arrives, before anything
+	// else is done with it: the tool's name and what it is asked. It is for
+	// a test to see what a plugin was asked, and can be called from several
+	// goroutines.
+	Asked func(tool string, args json.RawMessage)
 	// Before, when set, is called with a tool's name before the tool
 	// answers: for a test to hold a call up.
 	Before func(ctx context.Context, tool string)
@@ -125,7 +140,9 @@ type Plugin struct {
 
 	mu sync.Mutex
 	// jobs are the Sources being indexed now, and failed the reasons of the
-	// ones whose last indexing failed, both by collection and Source.
+	// ones whose last indexing failed, both by collection and Source. A
+	// failure is in the folder too (fail), where the next start of the plugin
+	// finds it.
 	jobs   map[[2]string]*job
 	failed map[[2]string]string
 }
@@ -222,6 +239,9 @@ func (p *Plugin) Server() *mcp.Server {
 		}
 		server.AddTool(&mcp.Tool{Name: tool.name, Description: tool.description, InputSchema: json.RawMessage(`{"type":"object"}`)},
 			func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				if p.cfg.Asked != nil {
+					p.cfg.Asked(tool.name, req.Params.Arguments)
+				}
 				if p.cfg.Before != nil {
 					p.cfg.Before(ctx, tool.name)
 				}
@@ -336,7 +356,7 @@ func (p *Plugin) index(_ context.Context, args json.RawMessage) (any, *plugincon
 		(in.Source.Kind == plugincontract.SourceFile && have.Hash == in.Source.Hash ||
 			in.Source.Kind == plugincontract.SourceURL && !in.Source.Refetch) {
 		p.mu.Lock()
-		delete(p.failed, key)
+		p.forget(key)
 		p.mu.Unlock()
 		return plugincontract.IndexResult{Source: plugincontract.SourceStatus{ID: have.ID, State: plugincontract.StateIndexed, Hash: have.Hash}}, nil
 	}
@@ -344,7 +364,7 @@ func (p *Plugin) index(_ context.Context, args json.RawMessage) (any, *plugincon
 	ctx, stop := context.WithCancel(context.Background())
 	j := &job{hash: in.Source.Hash, stop: stop, done: make(chan struct{})}
 	p.mu.Lock()
-	delete(p.failed, key)
+	p.forget(key)
 	p.jobs[key] = j
 	status := p.statusOf(key, have)
 	p.mu.Unlock()
@@ -357,7 +377,7 @@ func (p *Plugin) index(_ context.Context, args json.RawMessage) (any, *plugincon
 			delete(p.jobs, key)
 		}
 		if err != nil && ctx.Err() == nil {
-			p.failed[key] = err.Error()
+			p.fail(key, err.Error())
 		}
 	}()
 	return plugincontract.IndexResult{Source: status}, nil
@@ -384,6 +404,11 @@ func (p *Plugin) work(ctx context.Context, in plugincontract.IndexInput, j *job)
 	sum := sha256.Sum256(content)
 	entry := stored{Format: 1, ID: in.Source.ID, Title: in.Source.Title, Kind: in.Source.Kind, Hash: "sha256:" + hex.EncodeToString(sum[:]),
 		Path: in.Source.Path}
+	// A file is the one study read only when its bytes are the hash study
+	// handed over. Of another, nothing is kept.
+	if in.Source.Kind == plugincontract.SourceFile && entry.Hash != in.Source.Hash && !p.breaks(BreakIndexesWhatItReads) {
+		return errors.New("the file changed since study read it")
+	}
 	pages := pagesOf(in.Source.Kind, string(content))
 	if len(pages) == 0 {
 		return errors.New("there is no text in it")
@@ -482,12 +507,13 @@ func (p *Plugin) statusOf(key [2]string, have *stored) plugincontract.SourceStat
 	if have != nil {
 		status.Hash = have.Hash
 	}
+	reason := p.failure(key)
 	switch {
 	case p.jobs[key] != nil:
 		progress := p.jobs[key].progress
 		status.State, status.Progress = plugincontract.StateIndexing, &progress
-	case p.failed[key] != "":
-		status.State, status.Reason = plugincontract.StateFailed, p.failed[key]
+	case reason != "":
+		status.State, status.Reason = plugincontract.StateFailed, reason
 	default:
 		status.State = plugincontract.StateIndexed
 	}
@@ -545,9 +571,9 @@ func (p *Plugin) status(ctx context.Context, args json.RawMessage) (any, *plugin
 			byID[key[1]] = nil
 		}
 	}
-	for key := range p.failed {
-		if _, known := byID[key[1]]; key[0] == in.Collection && !known {
-			byID[key[1]] = nil
+	for _, id := range p.failures(in.Collection) {
+		if _, known := byID[id]; !known {
+			byID[id] = nil
 		}
 	}
 	out := plugincontract.StatusResult{Sources: []plugincontract.SourceStatus{}}
@@ -555,7 +581,7 @@ func (p *Plugin) status(ctx context.Context, args json.RawMessage) (any, *plugin
 		key := [2]string{in.Collection, id}
 		out.Sources = append(out.Sources, p.statusOf(key, have))
 		if p.breaks(BreakFailedForgotten) {
-			delete(p.failed, key)
+			p.forget(key)
 		}
 	}
 	sort.Slice(out.Sources, func(i, j int) bool { return out.Sources[i].ID < out.Sources[j].ID })
@@ -701,28 +727,79 @@ func reasonOf(err error) error {
 	return err
 }
 
-func (p *Plugin) load(collection, source string) (*stored, error) {
+// failedFile is the name of the file that holds why a Source's last indexing
+// failed, beside the Source's own.
+func failedFile(collection, source string) string { return collection + "/" + source + ".failed" }
+
+// fail records that the indexing of a Source failed, and why. The reason is
+// kept in the folder: study starts a command anew for each of its own
+// commands, and the learner reads the reason in a later one. It is kept in
+// memory too, since a folder that cannot be written in is itself a reason.
+// p.mu is held.
+func (p *Plugin) fail(key [2]string, reason string) {
+	p.failed[key] = reason
+	if !p.breaks(BreakFailedLost) {
+		_ = p.put(key[0], failedFile(key[0], key[1]), []byte(reason))
+	}
+}
+
+// failure is why the last indexing of a Source failed, or nothing. p.mu is
+// held.
+func (p *Plugin) failure(key [2]string) string {
+	if reason := p.failed[key]; reason != "" {
+		return reason
+	}
+	reason, _ := p.get(failedFile(key[0], key[1]))
+	return string(reason)
+}
+
+// failures are the Sources of a collection whose last indexing failed. p.mu
+// is held.
+func (p *Plugin) failures(collection string) []string {
+	var ids []string
+	for key := range p.failed {
+		if key[0] == collection {
+			ids = append(ids, key[1])
+		}
+	}
+	files, _ := p.names(collection)
+	for _, f := range files {
+		if id, failed := strings.CutSuffix(f.Name(), ".failed"); failed && !strings.HasPrefix(id, ".") && !slices.Contains(ids, id) {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
+// forget drops what is kept of a Source's failure: it is asked for again.
+// p.mu is held.
+func (p *Plugin) forget(key [2]string) {
+	delete(p.failed, key)
+	name := failedFile(key[0], key[1])
+	if root, err := p.folder(); err != nil {
+		return
+	} else if root == nil {
+		_ = os.Remove(p.cfg.Folder + "/" + name)
+	} else {
+		_ = root.Remove(name)
+	}
+}
+
+// get reads a file of the index.
+func (p *Plugin) get(name string) ([]byte, error) {
 	root, err := p.folder()
 	if err != nil {
 		return nil, err
 	}
-	var data []byte
 	if root == nil {
-		data, err = os.ReadFile(p.cfg.Folder + "/" + file(collection, source))
-	} else {
-		data, err = root.ReadFile(file(collection, source))
+		return os.ReadFile(p.cfg.Folder + "/" + name)
 	}
-	if err != nil {
-		return nil, err
-	}
-	var entry stored
-	if err := json.Unmarshal(data, &entry); err != nil || entry.Format != 1 || entry.ID != source {
-		return nil, fmt.Errorf("%s is not a Source of this plugin's index", file(collection, source))
-	}
-	return &entry, nil
+	return root.ReadFile(name)
 }
 
-func (p *Plugin) loadAll(collection string) ([]stored, error) {
+// names lists what a collection's folder holds, which is nothing when there
+// is no such folder.
+func (p *Plugin) names(collection string) ([]fs.DirEntry, error) {
 	root, err := p.folder()
 	if err != nil {
 		return nil, err
@@ -736,6 +813,23 @@ func (p *Plugin) loadAll(collection string) ([]stored, error) {
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
 	}
+	return files, err
+}
+
+func (p *Plugin) load(collection, source string) (*stored, error) {
+	data, err := p.get(file(collection, source))
+	if err != nil {
+		return nil, err
+	}
+	var entry stored
+	if err := json.Unmarshal(data, &entry); err != nil || entry.Format != 1 || entry.ID != source {
+		return nil, fmt.Errorf("%s is not a Source of this plugin's index", file(collection, source))
+	}
+	return &entry, nil
+}
+
+func (p *Plugin) loadAll(collection string) ([]stored, error) {
+	files, err := p.names(collection)
 	if err != nil {
 		return nil, reasonOf(err)
 	}
@@ -758,17 +852,23 @@ func (p *Plugin) loadAll(collection string) ([]stored, error) {
 }
 
 func (p *Plugin) save(collection string, entry stored) error {
-	root, err := p.folder()
+	data, err := json.Marshal(entry)
 	if err != nil {
 		return err
 	}
-	data, err := json.Marshal(entry)
+	return p.put(collection, file(collection, entry.ID), data)
+}
+
+// put writes a file of the index in a collection's folder, whole or not at
+// all: under another name first, and then in place of what was there.
+func (p *Plugin) put(collection, final string, data []byte) error {
+	root, err := p.folder()
 	if err != nil {
 		return err
 	}
 	name := make([]byte, 8)
 	_, _ = rand.Read(name)
-	tmp, final := collection+"/.tmp-"+hex.EncodeToString(name), file(collection, entry.ID)
+	tmp := collection + "/.tmp-" + hex.EncodeToString(name)
 	if root == nil {
 		dir := p.cfg.Folder + "/"
 		if err := os.MkdirAll(dir+collection, 0o700); err != nil {
@@ -778,6 +878,15 @@ func (p *Plugin) save(collection string, entry stored) error {
 			return reasonOf(err)
 		}
 		return reasonOf(os.Rename(dir+tmp, dir+final))
+	}
+	if p.breaks(BreakMindsStrays) {
+		if entries, err := fs.ReadDir(root.FS(), "."); err == nil {
+			for _, entry := range entries {
+				if strings.HasPrefix(entry.Name(), ".") {
+					return errors.New("the index holds something this plugin did not make")
+				}
+			}
+		}
 	}
 	if err := root.MkdirAll(collection, 0o700); err != nil {
 		return fmt.Errorf("the index cannot be written: %v", reasonOf(err))

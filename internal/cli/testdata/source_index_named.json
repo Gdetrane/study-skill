@@ -1,0 +1,24 @@
+{
+  "ok": true,
+  "data": {
+    "topic": "linear-algebra",
+    "plugin": "kb",
+    "collection": "linear-algebra-<collection>",
+    "sources": [
+      {
+        "id": "strang.<id>",
+        "title": "Strang",
+        "path": "$HOME/Books/strang.txt",
+        "state": "indexed",
+        "asked": true
+      },
+      {
+        "id": "go-blog.<id>",
+        "title": "Go blog",
+        "url": "http://127.0.0.1:PORT/blog",
+        "state": "indexed",
+        "asked": true
+      }
+    ]
+  }
+}

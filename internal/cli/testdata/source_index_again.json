@@ -1,0 +1,36 @@
+{
+  "ok": true,
+  "data": {
+    "topic": "linear-algebra",
+    "plugin": "kb",
+    "collection": "linear-algebra-<collection>",
+    "sources": [
+      {
+        "id": "strang.<id>",
+        "title": "Strang",
+        "path": "$HOME/Books/strang.txt",
+        "state": "indexed"
+      },
+      {
+        "id": "scan.<id>",
+        "title": "Scan",
+        "path": "$HOME/Books/scan.txt",
+        "state": "failed",
+        "reason": "there is no text in it",
+        "asked": true
+      },
+      {
+        "id": "lost.<id>",
+        "title": "Lost",
+        "state": "not_indexed",
+        "skipped": "its file is not on this computer: say where it is with study source update linear-algebra lost.<id> --path <file>"
+      },
+      {
+        "id": "go-blog.<id>",
+        "title": "Go blog",
+        "url": "http://127.0.0.1:PORT/blog",
+        "state": "indexed"
+      }
+    ]
+  }
+}

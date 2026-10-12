@@ -75,11 +75,11 @@ func (a *app) reviewTopic(ctx context.Context, c *core.Core, args []string) (top
 	if len(args) == 1 {
 		return args[0], "", nil
 	}
-	status, err := c.Status(ctx)
+	t, err := c.ActiveTopic(ctx)
 	if err != nil {
 		return "", "", err
 	}
-	if t := status.ActiveTopic; t != nil {
+	if t != nil {
 		return t.ID, t.Reason, nil
 	}
 	return "", "", usageError{errors.New("name the Topic to review: study review <topic>")}

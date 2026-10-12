@@ -45,10 +45,17 @@ type terminal struct {
 
 func startOnTerminal(t *testing.T, bin, home string, args ...string) *terminal {
 	t.Helper()
+	return startOnTerminalAs(t, bin, home, []string{"NO_COLOR=1", "TERM=dumb"}, args...)
+}
+
+// startOnTerminalAs is startOnTerminal on a terminal of the kind env says,
+// which may be one with colours.
+func startOnTerminalAs(t *testing.T, bin, home string, env []string, args ...string) *terminal {
+	t.Helper()
 	master, slave := openPTY(t)
 	term := &terminal{t: t, master: master, slave: slave}
 	term.cmd = exec.CommandContext(t.Context(), bin, args...)
-	term.cmd.Env = append(os.Environ(), "STUDY_HOME="+home, "HOME="+home, "NO_COLOR=1", "TERM=dumb")
+	term.cmd.Env = append(append(os.Environ(), "STUDY_HOME="+home, "HOME="+home), env...)
 	term.cmd.Stdin, term.cmd.Stdout, term.cmd.Stderr = slave, slave, slave
 	if err := term.cmd.Start(); err != nil {
 		t.Fatal(err)

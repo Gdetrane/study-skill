@@ -18,12 +18,15 @@ import (
 	"golang.org/x/text/unicode/norm"
 
 	"github.com/mordor-forge/lamplight/v2/internal/library"
+	"github.com/mordor-forge/lamplight/v2/internal/pluginregistry"
 )
 
 // The Knowledge seam (ADR-0007): a Topic's Knowledge base, its Sources, and
-// the Evidence its Lessons cite. The core records them and nothing more: it
-// never parses a document and never calls a knowledge service. The agent
-// reads the Sources itself and records the exact quotes it relied on.
+// the Evidence its Lessons cite. The core records them and never parses a
+// document. Without a Knowledge base the agent reads the Sources itself and
+// records the exact quotes it relied on; with a Knowledge base plugin
+// (ADR-0012), which the Topic names, the plugin indexes the Sources (see
+// source_index.go).
 //
 // The History is the single source of truth for which Sources exist and
 // what they are. sources.jsonl is the readable copy Lamplight writes, one
@@ -34,18 +37,26 @@ const (
 	sourcesFile = "sources.jsonl"
 
 	eventKnowledgeBaseSet = "knowledge_base.set"
-	eventSourceAdded      = "source.added"
-	eventSourceUpdated    = "source.updated"
+	// eventKnowledgeBasePluginSet names the Topic's Knowledge base plugin. A
+	// name is another payload than a kind, so it is another type: a
+	// knowledge_base.set Event carries a kind alone, as it always has.
+	eventKnowledgeBasePluginSet = "knowledge_base_plugin.set"
+	eventSourceAdded            = "source.added"
+	eventSourceUpdated          = "source.updated"
 
 	maxURLRunes  = 2000 // a Source's URL
 	maxPathRunes = 4096 // a file path
 )
 
-// Knowledge base kinds. "none" is the only one this version has (ADR-0011).
+// Knowledge base kinds.
 const (
 	// KnowledgeBaseNone: there is no Knowledge base; the agent reads the
 	// Sources itself.
 	KnowledgeBaseNone = "none"
+	// KnowledgeBasePlugin: a Knowledge base plugin indexes the Sources and
+	// searches them (ADR-0012). The Topic records the plugin's name, and
+	// each computer's registry says what the name stands for there.
+	KnowledgeBasePlugin = "plugin"
 )
 
 // Source kinds.
@@ -73,6 +84,7 @@ const (
 func init() {
 	fileCodecs = append(fileCodecs, codecEntry{pattern: sourcesFile, codec: jsonlHistoryCodec})
 	eventKinds[eventKnowledgeBaseSet] = eventKind{apply: applyKnowledgeBaseSet, replay: replayTopicUpdated}
+	eventKinds[eventKnowledgeBasePluginSet] = eventKind{apply: applyKnowledgeBasePluginSet, replay: replayTopicUpdated}
 	eventKinds[eventSourceAdded] = eventKind{apply: applySourceAdded, replay: replaySourceAdded}
 	eventKinds[eventSourceUpdated] = eventKind{apply: applySourceUpdated, replay: replaySourceUpdated}
 }
@@ -86,25 +98,67 @@ func init() {
 // Such a Topic behaves as "none" too.
 type KnowledgeBase struct {
 	Kind string `json:"kind"`
+	// Plugin is the name of the Topic's Knowledge base plugin, with the
+	// kind "plugin". It is a name and nothing more: which program or
+	// address it stands for is each computer's to say, in its registry, and
+	// a computer that has no plugin under the name treats the Topic as one
+	// without a Knowledge base.
+	Plugin string `json:"plugin,omitempty"`
+	// unnamed says that the Topic's file holds, for a plugin's name, text no
+	// plugin can be registered under: Plugin is then what is shown of it,
+	// made safe to print, and names no plugin (pluginOf).
+	unnamed bool
 }
 
-// checkKnowledgeBase validates a Knowledge base setting: a kind this version
-// knows.
+// knowledgeBaseSetData is the payload of a knowledge_base.set Event: a kind
+// that names no plugin.
+type knowledgeBaseSetData struct {
+	Kind string `json:"kind"`
+}
+
+// knowledgeBasePluginSetData is the payload of a knowledge_base_plugin.set
+// Event: the name of the Topic's Knowledge base plugin.
+type knowledgeBasePluginSetData struct {
+	Plugin string `json:"plugin"`
+}
+
+// checkKnowledgeBase validates a Knowledge base setting: the kind "none",
+// or the kind "plugin" with a name a plugin can be registered under. The
+// name need not be registered on this computer: another of the learner's
+// computers may have it.
 func checkKnowledgeBase(kb KnowledgeBase) (KnowledgeBase, error) {
 	switch kind := strings.TrimSpace(kb.Kind); kind {
 	case KnowledgeBaseNone:
+		if kb.Plugin != "" {
+			return KnowledgeBase{}, invalidf("the Knowledge base kind %q has no plugin: leave the plugin out, or give the kind %q",
+				KnowledgeBaseNone, KnowledgeBasePlugin)
+		}
 		return KnowledgeBase{Kind: kind}, nil
+	case KnowledgeBasePlugin:
+		if err := pluginregistry.CheckName(kb.Plugin); err != nil {
+			return KnowledgeBase{}, &Error{Code: CodeInvalidArgument, Err: err, Message: err.Error()}
+		}
+		return KnowledgeBase{Kind: kind, Plugin: kb.Plugin}, nil
 	case "":
-		return KnowledgeBase{}, invalidf("give the Knowledge base kind: %q is the only one this version has", KnowledgeBaseNone)
+		return KnowledgeBase{}, invalidf("give the Knowledge base: the kind %q, or the kind %q with the name of a Knowledge "+
+			"base plugin", KnowledgeBaseNone, KnowledgeBasePlugin)
 	default:
-		return KnowledgeBase{}, invalidf("the Knowledge base kind must be %q, the only one this version has, not %q",
-			KnowledgeBaseNone, kb.Kind)
+		return KnowledgeBase{}, invalidf("the Knowledge base kind must be %q or %q, not %q", KnowledgeBaseNone,
+			KnowledgeBasePlugin, kb.Kind)
 	}
 }
+
+// maxShownPluginRunes is how much is shown of a recorded name that cannot be
+// a plugin's.
+const maxShownPluginRunes = 64
 
 // knowledgeBaseOf reads the Knowledge base from topic.toml's
 // [knowledge_base] table, which lives among the settings parseTopicSettings
 // keeps as they are; nil when none was chosen.
+//
+// topic.toml syncs between computers and can be edited by hand, so the
+// plugin's name is whatever text is there. A name no plugin can have is
+// shown made safe to print and cut short, and names no plugin (pluginOf).
 func knowledgeBaseOf(settings topicSettings) *KnowledgeBase {
 	table, ok := settings.extra["knowledge_base"].(map[string]any)
 	if !ok {
@@ -114,7 +168,26 @@ func knowledgeBaseOf(settings topicSettings) *KnowledgeBase {
 	if kind == "" {
 		return nil
 	}
-	return &KnowledgeBase{Kind: kind}
+	kb := &KnowledgeBase{Kind: kind}
+	if kind == KnowledgeBasePlugin {
+		if kb.Plugin, _ = table["plugin"].(string); pluginregistry.CheckName(kb.Plugin) != nil {
+			// What is shown of it is cleaned, and cleaning can make a name a
+			// plugin has out of one none has: " kb" becomes "kb". So the
+			// Topic is marked as naming no plugin, whatever is shown.
+			kb.Plugin, kb.unnamed = derivedText(kb.Plugin, maxShownPluginRunes), true
+		}
+	}
+	return kb
+}
+
+// pluginOf is the name of the Knowledge base plugin a Topic names, and
+// whether it names one: its kind is "plugin", and the name is one a plugin
+// can have.
+func pluginOf(kb *KnowledgeBase) (name string, ok bool) {
+	if kb == nil || kb.Kind != KnowledgeBasePlugin || kb.unnamed || pluginregistry.CheckName(kb.Plugin) != nil {
+		return "", false
+	}
+	return kb.Plugin, true
 }
 
 // topicKnowledgeBase reads a Topic's Knowledge base through view.
@@ -134,7 +207,8 @@ func topicKnowledgeBase(view *topicView, topicID string) (*KnowledgeBase, error)
 }
 
 // planKnowledgeBase plans setting a Topic's Knowledge base; nothing when it
-// is already set so.
+// is already set so. A plugin's name is recorded by an Event type of its
+// own, and a kind without a plugin by the one that always recorded a kind.
 func planKnowledgeBase(topicID string, kb KnowledgeBase) plan {
 	return func(_ *replayed, view *topicView) (*change, error) {
 		current, err := topicKnowledgeBase(view, topicID)
@@ -144,27 +218,54 @@ func planKnowledgeBase(topicID string, kb KnowledgeBase) plan {
 		if current != nil && *current == kb {
 			return nil, nil
 		}
-		return &change{Type: eventKnowledgeBaseSet, Data: kb, Items: []string{topicFile}}, nil
+		if kb.Kind == KnowledgeBasePlugin {
+			return &change{Type: eventKnowledgeBasePluginSet, Data: knowledgeBasePluginSetData{Plugin: kb.Plugin},
+				Items: []string{topicFile}}, nil
+		}
+		return &change{Type: eventKnowledgeBaseSet, Data: knowledgeBaseSetData{Kind: kb.Kind}, Items: []string{topicFile}}, nil
 	}
 }
 
 // applyKnowledgeBaseSet writes the [knowledge_base] table of topic.toml anew,
 // with the Event's kind alone: a table's other keys are the settings of the
-// kind that had them. Choosing the kind a Topic has records no Event (see
-// planKnowledgeBase), so this version's own Events always change the kind.
-// An Event that keeps the kind is an earlier build's, moving a Topic from one
-// notebook to another (ADR-0011); when recovery finishes one, the table is
-// left without the notebook, at a version of its own.
+// kind that had them, the name of a plugin among them. Choosing the kind a
+// Topic has records no Event (see planKnowledgeBase), so this version's own
+// Events always change the kind. An Event that keeps the kind is an earlier
+// build's, moving a Topic from one notebook to another (ADR-0011); when
+// recovery finishes one, the table is left without the notebook, at a
+// version of its own.
+//
+// The payload is read as a kind and nothing else, whatever it holds: a name
+// beside the kind is no part of this Event type, and naming a plugin is for
+// knowledge_base_plugin.set to do.
 func applyKnowledgeBaseSet(ev event, item string, current []byte, exists bool) ([]byte, bool, error) {
+	var kb knowledgeBaseSetData
+	if err := json.Unmarshal(ev.Data, &kb); err != nil || kb.Kind == "" {
+		return nil, false, corruptf("Event %s has an unreadable payload", ev.ID)
+	}
+	return writeKnowledgeBase(ev, item, current, exists, map[string]any{"kind": kb.Kind})
+}
+
+// applyKnowledgeBasePluginSet writes the [knowledge_base] table of topic.toml
+// anew, with the kind "plugin" and the Event's name: whatever else the table
+// held was another Knowledge base's. A name no plugin can have is not one
+// this version recorded, and is not written.
+func applyKnowledgeBasePluginSet(ev event, item string, current []byte, exists bool) ([]byte, bool, error) {
+	var d knowledgeBasePluginSetData
+	if err := json.Unmarshal(ev.Data, &d); err != nil || pluginregistry.CheckName(d.Plugin) != nil {
+		return nil, false, corruptf("Event %s has an unreadable payload", ev.ID)
+	}
+	return writeKnowledgeBase(ev, item, current, exists, map[string]any{"kind": KnowledgeBasePlugin, "plugin": d.Plugin})
+}
+
+// writeKnowledgeBase returns topic.toml with table as its [knowledge_base]
+// table.
+func writeKnowledgeBase(ev event, item string, current []byte, exists bool, table map[string]any) ([]byte, bool, error) {
 	if item != topicFile {
 		return nil, false, corruptf("Event %s (%s) cannot edit %s", ev.ID, ev.Type, item)
 	}
 	if !exists {
 		return nil, false, corruptf("%s is missing", topicFile)
-	}
-	var kb KnowledgeBase
-	if err := json.Unmarshal(ev.Data, &kb); err != nil || kb.Kind == "" {
-		return nil, false, corruptf("Event %s has an unreadable payload", ev.ID)
 	}
 	settings, err := parseTopicSettings(current, topicFile)
 	if err != nil {
@@ -173,7 +274,7 @@ func applyKnowledgeBaseSet(ev event, item string, current []byte, exists bool) (
 	if settings.extra == nil {
 		settings.extra = map[string]any{}
 	}
-	settings.extra["knowledge_base"] = map[string]any{"kind": kb.Kind}
+	settings.extra["knowledge_base"] = table
 	data, err := encodeTopicSettings(settings)
 	return data, err == nil, err
 }
@@ -462,6 +563,10 @@ type SourceStatus struct {
 	// never fetched, and untracked for a line of sources.jsonl the History
 	// does not know.
 	State string `json:"state,omitempty"`
+	// Indexed is what the Topic's Knowledge base plugin says of the Source
+	// on this computer: whether it is indexed. It is absent when the Topic
+	// names no plugin, and for an untracked line, which is no Source.
+	Indexed *SourceIndex `json:"index,omitempty"`
 }
 
 // SourceList is a Topic's Knowledge base and Sources.
@@ -469,13 +574,22 @@ type SourceList struct {
 	Topic string `json:"topic"`
 	// KnowledgeBase is absent until one is chosen.
 	KnowledgeBase *KnowledgeBase `json:"knowledge_base,omitempty"`
-	Sources       []SourceStatus `json:"sources"`
+	// Indexing says, for a Topic that names a Knowledge base plugin, which
+	// plugin, what keeps it from saying what it has indexed, and the one
+	// command to run next. Each Source carries its own state.
+	Indexing *Indexing      `json:"indexing,omitempty"`
+	Sources  []SourceStatus `json:"sources"`
 }
 
 // ListSources lists a Topic's Sources, as the History records them, and
 // finds each file on this computer: inside the Topic, where it was last
 // found, or in the Library by its content. Where a file is found is local
 // state, updated as needed; nothing is recorded in the History.
+//
+// For a Topic that names a Knowledge base plugin it also asks the plugin
+// which Sources it has indexed, without waiting for it (askPlugins): a
+// plugin that is missing, slow or broken leaves the Sources' index state
+// unknown and the listing as quick as ever.
 func (c *Core) ListSources(ctx context.Context, topicID string) (SourceList, error) {
 	home, topic, err := c.openTopicFolder(topicID)
 	if err != nil {
@@ -505,6 +619,28 @@ func (c *Core) ListSources(ctx context.Context, topicID string) (SourceList, err
 		list.Sources = append(list.Sources, st)
 	}
 	l.save()
+	if kb != nil && kb.Kind == KnowledgeBasePlugin {
+		recorded := make([]Source, 0, len(list.Sources))
+		for _, st := range list.Sources {
+			recorded = append(recorded, st.Source)
+		}
+		ask := newIndexAsk(topicID, kb, recorded)
+		// Each file was found above, or was not.
+		states := map[string]string{}
+		for _, st := range list.Sources {
+			states[st.ID] = fileStateAt(st.Path, st.State)
+		}
+		ask.fileState = func(_ context.Context, src Source) string { return states[src.ID] }
+		if err := c.askPlugins(ctx, []*indexAsk{ask}); err != nil {
+			return SourceList{}, err
+		}
+		// Each state goes with its Source here, and is not said twice.
+		for i := range list.Sources {
+			index := ask.indexing.Sources[i].SourceIndex
+			list.Sources[i].Indexed = &index
+		}
+		list.Indexing, ask.indexing.Sources = ask.indexing, nil
+	}
 	for _, src := range untrackedSources(topic, k) {
 		list.Sources = append(list.Sources, SourceStatus{Source: src, State: SourceUntracked})
 	}
