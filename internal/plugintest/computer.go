@@ -42,6 +42,63 @@ func NewComputer(t testing.TB) *Computer {
 	return c
 }
 
+// Base is the folder that holds the home folder and the Study home, and
+// nothing else at first.
+func (c *Computer) Base() string { return filepath.Dir(c.Home) }
+
+// PassThrough takes from each folder the permission to list it, and leaves
+// the ones to pass through it and to write in it. That is what a folder of
+// someone else's with mode 711 is to the learner, as /home is on many
+// shared computers: their own folders have to change mode for a test to
+// have one. Name a folder before the ones inside it. The test is skipped
+// for root, who may list every folder, and the folders get their modes back
+// when it ends, so that it can remove them.
+func PassThrough(t testing.TB, dirs ...string) {
+	t.Helper()
+	restrict(t, 0o311, dirs)
+	for _, dir := range dirs {
+		if _, err := os.ReadDir(dir); err == nil {
+			t.Fatalf("%s can still be listed, so this test proves nothing", dir)
+		}
+	}
+}
+
+// Shut takes every permission from each folder: the learner may not even
+// pass through it, so nobody can tell where a path through it leads. The
+// test is skipped for root, and the folders get their modes back when it
+// ends.
+func Shut(t testing.TB, dirs ...string) {
+	t.Helper()
+	restrict(t, 0, dirs)
+}
+
+func restrict(t testing.TB, mode os.FileMode, dirs []string) {
+	t.Helper()
+	if os.Geteuid() == 0 {
+		t.Skip("root may list every folder and pass through it, whatever its mode")
+	}
+	// A folder is reached through the ones before it, to restrict it and to
+	// give its mode back: so the inner ones first, then back the other way.
+	before := make([]os.FileInfo, len(dirs))
+	t.Cleanup(func() {
+		for i, dir := range dirs {
+			if before[i] != nil {
+				_ = os.Chmod(dir, before[i].Mode().Perm())
+			}
+		}
+	})
+	for i := len(dirs) - 1; i >= 0; i-- {
+		info, err := os.Stat(dirs[i])
+		if err != nil {
+			t.Fatal(err)
+		}
+		before[i] = info
+		if err := os.Chmod(dirs[i], mode); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 // Getenv reads the computer's environment: HOME and STUDY_HOME.
 func (c *Computer) Getenv(key string) string {
 	return map[string]string{"HOME": c.Home, "STUDY_HOME": c.StudyHome}[key]

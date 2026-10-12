@@ -64,10 +64,10 @@ func OpenCommand(env Env, p Plugin) (*Command, error) {
 //
 // The folder is found and checked as Read finds it, at that moment: it is
 // not the Study home, not inside it and not reached through it. It returns
-// the folder open for reading, and its path with every symbolic link
-// followed, which is for messages. Start the plugin in the folder that is
-// returned, by its descriptor where the system can name one (/proc/self/fd
-// on Linux), not in the path again. The caller closes the file.
+// the folder open, and its path with every symbolic link followed, which is
+// for messages. Start the plugin in the folder that is returned, by its
+// descriptor where the system can name one (/proc/self/fd on Linux), not in
+// the path again. The caller closes the file.
 //
 // The folder is opened to be a working folder and nothing more: what
 // changes the registry in it stays in the registrar package.
@@ -84,7 +84,7 @@ func OpenFolder(env Env) (*os.File, string, error) {
 			folder.Path)
 	}
 	_, path := folder.Nearest()
-	file, err := dir.Open(".")
+	file, err := dir.File()
 	if err != nil {
 		return nil, "", &regfile.Error{Code: regfile.CodeFailedPrecondition, Err: err, Message: "study cannot open Lamplight's " +
 			"configuration folder, " + folder.Path + ", to start a Knowledge base plugin from it (" + regfile.Reason(err) +
@@ -109,18 +109,11 @@ func (g *Guard) Close() { g.walker.Close() }
 
 // Outside reports whether an absolute path is known to stay outside the
 // Study home at every hop. What cannot be decided is not outside: a path
-// that cannot be followed, because a folder on the way cannot be opened or
-// because the Study home itself cannot be looked at, may lead anywhere. A
-// path that ends in something that is not there yet is outside when what
-// is there of it is.
-func (g *Guard) Outside(path string) bool {
-	place, err := g.walker.Walk(path)
-	if err != nil {
-		return false
-	}
-	place.Close()
-	return true
-}
+// that cannot be followed, because study may not pass through a folder on
+// the way or because the Study home itself cannot be looked at, may lead
+// anywhere. A path that ends in something that is not there yet is outside
+// when what is there of it is.
+func (g *Guard) Outside(path string) bool { return g.walker.Follow(path) == nil }
 
 // CheckProgram checks a program that starting a plugin would run without
 // its being the plugin's own, such as the interpreter a script's first line

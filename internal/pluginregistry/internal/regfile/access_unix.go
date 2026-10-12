@@ -2,17 +2,13 @@
 
 package regfile
 
-import (
-	"os"
-
-	"golang.org/x/sys/unix"
-)
+import "golang.org/x/sys/unix"
 
 // Writable reports whether the current user may make and replace files in
 // an open folder, without writing anything. It asks about the folder that
 // is open, not about a name.
-func Writable(dir *os.Root) bool {
-	d, err := dir.Open(".")
+func Writable(dir *Dir) bool {
+	d, err := dir.File()
 	if err != nil {
 		return false
 	}
@@ -24,8 +20,8 @@ func Writable(dir *os.Root) bool {
 // name in an open folder. The system is asked, for the effective user, so
 // an execute bit that applies to someone else does not count; and it is
 // asked through the folder that is open, not through a path.
-func Runnable(dir *os.Root, name string) bool {
-	d, err := dir.Open(".")
+func Runnable(dir *Dir, name string) bool {
+	d, err := dir.File()
 	if err != nil {
 		return false
 	}

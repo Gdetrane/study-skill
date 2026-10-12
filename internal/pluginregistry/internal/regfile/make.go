@@ -33,7 +33,7 @@ func (w *Walker) MakeFolder(path string) (*os.File, string, error) {
 			place.Close()
 			return nil, "", &fs.PathError{Op: "mkdir", Path: path, Err: errors.New("the symbolic link " + link + " on the way leads nowhere")}
 		case len(place.Missing) == 0:
-			folder, err := place.Folder().Open(".")
+			folder, err := place.Folder().File()
 			resolved := place.Path()
 			place.Close()
 			if err != nil {
@@ -55,8 +55,8 @@ func (w *Walker) MakeFolder(path string) (*os.File, string, error) {
 
 // makeBelow makes the folders named, one inside the other, below an open
 // folder.
-func makeBelow(dir *os.Root, path string, names []string) error {
-	var opened []*os.Root
+func makeBelow(dir *Dir, path string, names []string) error {
+	var opened []*Dir
 	defer func() {
 		for _, d := range opened {
 			_ = d.Close()
@@ -67,7 +67,7 @@ func makeBelow(dir *os.Root, path string, names []string) error {
 		if err := dir.Mkdir(name, 0o700); err != nil && !errors.Is(err, fs.ErrExist) {
 			return &fs.PathError{Op: "mkdir", Path: path, Err: reasonOf(err)}
 		}
-		next, err := dir.OpenRoot(name)
+		next, err := dir.OpenDir(name)
 		if err != nil {
 			return &fs.PathError{Op: "open", Path: path, Err: reasonOf(err)}
 		}

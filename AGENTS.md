@@ -81,7 +81,11 @@ GOOS=darwin go vet ./...            # macOS is supported too
   Lamplight's configuration folder, not a plugin's program. That is decided by file
   identity, one hop of the path at a time, on folders that are then used as they were
   opened (`regfile.Walker`). Never decide it from a path's name, and never open by name
-  again what was checked.
+  again what was checked. A folder on the way is opened to be passed through where it may
+  not be listed (`regfile.Dir`, not `os.Root`, which opens a folder to list it). A walk
+  that cannot be finished has decided nothing: never take a path it could not follow for
+  one outside the Study home (`Walker.Follow`), and test each new caller with a folder
+  that cannot be passed through.
 - A Knowledge base plugin is started, or reached, only through `internal/pluginclient`,
   which only the core imports, besides the conformance suite in `internal/plugintest`; the
   MCP server reaches a plugin only through the core. A command is the program

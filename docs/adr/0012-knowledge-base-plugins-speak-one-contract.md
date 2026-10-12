@@ -103,6 +103,20 @@ Building the registry showed that three of these rules needed more than they say
   or a program, from folders that are already open. Deciding from names let an agent repoint
   a link between the check and the use, and let another letter case through on a file
   system that ignores case.
+  - A folder on the way is opened to be passed through, not to be listed. The first
+    registry opened each folder as Go's `os.Root` does, which asks to list it, and so
+    failed wherever a folder may be passed through and not listed: `/home` with mode 711
+    on a shared computer, above everything the learner has. `study` now asks to list a
+    folder and, where that is refused, asks only to pass through it (`O_PATH` on Linux,
+    `O_SEARCH` on macOS 13 and later), and looks at each name beside the folder's
+    descriptor itself, since an `os.Root` cannot be made from one.
+  - **A path that cannot be followed to its end is never outside the Study home.** The
+    first registry called such a path "not inside", reasoning that whatever stopped
+    `study` would stop whoever used the path; the folders it could not list showed that
+    this need not hold. Where a walk stops, nothing was decided: a program or an argument
+    by such a path is refused, the environment leaves it out, no folder is made below it,
+    and the listing gives the plugin a `problem`. The learner can still allow an argument,
+    as one inside the Study home.
 - A command's arguments are checked as its program is. `python3` with a script inside the
   Study home is refused unless the learner allows it when registering, and the registry
   records that they did. This catches the honest mistake and is not a guarantee: a command

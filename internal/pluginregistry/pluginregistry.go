@@ -54,9 +54,10 @@ type List struct {
 //
 // A plugin study does not use as it is registered carries a Problem: its
 // program, or an argument the learner did not allow, is inside the Study
-// home this study uses or is reached through it. That is checked at each
-// reading, because the Study home can be another than when the plugin was
-// registered, and a link can lead elsewhere.
+// home this study uses or is reached through it, or is named by a path
+// study cannot follow to tell. That is checked at each reading, because the
+// Study home can be another than when the plugin was registered, and a link
+// can lead elsewhere.
 func Read(ctx context.Context, env Env) (List, error) {
 	if err := ctx.Err(); err != nil {
 		return List{}, err
@@ -80,19 +81,37 @@ func Read(ctx context.Context, env Env) (List, error) {
 
 // problem says why study does not use a plugin as it is registered, or
 // nothing when it does.
+//
+// Only what is known to be outside the Study home is used. A path study
+// cannot follow to its end, the program's or an argument's, may lead
+// anywhere, so it is a problem as one inside the Study home is.
 func problem(w *regfile.Walker, env Env, p Plugin) string {
 	if len(p.Command) == 0 {
 		return ""
 	}
-	if regfile.IsInside(w.CheckProgram(p.Command[0])) {
+	switch err := w.Follow(p.Command[0]); {
+	case regfile.IsInside(err):
 		return "its program is inside the Study home, " + env.StudyHome + ", or is reached through it, where your agent " +
 			"can write, so study does not use this plugin: install the program outside the Study home, then register " +
 			"it again with study knowledge-base add " + p.Name + " --replace -- <command>"
+	case err != nil:
+		return "study cannot follow the path of its program to its end (" + regfile.Reason(err) + "), so it cannot tell " +
+			"whether the program is inside the Study home, " + env.StudyHome + ", or is reached through it, where your " +
+			"agent can write, and study does not use this plugin: check that every folder on the way to the program " +
+			"is one you may pass through, or register the program by another path with study knowledge-base add " +
+			p.Name + " --replace -- <command>"
 	}
 	if p.AllowStudyHomeArguments {
 		return ""
 	}
 	if i, arg := w.InsideArgument(env, p.Command); i > 0 {
+		if err := w.Unfollowed(env, arg); err != nil {
+			return "argument " + strconv.Itoa(i) + " of its command, " + strconv.Quote(arg) + ", names a path study cannot " +
+				"follow to its end (" + regfile.Reason(err) + "), so it cannot tell whether the path leads into the Study " +
+				"home, " + env.StudyHome + ", where your agent can write, and the plugin was not registered to allow " +
+				"that, so study does not use it: register it again with study knowledge-base add " + p.Name +
+				" --replace, without that argument or with --allow-study-home-arguments"
+		}
 		return "argument " + strconv.Itoa(i) + " of its command, " + strconv.Quote(arg) + ", names something inside the " +
 			"Study home, " + env.StudyHome + ", or reached through it, where your agent can write, and the plugin was " +
 			"not registered to allow that, so study does not use it: register it again with study knowledge-base add " +

@@ -30,6 +30,15 @@ import (
 // folder, and not its name again, so nothing can change between the check
 // and the use.
 //
+// A folder on the way has to be one study may pass through, as it has to be
+// for anyone who uses the path. It need not be one study may list (see
+// Dir).
+//
+// A walk that cannot be finished has decided nothing: where the path leads
+// is not known, and what stopped the walk need not stop whoever uses the
+// path. So nobody who asks a Walker takes a path it could not follow for
+// one outside the Study home (see Follow).
+//
 // What no walk can see is a hard link: a second name, outside the Study
 // home, for a file that also has a name inside it. Both names are the same
 // file and neither leads through the Study home. A link count above one says
@@ -51,8 +60,9 @@ type Walker struct {
 	// second look.
 	comingIn fs.FileInfo
 	comingAs []string
-	// blind is why the Study home cannot be told apart from other folders,
-	// when it is there and study may not look at it. Every walk then fails.
+	// blind is why the Study home cannot be told apart from other folders:
+	// it is there and study may not look at it, or it is not there and where
+	// it will be cannot be found. Every walk then fails.
 	blind error
 	// beforeEnter, when a test sets it, is called with a folder's path after
 	// the folder was looked at and before it is opened, where another
@@ -75,18 +85,31 @@ func NewWalker(studyHome string) *Walker {
 	w := &Walker{studyHome: studyHome}
 	w.identify()
 	if w.homeInfo == nil && w.blind == nil && filepath.IsAbs(studyHome) {
-		// Not there yet: find where it will be.
-		if place, err := (&Walker{}).Walk(studyHome); err == nil {
-			if info, err := place.Folder().Stat("."); err == nil && len(place.Missing) > 0 {
-				w.comingIn, w.comingAs = info, place.Missing
-			}
-			place.Close()
-		}
+		// Not there yet: find where it will be. When that cannot be found,
+		// nothing tells what will be inside it.
+		w.blind = w.expect()
 	}
 	if afterNewWalker != nil {
 		afterNewWalker()
 	}
 	return w
+}
+
+// expect finds where a Study home that is not there yet will be, and says
+// why when it cannot.
+func (w *Walker) expect() error {
+	place, err := (&Walker{}).Walk(w.studyHome)
+	if err == nil {
+		defer place.Close()
+		var info fs.FileInfo
+		if info, err = place.Folder().Stat("."); err == nil {
+			if len(place.Missing) > 0 {
+				w.comingIn, w.comingAs = info, place.Missing
+			}
+			return nil
+		}
+	}
+	return fmt.Errorf("study cannot find where the Study home, %s, will be, to tell what will be inside it: %w", w.studyHome, err)
 }
 
 // identify looks for the Study home and takes what identifies it. A Walker
@@ -136,7 +159,7 @@ func (w *Walker) isHome(info fs.FileInfo) (bool, error) {
 	if w.blind != nil {
 		return false, w.blind
 	}
-	return w.homeInfo != nil && os.SameFile(w.homeInfo, info), nil
+	return w.homeInfo != nil && same(w.homeInfo, info), nil
 }
 
 // Close lets go of the Study home.
@@ -166,7 +189,7 @@ func IsInside(err error) bool {
 // the path names in the last of them.
 type Place struct {
 	root    string
-	folders []*os.Root
+	folders []*Dir
 	names   []string
 
 	// Leaf is the name, in the last folder, of what the path ends in, and
@@ -185,7 +208,7 @@ type Place struct {
 }
 
 // Folder is the last folder the walk entered, open.
-func (p *Place) Folder() *os.Root { return p.folders[len(p.folders)-1] }
+func (p *Place) Folder() *Dir { return p.folders[len(p.folders)-1] }
 
 // Path is the path of the last folder as the walk went: with every symbolic
 // link followed.
@@ -226,10 +249,9 @@ func steps(path, link string) []step {
 //
 // It fails with an InsideError as soon as the path enters the Study home,
 // whether it would stay there or come out again. Any other error means that
-// the path cannot be followed: a folder that cannot be opened (study opens
-// each to list it, so one it may only pass through stops the walk), a file
+// the path cannot be followed: a folder study may not pass through, a file
 // where a folder should be, links without end, or a folder that was replaced
-// while the walk looked at it.
+// while the walk looked at it. Where such a path leads is not known.
 func (w *Walker) Walk(path string) (_ *Place, err error) {
 	if !filepath.IsAbs(path) {
 		return nil, fmt.Errorf("%q is not an absolute path", path)
@@ -244,11 +266,11 @@ func (w *Walker) Walk(path string) (_ *Place, err error) {
 			p.Close()
 		}
 	}()
-	root, err := os.OpenRoot(p.root)
+	root, err := openDir(p.root)
 	if err != nil {
 		return nil, err
 	}
-	p.folders = []*os.Root{root}
+	p.folders = []*Dir{root}
 	if info, err := root.Stat("."); err != nil {
 		return nil, err
 	} else if err := w.entered(p, info); err != nil {
@@ -313,18 +335,18 @@ func (w *Walker) Walk(path string) (_ *Place, err error) {
 				w.beforeEnter(p.path(s.name))
 			}
 			changed := fmt.Errorf("%s changed while study was reading it", p.path(s.name))
-			next, err := p.Folder().OpenRoot(s.name)
+			next, err := p.Folder().OpenDir(s.name)
 			if err != nil {
-				if now, lerr := p.Folder().Lstat(s.name); lerr != nil || !os.SameFile(info, now) {
+				if now, lerr := p.Folder().Lstat(s.name); lerr != nil || !same(info, now) {
 					return nil, changed
 				}
 				return nil, err
 			}
-			// What was opened is what was looked at: opening follows a link
-			// put there in between, when it stays in the folder, and this
+			// What was opened is what was looked at: another folder put
+			// under the name in between is one nobody looked at, and this
 			// is how it shows.
 			opened, err := next.Stat(".")
-			if err != nil || !os.SameFile(info, opened) {
+			if err != nil || !same(info, opened) {
 				_ = next.Close()
 				return nil, changed
 			}
@@ -359,7 +381,9 @@ func (w *Walker) coming(p *Place) error {
 	if w.comingIn == nil || len(p.Missing) < len(w.comingAs) {
 		return nil
 	}
-	if info, err := p.Folder().Stat("."); err != nil || !os.SameFile(w.comingIn, info) {
+	if info, err := p.Folder().Stat("."); err != nil {
+		return err
+	} else if !same(w.comingIn, info) {
 		return nil
 	}
 	for i, name := range w.comingAs {
@@ -371,18 +395,24 @@ func (w *Walker) coming(p *Place) error {
 	return &InsideError{StudyHome: w.studyHome}
 }
 
-// Inside reports whether an absolute path leads through the Study home. A
-// path that cannot be followed for another reason does not: what stops the
-// walk stops whoever uses the path too. When the Study home cannot be
-// looked at, every path counts as inside it.
-func (w *Walker) Inside(path string) bool {
-	if w.blind != nil {
-		return true
-	}
+// Follow walks an absolute path to its end and says why it cannot be taken
+// for one outside the Study home: nil when it can, because every hop of it
+// that is there is known to be outside. An InsideError says that the path
+// leads through the Study home. Any other error says that the path could
+// not be followed, so where it leads is not known: whoever asks treats
+// that as they treat a path inside the Study home, and never as one
+// outside it.
+func (w *Walker) Follow(path string) error {
 	place, err := w.Walk(path)
 	if err != nil {
-		return IsInside(err)
+		return err
 	}
 	place.Close()
-	return false
+	return nil
 }
+
+// Inside reports whether an absolute path leads through the Study home, or
+// may: a path that cannot be followed to its end counts as inside, whatever
+// stopped the walk, and so does every path when the Study home cannot be
+// looked at. Only what is known to stay outside the Study home is outside.
+func (w *Walker) Inside(path string) bool { return w.Follow(path) != nil }

@@ -607,6 +607,10 @@ hours before any learning happens is exactly what v1 produced.
     and written through the folder as it was opened, never through its name again. A
     configuration folder that is not an absolute path is refused too. A program must be
     one the user `study` runs as may run, which the system is asked.
+  - A folder on the way is opened to be passed through, where the learner may not list it
+    (`/home` with mode 711 on a shared computer). A path that cannot be followed to its
+    end, because the learner may not pass through a folder on it or for any other reason,
+    is never taken for one outside the Study home: nobody knows where it leads.
   - An argument that names something in the Study home is refused unless the learner
     allows it (`--allow-study-home-arguments`), which the entry records. An argument that
     names a file relative to where the command was typed is refused, since a plugin is
