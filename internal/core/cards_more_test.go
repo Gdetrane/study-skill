@@ -268,8 +268,15 @@ func TestTwoThousandCardsListQuickly(t *testing.T) {
 	if _, err := m.DueCardsOf(context.Background(), "c", DueQuery{Limit: MaxDueLimit}); err != nil {
 		t.Fatal(err)
 	}
-	if took := time.Since(start); took > time.Second {
-		t.Errorf("listing and offering 2000 Cards took %v", took)
+	// The race detector makes this more than ten times slower: about 60 ms
+	// became 0.8 s where it was measured, and 1.06 s on a busier computer. A
+	// second leaves no margin there.
+	limit := time.Second
+	if raceEnabled {
+		limit = 10 * time.Second
+	}
+	if took := time.Since(start); took > limit {
+		t.Errorf("listing and offering 2000 Cards took %v, over %v", took, limit)
 	}
 }
 
