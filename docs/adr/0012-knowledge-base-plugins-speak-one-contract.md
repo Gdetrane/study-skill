@@ -379,6 +379,139 @@ The Passage makes a new payload, so it is recorded by a new Event type.
   Passage's text. In the same test it gained a point or two, for about a hundred times the
   indexing time.
 
+Building Shelf with keyword search settled what the list above left open, and showed
+where two of its lines needed more than they say:
+
+- **The PDF reader is PDFium, compiled to WebAssembly and run inside `study-shelf` by
+  wazero.** The prototype read nine of the maintainer's books with it and with
+  `pdftotext` (poppler 26.08), on one computer, with a warm file cache:
+
+  | Book | Pages | PDFium in wazero | `pdftotext` |
+  |---|---|---|---|
+  | An algorithms textbook set in TeX, 4.8 MB | 1,313 | 12.1 s | 3.6 s |
+  | A programming textbook, 7.1 MB | 883 | 11.8 s | 1.3 s |
+  | An abstract algebra textbook, 3.8 MB | 297 | 3.1 s | 0.8 s |
+  | A book on data systems, 23 MB | 613 | 4.8 s | 4.1 s |
+  | A statistics textbook, 23 MB | 446 | 2.9 s | 1.5 s |
+  | A programming classic, 1.3 MB | 238 | 7.0 s | 0.7 s |
+  | A networking handbook, 8.5 MB | 785 | 9.4 s | 2.2 s |
+  | A statistical learning textbook, 11 MB | 434 | 12.1 s | 3.0 s |
+  | A physics textbook with a drawing on most pages, 131 MB | 390 | 84 s | 16 s |
+
+  PDFium was asked for each page's text in one call, as Shelf asks: its Go package's
+  convenience call asks for one character at a time, and took a third longer. It is
+  compiled to machine code once for each run of the program, in 2.5 to 4 seconds, before
+  the first page.
+
+  | | PDFium in wazero | `pdftotext` |
+  |---|---|---|
+  | What the learner installs | Nothing | poppler: there on most Linux desktops, never on a Mac |
+  | Speed, on the eight books of text | 35 to 155 pages a second | 145 to 670 pages a second |
+  | Memory at its peak | 300 to 750 MB, of which 260 MB is the compiling | About 30 MB, in a process of its own |
+  | Added to the binary | 9.0 MB (PDFium 5.8 MB, wazero and the Go package the rest) | Nothing |
+  | Reading order | The order of the page's content: a displayed equation stays together | By layout: paragraphs are told apart, and a page number can land in the middle of a formula's parts |
+  | A word divided at a line's end | Marked, with a character a formula's font may also produce | Joined, silently |
+  | Ligatures | Written as their letters | Kept as one character in four of the first eight books |
+  | Formulas without a table of symbols | Garbled, the same in both | Garbled, the same in both |
+  | Paragraphs | Not told apart | An empty line between them |
+  | The same text everywhere | Yes: one reader, in the binary | Whatever poppler or xpdf the computer has |
+  | A file that is hostile | Cannot leave WebAssembly: no file, no network, 1 GB | Is parsed by a C++ program with the learner's rights |
+  | Licences | BSD-3-Clause and Apache-2.0 (PDFium), Apache-2.0 (wazero), MIT (the Go package) | GPL, and not ours to ship |
+
+  A reader written in Go (`ledongthuc/pdf`) was tried on three of the books and lost the
+  spaces between the words of the two set in TeX: it was not considered further.
+
+  The text is as good from either: each has something the other lacks, and Shelf's own
+  tidying evens out the two that matter for a search, the divided words and the
+  ligatures. `pdftotext` is up to ten times faster and far lighter. What decided
+  for PDFium is what the learner must do and what can go wrong for them: a second thing to
+  install, which a Mac never has, for the main kind of Source; text and Passages that
+  differ with the reader a computer happens to have; tests of the central path that can
+  run only where poppler is; and a parser of other people's files running with the
+  learner's rights, where PDFium in WebAssembly is held to the one file by construction.
+  Ten seconds for a book that is indexed once, and nine megabytes, are the price.
+- **A Passage keeps to one page, always.** A Passage of a page ends where a paragraph or
+  a sentence does; PDFium does not tell paragraphs apart, so in a PDF it is sentences.
+  Shelf was first built to take the rest of a sentence that runs over the end of a page
+  into the Passage it begins in, up to 400 characters, so that a quote of the sentence
+  could be checked against one Passage. Review tried it on real books. A printed book
+  begins each page with a running header, which then stood in the middle of the sentence:
+  in an algorithms textbook 510 of 1,880 Passages were on two pages, and four in five of
+  those held the next page's header. A page that ends in a heading, a caption or a table
+  row looked like an unfinished sentence too. So the exception did not do what it was for,
+  and gave a third of all Passages a location of two pages. A sentence over a page break
+  is now in two Passages, each on its page, and whoever checks a quote that runs from one
+  Passage into the next, over a page break or within a page, reads the two together.
+  Leaving running headers out of the text is for later: it needs telling them from the
+  page's own first line, and dropping a line is rewriting too.
+- **A word divided at the end of a line is what the Source's own words say it is.**
+  PDFium marks where a line ended inside a word, and the mark is the same for `solu-tion`
+  and for `well-known`. Joined always, as first built, the three books of the review held
+  `shortestpath`, `worstcase` and `polynomialtime` dozens of times, and a search for
+  `well-known` found nothing. Shelf now reads all of a file's words before it tidies any
+  page: a divided word is joined when the Source holds the joined word elsewhere, keeps
+  its hyphen when the Source writes the pair with one or holds each half as a word, and
+  is joined otherwise, which is what most divided words are.
+- **What one Shelf has to tell the next is in the collection.** `study` keeps no plugin
+  running: it starts Shelf for every question it has and stops it again, so the Shelf
+  that is asked is seldom the one that indexed, and several are at one folder at once.
+  - A failure is written into the collection: the Source, what the indexing was asked
+    with, and the reason, beside what was indexed of the Source before. It stays until
+    the Source is indexed again.
+  - Work in progress is written there too, with how far it is, and counts only while the
+    Shelf that wrote it holds a lock on the collection's lock file, at a byte of its
+    own. The system lets go of that lock when the program ends, however it ends. So a
+    Source that one Shelf is indexing is `indexing` to every Shelf that is asked, and a
+    Source whose Shelf was killed halfway is not: a row alone could not tell the two
+    apart. Only the Shelf that indexes a Source can stop it.
+  - Shelf starts in a few milliseconds, since a glance at what is indexed has two
+    seconds for all of it: the PDF reader is compiled when a PDF is first indexed, and no
+    collection is opened before it is asked about. It exits within a fifth of a second
+    of its input closing, whatever it is doing.
+  - A collection is read where Shelf may not write, as from an agent's sandbox: for
+    reading, and, when no Shelf has it open, as the one file it then is.
+- **A file is indexed only when its bytes are the hash it was handed with.** `study`
+  counts a Source as indexed when Shelf gives the hash `study` took, so a file that
+  changed since is not indexed under its new hash, which `study` would not count, and
+  the learner is told to index again. The hash is taken of the open file the pages are
+  read from, before they are read and after.
+- **Shelf fetches nothing from the computer it runs on, or from the link-local addresses.**
+  The lines above have Shelf, served over a URL, never fetch a loopback, link-local or
+  private address. Shelf as a command was first built to fetch whatever address it was
+  given, and review showed why that does not do either. The agent chooses which addresses
+  are Sources and reads what was fetched through a search, and when the learner indexes in
+  a shell of their own, Shelf fetches with the learner's network: so an agent in a sandbox
+  without a network could read a page of whatever listens on the learner's own computer,
+  or the credentials a cloud hands its machines at `169.254.169.254`. Shelf refuses both,
+  for the page, for every address it redirects to, and by the number a name leads to as
+  the connection is made, which is the only place that is known. The link-local addresses
+  are refused always, and with them the three addresses where a cloud hands out the same
+  outside that range, named one by one, since the ranges they are in hold learners' own
+  networks. The computer itself is allowed by `--allow-loopback`, given where the
+  learner registers Shelf, for a learner who serves the pages they study from to
+  themselves: the registry is outside the Study home, so the agent cannot turn it on.
+  Addresses of the learner's own network are fetched, which the service is not to do: a
+  wiki there is a Source like any other, and the command shows each address before it is
+  fetched. A proxy the learner sets makes the connections itself, so there Shelf refuses
+  only what is written as such a number. The connection to the proxy is let through for
+  the request that goes through it and for no other: a proxy on the learner's own
+  computer is not thereby an address Shelf fetches pages from.
+- **Indexing that was stopped starts over.** A book is read in seconds, and its content
+  is put in the index in one transaction, so there is nothing half done to carry on from.
+  Embedding a book takes minutes, and will carry on.
+- **"One SQLite file per collection" is opened by name**, by SQLite, and the contract has
+  a plugin open its folder once and follow no link out of it. The translation of SQLite
+  to Go that needs no cgo (`modernc.org/sqlite`) has no way to give SQLite a file that
+  Shelf opened, so Shelf does what it can around it: it looks at the names through the
+  folder it holds before every connection, makes a collection's file itself and has
+  SQLite only open it, relies on SQLite following no link at a path's last name, and asks
+  SQLite which file it opened before it writes. The conformance suite's links, and links
+  under every name SQLite uses, are refused. What is left is a folder above Shelf's
+  exchanged for a link between two of SQLite's own system calls, by someone who can
+  write the learner's state folder. An SQLite whose file access is written in Go
+  (`ncruces/go-sqlite3`, SQLite itself as WebAssembly on the runtime Shelf already has)
+  would close it, and is worth a look when Shelf is next opened up.
+
 Considered and rejected:
 
 - **Retrieval inside `study`.** Smaller to ship, but it ties the core to one way of

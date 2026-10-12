@@ -29,8 +29,8 @@ curl -fsSL https://raw.githubusercontent.com/mordor-forge/lamplight/main/install
 ```
 
 The script downloads the latest release for your machine, checks it against the release's
-checksums, puts `study` in `~/.local/bin` without sudo, and installs completions for your
-shell. Run it again to upgrade. `STUDY_VERSION` and `STUDY_INSTALL_DIR` choose another
+checksums, puts `study` and `study-shelf` in `~/.local/bin` without sudo, and installs
+completions for your shell. Run it again to upgrade. `STUDY_VERSION` and `STUDY_INSTALL_DIR` choose another
 release or folder, set for `sh`: `curl ... | STUDY_VERSION=v2.0.0 sh`.
 
 You can also download an archive, a `.deb` or an `.rpm` from the
@@ -38,7 +38,7 @@ You can also download an archive, a `.deb` or an `.rpm` from the
 1.26 or later:
 
 ```bash
-go install github.com/mordor-forge/lamplight/v2/cmd/study@latest
+go install github.com/mordor-forge/lamplight/v2/cmd/study@latest github.com/mordor-forge/lamplight/v2/cmd/study-shelf@latest
 ```
 
 Then make Lamplight available to your agents:
@@ -48,6 +48,16 @@ study setup                # installs the skill and registers `study mcp` with C
 study completion install   # shell completions, if you did not use the install script
 study doctor               # checks that everything is in place
 ```
+
+To have your books and web pages indexed and searched, register Shelf, the Knowledge base
+plugin that is installed beside `study`, once on each computer:
+
+```bash
+study knowledge-base add shelf -- ~/.local/bin/study-shelf
+study knowledge-base check shelf
+```
+
+[docs/shelf.md](docs/shelf.md) says what Shelf reads, what it keeps and where.
 
 `study setup --check` finds a stale install, and `study setup --remove` undoes exactly what
 setup did. Claude Code users can install the plugin instead; other agents can run
@@ -118,7 +128,7 @@ Syllabus. See [Importing a v1 workspace](docs/cli.md#importing-a-v1-workspace).
 ## Build from source
 
 ```bash
-make build      # builds ./study
+make build      # builds ./study and ./study-shelf
 make test       # all tests, with the race detector
 make lint       # gofmt and go vet
 ```
@@ -128,6 +138,10 @@ make lint       # gofmt and go vet
 - [GLOSSARY.md](GLOSSARY.md): the words Lamplight uses, and what they mean.
 - [docs/design/lamplight-v2.md](docs/design/lamplight-v2.md): the design.
 - [docs/adr](docs/adr): the decisions behind it.
+- [docs/shelf.md](docs/shelf.md): Shelf, the `study-shelf` program that indexes and searches
+  a Topic's PDFs and web pages on your own computer.
+- [docs/knowledge-base-contract.md](docs/knowledge-base-contract.md): the contract a
+  Knowledge base plugin speaks, for whoever writes one.
 - [AGENTS.md](AGENTS.md): how to work on the code.
 
 ## License

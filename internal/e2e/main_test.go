@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/mordor-forge/lamplight/v2/internal/plugintest"
+	"github.com/mordor-forge/lamplight/v2/internal/shelf/shelftest"
 )
 
 // TestMain clears the caller's GIT_* variables. A commit hook that runs the
@@ -25,7 +26,10 @@ func TestMain(m *testing.M) {
 			os.Unsetenv(name)
 		}
 	}
-	os.Exit(m.Run())
+	code := m.Run()
+	// The study-shelf the install script's test built.
+	shelftest.Remove()
+	os.Exit(code)
 }
 
 // The learner loop, whose helpers commit, clone and pull with plain git, runs

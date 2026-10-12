@@ -1312,7 +1312,9 @@ computer registers the plugins it has, each under a name, with `study knowledge-
 speaks. A Topic names the plugin it uses (`study topic update --knowledge-base <name>`),
 `study source index` has the plugin index the Topic's Sources, and `status` and
 `study source list` say what it has indexed (see
-[Sources and Evidence](#sources-and-evidence)). Nothing searches a plugin yet.
+[Sources and Evidence](#sources-and-evidence)). Nothing searches a plugin yet. The plugin
+that ships with Lamplight is Shelf, the `study-shelf` program installed beside `study`:
+[docs/shelf.md](shelf.md) says what it reads and where it keeps its index.
 
 - **The registry** is `knowledge-base-plugins.json` in Lamplight's configuration folder,
   beside `config.toml`: `$XDG_CONFIG_HOME/lamplight`, or `~/.config/lamplight`. It is this

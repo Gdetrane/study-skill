@@ -234,6 +234,9 @@ In this order: the v1 branch, the checks `main` requires, the rename, the merge,
       ```sh
       curl -fsSL https://raw.githubusercontent.com/mordor-forge/lamplight/main/install.sh | sh
       ~/.local/bin/study --version && ~/.local/bin/study doctor          # on Linux, and on a Mac
+      ~/.local/bin/study-shelf --version                                 # Shelf, the same version
+      ~/.local/bin/study knowledge-base add shelf -- ~/.local/bin/study-shelf
+      ~/.local/bin/study knowledge-base check shelf                      # version 1; on a Mac too
       go install github.com/mordor-forge/lamplight/v2/cmd/study@v2.0.0   # replaces the trial build
       "$(go env GOPATH)/bin/study" --version && "$(go env GOPATH)/bin/study" doctor
       ```
