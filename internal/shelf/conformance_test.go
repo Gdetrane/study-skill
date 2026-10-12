@@ -15,6 +15,7 @@ import (
 	"github.com/mordor-forge/lamplight/v2/internal/plugintest"
 	"github.com/mordor-forge/lamplight/v2/internal/shelf"
 	"github.com/mordor-forge/lamplight/v2/internal/shelf/shelftest"
+	"github.com/mordor-forge/lamplight/v2/internal/shelf/web"
 )
 
 func TestMain(m *testing.M) { shelftest.Main(m) }
@@ -42,7 +43,9 @@ func TestTheTestsIgnoreTheCallersGitEnvironment(t *testing.T) {
 // files, and the suite's own web pages, which it serves from this computer.
 func TestShelfConformsAsStudyStartsIt(t *testing.T) {
 	plugintest.Conformance(t, plugintest.Target{
-		Connect:   plugintest.AsCommand(plugintest.NewComputer(t), shelftest.Shelf(t)),
+		// The suite serves its web pages from this computer, which a Shelf
+		// fetches nothing from unless it is registered to.
+		Connect:   plugintest.AsCommand(plugintest.NewComputer(t), shelftest.Shelf(t), "--allow-loopback"),
 		Restarts:  true,
 		WriteFile: shelftest.WritePDF,
 		Extension: ".pdf",
@@ -57,7 +60,7 @@ func TestShelfConformsInOneProcess(t *testing.T) {
 	// The suite gives a plugin half a minute to index a few pages, and the
 	// race detector makes compiling the PDF reader take longer than that.
 	warm(t)
-	plugin := shelf.New(shelf.Options{Folder: t.TempDir()})
+	plugin := shelf.New(shelf.Options{Folder: t.TempDir(), Settings: shelf.Settings{Fetch: web.Limits{Loopback: true}}})
 	server := httptest.NewServer(mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return plugin.Server() }, nil))
 	t.Cleanup(func() {
 		server.Close()

@@ -66,6 +66,8 @@ func warm(t *testing.T) {
 func startWith(t *testing.T, folder string, settings shelf.Settings) (*shelf.Shelf, *session) {
 	t.Helper()
 	warm(t)
+	// The tests serve their web pages from this computer.
+	settings.Fetch.Loopback = true
 	plugin := shelf.New(shelf.Options{Folder: folder, Settings: settings})
 	t.Cleanup(plugin.Close)
 	return plugin, connect(t, plugin)

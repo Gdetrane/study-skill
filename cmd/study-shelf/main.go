@@ -47,6 +47,15 @@ Usage:
   study-shelf --stdio    the same, said outright
   study-shelf --version  print the version
   study-shelf --help     print this
+
+Options, given where Shelf is registered:
+  --allow-loopback       also fetch web pages from this computer itself
+                         (localhost, 127.0.0.1). Shelf fetches none from
+                         there otherwise: whatever listens on this computer
+                         trusts whoever reaches it, and the agent chooses
+                         which addresses are Sources. For a learner who
+                         serves the pages they study from to themselves:
+                           study knowledge-base add shelf --replace -- study-shelf --allow-loopback
 `
 
 func main() {
@@ -65,6 +74,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 	// plugin is to be reached reads better, and still holds on the day Shelf
 	// can be reached another way.
 	_ = flags.Bool("stdio", false, "")
+	// Given where Shelf is registered, which is the learner's to do and
+	// outside the Study home: nothing the agent writes turns it on.
+	loopback := flags.Bool("allow-loopback", false, "")
 	switch err := flags.Parse(args); {
 	case errors.Is(err, flag.ErrHelp):
 		fmt.Fprint(stdout, usage)
@@ -86,7 +98,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 			"registered plugin: register Shelf with\n  study knowledge-base add shelf -- study-shelf\n", shelf.Name, plugincontract.DataFolderEnv)
 		return 1
 	}
-	plugin := shelf.New(shelf.Options{Folder: folder})
+	settings := shelf.DefaultSettings()
+	settings.Fetch.Loopback = *loopback
+	plugin := shelf.New(shelf.Options{Folder: folder, Settings: settings})
 
 	// study asks a plugin to exit by closing its standard input: Run
 	// returns then. A signal ends it too.

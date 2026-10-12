@@ -20,7 +20,7 @@ import (
 )
 
 // limits are small enough for a test to reach each of them.
-var limits = web.Limits{Timeout: 2 * time.Second, MaxBytes: 64 << 10, MaxRedirects: 3}
+var limits = web.Limits{Timeout: 2 * time.Second, MaxBytes: 64 << 10, MaxRedirects: 3, Loopback: true}
 
 // serve runs a web server on this computer's loopback interface for a test.
 func serve(t *testing.T, handler http.HandlerFunc) *httptest.Server {

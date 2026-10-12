@@ -48,11 +48,34 @@ And what it does not read, with the reason `study` shows for the Source:
 | A file that changed since `study` read it, or while Shelf read it | `the file changed`. Index it again: a Source is indexed as the content `study` saw, or not at all. |
 | A web address that sends a PDF, a picture or anything else that is no page | `Shelf reads web pages, which are HTML or plain text`. Download the file and add it as a file Source. |
 | A page that shows nothing until a script has run, or that needs you to sign in | `the page has no text to read`, or the server's refusal. Shelf runs no script and has none of your browser's sessions. |
+| A page served by your own computer: `localhost`, `127.0.0.1` | `… is this computer itself: Shelf fetches no page from it`. See below. |
 
 Shelf reads a file and fetches an address only when it is asked to index it, which is what
 `study source index` does, from your shell or your agent's. It fetches the address it is
 given, from your computer, as your browser would: one on your own network too. A PDF is
 recognised by how it begins, not by its name, so no other kind of file is read as one.
+
+**Where Shelf fetches nothing from.** Your agent chooses which addresses are Sources, and
+reads what was fetched back when it searches. Shelf fetches with your network, outside
+whatever sandbox the agent is in. So two kinds of address are refused, for the page itself,
+for every address it redirects to, and whatever name leads there:
+
+- **Your own computer**: `localhost`, `127.0.0.1`, `::1`. Whatever listens there trusts
+  whoever reaches it, since nobody else can. If you do serve the pages you study from to
+  yourself, a book built with a local documentation server say, register Shelf to allow it:
+
+  ```sh
+  study knowledge-base add shelf --replace -- study-shelf --allow-loopback
+  ```
+
+  The registry is yours, outside the Study home, so nothing your agent writes turns this
+  on.
+- **The link-local addresses**, `169.254.0.0/16` and `fe80::/10`, always. No page to study
+  from is served there, and a cloud's machines hand out their credentials at one of them.
+
+A proxy you set for Shelf (below) is yours to choose, wherever it listens, and it then
+makes the connections: Shelf still refuses an address that is written as one of those
+numbers, and cannot see where a name leads on the proxy's side.
 
 Three more things to know about what comes out:
 

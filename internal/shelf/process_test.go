@@ -225,6 +225,10 @@ func TestAStudyShelfThatIsKilledLeavesItsIndexWhole(t *testing.T) {
 			}
 		}
 		command.Kill()
+		// The kill is asked for, and the program is gone a moment later:
+		// until then it still holds its lock, and the next study-shelf
+		// would rightly say that the book is being indexed.
+		command.Stop()
 		integrity(t, folder, "crash")
 
 		next, _ := run(t, computer)
@@ -310,8 +314,10 @@ func TestAGlanceSeesWhatAnotherStudyShelfIsIndexing(t *testing.T) {
 		t.Errorf("a glance says the work is %v done", *seen.Progress)
 	}
 
-	// The one that indexes is killed. No Source is being indexed now.
+	// The one that indexes is killed. Once it is gone, no Source is being
+	// indexed.
 	command.Kill()
+	command.Stop()
 	glance, _ := run(t, computer)
 	status := glance.status("glanced")
 	if now := status[earlier.ID]; now.State != plugincontract.StateIndexed || now.Hash != earlier.Hash {

@@ -18,9 +18,13 @@ import (
 	"fmt"
 	"io"
 	"mime"
+	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strings"
+	"sync"
+	"syscall"
 	"time"
 
 	readability "codeberg.org/readeck/go-readability/v2"
@@ -39,6 +43,10 @@ type Limits struct {
 	// MaxRedirects is how often the server may send Shelf to another
 	// address.
 	MaxRedirects int
+	// Loopback lets Shelf fetch a page from the computer it runs on:
+	// localhost, 127.0.0.1 and the like. It is off unless the learner
+	// started Shelf to allow it (see refused).
+	Loopback bool
 }
 
 // DefaultLimits are the limits Shelf fetches with.
@@ -70,11 +78,82 @@ type Fetcher struct {
 	agent  string
 	// transport is what requests go out through. A test gives its own.
 	transport http.RoundTripper
+	// proxies are the proxies requests went out through so far, as host and
+	// port: a connection to one of them is not one to a page.
+	proxies sync.Map
+}
+
+// Where Shelf fetches no page from.
+//
+// The learner's agent chooses which addresses are Sources, and reads what
+// was fetched back through a search. Shelf fetches with the learner's
+// network, outside whatever sandbox the agent is in. So an address is
+// refused when a page there is one the agent could not have asked for
+// itself and no book or article is served from:
+//
+//   - The link-local addresses, 169.254.0.0/16 and fe80::/10: no web page a
+//     learner studies from lives there, and a cloud's machines hand their
+//     credentials to whoever asks at 169.254.169.254. They are refused
+//     always, with the unspecified address, which leads to this computer.
+//   - This computer itself, 127.0.0.0/8, ::1 and localhost: whatever
+//     listens there trusts whoever reaches it, since nobody else can. A
+//     learner who does study from a page they serve to themselves starts
+//     Shelf with --allow-loopback.
+//
+// Addresses of the learner's own network, 10.0.0.0/8 and the like, are
+// fetched: a wiki or a lecturer's notes on it are Sources like any other.
+//
+// An address is checked as the connection is made (refuseDial), since only
+// then is it known where a name leads, for the page and for every address
+// it redirects to. What is written as a number is refused before anything
+// is sent, which also holds when a proxy makes the connection.
+type refusal struct {
+	// host is the address's host as it was given, or the number it led to.
+	host     string
+	loopback bool
+}
+
+func (r *refusal) Error() string { return r.problem().Reason }
+
+func (r *refusal) problem() *Problem {
+	if r.loopback {
+		return &Problem{Reason: r.host + " is this computer itself: Shelf fetches no page from it, since whatever listens there " +
+			"trusts whoever reaches it. If you do serve the page to yourself, register Shelf with study-shelf --allow-loopback"}
+	}
+	return &Problem{Reason: r.host + " is an address of the link this computer is plugged into, where no web page is served " +
+		"and where a cloud hands out its machines' credentials: Shelf fetches nothing from it"}
+}
+
+// refused says why Shelf fetches nothing from an address, or nil. host is
+// what is said of it.
+func (f *Fetcher) refused(host string, addr netip.Addr) *refusal {
+	addr = addr.Unmap()
+	switch {
+	case addr.IsLinkLocalUnicast(), addr.IsLinkLocalMulticast(), addr.IsInterfaceLocalMulticast(), addr.IsMulticast(), addr.IsUnspecified():
+		return &refusal{host: host}
+	case addr.IsLoopback() && !f.limits.Loopback:
+		return &refusal{host: host, loopback: true}
+	}
+	return nil
+}
+
+// refusedHost is refused for an address's host as it is written: a number,
+// or localhost. A name is checked where it leads, when it is connected to.
+func (f *Fetcher) refusedHost(u *url.URL) *refusal {
+	host := u.Hostname()
+	if name := strings.TrimSuffix(strings.ToLower(host), "."); (name == "localhost" || strings.HasSuffix(name, ".localhost")) && !f.limits.Loopback {
+		return &refusal{host: host, loopback: true}
+	}
+	if addr, err := netip.ParseAddr(host); err == nil {
+		return f.refused(host, addr)
+	}
+	return nil
 }
 
 // NewFetcher returns a Fetcher that keeps to limits and calls itself agent
 // to the servers it asks.
 func NewFetcher(limits Limits, agent string) *Fetcher {
+	f := &Fetcher{limits: limits, agent: agent}
 	// The transport is Go's own, with its defaults: it verifies
 	// certificates, and takes a proxy from the environment when one is set
 	// there. study gives a plugin no such variable, so a learner behind a
@@ -83,7 +162,52 @@ func NewFetcher(limits Limits, agent string) *Fetcher {
 	transport.MaxResponseHeaderBytes = 1 << 20
 	// One page from one server: nothing is kept open for a next request.
 	transport.DisableKeepAlives = true
-	return &Fetcher{limits: limits, agent: agent, transport: transport}
+	transport.Proxy = func(req *http.Request) (*url.URL, error) {
+		proxy, err := http.ProxyFromEnvironment(req)
+		if proxy != nil {
+			f.proxies.Store(hostPort(proxy), true)
+		}
+		return proxy, err
+	}
+	// Every connection but one to the learner's proxy is to a page, and is
+	// refused where Shelf fetches none from. The proxy is the learner's
+	// own choice, wherever it listens.
+	plain := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}
+	checked := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second, Control: f.refuseDial}
+	transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+		if _, proxy := f.proxies.Load(address); proxy {
+			return plain.DialContext(ctx, network, address)
+		}
+		return checked.DialContext(ctx, network, address)
+	}
+	f.transport = transport
+	return f
+}
+
+// hostPort is a proxy's address as a connection to it is asked for.
+func hostPort(u *url.URL) string {
+	port := u.Port()
+	if port == "" {
+		port = map[string]string{"https": "443", "socks5": "1080", "socks5h": "1080"}[u.Scheme]
+		if port == "" {
+			port = "80"
+		}
+	}
+	return net.JoinHostPort(u.Hostname(), port)
+}
+
+// refuseDial refuses a connection to an address Shelf fetches nothing from.
+// It is asked once a name has been looked up, with the number it led to, so
+// it holds for every name, and for every address a page redirects to.
+func (f *Fetcher) refuseDial(_, address string, _ syscall.RawConn) error {
+	to, err := netip.ParseAddrPort(address)
+	if err != nil {
+		return fmt.Errorf("the address %s is no number to connect to", address)
+	}
+	if r := f.refused(to.Addr().Unmap().String(), to.Addr()); r != nil {
+		return r
+	}
+	return nil
 }
 
 // Fetch fetches the page at address, an http or https address, and returns
@@ -93,6 +217,9 @@ func (f *Fetcher) Fetch(ctx context.Context, address string) (Page, error) {
 	u, err := checkAddress(address)
 	if err != nil {
 		return Page{}, err
+	}
+	if r := f.refusedHost(u); r != nil {
+		return Page{}, r.problem()
 	}
 	ctx, cancel := context.WithTimeout(ctx, f.limits.Timeout)
 	defer cancel()
@@ -104,6 +231,9 @@ func (f *Fetcher) Fetch(ctx context.Context, address string) (Page, error) {
 			}
 			if _, err := checkAddress(req.URL.String()); err != nil {
 				return problem("the address redirects to one that is no web page: %v", err)
+			}
+			if r := f.refusedHost(req.URL); r != nil {
+				return problem("the address redirects to one Shelf fetches nothing from: %s", r.problem().Reason)
 			}
 			return nil
 		},
@@ -163,10 +293,18 @@ func (f *Fetcher) Fetch(ctx context.Context, address string) (Page, error) {
 // which may hold a key.
 func (f *Fetcher) failure(ctx context.Context, u *url.URL, err error) error {
 	var p *Problem
+	var r *refusal
 	var timeout interface{ Timeout() bool }
 	switch {
 	case errors.As(err, &p):
 		return p
+	case errors.As(err, &r):
+		// Refused as the connection was made: a name that leads there, or
+		// an address a page redirected to.
+		if r.host != u.Hostname() {
+			return problem("%s leads to %s", u.Host, r.problem().Reason)
+		}
+		return r.problem()
 	case ctx.Err() == context.Canceled:
 		return ctx.Err()
 	case ctx.Err() != nil, errors.As(err, &timeout) && timeout.Timeout():

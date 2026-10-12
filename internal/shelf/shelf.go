@@ -97,8 +97,16 @@ func (s Settings) orDefault() Settings {
 	if s.PassageSize == 0 {
 		s.PassageSize = d.PassageSize
 	}
-	if s.Fetch == (web.Limits{}) {
-		s.Fetch = d.Fetch
+	// Each limit by itself: whether pages on this computer are fetched is
+	// said apart from how long and how large a page may be.
+	if s.Fetch.Timeout == 0 {
+		s.Fetch.Timeout = d.Fetch.Timeout
+	}
+	if s.Fetch.MaxBytes == 0 {
+		s.Fetch.MaxBytes = d.Fetch.MaxBytes
+	}
+	if s.Fetch.MaxRedirects == 0 {
+		s.Fetch.MaxRedirects = d.Fetch.MaxRedirects
 	}
 	if s.FileTime == 0 {
 		s.FileTime = d.FileTime

@@ -328,6 +328,23 @@ where two of its lines needed more than they say:
   changed since is not indexed under its new hash, which `study` would not count, and
   the learner is told to index again. The hash is taken of the open file the pages are
   read from, before they are read and after.
+- **Shelf fetches nothing from the computer it runs on, or from the link-local addresses.**
+  The lines above have Shelf, served over a URL, never fetch a loopback, link-local or
+  private address. Shelf as a command was first built to fetch whatever address it was
+  given, and review showed why that does not do either. The agent chooses which addresses
+  are Sources and reads what was fetched through a search, and when the learner indexes in
+  a shell of their own, Shelf fetches with the learner's network: so an agent in a sandbox
+  without a network could read a page of whatever listens on the learner's own computer,
+  or the credentials a cloud hands its machines at `169.254.169.254`. Shelf refuses both,
+  for the page, for every address it redirects to, and by the number a name leads to as
+  the connection is made, which is the only place that is known. The link-local addresses
+  are refused always. The computer itself is allowed by `--allow-loopback`, given where the
+  learner registers Shelf, for a learner who serves the pages they study from to
+  themselves: the registry is outside the Study home, so the agent cannot turn it on.
+  Addresses of the learner's own network are fetched, which the service is not to do: a
+  wiki there is a Source like any other, and the command shows each address before it is
+  fetched. A proxy the learner sets makes the connections itself, so there Shelf refuses
+  only what is written as such a number.
 - **Indexing that was stopped starts over.** A book is read in seconds, and its content
   is put in the index in one transaction, so there is nothing half done to carry on from.
   Embedding a book takes minutes, and will carry on.
