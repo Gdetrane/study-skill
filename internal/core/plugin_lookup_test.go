@@ -47,6 +47,18 @@ func TestFindingAPluginDoesNotOutlastTheCommand(t *testing.T) {
 		t.Errorf("CheckPlugin took %s over a registry that does not answer, with 200ms to start a plugin", took)
 	}
 
+	// The time to start the plugin counts from when the look began: the
+	// two share one deadline, and starting has no time of its own on top.
+	slow := func() { time.Sleep(300 * time.Millisecond) }
+	beforePluginLookup.Store(&slow)
+	asked := time.Now()
+	_, counted, err := open(time.Second).pluginInTime(context.Background(), "kb")
+	if CodeOf(err) != CodeNotFound || counted.Before(asked) || time.Since(counted) < 300*time.Millisecond {
+		t.Errorf("pluginInTime after a look of 300ms counts from %s ago, %v; want not_found, and from before the look",
+			time.Since(counted), err)
+	}
+	beforePluginLookup.Store(&hold)
+
 	ctx, cancel := context.WithCancel(context.Background())
 	time.AfterFunc(100*time.Millisecond, cancel)
 	began = time.Now()

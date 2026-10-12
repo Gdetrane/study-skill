@@ -94,11 +94,11 @@ func (c *Core) CheckPlugin(ctx context.Context, name string) (PluginCheck, error
 		return PluginCheck{}, &Error{Code: CodeCanceled, Err: ctx.Err(), Message: "the command was stopped before Knowledge base " +
 			"plugin " + name + " was started"}
 	}
-	plugin, err := c.pluginInTime(ctx, name)
+	plugin, began, err := c.pluginInTime(ctx, name)
 	if err != nil {
 		return PluginCheck{}, err
 	}
-	session, err := c.startPlugin(ctx, plugin)
+	session, err := c.startPlugin(ctx, plugin, began)
 	if err != nil {
 		return PluginCheck{}, err
 	}
@@ -128,18 +128,21 @@ func (c *Core) plugin(ctx context.Context, name string) (Plugin, error) {
 }
 
 // pluginInTime finds the plugin as plugin does, within the time a plugin
-// has to start, and no longer than the command lasts.
+// has to start, and no longer than the command lasts. It returns the plugin
+// and when the look began, which is when the time to start it began too:
+// finding a plugin and starting it share one deadline.
 //
 // Finding it reads the registry and looks at the program of every plugin
 // in it, each on whatever drive it is. A drive that does not answer holds
 // such a look for as long as it likes, and nothing in this program can
 // interrupt it: so the look is left to finish by itself, and the command
 // does not wait for it.
-func (c *Core) pluginInTime(ctx context.Context, name string) (Plugin, error) {
+func (c *Core) pluginInTime(ctx context.Context, name string) (Plugin, time.Time, error) {
 	limit := c.plugins.StartTimeout
 	if limit <= 0 {
 		limit = pluginclient.DefaultStartTimeout
 	}
+	began := time.Now()
 	type found struct {
 		plugin Plugin
 		err    error
@@ -154,17 +157,18 @@ func (c *Core) pluginInTime(ctx context.Context, name string) (Plugin, error) {
 	}()
 	timer := time.NewTimer(limit)
 	defer timer.Stop()
+	late := &Error{Code: CodeFailedPrecondition, Message: "study could not read the Knowledge base plugin registry " +
+		"within " + limit.String() + ": reading it, or looking at the program of a plugin registered in it, took that " +
+		"long. Check that Lamplight's configuration folder and the programs study knowledge-base list shows are on " +
+		"drives that answer"}
 	select {
 	case f := <-done:
-		return f.plugin, f.err
+		return f.plugin, began, f.err
 	case <-ctx.Done():
-		return Plugin{}, &Error{Code: CodeCanceled, Err: ctx.Err(), Message: "the command was stopped before Knowledge base " +
+		return Plugin{}, began, &Error{Code: CodeCanceled, Err: ctx.Err(), Message: "the command was stopped before Knowledge base " +
 			"plugin " + name + " was started"}
 	case <-timer.C:
-		return Plugin{}, &Error{Code: CodeFailedPrecondition, Message: "study could not read the Knowledge base plugin registry " +
-			"within " + limit.String() + ": reading it, or looking at the program of a plugin registered in it, took that " +
-			"long. Check that Lamplight's configuration folder and the programs study knowledge-base list shows are on " +
-			"drives that answer"}
+		return Plugin{}, began, late
 	}
 }
 
@@ -175,7 +179,9 @@ var beforePluginLookup atomic.Pointer[func()]
 
 // startPlugin starts a registered plugin, or reaches it, and returns the
 // Connection with it, which the caller closes: that is what stops a command.
-func (c *Core) startPlugin(ctx context.Context, plugin pluginregistry.Plugin) (*pluginclient.Connection, error) {
+// The time the plugin has to start counts from began, when study set out to
+// find it.
+func (c *Core) startPlugin(ctx context.Context, plugin pluginregistry.Plugin, began time.Time) (*pluginclient.Connection, error) {
 	// An Environ that returns nothing is an empty environment, not the
 	// default.
 	environ := []string{}
@@ -188,6 +194,7 @@ func (c *Core) startPlugin(ctx context.Context, plugin pluginregistry.Plugin) (*
 		Version:       c.version,
 		Environ:       environ,
 		Logger:        c.log,
+		Began:         began,
 		StartTimeout:  c.plugins.StartTimeout,
 		CallTimeout:   c.plugins.CallTimeout,
 		SearchTimeout: c.plugins.SearchTimeout,

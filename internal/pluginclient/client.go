@@ -81,6 +81,9 @@ const MCPVersion = "2025-11-25"
 const (
 	MaxTools     = 1000
 	maxToolPages = 100
+	// maxCursorBytes is how long a cursor to the next page may be: study
+	// sends it back, and holds it meanwhile.
+	maxCursorBytes = 4096
 )
 
 // StderrKept is how much of the end of what a command wrote on its standard
@@ -111,6 +114,10 @@ type Options struct {
 	Environ []string
 	// Logger receives the Log. Nil discards it.
 	Logger *slog.Logger
+	// Began is when study set out to start the plugin, when that was before
+	// Start is called: finding the plugin in the registry comes first, and
+	// StartTimeout counts from there. Zero is the moment Start is called.
+	Began time.Time
 	// StartTimeout, CallTimeout, SearchTimeout and StopGrace replace the
 	// defaults above when they are not zero.
 	StartTimeout  time.Duration
@@ -173,7 +180,10 @@ type Connection struct {
 	ended  string
 	exited bool
 	// asked is the first request the plugin sent study, if it sent one.
-	asked     string
+	asked string
+	// misread is the first thing read from the plugin that was no MCP
+	// message, if there was one.
+	misread   error
 	closeOnce sync.Once
 }
 
@@ -195,7 +205,11 @@ func Start(ctx context.Context, env pluginregistry.Env, plugin pluginregistry.Pl
 	// One clock for all of it: what study does to start the plugin, and
 	// what the plugin does to answer.
 	limit := s.opts.StartTimeout
-	limited, cancel := context.WithTimeout(ctx, limit)
+	began := s.opts.Began
+	if began.IsZero() {
+		began = time.Now()
+	}
+	limited, cancel := context.WithDeadline(ctx, began.Add(limit))
 	defer cancel()
 
 	var transport mcp.Transport
@@ -242,7 +256,7 @@ func Start(ctx context.Context, env pluginregistry.Env, plugin pluginregistry.Pl
 	default:
 		return nil, errorf(CodeInternal, "Knowledge base plugin %s is registered with neither a command nor a URL", plugin.Name)
 	}
-	guarded := &answersOnly{inner: transport, asked: s.wasAsked, tooMuch: s.heldTooMuch}
+	guarded := &answersOnly{inner: transport, asked: s.wasAsked, tooMuch: s.heldTooMuch, misread: s.readNoMCP}
 	if s.http != nil {
 		guarded.speaks = s.http.speaks
 	}
@@ -271,6 +285,9 @@ type answersOnly struct {
 	// tooMuch is told that a message held more values than one may, which
 	// ended the connection too.
 	tooMuch func()
+	// misread is told what reading failed with, when that was what the
+	// plugin wrote and not that it went away.
+	misread func(error)
 	// speaks, when set, is told the MCP revision the plugin answered
 	// initialize with, before the library goes on to its next message.
 	//
@@ -291,7 +308,7 @@ func AnswersOnly(transport mcp.Transport, asked func(method string)) mcp.Transpo
 	// gives one, is told whom to tell. A second one around it would see that
 	// the first hung up, and never the request.
 	if inner, ok := transport.(*answersOnly); ok {
-		return &answersOnly{inner: inner.inner, asked: asked, tooMuch: inner.tooMuch, speaks: inner.speaks}
+		return &answersOnly{inner: inner.inner, asked: asked, tooMuch: inner.tooMuch, misread: inner.misread, speaks: inner.speaks}
 	}
 	return &answersOnly{inner: transport, asked: asked}
 }
@@ -310,13 +327,14 @@ func (t *answersOnly) Connect(ctx context.Context) (mcp.Connection, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &answering{Connection: conn, asked: t.asked, tooMuch: t.tooMuch, speaks: t.speaks}, nil
+	return &answering{Connection: conn, asked: t.asked, tooMuch: t.tooMuch, misread: t.misread, speaks: t.speaks}, nil
 }
 
 type answering struct {
 	mcp.Connection
 	asked   func(method string)
 	tooMuch func()
+	misread func(error)
 	speaks  func(revision string)
 	once    sync.Once
 	first   sync.Once
@@ -332,6 +350,12 @@ var (
 func (c *answering) Read(ctx context.Context) (jsonrpc.Message, error) {
 	msg, err := c.Connection.Read(ctx)
 	if err != nil {
+		// Whoever waits for an answer is told by the library that the
+		// connection closed, or what was read, whichever it comes to first.
+		// What was read is known here, and says more.
+		if c.misread != nil && ctx.Err() == nil && !hungUp(err) {
+			c.misread(err)
+		}
 		return nil, err
 	}
 	// The MCP library reads what a message holds into values of any kind,
@@ -397,6 +421,16 @@ func (s *Connection) wasAsked(method string) {
 	go s.drop(why)
 }
 
+// readNoMCP is told what reading from the plugin failed with, when the
+// plugin wrote something that is no MCP message.
+func (s *Connection) readNoMCP(err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.misread == nil {
+		s.misread = err
+	}
+}
+
 // heldTooMuch is told that the plugin sent a message of more values than
 // one may hold. It ends the Connection, as a request does.
 func (s *Connection) heldTooMuch() {
@@ -455,19 +489,26 @@ func (s *Connection) handshake(parent, limited context.Context, limit time.Durat
 	}
 
 	tools, err := within(s, limited, func(ctx context.Context) ([]string, error) {
+		// Only the contract's own names are kept, of however many tools
+		// with names however long: a page is bounded, and what is kept of
+		// every page must be too.
 		var names []string
 		cursor := ""
+		listed := 0
 		for range maxToolPages {
 			page, err := cs.ListTools(ctx, &mcp.ListToolsParams{Cursor: cursor})
 			if err != nil {
 				return nil, err
 			}
 			for _, tool := range page.Tools {
-				if names = append(names, tool.Name); len(names) >= MaxTools {
+				if slices.Contains(plugincontract.Tools, tool.Name) && !slices.Contains(names, tool.Name) {
+					names = append(names, tool.Name)
+				}
+				if listed++; listed >= MaxTools {
 					return names, nil
 				}
 			}
-			if page.NextCursor == "" || page.NextCursor == cursor {
+			if page.NextCursor == "" || page.NextCursor == cursor || len(page.NextCursor) > maxCursorBytes {
 				break
 			}
 			cursor = page.NextCursor
@@ -943,7 +984,7 @@ func (s *Connection) notTheContract(what string) *Error {
 // was.
 func (s *Connection) failure(parent, limited context.Context, doing, tool string, limit time.Duration, err error) *Error {
 	s.mu.Lock()
-	asked, askedWhy, ended, exited := s.asked, s.askedWhy(), s.ended, s.exited
+	asked, askedWhy, ended, exited, misread := s.asked, s.askedWhy(), s.ended, s.exited, s.misread
 	s.mu.Unlock()
 	answered := protocolError(err)
 	switch {
@@ -997,6 +1038,11 @@ func (s *Connection) failure(parent, limited context.Context, doing, tool string
 			"that it speaks that revision or an earlier one, and that the address is the one of its MCP endpoint: study "+
 			"knowledge-base list shows it, and study knowledge-base add %s --replace --url <URL> changes it",
 			s.name, Address(s.address), why, MCPVersion, s.name)}
+	}
+	// What was read and was no MCP message is why, whatever the library
+	// came to report first.
+	if misread != nil {
+		err = misread
 	}
 	// A command that exited closes its output, and a moment may pass before
 	// it is collected.

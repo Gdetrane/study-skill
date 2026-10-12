@@ -479,3 +479,21 @@ func TestAProgramInTheStudyHomeIsNotStarted(t *testing.T) {
 		t.Error("study made a folder for a plugin it refused to start")
 	}
 }
+
+// A folder that was there already, open to others, is made the learner's
+// alone before a plugin is given it: an index holds the text of their books,
+// and whoever writes it writes what a search finds.
+func TestAPluginsFolderIsMadePrivate(t *testing.T) {
+	c := plugintest.NewComputer(t)
+	folder := c.DataFolder("kb")
+	if err := os.MkdirAll(folder, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(folder, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	s := start(t, c)
+	if info, err := os.Lstat(s.DataFolder()); err != nil || info.Mode().Perm() != 0o700 {
+		t.Errorf("the plugin's folder, %s: %v, %v; want it for the learner alone", s.DataFolder(), info, err)
+	}
+}

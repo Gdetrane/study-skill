@@ -142,7 +142,7 @@ func TestKnowledgeBaseCheckJSON(t *testing.T) {
 		{"knowledge_base_check_hangs", withTestPlugin("--hang", "start"), impatient, "kb", cli.ExitError},
 		{"knowledge_base_check_newer_contract", withTestPlugin("--contract", `{"version": 2}`), patient, "kb", cli.ExitError},
 		{"knowledge_base_check_not_the_contract", withTestPlugin("--tools", "status,search"), patient, "kb", cli.ExitError},
-		{"knowledge_base_check_broken_contract", withTestPlugin("--contract", `{"version": 1, "sources": ["file"]}`), patient, "kb", cli.ExitError},
+		{"knowledge_base_check_broken_contract", withTestPlugin("--contract", `{"version": 1, "sources": ["file"], "search": [], "locations": []}`), patient, "kb", cli.ExitError},
 		{"knowledge_base_check_program_in_study_home", withThePluginInTheStudyHome, patient, "kb", cli.ExitError},
 		{"knowledge_base_check_nobody_answers", withNobodyAnswering, patient, "remote", cli.ExitError},
 		{"knowledge_base_check_url_hangs", withService(func(t *testing.T) http.Handler {
@@ -220,7 +220,7 @@ func TestKnowledgeBaseCheckKeepsAPluginOffTheTerminal(t *testing.T) {
 	for name, args := range map[string][]string{
 		"a plugin that speaks":        {"--name", "kb" + escapes, "--version", "1" + escapes, "--stderr", "ready" + escapes + "\n"},
 		"a plugin that does not":      {"--exit", "1", "--stderr", "failed" + escapes + "\n"},
-		"a plugin that breaks it":     {"--contract", `{"version": 1, "sources": ["file\u001b[2J"], "search": ["keyword"]}`},
+		"a plugin that breaks it":     {"--contract", `{"version": 1, "sources": ["file\u001b[2J"], "search": ["keyword"], "locations": []}`},
 		"a plugin that refuses":       {"--refuse", "contract=internal:no" + escapes},
 		"a plugin that writes no MCP": {"--garbage", "--stderr", escapes},
 	} {

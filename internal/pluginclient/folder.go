@@ -2,7 +2,9 @@ package pluginclient
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
+	"os"
 	"path/filepath"
 
 	"github.com/mordor-forge/lamplight/v2/internal/pluginregistry"
@@ -63,11 +65,39 @@ func makeDataFolder(guard *pluginregistry.Guard, env pluginregistry.Env, name st
 	}
 	defer folder.Close()
 	// The folder is the learner's alone: an index holds the text of their
-	// books.
-	if info, err := folder.Stat(); err == nil && info.Mode().Perm() != 0o700 {
-		_ = folder.Chmod(0o700)
+	// books, and whoever can write it writes what a search finds. A folder
+	// that was there already is made so, and one that cannot be, as one
+	// another user made in a shared state folder cannot, is not used.
+	if err := private(folder); err != nil {
+		return "", &Error{Code: CodeFailedPrecondition, Err: err, Message: "the folder Knowledge base plugin " + name +
+			" keeps its index in, " + resolved + ", " + err.Error() + ". An index holds the text of your books, and whoever " +
+			"writes it writes what a search finds: remove the folder so that study makes it anew, or set XDG_STATE_HOME " +
+			"to a folder that is yours alone"}
 	}
 	return resolved, nil
+}
+
+// private makes an open folder one that only its owner reads and writes,
+// and fails, with what is wrong, when it is not one afterwards.
+func private(folder *os.File) error {
+	info, err := folder.Stat()
+	if err != nil {
+		return errors.New("cannot be looked at (" + pathReason(err) + ")")
+	}
+	if info.Mode().Perm() == 0o700 {
+		return nil
+	}
+	changed := folder.Chmod(0o700)
+	if now, err := folder.Stat(); err == nil {
+		if info = now; info.Mode().Perm()&0o077 == 0 {
+			return nil
+		}
+	}
+	if changed != nil {
+		return fmt.Errorf("can be read or written by others (mode %04o), and study cannot change that (%s)",
+			info.Mode().Perm(), pathReason(changed))
+	}
+	return fmt.Errorf("can be read or written by others (mode %04o), and stays so when study changes it", info.Mode().Perm())
 }
 
 // pathReason is an operating system error without the path it names: the

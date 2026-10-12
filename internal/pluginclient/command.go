@@ -431,21 +431,22 @@ func checkInterpreter(guard *pluginregistry.Guard, program *os.File, path []stri
 		if err := guard.CheckProgram(interpreter); err != nil {
 			return err
 		}
-		if filepath.Base(interpreter) == "env" {
+		next, err := openInterpreter(interpreter)
+		if err != nil {
+			return err
+		}
+		// A file called env that is a script is a script, and is followed
+		// as one: the system runs what its own first line names. Only env
+		// the program starts what it is given.
+		if filepath.Base(interpreter) == "env" && len(firstLine(next)) == 0 {
+			_ = next.Close()
 			started, err := startedByEnv(guard, words[1:], path)
 			if err != nil || started == "" {
 				return err
 			}
-			interpreter = started
-		}
-		// The system reads the interpreter's own first line whether or not
-		// this user may read the file, and follows it. One that study
-		// cannot read is one whose interpreter nobody checked.
-		next, err := os.Open(interpreter)
-		if err != nil {
-			return fmt.Errorf("study cannot read %s to see whether it is a script too (%s): a program you may run and not "+
-				"read can name an interpreter that nobody checked. Make it readable for you, or name another interpreter",
-				clean(interpreter, 200), pathReason(err))
+			if next, err = openInterpreter(started); err != nil {
+				return err
+			}
 		}
 		if script != program {
 			_ = script.Close()
@@ -464,6 +465,20 @@ func checkInterpreter(guard *pluginregistry.Guard, program *os.File, path []stri
 // maxInterpreters is how many interpreters in a row study checks for a
 // script: the script's, that one's own when it is a script too, and so on.
 const maxInterpreters = 4
+
+// openInterpreter opens a program that was checked, to see whether it is a
+// script itself. The system reads a program's first line whether or not
+// this user may read the file, and follows it: one that study cannot read is
+// one whose interpreter nobody checked, and is refused.
+func openInterpreter(path string) (*os.File, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("study cannot read %s to see whether it is a script too (%s): a program you may run and not "+
+			"read can name an interpreter that nobody checked. Make it readable for you, or name another interpreter",
+			clean(path, 200), pathReason(err))
+	}
+	return file, nil
+}
 
 func notAbsolute(interpreter string) error {
 	return fmt.Errorf("%s is no absolute path: the system would look for it from the folder the plugin is started "+

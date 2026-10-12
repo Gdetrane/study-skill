@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"net/url"
+	"reflect"
 	"regexp"
 	"slices"
 	"strconv"
@@ -177,6 +178,17 @@ func ParseContract(data []byte) (Contract, error) {
 	}
 	if err := Decode(data, &rest); err != nil {
 		return Contract{}, err
+	}
+	// Each field is there under its own name, the three lists as lists: an
+	// empty one says that the plugin does nothing of the kind, and a missing
+	// one says nothing. The version was judged above, however it is written.
+	if problems := Shape(data, reflect.TypeFor[struct {
+		Version   json.RawMessage `json:"version"`
+		Sources   []string        `json:"sources"`
+		Search    []string        `json:"search"`
+		Locations []string        `json:"locations"`
+	}]()); len(problems) > 0 {
+		return Contract{}, errors.New(problems[0])
 	}
 	c := rest.Contract
 	c.Version = int(version)

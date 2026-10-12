@@ -126,7 +126,8 @@ Study home. So `study` starts a plugin with nothing the agent could have prepare
   link in `~/.local/bin` to a Topic's virtual environment is, the plugin is not started,
   whatever comes later in `PATH`. A plugin with no `PATH`, or with none that has the name,
   is not started either. Anything else given to `env` on that line, an option or a
-  `NAME=value` setting, is refused: `study` cannot tell what it would start.
+  `NAME=value` setting, is refused: `study` cannot tell what it would start. A file called
+  `env` that is itself a script is followed as any script is.
 
   **Every interpreter must be readable, and four in a row is the most.** The system reads
   a program's first line whether or not you may read the file, so an interpreter `study`
@@ -155,7 +156,8 @@ Study home. So `study` starts a plugin with nothing the agent could have prepare
 
 A plugin started by a command keeps its index in the folder `LAMPLIGHT_PLUGIN_DATA` names:
 an absolute path, of a folder that exists when the plugin starts and that only the learner
-can read (mode 0700). It is `$XDG_STATE_HOME/lamplight/knowledge-base-plugins/<name>`, or
+can read (mode 0700): `study` makes it so, and does not start a plugin whose folder others
+can read or write. It is `$XDG_STATE_HOME/lamplight/knowledge-base-plugins/<name>`, or
 `~/.local/state/lamplight/knowledge-base-plugins/<name>` when `XDG_STATE_HOME` is not set
 or is not an absolute path, `<name>` being the name the plugin is registered under. It is
 that computer's state, never synced, and rebuilt by indexing again.

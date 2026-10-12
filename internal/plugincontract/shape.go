@@ -28,6 +28,9 @@ func shape(path string, raw json.RawMessage, typ reflect.Type) []string {
 		return path + ": " + what
 	}
 	raw = bytes.TrimSpace(raw)
+	if typ == reflect.TypeFor[json.RawMessage]() {
+		return nil // read by whoever asked for it as it is
+	}
 	if typ.Kind() == reflect.Pointer {
 		if string(raw) == "null" {
 			return nil

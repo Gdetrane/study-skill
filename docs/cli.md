@@ -1256,8 +1256,10 @@ is a command.
   ```
 - **Its folder** is `lamplight/knowledge-base-plugins/<name>` in your state folder,
   `$XDG_STATE_HOME`, or `~/.local/state` when that is not set or is not an absolute path:
-  this computer's state, never synced, where the plugin keeps its index. It is made when it is not there, for you alone to read. **It is
-  outside the Study home**, where your agent writes: when the state folder is the Study
+  this computer's state, never synced, where the plugin keeps its index. It is made when it
+  is not there, for you alone to read, and one that is there is made so; a folder that
+  others can read or write, and that `study` cannot change, is `failed_precondition`. **It
+  is outside the Study home**, where your agent writes: when the state folder is the Study
   home, is inside it or is reached through it by a link, the plugin is not started
   (`failed_precondition`), and the message says to set `XDG_STATE_HOME`. The cost is that a
   sandbox which lets `study` write in the Study home alone does not let a plugin started
@@ -1275,8 +1277,8 @@ is a command.
   that beside the revision of MCP `study` speaks, `2025-11-25`.
 - **Deadlines**: `study` has 30 seconds to start a plugin, or to reach it, and the plugin
   to answer `contract`. One that takes longer is stopped and reported, so the command never
-  hangs. Reading the registry to find the plugin has 30 seconds as well, and ends when the
-  command is stopped: a drive that does not answer does not hold the command.
+  hangs. The 30 seconds cover finding the plugin in the registry as well, and the command
+  ends when it is stopped: a drive that does not answer does not hold it.
 - **What a plugin answers is bounded and held to the contract**: a message of more than
   16 MiB or of more than 250,000 values ends the session, and a result that lacks a field
   the contract requires is `failed_precondition`.

@@ -129,8 +129,12 @@ func TestAPluginThatDoesNotSpeakIsRefused(t *testing.T) {
 			[]string{"what its contract tool gave back is not what the contract describes: version is missing"}},
 		{"gives a version that is no number", quickOptions, []string{"--contract", `{"version": "1", "sources": ["file"], "search": ["keyword"]}`},
 			pluginclient.CodeFailedPrecondition, []string{"version is not a whole number of 1 or more"}},
-		{"indexes nothing", quickOptions, []string{"--contract", `{"version": 1, "sources": [], "search": ["keyword"]}`},
+		{"indexes nothing", quickOptions, []string{"--contract", `{"version": 1, "sources": [], "search": ["keyword"], "locations": []}`},
 			pluginclient.CodeFailedPrecondition, []string{"sources lists none of file, url"}},
+		{"leaves a list out", quickOptions, []string{"--contract", `{"version": 1, "sources": ["file"], "search": ["keyword"]}`},
+			pluginclient.CodeFailedPrecondition, []string{`what its contract tool gave back is not what the contract describes: "locations" is missing`}},
+		{"spells a key its own way", quickOptions, []string{"--contract", `{"Version": 1, "Sources": ["file"], "Search": ["keyword"], "Locations": []}`},
+			pluginclient.CodeFailedPrecondition, []string{`what its contract tool gave back is not what the contract describes: "version" is spelled "Version"`}},
 		{"names a kind that is no word", quickOptions, []string{"--contract", `{"version": 1, "sources": ["file"], "search": ["keyword"], "locations": ["\u001b[31mpages"]}`},
 			pluginclient.CodeFailedPrecondition, []string{`locations[0] is "\x1b[31mpages", not a kind`}},
 		{"gives no object", quickOptions, []string{"--contract", `[1]`}, pluginclient.CodeFailedPrecondition,
@@ -165,6 +169,25 @@ func unhurried(c *plugintest.Computer) pluginclient.Options {
 	opts := impatient(c)
 	opts.StartTimeout = 4 * time.Second
 	return opts
+}
+
+// The time a plugin has to start counts from when study set out to start
+// it, which is before Start when the plugin had to be found first: finding
+// and starting share one deadline, and the message names the whole of it.
+func TestTheTimeToStartCountsFromWhenStudySetOut(t *testing.T) {
+	c := plugintest.NewComputer(t)
+	plugin := c.Register(t, "kb", plugintest.Command("--hang", "start")...)
+	opts := impatient(c)
+	opts.StartTimeout = 3 * time.Second
+	opts.Began = time.Now().Add(-2500 * time.Millisecond)
+	began := time.Now()
+	_, err := pluginclient.Start(context.Background(), c.Env(""), plugin, opts)
+	if codeOf(err) != pluginclient.CodeFailedPrecondition || !strings.Contains(err.Error(), "did not open an MCP session within 3s") {
+		t.Errorf("Start = %v; want failed_precondition, naming the 3s a plugin has", err)
+	}
+	if took := time.Since(began); took > 2*time.Second {
+		t.Errorf("Start took %s with half a second left of the time to start", took)
+	}
 }
 
 // A program that cannot be run at all says why, and how to look.
@@ -287,6 +310,11 @@ func TestAScriptStartedThroughEnv(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(empty, "kb-python"), []byte("no program\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// A script that is called env, and names what the agent wrote.
+	scripted := filepath.Join(linked, "env")
+	if err := os.WriteFile(scripted, []byte("#!"+inTopic+"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	script := func(name, firstLine string) string {
 		path := filepath.Join(bin, name)
 		if err := os.WriteFile(path, []byte(firstLine+"\nnothing reads the rest\n"), 0o755); err != nil {
@@ -337,6 +365,10 @@ func TestAScriptStartedThroughEnv(t *testing.T) {
 			path(tools), []string{notRun + inTopic + " is inside the Study home"}},
 		"env is given a relative path": {"#!" + env + " ./kb-python", path(tools),
 			[]string{notRun + "./kb-python is no absolute path"}},
+		// A file called env that is a script is run as a script: by what its
+		// own first line names, and not by what env would have found.
+		"an env that is a script": {"#!" + scripted + " kb-python", path(tools),
+			[]string{notRun + inTopic + " is inside the Study home"}},
 		// What else env is given decides what is started in ways study does
 		// not follow.
 		"env is given an option": {"#!" + env + " -i kb-python", path(tools),

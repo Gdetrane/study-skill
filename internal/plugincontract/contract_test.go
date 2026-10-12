@@ -78,8 +78,9 @@ func TestParseContract(t *testing.T) {
 	if err != nil || c.Version != 1 || len(c.Sources) != 2 || len(c.Search) != 1 || len(c.Locations) != 1 {
 		t.Fatalf("ParseContract = %+v, %v", c, err)
 	}
-	// A kind this version does not know is kept, and no location is fine.
-	c, err = plugincontract.ParseContract([]byte(`{"version": 1, "sources": ["recording", "file"], "search": ["embedding", "hybrid_rank"]}`))
+	// A kind this version does not know is kept, and a plugin that knows no
+	// location lists none.
+	c, err = plugincontract.ParseContract([]byte(`{"version": 1, "sources": ["recording", "file"], "search": ["embedding", "hybrid_rank"], "locations": []}`))
 	if err != nil || c.Sources[0] != "recording" || c.Search[1] != "hybrid_rank" || len(c.Locations) != 0 {
 		t.Errorf("ParseContract = %+v, %v", c, err)
 	}
@@ -108,7 +109,8 @@ func TestParseContract(t *testing.T) {
 		}
 	}
 	// Version 1 is version 1 however it is written.
-	for _, data := range []string{`{"version": 1.0, "sources": ["file"], "search": ["keyword"]}`, `{"version": 1e0, "sources": ["file"], "search": ["keyword"]}`} {
+	for _, data := range []string{`{"version": 1.0, "sources": ["file"], "search": ["keyword"], "locations": []}`,
+		`{"version": 1e0, "sources": ["file"], "search": ["keyword"], "locations": []}`} {
 		if c, err := plugincontract.ParseContract([]byte(data)); err != nil || c.Version != 1 || len(c.Sources) != 1 {
 			t.Errorf("ParseContract(%s) = %+v, %v; want version 1", data, c, err)
 		}
@@ -130,11 +132,19 @@ func TestParseContract(t *testing.T) {
 		`{"version": 1.5}`:    "version is not a whole number of 1 or more",
 		`{"version": "1"}`:    "version is not a whole number of 1 or more",
 		`{"version": null}`:   "version is not a whole number of 1 or more",
-		`{"version": 1}`:      "sources lists none of file, url",
-		`{"version": 1, "sources": ["recording"], "search": ["keyword"]}`:                                              "sources lists none of file, url",
-		`{"version": 1, "sources": ["file"], "search": []}`:                                                            "search lists none of keyword, embedding",
-		`{"version": 1, "sources": ["file", "file"], "search": ["keyword"]}`:                                           "sources lists file twice",
-		`{"version": 1, "sources": ["file"], "search": ["Keyword", "keyword"]}`:                                        `search[0] is "Keyword", not a kind`,
+		`{"version": 1, "sources": [], "search": ["keyword"], "locations": []}`:                  "sources lists none of file, url",
+		`{"version": 1, "sources": ["recording"], "search": ["keyword"], "locations": []}`:       "sources lists none of file, url",
+		`{"version": 1, "sources": ["file"], "search": [], "locations": []}`:                     "search lists none of keyword, embedding",
+		`{"version": 1, "sources": ["file", "file"], "search": ["keyword"], "locations": []}`:    "sources lists file twice",
+		`{"version": 1, "sources": ["file"], "search": ["Keyword", "keyword"], "locations": []}`: `search[0] is "Keyword", not a kind`,
+		// Every field is there, under its own name: a list that is missing
+		// says nothing, where an empty one says "none".
+		`{"version": 1}`: `"sources" is missing`,
+		`{"version": 1, "sources": ["file"], "search": ["keyword"]}`:                                                   `"locations" is missing`,
+		`{"version": 1, "sources": ["file"], "search": ["keyword"], "locations": null}`:                                "locations: it is not a list",
+		`{"Version": 1, "sources": ["file"], "search": ["keyword"], "locations": []}`:                                  `"version" is spelled "Version"`,
+		`{"version": 1, "Sources": ["file"], "search": ["keyword"], "locations": []}`:                                  `"sources" is spelled "Sources"`,
+		`{"version": 1, "sources": ["file"], "search": ["keyword"], "LOCATIONS": ["pages"]}`:                           `"locations" is spelled "LOCATIONS"`,
 		`{"version": 1, "sources": ["file"], "search": ["keyword"], "locations": ["two words"]}`:                       `locations[0] is "two words", not a kind`,
 		`{"version": 1, "sources": ["file"], "search": ["keyword"], "locations": [` + many + `]}`:                      "locations lists more than 16 kinds",
 		`{"version": 1, "sources": "file", "search": ["keyword"]}`:                                                     "sources is a string, not a []string",
