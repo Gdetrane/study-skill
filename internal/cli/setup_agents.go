@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/mordor-forge/lamplight/v2/internal/core"
+	"github.com/mordor-forge/lamplight/v2/internal/xdg"
 	"github.com/mordor-forge/lamplight/v2/skills/lamplight"
 )
 
@@ -386,14 +387,12 @@ func (a *app) claudeProject() string {
 }
 
 func (a *app) homeDir() (string, error) {
-	if home := a.opts.Getenv("HOME"); filepath.IsAbs(home) {
-		return filepath.Clean(home), nil
-	}
-	home, err := os.UserHomeDir()
+	home, err := xdg.Home(a.opts.Getenv)
 	if err != nil {
-		return "", &core.Error{Code: core.CodeInternal, Message: "cannot find your home folder: set HOME", Err: err}
+		return "", &core.Error{Code: core.CodeInternal, Err: err,
+			Message: "cannot find your home folder (" + err.Error() + "): set HOME to its absolute path"}
 	}
-	return home, nil
+	return filepath.Clean(home), nil
 }
 
 // skillDir is where study setup installs the skill: the Agent Skills

@@ -14,6 +14,8 @@ import (
 
 	"charm.land/log/v2"
 	"github.com/charmbracelet/colorprofile"
+
+	"github.com/mordor-forge/lamplight/v2/internal/xdg"
 )
 
 const logFileName = "study.log"
@@ -129,17 +131,11 @@ func (l *logs) close() {
 // stateDir is Lamplight's state folder: $XDG_STATE_HOME/lamplight, or
 // ~/.local/state/lamplight. It holds the Log and the completion record.
 func stateDir(getenv func(string) string) (string, error) {
-	if dir := getenv("XDG_STATE_HOME"); filepath.IsAbs(dir) {
-		return filepath.Join(dir, "lamplight"), nil
+	base, err := xdg.StateHome.Dir(getenv)
+	if err != nil {
+		return "", err
 	}
-	home := getenv("HOME")
-	if home == "" {
-		var err error
-		if home, err = os.UserHomeDir(); err != nil {
-			return "", err
-		}
-	}
-	return filepath.Join(home, ".local", "state", "lamplight"), nil
+	return filepath.Join(base, "lamplight"), nil
 }
 
 // environ returns the variables that decide colours, read through getenv so

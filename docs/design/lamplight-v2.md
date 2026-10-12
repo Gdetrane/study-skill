@@ -75,7 +75,9 @@ the maintainer's answers to the questions they raised.
 ```
 
 - Global config: `$XDG_CONFIG_HOME/lamplight/config.toml`; environment variables such as
-  `STUDY_HOME` override it.
+  `STUDY_HOME` override it. An `XDG_*` folder counts only as an absolute path: a relative
+  one is ignored for its default under `HOME`, as the specification says, since it would be
+  wherever `study` is started, inside a Topic too. A relative `HOME` is not used at all.
 - **IDs** are short slugs that never change (`pii-in-cli-logs`, or `lesson-01` for imported
   v1 Lessons). Display numbers ("Lesson 2.3", "Card 4") come from position, so a Revision
   never renames files. Card IDs are `<lesson-id>.<random suffix>`, and Explore Cards use

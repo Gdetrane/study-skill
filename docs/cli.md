@@ -72,6 +72,18 @@ The Study home is `STUDY_HOME` if set, otherwise `study_home` in
 `$XDG_CONFIG_HOME/lamplight/config.toml`, otherwise `~/study`. It must be an absolute path
 or start with `~/`, so every folder finds the same Study home.
 
+`XDG_CONFIG_HOME` counts only as an absolute path, and so do the other folders named
+below, `XDG_DATA_HOME`, `XDG_STATE_HOME` and `XDG_CACHE_HOME`. A relative one is ignored, as
+the XDG Base Directory Specification says, and its default under the home folder is used
+(`~/.config`, `~/.local/share`, `~/.local/state`, `~/.cache`): the folder would otherwise be
+wherever `study` is started, inside a Topic too, and a file there would choose the Study
+home. `study doctor` warns about it and says how to fix it. A relative `HOME` is not used
+either, and has no default: a command that needs the home folder fails and says so. git is
+started without the ones that are relative, so it looks for your configuration where `study`
+does. The Knowledge base plugin registry is stricter: it is not read at all from a
+configuration folder that is not an absolute path (see
+[Knowledge base plugins](#knowledge-base-plugins)).
+
 Global flags: `--json` (below) and `--log-level` (see [The Log](#the-log)).
 
 Human output is styled when stdout is a terminal. Styles are dropped when it is not, and
@@ -1195,7 +1207,10 @@ Only a failure makes the setup unhealthy; then `ok` is `false`, the error code i
 }
 ```
 
-`study_home` is absent when it cannot be resolved. Finding names, in order: `config`,
+`study_home` is absent when it cannot be resolved. Finding names, in order: `environment`
+(a warning, only when `HOME`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME` or
+`XDG_CACHE_HOME` is set to a relative path, which `study` does not use; it names each one,
+and the fix is to set it to an absolute path or unset it), `config`,
 `study_home`, `git`, `git_identity` (only when git works), and, when the Study home
 resolves, `local_state`, `topics`, one `topic:<id>` per Topic with a problem, `staging` (a
 warning, only when an interrupted import or Topic creation left folders in `.lamplight/tmp`
