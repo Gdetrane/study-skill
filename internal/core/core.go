@@ -297,7 +297,28 @@ func (e *Error) Unwrap() error { return e.Err }
 // an ErrorCode method: the Knowledge base plugin registry's errors do, which
 // reach the command line without passing through the core. Their codes are
 // among the ones above.
+//
+// A command stopped through its context is CodeCanceled wherever it was
+// stopped. An operation returns the context's error as it is, or as the
+// cause of an error it could not classify, and the code is given here: the
+// one place the adapters, and the core's own wrappers, read a code. An
+// operation wraps itself only to say what the stop left behind.
+//
+// A deadline that passed is not a stop: nobody stopped the command. Only
+// what was waiting knows what its deadline means and says so itself (the
+// wait for a lock is CodeBusy, see waitEnded; a Check's time limit is the
+// outcome of its criterion), so one that nothing classified stays
+// CodeInternal.
 func CodeOf(err error) ErrorCode {
+	code := classified(err)
+	if code == CodeInternal && errors.Is(err, context.Canceled) {
+		return CodeCanceled
+	}
+	return code
+}
+
+// classified is the code err carries, or CodeInternal when it carries none.
+func classified(err error) ErrorCode {
 	var e *Error
 	if errors.As(err, &e) {
 		return e.Code
