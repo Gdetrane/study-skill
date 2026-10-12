@@ -245,10 +245,14 @@ func Conformance(t *testing.T, target Target) {
 			in   any
 		}
 		calls := map[string]call{
-			"status without a collection":          {plugincontract.ToolStatus, map[string]any{}},
-			"a collection that is a path":          {plugincontract.ToolStatus, map[string]any{"collection": "../" + collection}},
-			"a collection in capital letters":      {plugincontract.ToolStatus, map[string]any{"collection": "Linear-Algebra"}},
-			"a collection that is no text":         {plugincontract.ToolStatus, map[string]any{"collection": 7}},
+			"status without a collection":     {plugincontract.ToolStatus, map[string]any{}},
+			"a collection that is a path":     {plugincontract.ToolStatus, map[string]any{"collection": "../" + collection}},
+			"a collection in capital letters": {plugincontract.ToolStatus, map[string]any{"collection": "Linear-Algebra"}},
+			"a collection that is no text":    {plugincontract.ToolStatus, map[string]any{"collection": 7}},
+			// An argument has its own name. A plugin whose JSON library
+			// matches names in any letter case takes this for one it has.
+			"a collection under another spelling":  {plugincontract.ToolStatus, map[string]any{"Collection": collection}},
+			"a query under another spelling":       {plugincontract.ToolSearch, map[string]any{"collection": collection, "Query": "anything", "limit": 5}},
 			"index without a Source":               {plugincontract.ToolIndex, map[string]any{"collection": collection}},
 			"cancel without a Source":              {plugincontract.ToolCancel, map[string]any{"collection": collection}},
 			"cancel without a collection":          {plugincontract.ToolCancel, map[string]any{"source": "book.a1"}},
@@ -1497,7 +1501,10 @@ func (s *suite) links(t *testing.T) {
 		outside := t.TempDir()
 		for _, entry := range entries {
 			from, to := filepath.Join(s.dataFolder, entry.Name()), filepath.Join(outside, entry.Name())
-			if entry.Type()&fs.ModeSymlink != 0 {
+			// A link is left as it is, and so is a pipe or a socket, which
+			// is never opened: reading a pipe nobody writes to waits for
+			// ever.
+			if !entry.IsDir() && !entry.Type().IsRegular() {
 				continue
 			}
 			if err := os.CopyFS(to, os.DirFS(from)); entry.IsDir() && err != nil {

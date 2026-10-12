@@ -40,7 +40,6 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -540,7 +539,15 @@ func (s *Connection) handshake(parent, limited context.Context, limit time.Durat
 	}
 
 	data, err := s.callWithin(parent, limited, plugincontract.ToolContract, "say which contract it speaks", limit, struct{}{})
-	if err != nil {
+	var refused *Error
+	switch {
+	case errors.As(err, &refused) && (refused.Code == CodeInvalidArgument || refused.Code == CodeNotFound):
+		// The contract tool is asked nothing it could find wrong or
+		// missing. A plugin that refuses it so does not speak the contract:
+		// its code is not one for whoever asked study for the plugin.
+		return &Error{Code: CodeFailedPrecondition, Err: err, Message: refused.Message + ". The contract tool takes no " +
+			"arguments and always answers: docs/knowledge-base-contract.md describes the contract"}
+	case err != nil:
 		return err
 	}
 	contract, err := plugincontract.ParseContract(data)
@@ -550,7 +557,7 @@ func (s *Connection) handshake(parent, limited context.Context, limit time.Durat
 		return errorf(CodeNewerFormat, "Knowledge base plugin %s speaks version %s of Lamplight's contract, and this version of "+
 			"study knows version %d: upgrade study", s.name, clean(newer.Version, 40), plugincontract.Version)
 	case err != nil:
-		return s.notTheContract("what its contract tool gave back is not what the contract describes: " + err.Error())
+		return s.notTheContract("what its contract tool gave back is not what the contract describes: " + s.say(err.Error(), 300))
 	}
 	s.contract = contract
 	return nil
@@ -820,13 +827,12 @@ func (s *Connection) ask(ctx context.Context, tool string, limit time.Duration, 
 	if err != nil {
 		return err
 	}
+	// Decode holds the answer to its shape: read without that, a field the
+	// contract requires and the answer lacks is nothing, a cancel that
+	// stopped nothing and a score of 0. What is wrong may be said with a
+	// key as the plugin spelled it.
 	if err := plugincontract.Decode(data, out); err != nil {
-		return s.notTheContract("what its " + tool + " tool gave back is not what the contract describes: " + err.Error())
-	}
-	// Reading passes over what is missing, and a field the contract requires
-	// then reads as nothing: a cancel that stopped nothing, a score of 0.
-	if problems := plugincontract.Shape(data, reflect.TypeOf(out).Elem()); len(problems) > 0 {
-		return s.notTheContract("what its " + tool + " tool gave back is not what the contract describes: " + s.say(problems[0], 300))
+		return s.notTheContract("what its " + tool + " tool gave back is not what the contract describes: " + s.say(err.Error(), 300))
 	}
 	if check != nil {
 		if err := check(); err != nil {

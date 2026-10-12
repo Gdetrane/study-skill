@@ -141,6 +141,12 @@ func TestAPluginThatDoesNotSpeakIsRefused(t *testing.T) {
 			[]string{"what its contract tool gave back is not what the contract describes: it is not a JSON object"}},
 		{"refuses to say", quickOptions, []string{"--refuse", "contract=internal:the index is locked"}, pluginclient.CodeFailedPrecondition,
 			[]string{"Knowledge base plugin kb failed in its contract tool: the index is locked"}},
+		// The code is not one for whoever asked study for the plugin: the
+		// name they gave is registered, and nothing they wrote was wrong.
+		{"says the contract is not there", quickOptions, []string{"--refuse", "contract=not_found:no such tool"}, pluginclient.CodeFailedPrecondition,
+			[]string{"does not have what its contract tool was asked for: no such tool. The contract tool takes no arguments and always answers"}},
+		{"says the contract was asked wrongly", quickOptions, []string{"--refuse", "contract=invalid_argument:version missing"}, pluginclient.CodeFailedPrecondition,
+			[]string{"The contract tool takes no arguments and always answers"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -597,6 +603,11 @@ func TestAnAnswerThatBreaksTheContractIsRefused(t *testing.T) {
 		{"a key spelled its own way", `search={"Passages": []}`,
 			func(s *pluginclient.Connection) error { _, err := s.Search(ctx, "c", "q", 5, nil); return err },
 			`what its search tool gave back is not what the contract describes: "passages" is spelled "Passages"`},
+		// A name in another letter case would be read into the field, and
+		// over the contract's own when it comes after it.
+		{"a key both ways", `search={"passages": [], "Passages": [{"id": "a", "source": "s.1", "text": "x"}]}`,
+			func(s *pluginclient.Connection) error { _, err := s.Search(ctx, "c", "q", 5, nil); return err },
+			`what its search tool gave back is not what the contract describes: "passages" is spelled "Passages"`},
 		{"a status without its list", `status={}`,
 			func(s *pluginclient.Connection) error { _, err := s.Status(ctx, "c"); return err },
 			`what its status tool gave back is not what the contract describes: "sources" is missing`},
@@ -647,6 +658,11 @@ func TestAToolErrorCarriesStudysCode(t *testing.T) {
 		{"text and no JSON", "--plain-error=passage=Traceback (most recent call last):\n  File \"kb.py\"\nKeyError: 'a'",
 			pluginclient.CodeFailedPrecondition,
 			`Knowledge base plugin kb failed in its passage tool: Traceback (most recent call last): File "kb.py" KeyError: 'a'`},
+		// A refusal has a code and a message. One without its message is not
+		// the contract's, and its code is not taken at its word: not_found
+		// would tell the caller that the Passage is not there.
+		{"a refusal without its message", `--plain-error=passage={"error": {"code": "not_found"}}`, pluginclient.CodeFailedPrecondition,
+			`Knowledge base plugin kb failed in its passage tool: {"error": {"code": "not_found"}}`},
 		{"a terminal's escapes", "--refuse=passage=internal:\x1b[31mred\x1b[0m \u202edesrever", pluginclient.CodeFailedPrecondition,
 			`failed in its passage tool: \u001b[31mred\u001b[0m \u202edesrever`},
 	} {

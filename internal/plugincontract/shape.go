@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"reflect"
+	"slices"
 	"strings"
 )
 
@@ -45,15 +47,20 @@ func shape(path string, raw json.RawMessage, typ reflect.Type) []string {
 		}
 		var problems []string
 		for _, f := range fields(typ) {
+			// A name in another letter case is read into the field as if
+			// it were the contract's, and over the contract's own when it
+			// comes later: so it is wrong whether or not the name itself
+			// is there too.
+			spelled := false
+			for _, key := range slices.Sorted(maps.Keys(object)) {
+				if key != f.name && strings.EqualFold(key, f.name) {
+					problems = append(problems, at(fmt.Sprintf("%q is spelled %q", f.name, key)))
+					spelled = true
+				}
+			}
 			value, ok := object[f.name]
 			if !ok {
-				for key := range object {
-					if strings.EqualFold(key, f.name) {
-						problems = append(problems, at(fmt.Sprintf("%q is spelled %q", f.name, key)))
-						ok = true
-					}
-				}
-				if !ok && !f.optional {
+				if !spelled && !f.optional {
 					problems = append(problems, at(fmt.Sprintf("%q is missing", f.name)))
 				}
 				continue

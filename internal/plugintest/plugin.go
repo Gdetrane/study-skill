@@ -66,6 +66,9 @@ const (
 	// BreakStrict refuses arguments that hold a field the contract does not
 	// name.
 	BreakStrict = "strict"
+	// BreakAnyCase takes an argument under its name in any letter case, as
+	// a JSON library that matches names loosely does.
+	BreakAnyCase = "any-case"
 )
 
 // Config says how a test plugin behaves.
@@ -267,10 +270,15 @@ func refuse(code, format string, args ...any) *plugincontract.ErrorBody {
 	return &plugincontract.ErrorBody{Code: code, Message: fmt.Sprintf(format, args...)}
 }
 
-// read reads a tool's input and checks it against the contract. A field
-// the contract does not name is passed over.
+// read reads a tool's input and checks it against the contract: every
+// argument it requires is there, under exactly its name. A field the
+// contract does not name is passed over.
 func (p *Plugin) read(args json.RawMessage, in interface{ Validate() error }) *plugincontract.ErrorBody {
-	if err := plugincontract.Decode(args, in); err != nil {
+	err := plugincontract.Decode(args, in)
+	if p.breaks(BreakAnyCase) {
+		err = json.Unmarshal(args, in)
+	}
+	if err != nil {
 		return refuse(plugincontract.CodeInvalidArgument, "%v", err)
 	}
 	if p.breaks(BreakStrict) {

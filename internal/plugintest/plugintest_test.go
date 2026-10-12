@@ -158,6 +158,8 @@ var broken = map[string]struct {
 		want: "with a score: a score belongs to one search"},
 	"it refuses a field it does not know": {cfg: plugintest.Config{Breaks: []string{plugintest.BreakStrict}},
 		want: "a plugin passes over what it does not know"},
+	"it takes an argument under any spelling": {cfg: plugintest.Config{Breaks: []string{plugintest.BreakAnyCase}},
+		want: "a collection under another spelling (status of {\"Collection\":"},
 	"it stays when its input closes": {args: []string{"--linger"},
 		want: "the plugin did not exit within 2 seconds of its standard input closing"},
 	"it writes where it is started": {args: []string{"--litter"}, want: "a plugin writes in its own folder"},

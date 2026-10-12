@@ -114,10 +114,28 @@ func (e *NewerVersionError) Error() string {
 	return fmt.Sprintf("the plugin speaks version %s of the contract, and this is version %d", e.Version, Version)
 }
 
-// Decode reads the JSON object of a tool's input or result into v. Fields
-// the contract does not define are passed over, so a plugin may say more
-// than study asks.
+// Decode reads the JSON object of a tool's input or result into v, a
+// pointer to one of the contract's types, and holds it to that type's shape
+// (Shape): every field the contract requires is there, under exactly its
+// name. Fields the contract does not define are passed over, so a plugin
+// may say more than study asks.
+//
+// The error may repeat a key as the JSON spelled it, which is the text of
+// whoever wrote the JSON: clean it before it is shown.
 func Decode(data []byte, v any) error {
+	if err := decode(data, v); err != nil {
+		return err
+	}
+	if problems := Shape(data, reflect.TypeOf(v).Elem()); len(problems) > 0 {
+		return errors.New(problems[0])
+	}
+	return nil
+}
+
+// decode reads a JSON object into v as encoding/json does: a field that is
+// missing is left as it was, and a name in another letter case is taken for
+// the field's.
+func decode(data []byte, v any) error {
 	if trimmed := bytes.TrimSpace(data); len(trimmed) == 0 || trimmed[0] != '{' {
 		return errors.New("it is not a JSON object")
 	}
@@ -151,7 +169,7 @@ func ParseContract(data []byte) (Contract, error) {
 	var head struct {
 		Version json.RawMessage `json:"version"`
 	}
-	if err := Decode(data, &head); err != nil {
+	if err := decode(data, &head); err != nil {
 		return Contract{}, err
 	}
 	// The version is read as the number it is, however large and however
@@ -176,7 +194,7 @@ func ParseContract(data []byte) (Contract, error) {
 		Contract
 		Version json.RawMessage `json:"version"`
 	}
-	if err := Decode(data, &rest); err != nil {
+	if err := decode(data, &rest); err != nil {
 		return Contract{}, err
 	}
 	// Each field is there under its own name, the three lists as lists: an
