@@ -125,11 +125,12 @@ needed more than these rules say too:
   run what the agent wrote there. The first client took out of the environment whatever
   named something inside the Study home, and the review showed that this does not hold: a
   variable has many ways to have a program load something, and a list of what to take out
-  is never finished. So a plugin gets `PATH`, `HOME`, `USER`, `LOGNAME`, `LANG`, `LC_*`, `TZ`, `TMPDIR`, the XDG base
-  folders and `LAMPLIGHT_PLUGIN_DATA`, each only when it leads nowhere inside the Study
-  home, and nothing else. A path the check cannot decide counts as inside. A plugin that
-  needs more, a key or a proxy, takes it in its arguments, or the learner registers a
-  script of their own, outside the Study home, that sets it.
+  is never finished. So a plugin gets `PATH`, `HOME`, `USER`, `LOGNAME`, `LANG`, `LC_*`,
+  `TZ`, `TMPDIR`, the XDG base folders and `LAMPLIGHT_PLUGIN_DATA`, each only when it leads
+  nowhere inside the Study home, and nothing else. A path the check cannot decide counts as
+  inside. A plugin that needs more, a key or a proxy, takes it in its arguments, such as
+  the path of a file that holds the key, or the learner registers a script of their own,
+  outside the Study home, that sets it.
 - **The plugin's folder is in the learner's state folder, outside the Study home**:
   `$XDG_STATE_HOME/lamplight/knowledge-base-plugins/<name>`. The first client put it under
   the Study home's `.lamplight`, where the agent writes, and refused to start a plugin
@@ -137,8 +138,9 @@ needed more than these rules say too:
   a look at one moment, and the plugin opens the name for as long as it runs, so the folder
   can be exchanged for a link afterwards and the plugin writes where the link leads. And an
   agent that can write the index can write what a search finds, so a quote checked against
-  a Passage would be as good as the agent's word. A state folder that is the Study home, is inside it or is reached through it is
-  refused by the registry's rule, and the folder is the learner's alone to read. The cost:
+  a Passage would be as good as the agent's word. A state folder that is the Study home,
+  is inside it or is reached through it is refused by the registry's rule, and the folder
+  is the learner's alone to read. The cost:
   `study source index` run inside a sandbox starts the plugin inside it, so the sandbox
   must allow that folder, or the learner indexes from their own shell. The contract still
   has a plugin open its folder once and follow no link out of it, and the conformance suite
