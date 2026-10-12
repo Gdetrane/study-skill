@@ -46,7 +46,8 @@
         "size_bytes": 61,
         "state": "missing",
         "index": {
-          "state": "not_indexed"
+          "state": "not_indexed",
+          "reason": "its file is not on this computer"
         }
       },
       {

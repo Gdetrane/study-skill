@@ -1104,14 +1104,21 @@ Event, it is in no file of the Topic, and it is asked each time.
 | `indexed` | The plugin holds the Source's content, and a search finds it. For a file, the hash of what the plugin holds is the Source's. |
 | `indexing` | The plugin is indexing it now; `progress` is how much is done, from 0 to 1, when the plugin can tell. A service says so to whoever asks while it works. A plugin that is a command indexes only while the `study source index` that started it runs. Another `study` starts a copy of its own meanwhile, which says `indexing` when it can tell that the work is going on, and otherwise shows the Source as it was before. |
 | `failed` | The plugin's last indexing of it failed; `reason` is why, in the plugin's words. It stays so, on every run of `study`, until the plugin is asked to index the Source again. |
-| `not_indexed` | The plugin does not hold the Source's content. `reason` is there when the plugin does not index Sources of this kind, and when it holds other content for the Source than the Topic records, because the file was another when the plugin read it. |
+| `not_indexed` | The plugin does not hold the Source's content. `reason` is there when the plugin does not index Sources of this kind, when it holds other content for the Source than the Topic records, because the file was another when the plugin read it, and when the Source's file is not on this computer or is no longer the one added, so that there is nothing to hand the plugin. |
 | `unknown` | The plugin could not say: `indexing.problem` says why. |
 
 - **`indexing.action` is the one command to run next.** It is
-  `study source index <topic>` when a Source is `not_indexed` and the plugin indexes
-  Sources of its kind; the command that puts a `problem` right; and absent when there is
-  nothing to do. Human output names it under the Sources, and `status` under
-  "Knowledge base plugins", with the Sources that are not indexed, by title.
+  `study source index <topic>` when a Source is `not_indexed` and the command would hand
+  it to the plugin: the plugin indexes Sources of its kind, and a file is on this computer
+  and is the one that was added. It is the command that puts a `problem` right. It is
+  absent when there is nothing to do. Human output names it under the Sources, and
+  `status` under "Knowledge base plugins", with the Sources that are not indexed, by title.
+- **A file that is missing, or is another now, is not one to index.**
+  `study source index` skips it, so it is not the action for it: the Source is
+  `not_indexed` with the `reason`, and in `status` the action is then
+  `study source list <topic>`, which says what to do about each such file. In
+  `study source list` itself there is no action for it beyond what the Source's own lines
+  say.
 - **A Source that `failed` is shown, and is no next action.** The plugin tried, and said
   why: trying again helps only once what the `reason` names is put right, and a scan
   without text would otherwise be the one thing to do for ever. `status` names it with its

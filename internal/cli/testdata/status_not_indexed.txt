@@ -6,5 +6,5 @@ Topics:
   linear-algebra  Linear algebra  Knowledge base: plugin kb
 
 Knowledge base plugins:
-  linear-algebra: not indexed: Strang, Scan, Lost and others
+  linear-algebra: not indexed: Strang, Scan, Lost (its file is not on this computer) and others
     Run: study source index linear-algebra

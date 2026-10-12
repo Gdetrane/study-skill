@@ -40,7 +40,8 @@
             {
               "id": "lost.<id>",
               "title": "Lost",
-              "state": "not_indexed"
+              "state": "not_indexed",
+              "reason": "its file is not on this computer"
             },
             {
               "id": "go-blog.<id>",

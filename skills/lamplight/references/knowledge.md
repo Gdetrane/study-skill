@@ -43,7 +43,9 @@ indexes, and adding a Source indexes nothing.
   indexed again: run `study source index <topic> <source>` for it only once what the reason
   names has been put right.
 - A Source the command skipped has a file that is missing or has changed since it was
-  added: the output says which, and what to do.
+  added: the output says which, and what to do. `status` and `sources` show such a Source
+  as `not_indexed` with that `reason`, and do not give the command as the `action` for it:
+  ask the learner where the file is, and record it with `source_update`.
 
 ## Evidence
 

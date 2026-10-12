@@ -409,7 +409,12 @@ func writeSourceList(w io.Writer, l core.SourceList) error {
 		if s.Indexed == nil {
 			continue
 		}
-		switch text, attention := describeIndex(*s.Indexed); {
+		index := *s.Indexed
+		if s.State == core.SourceMissing || s.State == core.SourceChanged {
+			// The line above says so already.
+			index.Reason = ""
+		}
+		switch text, attention := describeIndex(index); {
 		case text == "":
 		case attention:
 			fmt.Fprintf(&b, "  %s %s\n", styleWarn.Render("!"), text)

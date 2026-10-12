@@ -99,7 +99,25 @@ func (c *Core) where(ctx context.Context, indexing bool) (Status, error) {
 	asks := map[string]*indexAsk{}
 	var named func(t Topic, sources []Source)
 	if indexing {
-		named = func(t Topic, sources []Source) { asks[t.ID] = newIndexAsk(t.ID, t.KnowledgeBase, sources) }
+		named = func(t Topic, sources []Source) {
+			ask := newIndexAsk(t.ID, t.KnowledgeBase, sources)
+			// A Source the plugin has not indexed is looked for on this
+			// computer, as a listing of the Sources looks for it, within the
+			// time the plugin had. Where it is found is not written down:
+			// status changes nothing.
+			var l *locator
+			ask.fileState = func(ctx context.Context, src Source) string {
+				if l == nil {
+					l = c.newLocator(ctx, home, t.ID)
+				}
+				_, state, err := l.locate(src)
+				if err != nil {
+					return ""
+				}
+				return state
+			}
+			asks[t.ID] = ask
+		}
 	}
 	if status.Topics, status.Problems, err = c.listTopics(ctx, home, named); err != nil {
 		return status, err
@@ -115,6 +133,13 @@ func (c *Core) where(ctx context.Context, indexing bool) (Status, error) {
 	}
 	if err := c.askPlugins(ctx, asked); err != nil {
 		return status, err
+	}
+	for _, ask := range asked {
+		// Nothing to index, and a file that is missing or is another now:
+		// the listing of the Sources says what to do about each.
+		if x := ask.indexing; ask.held && x.Problem == "" && x.Action == "" {
+			x.Action = "study source list " + ask.topic
+		}
 	}
 	state, err := c.readState(home)
 	if err != nil {

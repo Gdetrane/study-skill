@@ -16,6 +16,3 @@ lost.<id>  Lost
 go-blog.<id>  Go blog
   http://127.0.0.1:PORT/blog
   indexed
-
-To have Knowledge base plugin kb index what is not indexed, run:
-  study source index linear-algebra

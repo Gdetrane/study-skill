@@ -9,5 +9,5 @@ Topics:
 Knowledge base plugins:
   c: no Knowledge base plugin named shelf is registered on this computer
     Run: study knowledge-base add shelf -- <command>
-  linear-algebra: not indexed: Lost; indexing failed: Scan (there is no text in it)
-    Run: study source index linear-algebra
+  linear-algebra: not indexed: Lost (its file is not on this computer); indexing failed: Scan (there is no text in it)
+    Run: study source list linear-algebra

@@ -618,6 +618,12 @@ func (c *Core) ListSources(ctx context.Context, topicID string) (SourceList, err
 			recorded = append(recorded, st.Source)
 		}
 		ask := newIndexAsk(topicID, kb, recorded)
+		// Each file was found above, or was not.
+		states := map[string]string{}
+		for _, st := range list.Sources {
+			states[st.ID] = st.State
+		}
+		ask.fileState = func(_ context.Context, src Source) string { return states[src.ID] }
 		if err := c.askPlugins(ctx, []*indexAsk{ask}); err != nil {
 			return SourceList{}, err
 		}

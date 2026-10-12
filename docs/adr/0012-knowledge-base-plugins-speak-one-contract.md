@@ -281,7 +281,9 @@ changed one of the ones above:
   indexed again, and the conformance suite asks over a new connection. And a failed Source
   is shown with its reason without being the next action: `study source index` is offered
   for Sources the plugin has not tried, and has the failed ones tried again when someone
-  runs it.
+  runs it. For the same reason it is not offered for a file that is missing or has changed,
+  which the command skips: `status` then points at `study source list`, which says what to
+  do about the file.
 - **A folder that cannot be written in is found before the plugin starts.** A sandbox
   refuses what a folder's mode allows, and a plugin would only say, each in its own words,
   that its index cannot be written. `study` makes and removes an empty file in the

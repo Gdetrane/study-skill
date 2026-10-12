@@ -141,16 +141,25 @@ func TestAFileThatChangesWhileItIsIndexed(t *testing.T) {
 	if handed != src.Hash {
 		t.Errorf("the plugin was told the hash %s, and the Source's is %s", handed, src.Hash)
 	}
-	// Whoever asks sees the Source as not indexed, with why, and the file as
-	// changed. The command does not hand over the file as it is now.
+	// Whoever asks sees the file as changed, and the Source as not indexed
+	// because of it. The command does not hand over the file as it is now,
+	// so it is not the next action, in a listing or in status: status names
+	// the listing, which says what to do about the file.
 	list, err := k.ListSources(ctx, "c")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got := list.Sources[0]; got.State != SourceChanged || got.Indexed.State != IndexNotIndexed ||
-		!strings.Contains(got.Indexed.Reason, "Knowledge base plugin kb holds other content for it than the Source's") ||
-		list.Indexing.Action != "study source index c" {
+		got.Indexed.Reason != "the file here is no longer the one added" || list.Indexing.Action != "" {
 		t.Errorf("ListSources = %+v, index %+v, %+v", got.State, got.Indexed, list.Indexing)
+	}
+	status, err := k.Status(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if x := status.Topics[0].Indexing; x == nil || len(x.Sources) != 1 || x.Sources[0].State != IndexNotIndexed ||
+		x.Sources[0].Reason != "the file here is no longer the one added" || x.Action != "study source list c" {
+		t.Errorf("status says of the Topic's indexing %+v; want the Source not indexed for its file, and the listing as the action", x)
 	}
 	again, err := k.IndexSources(ctx, IndexSpec{Topic: "c"})
 	if err != nil || again.Sources[0].Asked || !strings.Contains(again.Sources[0].Skipped, "has other content now than was added") {

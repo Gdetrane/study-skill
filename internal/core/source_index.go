@@ -109,10 +109,13 @@ type Indexing struct {
 	// is unknown.
 	Problem string `json:"problem,omitempty"`
 	// Action is the one command to run next: what puts Problem right, or
-	// study source index when a Source is not indexed. It is empty when
-	// there is nothing to do, and when all that is not indexed has failed:
-	// a failure is shown with its reason, and tried again by whoever runs
-	// study source index for it.
+	// study source index when a Source is not indexed and can be. It is
+	// empty when there is nothing to do, and when all that is not indexed
+	// has failed: a failure is shown with its reason, and tried again by
+	// whoever runs study source index for it. For a Source whose file is
+	// not on this computer, or is another now, indexing is no action
+	// either: status then names study source list, which says what to do
+	// about each such file.
 	Action string `json:"action,omitempty"`
 	// Sources are the Topic's Sources, in the order they were added, each
 	// with its state. A listing of a Topic's Sources gives each state with
@@ -229,6 +232,14 @@ type indexAsk struct {
 	topic   string
 	kb      *KnowledgeBase
 	sources []Source
+	// fileState, when it is not nil, says of a file Source whether its file
+	// is on this computer and is the one that was added: SourceOK,
+	// SourceMissing or SourceChanged, or nothing when it could not tell in
+	// time. It is asked only about a Source the plugin has not indexed.
+	fileState func(ctx context.Context, src Source) string
+	// held says that a Source is not indexed and cannot be handed to the
+	// plugin as things are: its file is missing, or is another now.
+	held bool
 	// indexing is the answer: every Source's state is unknown until the
 	// plugin said otherwise.
 	indexing *Indexing
@@ -249,8 +260,19 @@ func (a *indexAsk) unanswered(problem, action string) {
 	a.indexing.Problem, a.indexing.Action = shorten(problem, 2*maxIndexTextBytes), action
 }
 
+// Why a file Source that is not indexed is not one to index as things are.
+const (
+	reasonFileMissing = "its file is not on this computer"
+	reasonFileChanged = "the file here is no longer the one added"
+)
+
 // answered records what the plugin said of the Topic's Sources.
-func (a *indexAsk) answered(plugin string, contract plugincontract.Contract, said []plugincontract.SourceStatus) {
+//
+// study source index is the next action only for a Source it would hand to
+// the plugin. A file that is missing, or has other content now, is skipped
+// by it (fileToHandOver), so such a Source says why it is not indexed
+// instead, and what puts that right is the file's to say.
+func (a *indexAsk) answered(ctx context.Context, plugin string, contract plugincontract.Contract, said []plugincontract.SourceStatus) {
 	byID := map[string]*plugincontract.SourceStatus{}
 	for i := range said {
 		byID[said[i].ID] = &said[i]
@@ -258,6 +280,14 @@ func (a *indexAsk) answered(plugin string, contract plugincontract.Contract, sai
 	toIndex := false
 	for i, src := range a.sources {
 		index, wanted := indexOf(src, byID[src.ID], contract, plugin)
+		if wanted && src.Kind == SourceFile && a.fileState != nil {
+			switch a.fileState(ctx, src) {
+			case SourceMissing:
+				index.Reason, wanted, a.held = reasonFileMissing, false, true
+			case SourceChanged:
+				index.Reason, wanted, a.held = reasonFileChanged, false, true
+			}
+		}
 		index.Reason = shorten(index.Reason, maxIndexTextBytes)
 		a.indexing.Sources[i].SourceIndex = index
 		toIndex = toIndex || wanted
@@ -391,12 +421,13 @@ func (c *Core) askPlugin(ctx context.Context, plugin Plugin, began, deadline tim
 		// of that to answer.
 		asking, cancel := context.WithDeadline(ctx, deadline)
 		said, err := conn.Status(asking, collectionName(home, a.topic))
-		cancel()
 		if err != nil {
+			cancel()
 			failed(i, err)
 			return
 		}
-		a.answered(plugin.Name, conn.Contract(), said)
+		a.answered(asking, plugin.Name, conn.Contract(), said)
+		cancel()
 	}
 }
 
