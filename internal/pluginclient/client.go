@@ -282,6 +282,12 @@ type answersOnly struct {
 // not nil, is told the request's method. Notifications pass. The
 // conformance suite holds a plugin to the same rule with it.
 func AnswersOnly(transport mcp.Transport, asked func(method string)) mcp.Transport {
+	// A transport that already ends at the first request, as ServiceTransport
+	// gives one, is told whom to tell. A second one around it would see that
+	// the first hung up, and never the request.
+	if inner, ok := transport.(*answersOnly); ok {
+		return &answersOnly{inner: inner.inner, asked: asked, speaks: inner.speaks}
+	}
 	return &answersOnly{inner: transport, asked: asked}
 }
 

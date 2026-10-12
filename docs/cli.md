@@ -1230,7 +1230,11 @@ is a command.
 - **A script** is run by the program its first line names, so that interpreter is checked
   as the program is, and its own interpreter if it is a script too: one that is inside
   the Study home, or reached through it, or that is not there, or that is named by a
-  relative path, is `failed_precondition`.
+  relative path, is `failed_precondition`. A first line such as `#!/usr/bin/env python3`,
+  or `#!/usr/bin/env -S python3 -u`, has `env` find the interpreter in the plugin's `PATH`:
+  `study` finds it the same way and checks the first one found. An option or a setting
+  given to `env` there is `failed_precondition` too, since `study` cannot tell what it
+  would start.
 - **Its environment is a small one `study` makes**, not the one `study` has. A plugin gets
   `PATH`, `HOME`, `USER`, `LOGNAME`, `LANG`, the `LC_*` variables, `TZ`, `TMPDIR`, the XDG
   base folders (`XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME`, `XDG_CACHE_HOME`,

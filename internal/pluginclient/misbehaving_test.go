@@ -222,6 +222,121 @@ func TestAProgramThatCannotBeRun(t *testing.T) {
 	}
 }
 
+// A script whose first line is #!/usr/bin/env NAME is run by whatever env
+// finds under the name in the PATH the plugin is given. A folder of that
+// PATH is outside the Study home, and what a name in it leads to need not
+// be: so the program env would start is found as env finds it, and held to
+// what an interpreter is held to.
+func TestAScriptStartedThroughEnv(t *testing.T) {
+	const env = "/usr/bin/env"
+	if _, err := os.Stat(env); err != nil {
+		t.Skipf("there is no %s here", env)
+	}
+	c := plugintest.NewComputer(t)
+	bin := filepath.Join(c.Home, "bin")
+	tools, linked, empty := filepath.Join(c.Home, "tools"), filepath.Join(c.Home, "linked"), filepath.Join(c.Home, "empty")
+	inTopic := filepath.Join(c.StudyHome, "linear-algebra", ".venv", "bin", "kb-python")
+	for _, dir := range []string{bin, tools, linked, empty, filepath.Dir(inTopic)} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The interpreter is the test plugin itself, under a name of its own in
+	// a folder of PATH, as a package manager leaves a link.
+	words := plugintest.Command()
+	if err := os.Symlink(words[0], filepath.Join(tools, "kb-python")); err != nil {
+		t.Fatal(err)
+	}
+	// What the agent wrote in a Topic's virtual environment, and a link to
+	// it under the same name in another folder of PATH, outside the Study
+	// home.
+	if err := os.WriteFile(inTopic, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(inTopic, filepath.Join(linked, "kb-python")); err != nil {
+		t.Fatal(err)
+	}
+	// And one that nobody may run, which env passes over.
+	if err := os.WriteFile(filepath.Join(empty, "kb-python"), []byte("no program\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	script := func(name, firstLine string) string {
+		path := filepath.Join(bin, name)
+		if err := os.WriteFile(path, []byte(firstLine+"\nnothing reads the rest\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	path := func(folders ...string) string { return "PATH=" + strings.Join(folders, string(os.PathListSeparator)) }
+	const notRun = "is a script, and the interpreter its first line names is not one study runs. "
+
+	t.Run("it starts what env finds", func(t *testing.T) {
+		record := filepath.Join(t.TempDir(), "record.json")
+		plugin := c.Register(t, "kb", script("found", "#!"+env+" -S kb-python "+words[1]), "--record", record, "--name", "through-env")
+		// The folder without it and the one where it may not be run are
+		// passed over, as env passes over them.
+		s, err := pluginclient.Start(context.Background(), c.Env(""), plugin, quick(c, path(bin, empty, tools, linked)))
+		if err != nil {
+			t.Fatalf("Start: %v", err)
+		}
+		defer s.Close()
+		if s.Server().Name != "through-env" {
+			t.Errorf("Server = %+v", s.Server())
+		}
+		if got := plugintest.ReadRecord(t, record); filepath.Base(got.Args[0]) != "kb-python" {
+			t.Errorf("the interpreter was started as %q, want it under the name env found", got.Args[0])
+		}
+	})
+
+	for name, tc := range map[string]struct {
+		firstLine string
+		environ   string
+		want      []string
+	}{
+		// The first match is the one env starts: a good one later in PATH
+		// does not make up for it.
+		"the first one PATH has leads into the Study home": {"#!" + env + " kb-python", path(empty, linked, tools),
+			[]string{notRun + "it has env look for kb-python in the folders of PATH, and the first one found is one your agent can change: " +
+				filepath.Join(linked, "kb-python") + " is inside the Study home"}},
+		"and with arguments for it": {"#!" + env + " -S kb-python -u", path(linked, tools),
+			[]string{filepath.Join(linked, "kb-python") + " is inside the Study home"}},
+		"no folder of PATH has it": {"#!" + env + " kb-python", path(bin, empty),
+			[]string{notRun + "it has env look for kb-python in the folders of the PATH study gives a plugin (" + bin + ":" + empty +
+				"), and none of them has a program of that name", "name the interpreter by its full path"}},
+		// A PATH wholly inside the Study home is not given to a plugin.
+		"the plugin is given no PATH": {"#!" + env + " kb-python", path(filepath.Dir(inTopic)),
+			[]string{notRun + "it has env look for kb-python in the folders of PATH, and study gives this plugin no PATH"}},
+		"env is given a path into the Study home": {"#!" + env + " " + inTopic,
+			path(tools), []string{notRun + inTopic + " is inside the Study home"}},
+		"env is given a relative path": {"#!" + env + " ./kb-python", path(tools),
+			[]string{notRun + "./kb-python is no absolute path"}},
+		// What else env is given decides what is started in ways study does
+		// not follow.
+		"env is given an option": {"#!" + env + " -i kb-python", path(tools),
+			[]string{notRun + "it has env start -i, and study cannot tell which program that is", "#!/usr/bin/env python3"}},
+		"env is given a setting": {"#!" + env + " -S PATH=" + filepath.Dir(inTopic) + " kb-python", path(tools),
+			[]string{"study cannot tell which program that is"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			plugin := pluginregistry.Plugin{Name: "refused", Command: []string{script("refused", tc.firstLine)}}
+			_, err := pluginclient.Start(context.Background(), c.Env(""), plugin, quick(c, tc.environ))
+			if codeOf(err) != pluginclient.CodeFailedPrecondition {
+				t.Fatalf("Start = %v; want failed_precondition", err)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the message lacks %q:\n%s", want, err)
+				}
+			}
+			safe(t, err.Error())
+			// A plugin that is refused leaves nothing behind.
+			if _, err := os.Stat(c.DataFolder("refused")); err == nil {
+				t.Errorf("a plugin that was refused was given a folder, %s", c.DataFolder("refused"))
+			}
+		})
+	}
+}
+
 // A plugin that is a script is started through its interpreter, as the
 // system starts any script. On Linux the script is run by its name in the
 // folder study opened, so the interpreter is handed that name through the

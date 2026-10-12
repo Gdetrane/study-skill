@@ -679,14 +679,15 @@ hours before any learning happens is exactly what v1 produced.
     more takes it in its arguments, or the learner registers a script of their own, outside
     the Study home, that sets it.
   - A script's interpreter is checked as the program is, since it is what the system runs,
-    and one named by a relative path is refused. On Linux the program is run by its own
-    name in the folder that holds it, opened when it was checked, and the working folder is
-    entered by its descriptor (`/proc/self/fd`), so no folder on the way to either is
-    resolved by name after the check; a script still finds what is beside it. On macOS,
-    which cannot do that, they are named after a last look that the names still lead to
-    what was checked. Closing the Connection stops the command, with its process group: its
-    pipes are closed, then `SIGTERM`, then `SIGKILL`. A Connection has ended as soon as its
-    program has exited.
+    and one named by a relative path is refused. What `env` on a first line would start is
+    found in the plugin's `PATH`, as `env` finds it, and checked in its place. On Linux the
+    program is run by its own name in the folder that holds it, opened when it was checked,
+    and the working folder is entered by its descriptor (`/proc/self/fd`), so no folder on
+    the way to either is resolved by name after the check; a script still finds what is
+    beside it. On macOS, which cannot do that, they are named after a last look that the
+    names still lead to what was checked. Closing the Connection stops the command, with
+    its process group: its pipes are closed, then `SIGTERM`, then `SIGKILL`. A Connection
+    has ended as soon as its program has exited.
   - A plugin is not trusted with `study`'s time, memory or terminal. Starting, each call
     and stopping have deadlines, and what `study` does before the program runs is under the
     first; a message is read up to 16 MiB; a plugin that sends `study` a request is stopped

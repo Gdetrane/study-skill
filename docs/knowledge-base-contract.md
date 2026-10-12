@@ -118,6 +118,15 @@ Study home. So `study` starts a plugin with nothing the agent could have prepare
   home, or reached through it, is not started. **An interpreter named by a relative path is
   refused**: the system would look for it from the working folder. Write
   `#!/usr/bin/env python3`, or the interpreter's full path.
+
+  **`env` is followed to what it starts.** With `#!/usr/bin/env python3`, or
+  `#!/usr/bin/env -S python3 -u` to give the interpreter arguments, `env` finds `python3`
+  in the folders of the `PATH` above. `study` looks it up the same way and checks the
+  first one found: when that one is inside the Study home or reached through it, as a
+  link in `~/.local/bin` to a Topic's virtual environment is, the plugin is not started,
+  whatever comes later in `PATH`. A plugin with no `PATH`, or with none that has the name,
+  is not started either. Anything else given to `env` on that line, an option or a
+  `NAME=value` setting, is refused: `study` cannot tell what it would start.
 - **Stopping.** `study` stops the plugin when it is done with it: it closes the plugin's
   standard input and output. **Exit when your standard input closes**, whatever you are
   doing. A plugin still running 2 seconds later gets `SIGTERM`, sent to its process group,

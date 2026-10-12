@@ -117,7 +117,10 @@ needed more than these rules say too:
 - What the system starts for a script is the interpreter its first line names, so that
   program is checked as the plugin's own is, and its own interpreter after it. An
   interpreter named by a relative path is refused: the system would look for it from the
-  folder the plugin is started in.
+  folder the plugin is started in. And `#!/usr/bin/env python3` names `env`, which is no
+  interpreter: it starts whatever the plugin's `PATH` has under the name first. A folder of
+  that `PATH` is outside the Study home, and a link in it need not lead outside. So `study`
+  finds what `env` would start, as `env` finds it, and checks that.
 - **A plugin gets a small environment that `study` makes, not the caller's with things
   taken out.** The environment `study` has can point into the Study home: an agent started
   in a Topic with its virtual environment switched on hands the MCP server a `PATH` and a

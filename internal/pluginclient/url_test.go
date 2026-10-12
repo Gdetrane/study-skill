@@ -16,6 +16,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+
 	"github.com/mordor-forge/lamplight/v2/internal/pluginclient"
 	"github.com/mordor-forge/lamplight/v2/internal/plugincontract"
 	"github.com/mordor-forge/lamplight/v2/internal/plugintest"
@@ -370,6 +372,58 @@ func TestAServiceThatRepeatsItsAddressInAnAnswer(t *testing.T) {
 		if strings.Contains(text, "s3cr3t") || strings.Contains(text, "t0ken") {
 			t.Errorf("what the service wrote is shown with the address's key: %s", text)
 		}
+	}
+}
+
+// Whoever reaches a service as study does, and asks to be told of a request
+// it sends, is told: the conformance suite says so to the plugin's author.
+// The transport to a service already ends at the first request, and a
+// second one around it would see only that the first hung up.
+func TestWhoeverReachesAServiceIsToldWhatItAsked(t *testing.T) {
+	plugin := plugintest.New(plugintest.Config{Folder: t.TempDir()})
+	defer plugin.Close()
+	var asking atomic.Bool
+	handler := plugin.Handler()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !asking.Load() || r.Method != http.MethodPost {
+			handler.ServeHTTP(w, r)
+			return
+		}
+		// The call is answered with a request, as a keep-alive would come.
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = fmt.Fprint(w, "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":\"service-1\",\"method\":\"ping\"}\n\n")
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+	asked := make(chan string, 1)
+	transport := pluginclient.AnswersOnly(pluginclient.ServiceTransport(server.URL+"/mcp"), func(method string) {
+		select {
+		case asked <- method:
+		default:
+		}
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "1"},
+		&mcp.ClientOptions{Capabilities: &mcp.ClientCapabilities{}, MultiRoundTrip: &mcp.MultiRoundTripOptions{Disabled: true}})
+	cs, err := client.Connect(ctx, transport, &mcp.ClientSessionOptions{ProtocolVersion: pluginclient.MCPVersion})
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	defer cs.Close()
+	asking.Store(true)
+	if _, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: plugincontract.ToolStatus, Arguments: map[string]any{"collection": "c"}}); err == nil {
+		t.Error("a call was answered over a session the service's request had ended")
+	}
+	select {
+	case method := <-asked:
+		if method != "ping" {
+			t.Errorf("told of a request %q, want ping", method)
+		}
+	case <-time.After(10 * time.Second):
+		t.Error("nobody was told that the service sent a request")
 	}
 }
 
