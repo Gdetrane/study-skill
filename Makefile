@@ -14,8 +14,9 @@ coverage: ## Run tests with a coverage profile
 	go test -race -coverprofile=coverage.out -covermode=atomic ./...
 	go tool cover -func=coverage.out | tail -1
 
-build: ## Build the study binary
+build: ## Build the study and study-shelf binaries
 	go build -o study ./cmd/study/
+	go build -o study-shelf ./cmd/study-shelf/
 
 GORELEASER ?= goreleaser
 
@@ -26,4 +27,4 @@ release-snapshot: ## Build every release artefact into dist/ without publishing
 	$(GORELEASER) release --snapshot --clean --skip=publish
 
 clean: ## Remove generated local artifacts
-	rm -rf coverage.out study dist completions manpages
+	rm -rf coverage.out study study-shelf dist completions manpages
