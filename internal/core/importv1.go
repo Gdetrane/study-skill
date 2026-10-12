@@ -250,7 +250,7 @@ var clashingNames = []string{syllabusFile, cardsFile, sourcesFile, tasksFile}
 // ImportV1 imports a v1 workspace as a new Topic.
 func (c *Core) ImportV1(ctx context.Context, spec ImportSpec) (TopicImport, error) {
 	r, err := c.importV1(ctx, spec)
-	if err != nil && ctx.Err() != nil {
+	if err != nil && stopped(ctx) {
 		return TopicImport{}, &Error{Code: CodeCanceled, Err: ctx.Err(),
 			Message: "the import was stopped before it finished, so nothing was imported"}
 	}

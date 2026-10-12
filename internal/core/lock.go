@@ -97,11 +97,25 @@ func lockFile(ctx context.Context, home *os.Root, rel, what, doing string) (unlo
 		select {
 		case <-ctx.Done():
 			_ = f.Close()
-			return nil, ctx.Err()
+			return nil, waitEnded(ctx.Err(), doing)
 		case <-time.After(wait):
 		}
 		wait = min(2*wait, 50*time.Millisecond)
 	}
+}
+
+// waitEnded explains a wait for a lock that the caller's context ended
+// before lockWait did, while another process was still doing what doing
+// says. Stopped, by SIGTERM or Ctrl-C, the command is CodeCanceled. A
+// deadline that passed is what lockWait running out is, with less time
+// allowed: another process held the lock for too long, which is CodeBusy.
+func waitEnded(cause error, doing string) error {
+	if errors.Is(cause, context.DeadlineExceeded) {
+		return &Error{Code: CodeBusy, Err: cause, Message: "another study process was still " + doing +
+			" when the time this command was given ran out: try again"}
+	}
+	return &Error{Code: CodeCanceled, Err: cause,
+		Message: "the command was stopped while it waited for another study process that is " + doing}
 }
 
 func lockPath(topicID string) string { return filepath.Join(localDir, "locks", topicID+".lock") }

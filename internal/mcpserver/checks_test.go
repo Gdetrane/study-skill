@@ -81,7 +81,14 @@ func TestRubricRecordAndCheckResults(t *testing.T) {
 // input so that it does its work, in the order a study session would, and
 // checks that none ran the Check: Checks run only through study check
 // (ADR-0009).
-func TestNoToolRunsACheck(t *testing.T) {
+func TestNoToolRunsACheck(t *testing.T) { everyTool(t, nil) }
+
+// everyTool is the session of TestNoToolRunsACheck. prepare, if not nil,
+// changes the server before the session starts: a test with something to
+// check about every tool watches the calls of this one session, which fails
+// when the server offers a tool it does not call. It returns the Study home
+// and a core opened on it.
+func everyTool(t *testing.T, prepare func(*mcp.Server)) (string, *core.Core) {
 	ctx := context.Background()
 	withGitIdentity(t)
 	home := t.TempDir()
@@ -101,7 +108,7 @@ func TestNoToolRunsACheck(t *testing.T) {
 	if _, err := c.BuildLibrary(ctx, "Books"); err != nil {
 		t.Fatal(err)
 	}
-	session := connect(t, home)
+	session := connectServer(t, home, nil, nil, prepare)
 	marker := checkTopic(t, session, home)
 	runs := func() int {
 		data, err := os.ReadFile(marker)
@@ -245,6 +252,7 @@ func TestNoToolRunsACheck(t *testing.T) {
 			t.Errorf("%s was not called: add it to this test", tool.Name)
 		}
 	}
+	return home, c
 }
 
 // TestTheServerCannotRunACheck reads the server's own source: it must not

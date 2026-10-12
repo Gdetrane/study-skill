@@ -29,6 +29,14 @@ func connect(t *testing.T, home string) *mcp.ClientSession {
 // protocol version.
 func connectWith(t *testing.T, home string, opts *mcp.ClientOptions, session *mcp.ClientSessionOptions) *mcp.ClientSession {
 	t.Helper()
+	return connectServer(t, home, opts, session, nil)
+}
+
+// connectServer is connectWith for a test that prepares the server before
+// the client connects, such as with middleware that watches every call.
+func connectServer(t *testing.T, home string, opts *mcp.ClientOptions, session *mcp.ClientSessionOptions,
+	prepare func(*mcp.Server)) *mcp.ClientSession {
+	t.Helper()
 	ctx := context.Background()
 	var n atomic.Int64
 	c, err := core.Open(core.Options{
@@ -41,7 +49,11 @@ func connectWith(t *testing.T, home string, opts *mcp.ClientOptions, session *mc
 		t.Fatal(err)
 	}
 	serverSide, clientSide := mcp.NewInMemoryTransports()
-	if _, err := mcpserver.New(c, "test", nil).Connect(ctx, serverSide, nil); err != nil {
+	server := mcpserver.New(c, "test", nil)
+	if prepare != nil {
+		prepare(server)
+	}
+	if _, err := server.Connect(ctx, serverSide, nil); err != nil {
 		t.Fatal(err)
 	}
 	cs, err := mcp.NewClient(&mcp.Implementation{Name: "test-agent", Version: "1"}, opts).Connect(ctx, clientSide, session)
