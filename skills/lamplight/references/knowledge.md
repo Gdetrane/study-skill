@@ -9,10 +9,58 @@ Library with `library_search`, add files or web pages with `source_add`, and lis
 ## The Knowledge base
 
 A Topic has at most one Knowledge base: where its Sources are held and searched for
-Evidence. This version has one kind, `none`: you read the Sources yourself, files at the
-path `sources` gives and web pages at their URL. A Topic without a Knowledge base yet
-behaves the same, and so does one whose kind this version does not know, which `sources`
-shows as it is recorded.
+Evidence. It is one of two kinds:
+
+- `none`: you read the Sources yourself, files at the path `sources` gives and web pages at
+  their URL. A Topic without a Knowledge base yet behaves the same, and so does one whose
+  kind this version does not know, which `sources` shows as it is recorded.
+- `plugin`: the Topic names a Knowledge base plugin, a program or a service the learner
+  registered on their computer under that name, which indexes the Sources. Name one with
+  `topic_update` when the learner asks for it, by the name `study knowledge-base list`
+  shows. Registering, changing and removing a plugin are the learner's to do
+  (Instruction 14): when none is registered, say so and leave the Topic as it is.
+
+## Indexing
+
+With a plugin, `status` and `sources` say whether each Source is `indexed`, `indexing`,
+`failed`, `not_indexed` or `unknown`, and `indexing` gives the one `action` to take. No tool
+indexes, and adding a Source indexes nothing.
+
+- The `action` is `study source index <topic>`: run it in your own shell, as you run
+  `study check <lesson-id>`, and tell the learner what it printed. A book takes minutes. When
+  there is teaching to do, offer the learner to run it in a terminal of their own instead,
+  and go on: a Lesson never waits for it. Stopping the command is safe, and running it again
+  carries on.
+- The `action` is `study source list <topic>`: a Source that is not indexed has a file that
+  is missing, has changed or cannot be read, or the plugin's time ran out before it was
+  asked about this Topic. Call `sources`, which says the same, and tell the learner what it
+  shows.
+- Any other `action` comes with a `problem` and is the learner's to run, the ones that
+  begin with `study knowledge-base` above all: pass it on as it is, and fill in nothing it
+  leaves in angle brackets.
+- The command says the plugin's folder cannot be made or written in: your shell is
+  sandboxed, and the folder is outside the Study home. Tell the learner the two ways out the
+  message gives: allow that folder in your sandbox, or run the command in a shell of their
+  own. Do not look for another way to index.
+- `indexing` has a `problem`: the plugin is missing on this computer, does not start or
+  did not answer in time, and the Topic works as one without a Knowledge base. Tell the
+  learner the problem and its `action` once, then read the Sources yourself.
+- A Topic that is paused or finished has no `indexing` in `status`: nothing is to be done
+  for it. `sources` still says what is indexed of it.
+- A Source `failed`: tell the learner the reason the plugin gave, such as a scan without
+  text, and read that Source yourself. It is no `action`, and stays `failed` until it is
+  indexed again. Its `retry`, when it has one, is the command that has it tried again: run
+  it only once what the reason names has been put right. Without a `retry`, trying again
+  would come to nothing as things are, as for a file that is missing or has changed.
+- A Source the command skipped has a file that is missing, has changed since it was added,
+  or cannot be read: the output says which, and what to do. `status` and `sources` show
+  such a Source as `not_indexed` with that `reason`, and do not give the command as the
+  `action` for it. What puts it right depends on which it is:
+  - **missing**: ask the learner where the file is, and record it with `source_update`;
+  - **changed**: the file there is no longer this Source. The learner restores the file
+    that was added, or you add the file as it is now as a new Source with `source_add`.
+    `source_update` does not take a file with other content;
+  - **cannot be read**: the learner makes the file readable.
 
 ## Evidence
 

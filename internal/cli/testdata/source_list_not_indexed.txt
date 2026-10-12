@@ -1,0 +1,20 @@
+Knowledge base: plugin kb
+
+Sources:
+strang.<id>  Strang
+  $HOME/Books/strang.txt
+  ! not indexed
+scan.<id>  Scan
+  $HOME/Books/scan.txt
+  ! not indexed
+lost.<id>  Lost
+  lost.txt
+  ! not found on this computer: say where it is with study source update --path,
+    or add its folder to the Library with study library build
+  ! not indexed
+go-blog.<id>  Go blog
+  http://127.0.0.1:PORT/blog
+  ! not indexed
+
+To have Knowledge base plugin kb index what is not indexed, run:
+  study source index linear-algebra

@@ -1,0 +1,64 @@
+{
+  "ok": true,
+  "data": {
+    "topic": "linear-algebra",
+    "knowledge_base": {
+      "kind": "plugin",
+      "plugin": "kb"
+    },
+    "indexing": {
+      "plugin": "kb",
+      "action": "study source index linear-algebra"
+    },
+    "sources": [
+      {
+        "id": "strang.<id>",
+        "kind": "file",
+        "title": "Strang",
+        "file_name": "strang.txt",
+        "hash": "sha256:caac5764cc8e03adaa4cd02df03c2b63592bf17009daf012c4855e1f4db7ec5a",
+        "size_bytes": 92,
+        "path": "$HOME/Books/strang.txt",
+        "state": "ok",
+        "index": {
+          "state": "not_indexed"
+        }
+      },
+      {
+        "id": "scan.<id>",
+        "kind": "file",
+        "title": "Scan",
+        "file_name": "scan.txt",
+        "hash": "sha256:e16f1596201850fd4a63680b27f603cb64e67176159be3d8ed78a4403fdb1700",
+        "size_bytes": 2,
+        "path": "$HOME/Books/scan.txt",
+        "state": "ok",
+        "index": {
+          "state": "not_indexed"
+        }
+      },
+      {
+        "id": "lost.<id>",
+        "kind": "file",
+        "title": "Lost",
+        "file_name": "lost.txt",
+        "hash": "sha256:e3bbef4af0b8abd6ad3668778a77913be2fb2cd4a626e64703443fb8d9a0adbc",
+        "size_bytes": 61,
+        "state": "missing",
+        "index": {
+          "state": "not_indexed",
+          "reason": "its file is not on this computer"
+        }
+      },
+      {
+        "id": "go-blog.<id>",
+        "kind": "url",
+        "title": "Go blog",
+        "url": "http://127.0.0.1:PORT/blog",
+        "index": {
+          "state": "not_indexed"
+        }
+      }
+    ]
+  }
+}

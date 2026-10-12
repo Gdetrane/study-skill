@@ -17,9 +17,9 @@ Read these before changing behaviour:
   replaced that catalog, keeps its walk-once and case-insensitive extension rules and
   replaces its title clean-up with one shared normalizer. 0010 replaces the packaging
   channels of 0008: releases are on GitHub alone, installed by `install.sh`. 0011 replaces
-  the v2.0 part of 0007: Lamplight does not use NotebookLM, and `none` is the only Knowledge
-  base kind until another is built. 0012 decides what is built: Knowledge base plugins that
-  speak one contract over MCP, with `study` as their client, and Shelf as the first.
+  the v2.0 part of 0007: Lamplight does not use NotebookLM. 0012 decides what is built in
+  its place: Knowledge base plugins that speak one contract over MCP, with `study` as their
+  client, and Shelf as the first. A Topic's Knowledge base is `none`, or a plugin it names.
 - `docs/cli.md`: the command-line contract that scripts and agents rely on. A test checks
   that it mentions every command and flag.
 - `docs/knowledge-base-contract.md`: the contract a Knowledge base plugin speaks, for
@@ -63,7 +63,8 @@ GOOS=darwin go vet ./...            # macOS is supported too
   Domain time is the Event's `wall`; `time` only orders Events. `study topic remove` and
   `study topic restore` record none: they move a Topic's folder on one computer and change
   nothing inside it. Nor do `study knowledge-base add` and `remove`: the registry they
-  change is one computer's and no Topic's.
+  change is one computer's and no Topic's. Nor does `study source index`: whether a Source
+  is indexed is the plugin's to say on one computer, and is in no file of the Topic.
 - Conflicts between machines are flagged in `status`, never resolved silently.
 - Files in a Topic are read and written through `os.Root`. git runs only through the
   hardened `internal/checkpoint` package or `gitCommand`, never with the caller's `GIT_*`
@@ -95,11 +96,42 @@ GOOS=darwin go vet ./...            # macOS is supported too
   caller's (`childEnviron`: a list of what goes in, each variable only when
   `pluginregistry.Guard` knows it leads nowhere inside the Study home), with a folder of
   its own in the learner's state folder, outside the Study home, and stopped with its
-  process group when its Connection is closed. So far only `study knowledge-base check`
-  starts one. Two tests in `internal/mcpserver` keep it so: one registers plugins that
-  record being started or reached and calls every tool (`everyTool`: add a new tool
-  there), and one fails when anything in the core but `CheckPlugin` could start one.
-  Change them on purpose when a tool comes to search a plugin.
+  process group when its Connection is closed.
+- Three things in the core start a plugin, each through `startPlugin`, and each stops it
+  before it returns: `CheckPlugin` (`study knowledge-base check`), `IndexSources`
+  (`study source index`) and `askPlugins`, which `Status` and `ListSources` use to ask what
+  a Topic's plugin has indexed. Only the last is reached by an MCP tool, and it asks a
+  plugin's `status` tool and nothing else. **No MCP tool has a plugin index**: the server
+  runs outside the agent's sandbox, and a plugin that indexed for it would read any file
+  the agent named as a Source. Three tests in `internal/mcpserver` keep it so.
+  `TestNoToolHasAPluginIndex` registers plugins that record what they are asked, has the
+  Topic name one and hold a Source it has not indexed from before the first tool is
+  called, calls every tool (`everyToolOn`: add a new tool there) and fails when the plugin
+  was asked anything but `contract` and `status`, or when the registry changed; it also
+  lists the tools that ask a plugin anything (`toolsThatAskAPlugin`).
+  `TestTheCoreAsksAPluginToIndexInOnePlace` reads the core: a Connection's `Index` is
+  called in `indexRun.askToIndex` alone, which only `IndexSources` reaches, which the
+  server cannot name, its `Cancel` in `indexRun.ended` alone, and its `Search` and
+  `Passage` nowhere yet (`askedOfAConnection`). `TestTheClientAsksEachToolInOneMethod`
+  holds the client to naming each tool in the one method called after it. Change them on
+  purpose when a tool comes to search a plugin, name nothing else in the core `Index`,
+  `Cancel`, `Search` or `Passage`, and keep `reflect` out of the core: it calls by a name
+  those tests cannot read.
+- Nothing that shows where the learner is waits for a plugin. `askPlugins` has
+  `core.PluginGlanceTimeout`, two seconds, for the registry, the start and the answers
+  together, and shows the Sources as not known when it is missed. Opening a Session asks
+  no plugin anything, and a command that only needs to know which Topic it is about calls
+  `ActiveTopic`, not `Status`. Never give a plugin the client's thirty seconds on such a
+  path. The one action `status` names is a command that would help: `study source index`
+  only for a Source it would hand over and the plugin has not tried, never for one that
+  failed or whose file is missing, changed or unreadable.
+- A collection is named by `collectionName`: the Topic's id and a hash of the Study home's
+  real path and the id, never the id alone, since a plugin's folder is one for the plugin
+  on a computer. A Source is its content: a file goes to a plugin only when it is the file
+  the Topic records, read just before it is handed over, and counts as indexed only when
+  the plugin's hash is the Source's. The contract has a plugin keep nothing of a file whose
+  bytes are not the hash it was handed: a file inside the Study home is the agent's to
+  exchange for a link once `study` has read it.
 - A plugin is not trusted with `study`'s time, memory or terminal. Every call has a
   deadline, a message is read up to a limit, every answer is checked against the contract
   (`plugincontract`'s `Validate`), and text a plugin wrote reaches an error only through
@@ -140,7 +172,10 @@ GOOS=darwin go vet ./...            # macOS is supported too
   register `plugintest.Command(...)`, whose flags make the plugin misbehave. Never start a
   real plugin, and never reach an address that is not a test server on this computer. Give
   the plugin the test's environment (`core.Options.Plugins.Environ`) and short deadlines.
-  A plugin of any kind is held to the contract with `plugintest.Conformance`.
+  A plugin of any kind is held to the contract with `plugintest.Conformance`. Started with
+  `--record FILE`, the test plugin writes what it is asked beside the record
+  (`plugintest.ReadCalls`): assert on that, the collection and the Source of each call,
+  rather than on what `study` says it asked.
 - Tests must pass with no git identity configured (CI has none), and in any order.
 
 ## Important Paths
@@ -151,8 +186,9 @@ GOOS=darwin go vet ./...            # macOS is supported too
   the Syllabus and Revisions, Sessions and the Resume point, Checks and Attempts, Cards and
   FSRS scheduling (`schedule.go`), Sources and Evidence, Goal and Pace, Assessments and
   signals, the read views, and `study import`. It reads the Knowledge base plugin registry
-  (`plugin_registry.go`) and changes nothing in it, and starts or reaches a plugin
-  (`plugin_client.go`).
+  (`plugin_registry.go`) and changes nothing in it, starts or reaches a plugin
+  (`plugin_client.go`), and asks a Topic's plugin what it has indexed, or to index
+  (`source_index.go`).
 - `internal/plugincontract`: the contract a Knowledge base plugin speaks, version 1: the
   six tools' inputs and results as Go types, the limits, the error codes, and what each
   answer must hold (`Validate`). It holds no client and no server.
@@ -193,7 +229,8 @@ GOOS=darwin go vet ./...            # macOS is supported too
 - New operation: add it to the core with tests, then expose it in the CLI (with `--json`,
   and `--dry-run` for writes) and the MCP server, document it in `docs/cli.md`, and mention
   it in the skill if agents should use it. Some operations are CLI-only on purpose and get
-  no MCP tool: `study check`, which runs code (ADR-0009), and what is for the learner or the
+  no MCP tool: `study check`, which runs code (ADR-0009), `study source index`, which has a
+  plugin read files and fetch addresses (ADR-0012), and what is for the learner or the
   installation alone, such as `study topic remove`, `study topic restore`, `study import`,
   `study knowledge-base add`, `study knowledge-base list`, `study knowledge-base remove`,
   `study knowledge-base check`, `study setup`, `study doctor`, `study completion`, `study library build` and terminal

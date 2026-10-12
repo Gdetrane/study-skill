@@ -1,0 +1,7 @@
+Knowledge base: plugin shelf
+  ! no Knowledge base plugin named shelf is registered on this computer
+    Meanwhile this Topic works as one without a Knowledge base. Run:
+      study knowledge-base add shelf -- <command>
+
+No Sources yet. Add one with:
+  study source add c --file <path>

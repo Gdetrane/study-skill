@@ -1,0 +1,4 @@
+Knowledge base plugin kb was asked to index nothing of linear-algebra:
+  strang.<id>  Strang
+    $HOME/Books/strang.txt
+    indexed already

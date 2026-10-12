@@ -9,12 +9,12 @@ that scripts and agents can rely on. Terms follow [GLOSSARY.md](../GLOSSARY.md).
 | Command | What it does |
 |---|---|
 | `study` | Same as `study status`. |
-| `study status` | Shows the Study home, the Active topic and why it was chosen, the one action recommended for it (`recommended`), the Learner profile (`learner_profile`), every Topic, and any Topic that could not be read (`problems`). A broken Topic never stops the others from being listed. Each Topic can carry `flags`, its Resume point (`resume`), whether its Cards are ready (`cards`, never a count), its additions to the Learner profile (`learner_additions`) and `lessons_without_evidence`: Lessons started or done that cite no Evidence yet, once the Topic has Sources (a reminder, never a block). See "Where the learner stopped" below. It also carries its plan (see [Goal, Pace and Forecasts](#goal-pace-and-forecasts)): `state`, `deadline`, `pace`, `new_cards_per_day`, the `forecast` and the open `tasks` that matter now; human output shows them under the Active topic. |
+| `study status` | Shows the Study home, the Active topic and why it was chosen, the one action recommended for it (`recommended`), the Learner profile (`learner_profile`), every Topic, and any Topic that could not be read (`problems`). A broken Topic never stops the others from being listed. Each Topic can carry `flags`, its Resume point (`resume`), whether its Cards are ready (`cards`, never a count), its additions to the Learner profile (`learner_additions`) and `lessons_without_evidence`: Lessons started or done that cite no Evidence yet, once the Topic has Sources (a reminder, never a block). A Topic that names a Knowledge base plugin carries `indexing`: which of its Sources the plugin has indexed on this computer, and the one command to run when some are not; the plugin has two seconds to say, and is never waited for (see [What is indexed](#what-is-indexed)). See "Where the learner stopped" below. It also carries its plan (see [Goal, Pace and Forecasts](#goal-pace-and-forecasts)): `state`, `deadline`, `pace`, `new_cards_per_day`, the `forecast` and the open `tasks` that matter now; human output shows them under the Active topic. |
 | `study session open <topic> [--energy E] [--focus F] [--session ID] [--dry-run]` | Opens a Session and shows where you stopped. With an Energy and no Focus chosen yet, it suggests one (or to plan, or to stop); it lists every Session that ended without a Next step, and what changed since the last Checkpoint. With `--session` and `--focus`, it records the Focus chosen for that open Session instead of opening another. See "Opening a Session" below. |
 | `study session close <topic> --next-step S [--context C] [--session ID] [--dry-run]` | Closes the Session with a Next step that starts with a verb (see "Next steps" below), and saves the work with a Checkpoint. `--session` gives a Session left unclosed the note it never got. |
 | `study session break-point <topic> <lesson> <break-point> --next-step S [--context C] [--dry-run]` | Records a Break point the Lesson's header declares, with a Next step, and saves the work with a Checkpoint. The Session stays open. Reaching the same Break point with the same Next step again changes nothing. |
 | `study topic create --title T [--id ID] [--goal G] [--dry-run]` | Creates a Topic folder with its settings, History and git repository. `--dry-run` validates and shows the result without writing. |
-| `study topic update <topic> [--title T] [--goal G] [--knowledge-base K] [--deadline D] [--pace H[@FROM] ... \| --clear-pace] [--new-cards-per-day N] [--level L] [--approach A] [--state S] [--dry-run]` | Changes a Topic's title, goal, Knowledge base (`none`, the only kind this version has; see [Sources and Evidence](#sources-and-evidence)), the Goal's deadline, the Pace, the daily cap on new Cards, the Level (the learner's choice, which holds until the next Assessment), the Approach (`concepts`, `project` or `challenges`; see [Assessments, Level and learning signals](#assessments-level-and-learning-signals)), or its state (`active`, `paused` or `finished`); see [Goal, Pace and Forecasts](#goal-pace-and-forecasts). Flags left out stay as they are; `--goal ""` and `--deadline ""` remove them. `--pace` replaces the Pace: `--pace 10` is 10 hours a week from now on, and a further `--pace 3@2026-11-16` starts a period of 3 hours a week that day. Settings in `topic.toml` that this version does not know are kept. The result is `{"topic": ..., "changed": bool}`: asking for the values the Topic already has changes nothing and records nothing. Each kind of change is its own Event; if a later one fails, the error says which were recorded. A dry run shows the Topic as it would be, Forecast included. |
+| `study topic update <topic> [--title T] [--goal G] [--knowledge-base K] [--deadline D] [--pace H[@FROM] ... \| --clear-pace] [--new-cards-per-day N] [--level L] [--approach A] [--state S] [--dry-run]` | Changes a Topic's title, goal, Knowledge base (`none`, or the name of a Knowledge base plugin, which need not be registered on this computer; see [Sources and Evidence](#sources-and-evidence)), the Goal's deadline, the Pace, the daily cap on new Cards, the Level (the learner's choice, which holds until the next Assessment), the Approach (`concepts`, `project` or `challenges`; see [Assessments, Level and learning signals](#assessments-level-and-learning-signals)), or its state (`active`, `paused` or `finished`); see [Goal, Pace and Forecasts](#goal-pace-and-forecasts). Flags left out stay as they are; `--goal ""` and `--deadline ""` remove them. `--pace` replaces the Pace: `--pace 10` is 10 hours a week from now on, and a further `--pace 3@2026-11-16` starts a period of 3 hours a week that day. Settings in `topic.toml` that this version does not know are kept. The result is `{"topic": ..., "changed": bool, "note"?: text}`: asking for the values the Topic already has changes nothing and records nothing, and `note` is there when the update names a Knowledge base plugin this computer cannot use, with the command that puts it right. Each kind of change is its own Event; if a later one fails, the error says which were recorded. A dry run shows the Topic as it would be, Forecast included. |
 | `study assessment record <topic> --file F [--dry-run]` | Records an Assessment read from a JSON file (`--file -` reads stdin) holding one object in the shape the `assessment_record` tool takes; anything after it is refused. With a `level`, it sets the Topic's Level. A retry records nothing (see below). A dry run shows the Assessment without an id and the Level the Topic would have. See [Assessments, Level and learning signals](#assessments-level-and-learning-signals). |
 | `study assessment list [topic]` | Lists a Topic's Assessments, newest first in the text and in `--json`, and its Level. |
 | `study hint record <lesson> --requested-by learner\|agent [--topic ID] [--kind K] [--note N] [--request ID] [--dry-run]` | Records a hint given for a Lesson: `nudge`, `explanation` or `step`, asked for by the `learner` or offered unasked by the `agent`. Without `--topic`, it uses the Topic whose folder it runs in. |
@@ -31,7 +31,8 @@ that scripts and agents can rely on. Terms follow [GLOSSARY.md](../GLOSSARY.md).
 | `study library search <query> [--limit N]` | Ranks the books in the Library against the query. `--limit` defaults to 10 and is capped at 100; no matches is a success with an empty list. |
 | `study source add <topic> (--file PATH \| --url URL) [--title T] [--dry-run]` | Adds a file or a web page as a Source of the Topic. A file is hashed, never parsed. Adding a file or URL the Topic already has is `already_exists`, naming the Source. |
 | `study source update <topic> <source> [--title T] [--path P] [--dry-run]` | Changes a Source's title, which the History records, or says where its file is on this computer (`--path`, remembered locally only); the file at `--path` must hold the same content. |
-| `study source list <topic>` | Lists the Topic's Knowledge base and Sources, and finds each file on this computer. |
+| `study source list <topic>` | Lists the Topic's Knowledge base and Sources, and finds each file on this computer. When the Topic names a Knowledge base plugin, each Source has an `index` (`indexed`, `indexing`, `failed`, `not_indexed` or `unknown`) and the list an `indexing` with the one command to run next; the plugin has two seconds to say, and is never waited for. See [What is indexed](#what-is-indexed). |
+| `study source index <topic> [<source>...] [--again] [--dry-run]` | Asks the Topic's Knowledge base plugin to index the Topic's Sources that are not indexed, or the ones named, one after the other, and follows each to its end; progress goes to stderr. A file is handed over by its path and content hash, a web page by its address. `--again` asks for Sources that are indexed already too, and has a web page fetched again. `--dry-run` starts the plugin, asks what it has indexed and lists what would be asked of it, without asking. The result is `{"topic", "plugin", "collection", "sources": [{"id", "title", "path"? \| "url"?, "state", "progress"?, "reason"?, "asked"?, "skipped"?}]}`. A Source that fails is not an error of the command: its `state` is `failed`, with the plugin's `reason`, and the exit code is 0. Stopped, it tells the plugin to stop and reports `canceled`; run again, it carries on. It records no Event. It is the one thing that indexes, and agents have no tool for it: they run it in their own shell. See [study source index](#study-source-index). |
 | `study evidence record <topic> --lesson L --source S --quote Q [--location LOC --location-from F] [--dry-run]` | Records an exact quote from a Source that a Lesson cites. `--quote -` reads the quote from stdin. Recording the same Evidence twice changes nothing. |
 | `study evidence retract <topic> <evidence> [--dry-run]` | Takes back Evidence recorded by mistake. The retraction is recorded, never deleted; retracting twice changes nothing. |
 | `study evidence list <topic> [--lesson L] [--all]` | Lists the Evidence recorded in the Topic, or only what one Lesson cites. Retracted Evidence is listed only with `--all`. |
@@ -966,22 +967,51 @@ Topic's (see [Knowledge base plugins](#knowledge-base-plugins)). Nor does
 plugin that is a command makes its folder, `lamplight/knowledge-base-plugins/<name>` in the
 learner's state folder, when it is not there, and that is this computer's state too.
 
+`study source index` records no Event and writes nothing in the Topic: whether a Source is
+indexed is the plugin's to say on this computer, and its index is in that same folder (see
+[study source index](#study-source-index)). Naming a Topic's plugin is a write like any
+other, with an Event of its own type, `knowledge_base_plugin.set`.
+
 ## Sources and Evidence
 
 The Knowledge seam ([ADR-0007](adr/0007-knowledge-bases-return-evidence.md)) records where
-a Topic's material comes from. `study` never parses a document and never calls a knowledge
-service: the agent reads the Sources itself and records the quotes it relied on.
+a Topic's material comes from. `study` never parses a document. Without a Knowledge base the
+agent reads the Sources itself and records the quotes it relied on; a Topic can instead name
+a Knowledge base plugin, which indexes its Sources
+([ADR-0012](adr/0012-knowledge-base-plugins-speak-one-contract.md)).
 
-- **Knowledge base**: `none` is the only kind this version has
-  ([ADR-0011](adr/0011-lamplight-does-not-use-notebooklm.md)); any other is
-  `invalid_argument`. It is stored in the `[knowledge_base]` table of `topic.toml` and shown
-  on the Topic in `status`. Choosing the kind a Topic already has writes nothing, so the
-  table is left as it is, with any keys this version does not know; choosing a kind over
-  another writes the table anew, with the kind alone. A Topic without a Knowledge base
-  behaves as `none`. So does a Topic whose `topic.toml` holds a kind this version does not
-  know, one a newer version added or one an earlier build of v2 had: the kind is shown as
-  recorded, human output says it is treated as `none`, and `--knowledge-base none` replaces
-  it.
+- **Knowledge base**: `none`, or a Knowledge base plugin, which the Topic names. It is
+  stored in the `[knowledge_base]` table of `topic.toml` and shown on the Topic in `status`.
+
+  ```toml
+  [knowledge_base]
+    kind = "plugin"
+    plugin = "shelf"
+  ```
+
+  - `study topic update <topic> --knowledge-base <name>` names a plugin, and
+    `--knowledge-base none` goes back to none. A name follows the rule of the registry:
+    lowercase letters, digits and single hyphens, up to 64 characters, and neither `none`
+    nor `plugin`. Anything else is `invalid_argument`: a Topic holds a name and never a
+    command line or an address, so nothing in a Topic, which syncs between computers and
+    which an agent can write, decides which program `study` starts. What the name stands
+    for is each computer's to say, in its registry (see
+    [Knowledge base plugins](#knowledge-base-plugins)).
+  - **A name this computer does not have is recorded all the same**: another of your
+    computers may have the plugin. The result then carries a `note` that says so, with the
+    command that registers it, and the Topic works here as one without a Knowledge base.
+  - A name is recorded by a `knowledge_base_plugin.set` Event, whose payload is the name
+    (`{"plugin": "shelf"}`), and `none` by a `knowledge_base.set` Event, whose payload is the
+    kind (`{"kind": "none"}`), as it always was. Naming the plugin a Topic already names, or
+    choosing `none` for a Topic that has it, writes nothing, so the table is left as it is,
+    with any keys this version does not know. Any other choice writes the table anew, with
+    the kind, and the name when there is one, and nothing else.
+  - A Topic without a Knowledge base behaves as `none`. So does a Topic whose `topic.toml`
+    holds a kind this version does not know, one a newer version added or one an earlier
+    build of v2 had: the kind is shown as recorded, human output says it is treated as
+    `none`, and `--knowledge-base none` replaces it. `topic.toml` can be edited by hand, so
+    a plugin's name is whatever is written there: one no plugin can have is shown made safe
+    to print, at most 64 characters of it, and names no plugin.
 - **Sources**: the History records which Sources exist and what they are;
   `sources.jsonl` is the readable copy Lamplight writes, one line per Source. Edit Sources
   with `study source`, not by hand: a line added by hand is listed as `untracked` and is not
@@ -1038,6 +1068,240 @@ service: the agent reads the Sources itself and records the quotes it relied on.
   same file or URL, or the same Evidence, on both machines before syncing gives two of them;
   that is not flagged.
 
+### What is indexed
+
+For a Topic that names a Knowledge base plugin, `study status` and `study source list`, and
+the `status` and `sources` tools, ask the plugin which of the Topic's Sources it has
+indexed. So does the session-start hook of the Claude Code plugin, which prints
+`study status`. Whether a Source is indexed is the plugin's to say, on this computer: it is
+no Event, it is in no file of the Topic, and it is asked each time.
+
+`status` asks about the Topics that are active, and gives a Topic that is paused or
+finished no `indexing`: such a Topic has nothing to do next. `study source list` asks about
+the Topic it lists, whatever its state.
+
+`source list` gives each Source an `index`, and the list an `indexing`:
+
+```json
+{
+  "topic": "linear-algebra",
+  "knowledge_base": {"kind": "plugin", "plugin": "shelf"},
+  "indexing": {"plugin": "shelf", "action": "study source index linear-algebra"},
+  "sources": [
+    {"id": "strang-linear-algebra.k3f9a2", "kind": "file", "title": "Linear Algebra", "path": "/home/ada/Books/strang.pdf",
+     "state": "ok", "index": {"state": "indexed"}},
+    {"id": "axler-linear-algebra-done-right.p2x7q1", "kind": "file", "title": "Linear Algebra Done Right",
+     "path": "/home/ada/Books/axler.pdf", "state": "ok", "index": {"state": "indexing", "progress": 0.4}},
+    {"id": "scanned-notes.t8w3n5", "kind": "file", "title": "Notes", "path": "/home/ada/Books/notes.pdf", "state": "ok",
+     "index": {"state": "failed", "reason": "the file has no text layer"}},
+    {"id": "go-dev-blog-context.m4k8s3", "kind": "url", "title": "Go Concurrency Patterns: Context",
+     "url": "https://go.dev/blog/context", "index": {"state": "not_indexed"}}
+  ]
+}
+```
+
+`status` gives each such Topic the same `indexing`, with the Sources' states in it, since
+`status` lists no Sources otherwise:
+`"indexing": {"plugin", "problem"?, "action"?, "sources"?: [{"id", "title", "state", "progress"?, "reason"?, "retry"?}]}`.
+`sources` is left out for a Topic without Sources.
+
+| `state` | Means |
+|---|---|
+| `indexed` | The plugin holds the Source's content, and a search finds it. For a file, the hash of what the plugin holds is the Source's. |
+| `indexing` | The plugin is indexing it now; `progress` is how much is done, from 0 to 1, when the plugin can tell. A service says so to whoever asks while it works. A plugin that is a command indexes only while the `study source index` that started it runs. Another `study` starts a copy of its own meanwhile, which says `indexing` when it can tell that the work is going on, and otherwise shows the Source as it was before. |
+| `failed` | The plugin's last indexing of it failed; `reason` is why, in the plugin's words: a file without a text layer, a page that cannot be fetched, a file that was another when the plugin read it than when `study` did. It stays so, on every run of `study`, until the plugin is asked to index the Source again. |
+| `not_indexed` | The plugin does not hold the Source's content. `reason` is there when the plugin does not index Sources of this kind; when the Source's file is not on this computer, is no longer the one added or cannot be read, so that there is nothing to hand the plugin; and when a plugin that breaks the contract holds other content for the Source than the Topic records. |
+| `unknown` | The plugin could not say: `indexing.problem` says why. |
+
+- **`indexing.action` is the one command to run next.** It is
+  `study source index <topic>` when a Source is `not_indexed` and the command would hand
+  it to the plugin: the plugin indexes Sources of its kind, and a file is on this computer,
+  is the one that was added, and can be read. It is the command that puts a `problem`
+  right. It is absent when there is nothing to do, and for a folder whose name is no Topic
+  id, which no command can name. Human output names it under the Sources, and `status`
+  under "Knowledge base plugins", with the Sources that are not indexed, by title. An
+  action that puts a `problem` right can hold a part in angle brackets, `<command>` or
+  `<name>`, which is for the learner to fill in: such a command is theirs to run.
+- **A file that is missing, is another now, or cannot be read is not one to index.**
+  `study source index` skips it, so it is not the action for it: the Source is
+  `not_indexed` with the `reason`, and in `status` the action is then
+  `study source list <topic>`, which says what to do about each such file. In
+  `study source list` itself there is no action for it beyond what the Source's own lines
+  say. The same holds for a Source that `failed` and whose file is such a one.
+- **A Source that `failed` is shown, and is no next action.** The plugin tried, and said
+  why: trying again helps only once what the `reason` names is put right, and a scan
+  without text would otherwise be the one thing to do for ever. `status` names it with its
+  reason. Its `retry` is the command that has it tried again,
+  `study source index <topic> <source>`, which `study source list` prints under it; it is
+  left out when trying again would come to nothing as things are, because the Source's
+  file is missing, has changed or cannot be read. Whoever runs
+  `study source index <topic>` has every failed Source tried again with the rest.
+- **Nothing waits for a plugin.** Reading the registry, starting the plugin or reaching
+  it, and its answers have **2 seconds, all of it together**, against the 30 seconds a
+  plugin has to start when it is asked to index. A plugin that takes longer is stopped,
+  and its Sources are `unknown`. Stopping a command that does not exit when its input is
+  closed takes half a second more at most: after a quarter of a second its process group
+  gets `SIGTERM`, and after another it is killed. A service that does not answer when it
+  is told the session is over is waited for three quarters of a second, and no longer.
+  A plugin that missed the 2 seconds is given nothing more: a command is killed at once,
+  and a service is not waited for. Several plugins are asked side by side,
+  each once, however many Topics name it. A Topic without Sources has nothing to ask, so
+  its plugin is not started. **Opening a Session asks no plugin anything**, and neither
+  does a command that only has to know which Topic it is about, such as `study check`,
+  `study review` and `study syllabus`.
+- **The Topics that name one plugin share its 2 seconds**, and are asked one after the
+  other: the Active topic first, then the others in the order `status` lists them. A plugin
+  that answered about one Topic works, so a Topic the time did not reach says that, and its
+  action is `study source list <topic>`, which asks about that Topic alone with all of the
+  time.
+- **A plugin is asked what it has indexed, and nothing else**: its `status` tool, once it
+  said which contract it speaks. It is started for that and stopped again before the
+  command, or the tool, answers: nothing is kept running in between, in `study mcp`
+  either.
+- **`indexing.problem`** says why the plugin could not say, and every Source is then
+  `unknown`. The Topic works as one without a Knowledge base meanwhile: Sessions open,
+  teaching goes on, and Evidence is recorded from the Sources as the agent reads them.
+
+  | The problem | `action` |
+  |---|---|
+  | `topic.toml` records the kind `plugin` without a name a plugin can have. | `study topic update <topic> --knowledge-base <name>` |
+  | No plugin is registered under the name on this computer. | `study knowledge-base add <name> -- <command>` |
+  | The registry cannot be read, or the plugin is registered and `study` does not use it, because its program is inside the Study home. | `study knowledge-base list` |
+  | The plugin cannot be started, exits, does not answer within the 2 seconds, is no MCP server, does not speak the contract, or speaks a newer one. | `study knowledge-base check <name>` |
+
+  `study knowledge-base check` gives the plugin the 30 seconds, so a plugin that is only
+  slow to start passes it, and `study source index`, which waits as long, then says what
+  is indexed.
+- **What a plugin wrote is cut short here**: a `reason` to 300 bytes, a `problem` to 600,
+  the `…` that says so included, each on one line and with nothing a terminal would
+  interpret. `study source index` gives a `reason` whole, up to the 2,000 bytes `study`
+  keeps of one.
+- **The collection**: a plugin keeps collections apart and knows nothing else of Topics.
+  The name `study` gives it for a Topic is the Topic's id, a hyphen, and 32 characters of a
+  hash of where the Study home really is and of the Topic's id, such as
+  `linear-algebra-mfrggzdfmztwq2lknnwg23tpobyxe43u`. An id longer than 31 characters is cut
+  to fit the 64 a name may have, and a folder whose name is no Topic id is called `topic`
+  there. A plugin's folder is one for the plugin on a computer, and a service may serve
+  several, so the Topic's id alone would have two Study homes that each hold a
+  `linear-algebra` share one collection. The path is not the agent's to choose, and every
+  name ends with the hash, so no two Topics of one Study home, or of two, share a name.
+  **Moving the Study home, or renaming it, changes the name: the Sources are then indexed
+  again**, and what the plugin holds under the old name stays where it is, unused. The
+  same goes for a Study home that `study` sees under another path, as inside a sandbox that
+  shows it elsewhere: what is indexed there is not what `study` asks about outside it. A
+  Topic that is removed, and another made later under its id, share a name: nothing
+  removes a collection, so the plugin still holds the removed Topic's Sources there, under
+  their own ids.
+
+### study source index
+
+`study source index <topic>` asks the Topic's Knowledge base plugin to index the Topic's
+Sources that are not indexed. It is **the one thing that asks a plugin to index**. Adding a
+Source indexes nothing, with `study source add` or the `source_add` tool, and no MCP tool
+indexes: a plugin that indexes reads the files it is handed and fetches the addresses, and
+`study mcp` runs outside the agent's sandbox, so a tool that indexed would have a plugin
+read any file the agent named as a Source and hand its text back through a search. An
+agent runs this command in its own shell, where its sandbox and approval prompts apply, as
+it runs `study check`; the learner can always run it themselves.
+
+```json
+{
+  "topic": "linear-algebra",
+  "plugin": "shelf",
+  "collection": "linear-algebra-mfrggzdfmztwq2lknnwg23tpobyxe43u",
+  "sources": [
+    {"id": "strang-linear-algebra.k3f9a2", "title": "Linear Algebra", "path": "/home/ada/Books/strang.pdf", "state": "indexed"},
+    {"id": "axler-linear-algebra-done-right.p2x7q1", "title": "Linear Algebra Done Right", "path": "/home/ada/Books/axler.pdf",
+     "state": "indexed", "asked": true},
+    {"id": "scanned-notes.t8w3n5", "title": "Notes", "path": "/home/ada/Books/notes.pdf", "state": "failed",
+     "reason": "the file has no text layer", "asked": true},
+    {"id": "lecture-notes.b6c2d9", "title": "Lecture notes", "state": "not_indexed",
+     "skipped": "its file is not on this computer: say where it is with study source update linear-algebra lecture-notes.b6c2d9 --path <file>"}
+  ]
+}
+```
+
+- **What a plugin is handed is shown**: each Source comes with the real `path` of its file
+  on this computer, or its `url`, and human output prints it under the title. A plugin reads
+  the files it is handed, with your permissions when you run the command yourself, and an
+  agent can add any file it names as a Source: `--dry-run` shows which files those are
+  before anything reads them.
+
+- **Which Sources**: all of the Topic's, or the ones named after the Topic, in the order
+  they were added. A Source that is `indexed` is left alone. Every other is asked for, one
+  after the other: `asked` says so. One that is `indexing` already, in a service, is
+  followed with the rest.
+- **A file** is handed to the plugin by its path on this computer and its content hash.
+  The path is the file's real one, with every symbolic link followed: a Source can be a
+  link, a plugin reads what it is handed a moment later, and handed the link it would read
+  wherever the link leads by then.
+  **A Source is its content**: only the file the Topic records is handed over, and `study`
+  reads it once more, whole, just before it asks for it, to be sure. A file that is not on
+  this computer, cannot be read, or has other content now than was added is not asked for:
+  `skipped` says why and what to do, and what the plugin indexed for it before stays as it
+  is. The plugin reads the file itself a moment later, and **keeps nothing of a file whose
+  bytes are not the hash it was handed**: the Source is then `failed`, with the plugin's
+  reason. That is what keeps a file inside the Study home, which the agent can exchange for
+  a link to any file of yours once `study` has read it, from being indexed as something
+  else than was shown.
+- **A web page** is handed over by its address. The plugin fetches it, from where the
+  plugin runs.
+- **A kind the plugin does not index**, a web page for a plugin that indexes files, is
+  `skipped`, and is no reason for `indexing.action` to name this command.
+- `--again` asks for the Sources that are indexed too. A web page is then fetched again.
+  A file whose content is indexed is left as it is by the plugin, as the contract says, so
+  for a file it asks and changes nothing.
+- `--dry-run` starts the plugin, asks what it has indexed, and reports each Source as it is
+  now, with `asked` for the ones the run would ask for and `skipped` for the ones it would
+  not. It asks the plugin to index nothing. A command plugin's folder is made when it is
+  not there, as `study knowledge-base check` makes it, and is checked as below.
+- **Progress** goes to stderr: each Source as the plugin is asked for it, and every 15
+  seconds while one is indexed, with how far the plugin says it is. With `--json` only
+  the second kind is written, so a quick run keeps stderr empty. `study` asks the plugin
+  how far it is often at first and then once a second. **Indexing a Source has no time
+  limit**: a book takes as long as it takes, and each of the plugin's answers has the 30
+  seconds every call has.
+- **What goes wrong with a Source is not an error of the command.** A file without a text
+  layer, a page that cannot be fetched, a Source the plugin refuses: the Source is
+  `failed`, with the plugin's `reason`, the others are indexed, and the exit code is 0.
+  Look at each Source's `state`. A plugin that does not answer, or answers with what is
+  not the contract's, is another matter: it would do the same for the next Source, so the
+  command ends there, with `failed_precondition`.
+- **Stopped**, by Ctrl-C, `SIGTERM` or `SIGHUP`, it tells the plugin to stop indexing the
+  Source it was indexing, with the plugin's `cancel` tool, and waits up to 10 seconds for
+  the plugin to say that it has: so no work goes on behind a command that has exited. It
+  says so on stderr at once (`Stopping: telling the plugin to stop indexing …`), since
+  nothing else is printed until the plugin has answered, and a second Ctrl-C does not
+  hurry it. A plugin that is a command is stopped then, and its indexing with it, whether
+  or not it answered. A service is told, and when it cannot be told, or had not yet
+  answered the request to index, the message says that it may still be indexing. The
+  command reports `canceled`, and its message what came of the stop. **What is indexed
+  stays indexed, and running the command again carries on** with what is not. A `study`
+  that is killed (`SIGKILL`), or ends on `SIGQUIT` or on a closed terminal (`SIGPIPE`),
+  stops nothing: a plugin exits by itself when its input closes, as the contract asks, and
+  one that does not is left running.
+- **Inside a sandbox.** A command plugin keeps its index in
+  `lamplight/knowledge-base-plugins/<name>` in your state folder (`$XDG_STATE_HOME`, or
+  `~/.local/state`), which is outside the Study home on purpose (see
+  [study knowledge-base check](#study-knowledge-base-check)). An agent's sandbox that lets
+  `study` write in the Study home alone refuses it. `study` makes sure of the folder before
+  it starts the plugin, by making and removing an empty file in it, and fails with
+  `failed_precondition` when the folder cannot be made or written in. The message gives
+  both ways out: **allow that folder in the sandbox, or run the command in a shell of
+  your own.** Listing Sources and `status` need no such folder to be written in, and a
+  plugin reached by URL has none.
+- **It records nothing in the Topic**: no Event, and no file. What is indexed is this
+  computer's.
+
+| It ends with | When |
+|---|---|
+| exit 0 | The plugin was asked for every Source there was to ask for, and each was followed to its end, whatever that was: `indexed`, `failed` or `not_indexed`. Also when there was nothing to ask for, and for a dry run. |
+| `failed_precondition`, exit 1 | The Topic names no plugin; the plugin is not registered on this computer; it cannot be started, is no MCP server or does not speak the contract; its folder cannot be made or written in; or it stopped answering while it indexed. The message says which, and what to do. |
+| `newer_format`, exit 1 | The plugin speaks a newer version of the contract: upgrade `study`. |
+| `not_found`, exit 1 | There is no such Topic, or the Topic has no such Source. |
+| `canceled`, exit 1 | The command was stopped. |
+| `invalid_argument`, exit 2 | What was given as the Topic is not the id of one, or what was given as a Source is not the id of one. |
+
 ## Knowledge base plugins
 
 A Knowledge base plugin is a program, or a service the learner runs, that indexes Sources
@@ -1045,9 +1309,10 @@ and searches them ([ADR-0012](adr/0012-knowledge-base-plugins-speak-one-contract
 computer registers the plugins it has, each under a name, with `study knowledge-base`.
 `study` is the MCP client of a plugin, and
 [docs/knowledge-base-contract.md](knowledge-base-contract.md) is the contract a plugin
-speaks. This version registers plugins and checks them (`study knowledge-base check`, below):
-no Topic names one yet, so a Topic's Knowledge base is still `none`, and nothing is indexed
-or searched.
+speaks. A Topic names the plugin it uses (`study topic update --knowledge-base <name>`),
+`study source index` has the plugin index the Topic's Sources, and `status` and
+`study source list` say what it has indexed (see
+[Sources and Evidence](#sources-and-evidence)). Nothing searches a plugin yet.
 
 - **The registry** is `knowledge-base-plugins.json` in Lamplight's configuration folder,
   beside `config.toml`: `$XDG_CONFIG_HOME/lamplight`, or `~/.config/lamplight`. It is this
@@ -1069,7 +1334,7 @@ or searched.
   Change it with `study knowledge-base`, not by hand. The file is created readable by the
   learner alone, since a URL may carry a key, and the configuration folder likewise when
   it has to be created.
-- **A name** is what a Topic will call the plugin: lowercase letters, digits and single
+- **A name** is what a Topic calls the plugin: lowercase letters, digits and single
   hyphens, up to 64 characters, like a Topic's id. `none` and `plugin` are refused: they
   are the kinds of Knowledge base a Topic records, and a name is never one of them.
 - **A command** follows `--`, as the learner would type it: the program, then its
@@ -1279,7 +1544,9 @@ is a command.
   (`failed_precondition`), and the message says to set `XDG_STATE_HOME`. The cost is that a
   sandbox which lets `study` write in the Study home alone does not let a plugin started
   inside it write its index: allow that folder in the sandbox, or index from your own
-  shell. A plugin reached by URL gets no folder.
+  shell. A folder that cannot be made says both in its message, and so does one that
+  nothing can be written in, when the plugin is started to index. A plugin reached by URL
+  gets no folder.
 - **It is stopped** when the command is done, and when the command is stopped
   (`canceled`): its standard input and output are closed, which asks it to exit; after 2
   seconds its process group gets `SIGTERM`, and after 2 more it is killed. Whatever a
@@ -1325,8 +1592,12 @@ Shell completion offers the registered names to `study knowledge-base remove`,
 
 These commands are for the learner. No MCP tool registers, changes or removes a plugin, and
 none takes a command line or a URL for one: what changes the registry is in a part of
-`study` the MCP server is not built from. No MCP tool starts or reaches a plugin either,
-until a Topic can name one.
+`study` the MCP server is not built from. A tool names a plugin for a Topic, by its name
+alone (`topic_update`), and two tools, `status` and `sources`, have the plugin a Topic
+names started, or reached, to ask what it has indexed: its `contract` and `status` tools,
+and no other (see [What is indexed](#what-is-indexed)). **No MCP tool has a plugin index.**
+A test calls every tool with plugins registered that record what they are asked, and fails
+when one was asked anything else.
 
 ## study doctor
 

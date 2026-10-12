@@ -30,9 +30,15 @@ func checkTopic(t *testing.T, session *mcp.ClientSession, home string) (marker s
 
 // checkTopicIn is checkTopic for a Study home that is not the folder the
 // marker is kept in.
-func checkTopicIn(t *testing.T, session *mcp.ClientSession, home, studyHome string) (marker string) {
+//
+// created, when given, is called once the Topic exists and before any other
+// tool is called on it.
+func checkTopicIn(t *testing.T, session *mcp.ClientSession, home, studyHome string, created ...func()) (marker string) {
 	t.Helper()
 	call(t, session, "topic_create", map[string]any{"title": "C", "id": "c"})
+	for _, f := range created {
+		f()
+	}
 	var p core.RevisionProposal
 	decode(t, call(t, session, "revision_propose", map[string]any{"topic": "c", "summary": "A first Syllabus",
 		"syllabus": firstSyllabus}), &p)
@@ -97,21 +103,40 @@ func TestNoToolRunsACheck(t *testing.T) { everyTool(t, nil) }
 // and a core opened on it.
 func everyTool(t *testing.T, prepare func(*mcp.Server)) (string, *core.Core) {
 	home := t.TempDir()
-	return home, everyToolOn(t, home, home, prepare, nil)
+	return home, everyToolOn(t, home, home, everyToolOptions{prepare: prepare})
+}
+
+// everyToolOptions says what the session of everyToolOn is given besides
+// its folders.
+type everyToolOptions struct {
+	// prepare, if not nil, changes the server before the session starts.
+	prepare func(*mcp.Server)
+	// after, if not nil, is called with each tool's name once the tool has
+	// answered, for a test to look at what the call left behind, and with
+	// "study check" once the Lesson's Check was run through the core, as
+	// study check runs it.
+	after func(tool string)
+	// knowledgeBase is the Knowledge base topic_update gives the Topic: the
+	// kind none when it is nil.
+	knowledgeBase map[string]any
+	// plugins says how the server's core starts Knowledge base plugins.
+	plugins core.PluginOptions
 }
 
 // everyToolOn is everyTool on a computer whose home folder is home and whose
 // Study home is studyHome, which may be another folder: the Knowledge base
-// plugin registry is read only when it is. after, if not nil, is called with
-// each tool's name once the tool has answered, for a test to look at what
-// the call left behind, and with "study check" once the Lesson's Check was
-// run through the core, as study check runs it.
-func everyToolOn(t *testing.T, home, studyHome string, prepare func(*mcp.Server), after func(tool string)) *core.Core {
+// plugin registry is read only when it is.
+func everyToolOn(t *testing.T, home, studyHome string, options everyToolOptions) *core.Core {
 	t.Helper()
 	ctx := context.Background()
 	withGitIdentity(t)
+	prepare, after := options.prepare, options.after
 	if after == nil {
 		after = func(string) {}
+	}
+	knowledgeBase := options.knowledgeBase
+	if knowledgeBase == nil {
+		knowledgeBase = map[string]any{"kind": "none"}
 	}
 	book := filepath.Join(home, "Books", "The_C_Programming_Language.pdf")
 	if err := os.MkdirAll(filepath.Dir(book), 0o755); err != nil {
@@ -123,15 +148,36 @@ func everyToolOn(t *testing.T, home, studyHome string, prepare func(*mcp.Server)
 	getenv := func(key string) string {
 		return map[string]string{"STUDY_HOME": studyHome, "HOME": home}[key]
 	}
-	c, err := core.Open(core.Options{Getenv: getenv, Dir: home})
+	c, err := core.Open(core.Options{Getenv: getenv, Dir: home, Plugins: options.plugins})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := c.BuildLibrary(ctx, "Books"); err != nil {
 		t.Fatal(err)
 	}
-	session := connectOn(t, getenv, home, nil, nil, prepare)
-	marker := checkTopicIn(t, session, home, studyHome)
+	session := connectOn(t, getenv, home, nil, nil, prepare, options.plugins)
+	// A Topic that is to name a plugin names it, and has a Source the plugin
+	// has not indexed, from before the first tool is called on it: every
+	// tool is then called on a Topic a plugin could be asked to index for.
+	// Both are done through the core here, not by a tool, so that no tool
+	// is left out for coming before the ones that do it.
+	marker := checkTopicIn(t, session, home, studyHome, func() {
+		name, _ := options.knowledgeBase["plugin"].(string)
+		if name == "" {
+			return
+		}
+		if _, err := c.UpdateTopic(ctx, "c", core.TopicChanges{KnowledgeBase: &core.KnowledgeBase{Kind: core.KnowledgeBasePlugin,
+			Plugin: name}}); err != nil {
+			t.Fatal(err)
+		}
+		notes := filepath.Join(home, "Books", "notes.txt")
+		if err := os.WriteFile(notes, []byte("Notes the plugin has not indexed.\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := c.AddSource(ctx, core.SourceSpec{Topic: "c", File: notes}); err != nil {
+			t.Fatal(err)
+		}
+	})
 	runs := func() int {
 		data, err := os.ReadFile(marker)
 		if errors.Is(err, fs.ErrNotExist) {
@@ -199,7 +245,7 @@ func everyToolOn(t *testing.T, home, studyHome string, prepare func(*mcp.Server)
 
 	use("status", map[string]any{}, nil)
 	use("syllabus", topic, nil)
-	use("topic_update", with(topic, "goal", "Answer the question", "knowledge_base", map[string]any{"kind": "none"},
+	use("topic_update", with(topic, "goal", "Answer the question", "knowledge_base", knowledgeBase,
 		"add_tasks", []any{map[string]any{"title": "Book the exam"}}), field("task", "added_tasks", "id"))
 	use("tasks", topic, nil)
 	use("task_done", with(topic, "task", ids["task"]), nil)

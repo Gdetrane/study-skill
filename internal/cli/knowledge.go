@@ -5,6 +5,7 @@ import (
 	"io"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/spf13/cobra"
@@ -91,7 +92,11 @@ func (a *app) sourceCommand() *cobra.Command {
 	list := &cobra.Command{
 		Use:   "list <topic>",
 		Short: "List a Topic's Knowledge base and Sources, and find each file on this computer",
-		Args:  exactArgs(1),
+		Long: "List a Topic's Knowledge base and Sources, and find each file on this computer. When the\n" +
+			"Topic names a Knowledge base plugin, the plugin is asked which Sources it has indexed. It\n" +
+			"has a couple of seconds to say: a plugin that is missing, slow or broken leaves that not\n" +
+			"known, and the list says which command shows what is wrong.",
+		Args: exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := core.Open(a.opts)
 			if err != nil {
@@ -107,8 +112,85 @@ func (a *app) sourceCommand() *cobra.Command {
 			return writeSourceList(a.out, res)
 		},
 	}
-	group.AddCommand(add, update, list)
+	group.AddCommand(add, update, list, a.sourceIndexCommand())
 	return group
+}
+
+// sourceIndexCommand is study source index: the one thing that asks a
+// Knowledge base plugin to index. A plugin that indexes reads the files it
+// is handed and fetches the addresses, so the agent runs this from its own
+// shell, where its sandbox applies, or the learner runs it; the MCP server,
+// which runs outside that sandbox, has no tool for it (ADR-0012).
+func (a *app) sourceIndexCommand() *cobra.Command {
+	var spec core.IndexSpec
+	cmd := &cobra.Command{
+		Use:   "index <topic> [<source>...]",
+		Short: "Have the Topic's Knowledge base plugin index the Sources it has not indexed",
+		Long: "Ask the Knowledge base plugin a Topic names to index the Topic's Sources that are not\n" +
+			"indexed, one after the other, and follow each until the plugin has indexed it or says why\n" +
+			"it could not. Name Sources to index only those. A file is handed over by its path on this\n" +
+			"computer and its content hash, a web page by its address.\n\n" +
+			"A Source is its content: a file that is missing, or has other content now than was added,\n" +
+			"is skipped, and the output says what to do about it. What goes wrong with a Source is not\n" +
+			"an error of the command: the Source is failed, with the plugin's reason, and the exit code\n" +
+			"is 0. Progress goes to stderr.\n\n" +
+			"Stopped with Ctrl-C, it tells the plugin to stop and stops the plugin's program. What was\n" +
+			"indexed stays, and running it again carries on. Nothing is recorded in the Topic: what is\n" +
+			"indexed is this computer's, and the plugin's to say.\n\n" +
+			"A plugin keeps its index in a folder of its own in your state folder, outside the Study\n" +
+			"home. A sandbox that lets study write in the Study home alone refuses that folder: allow\n" +
+			"it in the sandbox, or run this command in a shell of your own. Agents have no tool for\n" +
+			"indexing, and run this command like any other.",
+		Example: `  study source index linear-algebra
+  study source index linear-algebra --dry-run
+  study source index c go-dev-blog-context.m4k8s3 --again`,
+		Args:              minArgs(1),
+		ValidArgsFunction: cobra.NoFileCompletions,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := core.Open(a.opts)
+			if err != nil {
+				return a.fail(err)
+			}
+			spec.Topic, spec.Sources = args[0], args[1:]
+			spec.Progress = indexProgress(a.stderr, a.json)
+			res, err := c.IndexSources(cmd.Context(), spec)
+			if err != nil {
+				return a.fail(err)
+			}
+			if a.json {
+				return a.writeJSON(envelope{OK: true, Data: res})
+			}
+			return writeIndexResult(a.out, res)
+		},
+	}
+	cmd.Flags().BoolVar(&spec.Again, "again", false,
+		"ask for Sources that are indexed already too: a web page is fetched again")
+	cmd.Flags().BoolVar(&spec.DryRun, "dry-run", false,
+		"start the plugin and list what it would be asked to index, without asking")
+	return cmd
+}
+
+// indexProgress reports a running study source index on stderr: each Source
+// as the plugin is asked for it, and every so often while a long one is
+// indexed, with how far the plugin says it is. With --json only the reports
+// of long ones are written, so a quick run keeps stderr empty.
+func indexProgress(w io.Writer, quiet bool) func(core.IndexProgress) {
+	return func(p core.IndexProgress) {
+		switch {
+		case p.State == core.ProgressStarted && !quiet:
+			fmt.Fprintf(w, "Indexing %s (%d of %d)…\n", printable(p.Title), p.Number, p.Total)
+		case p.State == core.ProgressRunning:
+			done := ""
+			if p.Progress != nil {
+				done = fmt.Sprintf("%d%%, ", int(*p.Progress*100))
+			}
+			fmt.Fprintf(w, "  still indexing %s (%s%s)\n", printable(p.Title), done, p.Elapsed.Round(time.Second))
+		case p.State == core.ProgressStopping:
+			// At once, and with --json too: nothing else is printed until
+			// the plugin has answered, which it has seconds to do.
+			fmt.Fprintf(w, "Stopping: telling the plugin to stop indexing %s…\n", printable(p.Title))
+		}
+	}
 }
 
 func (a *app) evidenceCommand() *cobra.Command {
@@ -215,17 +297,47 @@ func (a *app) evidenceCommand() *cobra.Command {
 	return group
 }
 
-// describeKnowledgeBase shows the kind as topic.toml records it. One this
-// version does not know is treated as none, and says so.
+// describeKnowledgeBase shows the Knowledge base as topic.toml records it: a
+// kind, and with the kind plugin the plugin's name. A kind this version does
+// not know is treated as none, and says so. Whether this computer has the
+// plugin is for the Topic's indexing to say (writeIndexing).
 func describeKnowledgeBase(kb *core.KnowledgeBase) string {
 	switch {
 	case kb == nil:
 		return "not chosen yet, so none"
-	case kb.Kind != core.KnowledgeBaseNone:
-		return printable(kb.Kind) + " (a kind this version of study does not know, so treated as none)"
-	default:
+	case kb.Kind == core.KnowledgeBaseNone:
 		return kb.Kind
+	case kb.Kind == core.KnowledgeBasePlugin && kb.Plugin == "":
+		return "plugin, without a name"
+	case kb.Kind == core.KnowledgeBasePlugin:
+		return "plugin " + printable(kb.Plugin)
+	default:
+		return printable(kb.Kind) + " (a kind this version of study does not know, so treated as none)"
 	}
+}
+
+// describeIndex says what a Topic's Knowledge base plugin says of a Source,
+// in the learner's words, and whether it is something to look at. A reason
+// is the plugin's, or names a path: it goes through printable.
+func describeIndex(x core.SourceIndex) (text string, attention bool) {
+	reason := ""
+	if x.Reason != "" {
+		reason = ": " + printable(x.Reason)
+	}
+	switch x.State {
+	case core.IndexIndexed:
+		return "indexed", false
+	case core.IndexIndexing:
+		if x.Progress != nil {
+			return fmt.Sprintf("being indexed (%d%%)", int(*x.Progress*100)), false
+		}
+		return "being indexed", false
+	case core.IndexFailed:
+		return "indexing failed" + reason, true
+	case core.IndexNotIndexed:
+		return "not indexed" + reason, true
+	}
+	return "", false
 }
 
 // printable quotes text that came from the file system, such as a path, if
@@ -282,6 +394,13 @@ func writeSourceDetails(w io.Writer, s core.SourceStatus) {
 func writeSourceList(w io.Writer, l core.SourceList) error {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s %s\n", styleLabel.Render("Knowledge base:"), describeKnowledgeBase(l.KnowledgeBase))
+	problem := l.Indexing != nil && l.Indexing.Problem != ""
+	if problem {
+		// What keeps the plugin from saying what it has indexed, once, and
+		// not with every Source.
+		fmt.Fprintf(&b, "  %s %s\n    Meanwhile this Topic works as one without a Knowledge base. Run:\n      %s\n",
+			styleWarn.Render("!"), printable(l.Indexing.Problem), styleAccent.Render(printable(l.Indexing.Action)))
+	}
 	if len(l.Sources) == 0 {
 		fmt.Fprintf(&b, "\nNo Sources yet. Add one with:\n  %s\n", styleAccent.Render("study source add "+l.Topic+" --file <path>"))
 		_, err := io.WriteString(w, b.String())
@@ -291,6 +410,91 @@ func writeSourceList(w io.Writer, l core.SourceList) error {
 	for _, s := range l.Sources {
 		fmt.Fprintf(&b, "%s  %s\n", styleAccent.Render(printable(s.ID)), printable(s.Title))
 		writeSourceDetails(&b, s)
+		if s.Indexed == nil {
+			continue
+		}
+		index := *s.Indexed
+		if index.State == core.IndexNotIndexed && (s.State == core.SourceMissing || s.State == core.SourceChanged) {
+			// The line above says so already. A Source that failed keeps
+			// its reason, which is the plugin's.
+			index.Reason = ""
+		}
+		switch text, attention := describeIndex(index); {
+		case text == "":
+		case attention:
+			fmt.Fprintf(&b, "  %s %s\n", styleWarn.Render("!"), text)
+			if index.Retry != "" {
+				// A failure is no next action: it is tried again by whoever
+				// put right what the reason names, and only where trying
+				// again would hand the Source to the plugin.
+				fmt.Fprintf(&b, "    To have it tried again, run: %s\n", styleAccent.Render(printable(index.Retry)))
+			}
+		default:
+			fmt.Fprintf(&b, "  %s\n", styleDim.Render(text))
+		}
+	}
+	if l.Indexing != nil && !problem && l.Indexing.Action != "" {
+		fmt.Fprintf(&b, "\nTo have Knowledge base plugin %s index what is not indexed, run:\n  %s\n", printable(l.Indexing.Plugin),
+			styleAccent.Render(printable(l.Indexing.Action)))
+	}
+	_, err := io.WriteString(w, b.String())
+	return err
+}
+
+// writeIndexResult shows what study source index did, or in a dry run what
+// it would do: each Source that was considered, with what the plugin says
+// of it now.
+func writeIndexResult(w io.Writer, r core.IndexResult) error {
+	var b strings.Builder
+	asked := 0
+	for _, s := range r.Sources {
+		if s.Asked {
+			asked++
+		}
+	}
+	plugin, topic := styleAccent.Render(printable(r.Plugin)), r.Topic
+	sources := fmt.Sprintf("%d %s", asked, plural(asked, "Source", "Sources"))
+	switch {
+	case len(r.Sources) == 0:
+		fmt.Fprintf(&b, "%s has no Sources to index yet. Add one with:\n  %s\n", topic,
+			styleAccent.Render("study source add "+topic+" --file <path>"))
+	case r.DryRun && asked == 0:
+		fmt.Fprintf(&b, "Knowledge base plugin %s would be asked to index nothing of %s:\n", plugin, topic)
+	case r.DryRun:
+		fmt.Fprintf(&b, "Knowledge base plugin %s would be asked to index %s of %s:\n", plugin, sources, topic)
+	case asked == 0:
+		fmt.Fprintf(&b, "Knowledge base plugin %s was asked to index nothing of %s:\n", plugin, topic)
+	default:
+		fmt.Fprintf(&b, "Knowledge base plugin %s was asked to index %s of %s:\n", plugin, sources, topic)
+	}
+	ids := make([]string, len(r.Sources))
+	for i, s := range r.Sources {
+		ids[i] = printable(s.ID)
+	}
+	width := widest(ids) + 2
+	for i, s := range r.Sources {
+		text, attention := describeIndex(s.SourceIndex)
+		switch {
+		case s.Asked && r.DryRun && s.State == core.IndexIndexed:
+			text, attention = "indexed, and would be asked for again", false
+		case s.Asked && r.DryRun:
+			text, attention = text+", and would be indexed", false
+		case s.Skipped != "":
+			text, attention = text+"; skipped: "+printable(s.Skipped), true
+		case !s.Asked && s.State == core.IndexIndexed:
+			text = "indexed already"
+		}
+		mark := " "
+		if attention {
+			mark = styleWarn.Render("!")
+		}
+		fmt.Fprintf(&b, "%s %s%s\n", mark, styleAccent.Render(pad(ids[i], width)), printable(s.Title))
+		// What the plugin is handed, and reads: whoever runs this sees which
+		// files and addresses those are.
+		if where := s.Path + s.URL; where != "" {
+			fmt.Fprintf(&b, "    %s\n", styleDim.Render(printable(where)))
+		}
+		fmt.Fprintf(&b, "    %s\n", text)
 	}
 	_, err := io.WriteString(w, b.String())
 	return err

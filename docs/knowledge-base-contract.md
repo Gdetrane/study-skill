@@ -37,6 +37,13 @@ A plugin may answer with an earlier revision it speaks. `study` then lists the p
 calls `contract`. All of that must be done within 30 seconds of `study` setting out to start
 the plugin.
 
+**Be quick to start, and to say what is indexed.** `study status`, and whatever else shows
+the learner where they are, asks a plugin which Sources it has indexed, and waits for no
+plugin: there, starting the plugin, the answer of `contract` and every answer of `status`
+have **2 seconds, all of them together**, and the plugin is started anew each time. One
+that takes longer is stopped, and its Sources are shown as not known. So load what is slow
+to load, a model say, when `index` or `search` first needs it, and not when you start.
+
 **A plugin answers what it is asked, and sends `study` no requests.** `study` offers a
 plugin nothing to call back: no roots, no sampling and no questions to the learner. The first
 request a plugin sends, a `ping` or a `roots/list` as much as any other, ends the session:
@@ -146,10 +153,11 @@ Study home. So `study` starts a plugin with nothing the agent could have prepare
 - **Stopping.** `study` stops the plugin when it is done with it: it closes the plugin's
   standard input and output. **Exit when your standard input closes**, whatever you are
   doing. A plugin still running 2 seconds later gets `SIGTERM`, sent to its process group,
-  and 2 seconds after that the group is killed. When the program exits, whatever it started
-  and left in its process group is killed with it. **A program the plugin moved to a
-  process group or a session of its own is not stopped by `study`**: a plugin that starts
-  one stops it itself.
+  and 2 seconds after that the group is killed. A plugin that was only asked what it has
+  indexed has nothing to finish, and gets a quarter of a second each time. When the program
+  exits, whatever it started and left in its process group is killed with it. **A program
+  the plugin moved to a process group or a session of its own is not stopped by `study`**:
+  a plugin that starts one stops it itself.
 - **Signals to `study`.** On `SIGINT`, `SIGTERM` and `SIGHUP`, `study` stops the request,
   sends `notifications/cancelled` for the call under way, and stops the plugin as above
   before it exits. A `study` that is killed (`SIGKILL`) stops nothing: its end of the
@@ -158,7 +166,11 @@ Study home. So `study` starts a plugin with nothing the agent could have prepare
   session of its own.
 - **More than one copy can run at once**, on the same folder: the MCP server the agent
   uses and a `study source index` in a shell each start their own. A copy must find what
-  another indexed, and searching while another copy indexes must work.
+  another indexed, and searching while another copy indexes must work. A copy that can
+  tell that another is indexing a Source **now** says `indexing` of it, and one that
+  cannot says what the index holds: never `indexing` for work that a copy which was
+  stopped left unfinished. `cancel` stops what the copy that is asked is indexing itself,
+  and answers `false` for another copy's work.
 - **Nothing is kept between runs but what is in the folder.** Indexing goes on only while
   the copy that was asked runs.
 
@@ -186,7 +198,14 @@ Two things follow for whoever writes or runs a plugin:
   run inside an agent's sandbox starts the plugin inside that sandbox, and the plugin writes
   its index in the learner's state folder, which a sandbox that allows only the Study home
   does not let it do. Allow `$XDG_STATE_HOME/lamplight/knowledge-base-plugins` there, or
-  index from a shell of the learner's own.
+  index from a shell of the learner's own. `study` says so itself when the folder cannot be
+  made, or cannot be written in.
+- **Pass over a name in the folder that begins with `.lamplight-`.** Before it starts a
+  plugin to index, `study` makes an empty file with such a name in the folder and removes
+  it again, to learn whether the folder can be written in: a sandbox refuses what a
+  folder's mode allows. Another copy of the plugin may see the file for a moment. It is
+  no part of an index, and no collection. The conformance suite leaves such a file in the
+  folder and fails a plugin that does not index beside it.
 
 ### A plugin reached by URL
 
@@ -222,6 +241,9 @@ with `application/json` or with a stream of server-sent events.
 | `index`, `status`, `cancel`, `passage`: each call | 30 seconds |
 | `search` | 60 seconds |
 | Exiting once standard input is closed, and again after `SIGTERM` | 2 seconds |
+| Starting, `contract` and every `status`, together, when `study` shows what is indexed | 2 seconds |
+| Exiting then, once standard input is closed, and again after `SIGTERM` | 250 milliseconds |
+| Answering `cancel`, when `study source index` was stopped | 10 seconds |
 | One MCP message from the plugin | 16,777,216 bytes |
 | Values in one MCP message from the plugin | 250,000 |
 | A Passage's `text` | 32,768 bytes of UTF-8 |
@@ -305,7 +327,7 @@ format the plugin cannot read, a page that cannot be fetched: `index` answers, a
 
 | What | Who chooses it | It is |
 |---|---|---|
-| A collection's name | `study` | Lowercase letters, digits and single hyphens, up to 64 characters: `linear-algebra`. It is safe as a file's name. |
+| A collection's name | `study` | Lowercase letters, digits and single hyphens, up to 64 characters: `linear-algebra`. It is safe as a file's name. The name `study` gives a Topic's collection is the Topic's id and a hash that tells the learner's Study homes apart, such as `linear-algebra-mfrggzdfmztwq2lknnwg23tpobyxe43u`: a plugin makes nothing of what a name says. |
 | A Source's id | `study` | Lowercase letters, digits, hyphens and dots, starting with a letter or a digit, up to 128 characters: `strang-linear-algebra.k3f9a2`. |
 | A Passage's id | the plugin | Letters, digits, dots, underscores, colons and hyphens, not starting with a hyphen, up to 128 characters. It names one Passage within its collection. |
 | A content hash | whoever read the bytes | `sha256:` and the 64 lowercase hexadecimal digits of the SHA-256 of the bytes: of the file, or of a web page's body as it was fetched. |
@@ -387,10 +409,17 @@ Source: `status` then says `failed` too. A plugin that finds out only later answ
   answer is `indexed`, at once, and the Passages and their ids stay as they are.
 - Otherwise the plugin reads the file at `path`. Its content replaces what the index held
   for the Source: the old Passages are no longer found.
-- **`status` gives the hash of the bytes the plugin read**, which it computes itself. The
-  file may have changed since `study` hashed it. Then the plugin indexes what it read and
-  says so through that hash, or fails the Source: it never gives the hash it was handed for
-  content it did not hash.
+- **A file is indexed only when its bytes are the `hash` it was handed.** The plugin
+  hashes the bytes it reads, the same bytes it indexes, in one reading. When they are not
+  the `hash` of the `index` call, the file is not the one `study` read: it changed since,
+  or its path leads elsewhere by now. The plugin then **keeps nothing of what it read**.
+  The Source is `failed`, with a reason such as "the file changed since study read it",
+  and what was indexed for it before is still found. This is no formality. A Source can be
+  a file inside the Study home, where the learner's agent writes: the agent could exchange
+  it for a link to any file of the learner's once `study` has read it, and a plugin that
+  indexed what it found there would hand that file's text to the next search.
+- **`status` gives the hash of the bytes the plugin read**, which it computes itself: it
+  never gives the hash it was handed for content it did not hash.
 - **A web page has no hash until it is fetched.** The plugin fetches it, and `status`
   gives the hash of what it fetched. A page that is indexed is fetched again only when
   `refetch` is `true`: otherwise the answer is `indexed`, at once.
@@ -440,8 +469,10 @@ Says what is indexed in a collection.
   halfway and is started again says nothing is `indexing` until `index` is called: then it
   carries on, or starts over.
 - `failed`: the last indexing failed. The Source stays `failed`, with its `reason`,
-  however often `status` is asked, until it is indexed again, or at least until the plugin
-  stops.
+  however often `status` is asked **and however often the plugin is started**, until it is
+  asked to be indexed again. `study` starts a command anew for each of its own commands, so
+  the one that shows the learner what failed is never the one that saw it fail: keep a
+  failure where the index is kept.
 - `status` answers from what the plugin knows, and never waits for indexing: asked while a
   Source is being indexed, it says `indexing`, at once.
 

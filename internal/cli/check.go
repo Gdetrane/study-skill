@@ -76,11 +76,13 @@ func checkProgress(w io.Writer, quiet bool) func(core.CheckProgress) {
 // never fall back to the most recent Topic: outside a Topic's folder, the
 // Topic must be named.
 func topicFromFolder(cmd *cobra.Command, c *core.Core) (string, error) {
-	status, err := c.Status(cmd.Context())
+	// Which Topic, and nothing else of status: no Knowledge base plugin is
+	// asked what it has indexed to run a Check.
+	t, err := c.ActiveTopic(cmd.Context())
 	if err != nil {
 		return "", err
 	}
-	if t := status.ActiveTopic; t != nil && t.ChosenBy == core.ChosenByFolder {
+	if t != nil && t.ChosenBy == core.ChosenByFolder {
 		return t.ID, nil
 	}
 	return "", usageError{fmt.Errorf("name the Topic with --topic, or run the command inside the Topic's folder")}

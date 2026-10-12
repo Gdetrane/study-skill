@@ -1,0 +1,10 @@
+Study home:    $HOME/study
+Active topic:  linear-algebra (Linear algebra): it is the Topic you worked on most recently
+Do next:       Plan the Syllabus together, and approve it
+
+Topics:
+  linear-algebra  Linear algebra  Knowledge base: plugin kb
+
+Knowledge base plugins:
+  linear-algebra: not indexed: Lost (its file is not on this computer); indexing failed: Scan (there is no text in it)
+    Run: study source list linear-algebra

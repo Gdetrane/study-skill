@@ -1,0 +1,12 @@
+Knowledge base plugin kb was asked to index 3 Sources of linear-algebra:
+  strang.<id>   Strang
+    $HOME/Books/strang.txt
+    indexed
+! scan.<id>     Scan
+    $HOME/Books/scan.txt
+    indexing failed: there is no text in it
+! lost.<id>     Lost
+    not indexed; skipped: its file is not on this computer: say where it is with study source update linear-algebra lost.<id> --path <file>
+  go-blog.<id>  Go blog
+    http://127.0.0.1:PORT/blog
+    indexed

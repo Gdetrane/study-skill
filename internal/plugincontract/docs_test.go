@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mordor-forge/lamplight/v2/internal/core"
 	"github.com/mordor-forge/lamplight/v2/internal/pluginclient"
 	"github.com/mordor-forge/lamplight/v2/internal/plugincontract"
 )
@@ -251,10 +252,16 @@ func TestThePageGivesEveryLimitAndDeadline(t *testing.T) {
 	table := sections(readDoc(t))["Deadlines and limits"]
 	seconds := func(d time.Duration) string { return strconv.Itoa(int(d/time.Second)) + " seconds" }
 	for what, want := range map[string]string{
-		"the deadline for starting":         "answer of `contract` | " + seconds(pluginclient.DefaultStartTimeout),
-		"the deadline for a call":           "each call | " + seconds(pluginclient.DefaultCallTimeout),
-		"the deadline for a search":         "| `search` | " + seconds(pluginclient.DefaultSearchTimeout),
-		"the grace for stopping":            "after `SIGTERM` | " + seconds(pluginclient.DefaultStopGrace),
+		"the deadline for starting": "answer of `contract` | " + seconds(pluginclient.DefaultStartTimeout),
+		"the deadline for a call":   "each call | " + seconds(pluginclient.DefaultCallTimeout),
+		"the deadline for a search": "| `search` | " + seconds(pluginclient.DefaultSearchTimeout),
+		"the grace for stopping":    "after `SIGTERM` | " + seconds(pluginclient.DefaultStopGrace),
+		// What the core gives a plugin that is asked what it has indexed,
+		// and one that is told to stop indexing.
+		"the time to say what is indexed": "when `study` shows what is indexed | " + seconds(core.PluginGlanceTimeout),
+		"the grace after saying it": "Exiting then, once standard input is closed, and again after `SIGTERM` | " +
+			strconv.Itoa(int(core.PluginGlanceGrace/time.Millisecond)) + " milliseconds",
+		"the time to stop indexing":         "when `study source index` was stopped | " + seconds(core.DefaultIndexCancelTimeout),
 		"the size of a message":             "| " + number(plugincontract.MaxMessageBytes) + " bytes |",
 		"the values of a message":           "| Values in one MCP message from the plugin | " + number(plugincontract.MaxMessageValues) + " |",
 		"the length of a Passage":           "| " + number(plugincontract.MaxPassageBytes) + " bytes of UTF-8 |",

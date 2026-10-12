@@ -38,22 +38,24 @@ func connectServer(t *testing.T, home string, opts *mcp.ClientOptions, session *
 	prepare func(*mcp.Server)) *mcp.ClientSession {
 	t.Helper()
 	getenv := func(key string) string { return map[string]string{"STUDY_HOME": home, "HOME": home}[key] }
-	return connectOn(t, getenv, home, opts, session, prepare)
+	return connectOn(t, getenv, home, opts, session, prepare, core.PluginOptions{})
 }
 
 // connectOn is connectServer for a study that has the environment getenv
 // gives and was started in dir: for a computer whose home folder is not its
-// Study home.
+// Study home, which is the only kind that reads a Knowledge base plugin
+// registry. plugins says how its core starts the plugins registered there.
 func connectOn(t *testing.T, getenv func(string) string, dir string, opts *mcp.ClientOptions, session *mcp.ClientSessionOptions,
-	prepare func(*mcp.Server)) *mcp.ClientSession {
+	prepare func(*mcp.Server), plugins core.PluginOptions) *mcp.ClientSession {
 	t.Helper()
 	ctx := context.Background()
 	var n atomic.Int64
 	c, err := core.Open(core.Options{
-		Getenv: getenv,
-		Dir:    dir,
-		Now:    func() time.Time { return time.Date(2026, 10, 1, 9, 30, 0, 0, time.UTC) },
-		NewID:  func() string { return fmt.Sprintf("id%03d", n.Add(1)) },
+		Getenv:  getenv,
+		Dir:     dir,
+		Now:     func() time.Time { return time.Date(2026, 10, 1, 9, 30, 0, 0, time.UTC) },
+		NewID:   func() string { return fmt.Sprintf("id%03d", n.Add(1)) },
+		Plugins: plugins,
 	})
 	if err != nil {
 		t.Fatal(err)

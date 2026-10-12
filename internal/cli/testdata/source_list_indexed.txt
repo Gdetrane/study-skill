@@ -1,0 +1,18 @@
+Knowledge base: plugin kb
+
+Sources:
+strang.<id>  Strang
+  $HOME/Books/strang.txt
+  indexed
+scan.<id>  Scan
+  $HOME/Books/scan.txt
+  ! indexing failed: there is no text in it
+    To have it tried again, run: study source index linear-algebra scan.<id>
+lost.<id>  Lost
+  lost.txt
+  ! not found on this computer: say where it is with study source update --path,
+    or add its folder to the Library with study library build
+  ! not indexed
+go-blog.<id>  Go blog
+  http://127.0.0.1:PORT/blog
+  indexed

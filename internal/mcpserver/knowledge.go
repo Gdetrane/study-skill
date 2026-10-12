@@ -12,8 +12,12 @@ import (
 )
 
 // addKnowledgeTools adds the Knowledge seam's tools (ADR-0007): Sources and
-// Evidence. The core never searches a Knowledge base: the agent reads the
-// Sources and records here what it relied on.
+// Evidence. The agent reads the Sources and records here what it relied on.
+//
+// The sources tool, like status, asks a Topic's Knowledge base plugin what
+// it has indexed, and nothing else. No tool here asks a plugin to index:
+// that is study source index, in the agent's own shell or the learner's
+// (ADR-0012), and a test calls every tool to see that none does.
 func addKnowledgeTools(server *mcp.Server, c *core.Core) {
 	closedWorld := false
 	notDestructive := false
@@ -27,7 +31,14 @@ func addKnowledgeTools(server *mcp.Server, c *core.Core) {
 			"file is not on this computer: ask the learner where it is and record it with source_update. State " +
 			"untracked is a line someone added to sources.jsonl by hand: add the Source with source_add instead. " +
 			"The Knowledge base kind is none, which a Topic without one behaves as too; so does a Topic whose kind " +
-			"this version does not know, shown as it is recorded.",
+			"this version does not know, shown as it is recorded. With the kind plugin the Topic names a Knowledge " +
+			"base plugin, and each Source has an index: its state on this computer is indexed, indexing (with its " +
+			"progress), failed (with the plugin's reason), not_indexed or unknown. indexing names the plugin and gives " +
+			"the one action to take: study source index for Sources that are not indexed, or, with a problem, the " +
+			"command that says what is wrong with the plugin. A Source that failed is no action: it stays failed, with " +
+			"the reason, until someone runs its retry, the command that has it tried again, which is there when " +
+			"trying again can come to anything. With a problem every state is unknown and the Topic " +
+			"works as one without a Knowledge base (Instruction 14).",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, OpenWorldHint: &closedWorld},
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in topicInput) (*mcp.CallToolResult, core.SourceList, error) {
 		list, err := c.ListSources(ctx, in.Topic)
@@ -42,7 +53,8 @@ func addKnowledgeTools(server *mcp.Server, c *core.Core) {
 		Title: "Add a Source",
 		Description: "Add a document or web page the Topic learns from: a file by its absolute path or a path " +
 			"starting with ~/ (library_search finds the learner's books), or an http or https URL. Files are hashed, " +
-			"never parsed, and found again on any machine by their content.",
+			"never parsed, and found again on any machine by their content. Adding a Source indexes nothing, whatever " +
+			"the Topic's Knowledge base: sources then gives the command that does.",
 		Annotations: &mcp.ToolAnnotations{DestructiveHint: &notDestructive, OpenWorldHint: &closedWorld},
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in sourceAddInput) (*mcp.CallToolResult, core.SourceResult, error) {
 		if err := absolutePath(in.File); err != nil {
@@ -169,6 +181,10 @@ func absolutePath(path string) error {
 		Message: fmt.Sprintf("%q is a relative path: give the file's absolute path, or one starting with ~/", path)}
 }
 
+// knowledgeBaseInput chooses a Topic's Knowledge base. A plugin is named,
+// and that is all: what the name stands for, a program or an address, is in
+// the registry of the learner's computer, which no tool changes (ADR-0012).
 type knowledgeBaseInput struct {
-	Kind string `json:"kind" jsonschema:"none, the only kind this version has"`
+	Kind   string `json:"kind" jsonschema:"none, or plugin"`
+	Plugin string `json:"plugin,omitempty" jsonschema:"with kind plugin, the name the learner registered the Knowledge base plugin under, such as shelf: lowercase letters, digits and single hyphens"`
 }

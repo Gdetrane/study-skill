@@ -210,8 +210,10 @@ hours before any learning happens is exactly what v1 produced.
    exercises), `project` (one project built step by step) or `challenges` (a run of
    challenges of growing difficulty). It lives in `topic.toml` as `approach`, set through
    `topic_update` (`approach.set`).
-3. Add Sources: files from the Library or URLs. The Knowledge base is `none`, the only
-   kind until Knowledge base plugins are built (ADR-0012).
+3. Add Sources: files from the Library or URLs. The Knowledge base is `none`, or a
+   Knowledge base plugin the learner registered, which the Topic names and
+   `study source index` has index the Sources (ADR-0012). Nothing after this step waits for
+   that.
 4. Assessment, time-boxed to about 15 minutes. Areas not reached are marked "confirm during
    Lessons". The result is saved in `notes/` and sets the Level.
 5. The agent drafts the Syllabus: Milestone 1 in detail, later Milestones as outlines with
@@ -552,10 +554,12 @@ hours before any learning happens is exactly what v1 produced.
   where the location came from. Sources are files (by path plus content hash) or URLs.
   Lessons without Evidence are marked, never blocked.
   - The Knowledge base lives in `topic.toml`'s `[knowledge_base]` table and is set by a
-    `knowledge_base.set` Event, which writes the table anew with the kind alone. With one
-    kind, choosing it again writes nothing, so the table is left as it is, with any keys a
-    newer version added. A kind this version does not know, one a newer version added or
-    the `notebooklm` of earlier builds, is shown as recorded and treated as `none`.
+    `knowledge_base.set` Event, whose payload is a kind and which writes the table anew
+    with the kind alone. Choosing what a Topic has writes nothing, so the table is left as
+    it is, with any keys a newer version added. A kind this version does not know, one a
+    newer version added or the `notebooklm` of earlier builds, is shown as recorded and
+    treated as `none`. A plugin's name is another payload, so it has an Event type of its
+    own (below).
   - Lamplight does not use NotebookLM (ADR-0011): its community MCP server works through
     undocumented endpoints and the learner's browser session, at the risk of the learner's
     Google account. Earlier builds of v2 recorded a notebook and each Source's id in it;
@@ -585,8 +589,7 @@ hours before any learning happens is exactly what v1 produced.
   - `status` marks the Lessons started or done that cite no Evidence, once the Topic has
     Sources (`lessons_without_evidence`); they are never blocked.
 - **Built** (ADR-0012): the registry of the Knowledge base plugins a machine has, and
-  `study knowledge-base add`, `list` and `remove` to change it. No Topic names a plugin
-  yet.
+  `study knowledge-base add`, `list` and `remove` to change it.
   - The registry is `knowledge-base-plugins.json`, with a `format` number, in Lamplight's
     configuration folder beside `config.toml`. An entry is a name and either a command, as
     an argument list, or an http or https URL. A name follows the rule of a Topic's id and
@@ -644,7 +647,7 @@ hours before any learning happens is exactly what v1 produced.
     registry's question, is this the agent's to change, of whatever else a plugin is
     started with: its folder, its interpreter and each path in its environment.
 - **Built** (ADR-0012): the contract, `study` as the MCP client of a plugin, and
-  `study knowledge-base check`. Nothing indexes or searches yet.
+  `study knowledge-base check`.
   - The contract, version 1, is `docs/knowledge-base-contract.md` for whoever writes a
     plugin and `internal/plugincontract` for `study`; a test keeps the two in step, down to
     the page's examples. It is six tools with fixed names: `contract` (the version, and the
@@ -701,11 +704,7 @@ hours before any learning happens is exactly what v1 produced.
     the query of its address, of which `study` shows the scheme and host alone. A plugin
     that reports a newer contract version is `newer_format`.
   - `study knowledge-base check <name>` starts or reaches a plugin, reports the contract it
-    speaks, and stops it. It is CLI-only. The core starts a plugin for nothing else yet, so
-    no MCP tool starts or reaches a plugin until a Topic can name one. A test checks that by
-    what the tools do: it registers a command that records being started and a service
-    that counts what reaches it, calls every tool, and finds neither touched. A second test
-    reads the core, and fails when anything but `CheckPlugin` could start a plugin.
+    speaks, and stops it. It is CLI-only.
   - `internal/plugintest` holds a small plugin that speaks the contract, which is the one
     program tests start (a test binary run as the plugin), and the conformance suite: a
     test helper that takes a way to connect to any plugin and holds it to everything the
@@ -714,26 +713,97 @@ hours before any learning happens is exactly what v1 produced.
     link out of its folder. A plugin that stops answering ends the suite at that call. A
     test runs the suite against plugins that each break the contract in one way, so the
     suite is known to fail them.
+- **Built** (ADR-0012): a Topic names its Knowledge base plugin, `study source index` has
+  the plugin index the Topic's Sources, and `status` and `sources` say what it has indexed.
+  Nothing searches a plugin yet.
+  - A Topic records the plugin's name and nothing else of it (`kind = "plugin"`,
+    `plugin = "<name>"`), so nothing a Topic holds decides which program runs (ADR-0009).
+    `study topic update --knowledge-base <name>` and `topic_update` set it, and `none` takes
+    it back. The name is held to the rule of the registry, and a name this machine does not
+    have is recorded all the same: another machine may have it, and the update says what is
+    missing here.
+  - A name is another payload than a kind, so it is another Event type:
+    `knowledge_base_plugin.set`, whose payload is the name, and which writes the table anew
+    with the kind `plugin` and the name. `knowledge_base.set` keeps recording a kind alone,
+    `none` among them, and is read as a kind whatever its payload holds.
+  - **A collection** is named after the Topic and the Study home: the Topic's id, cut to
+    fit, and 32 characters of a hash of the Study home's real path and the id. A plugin's
+    folder is one for the plugin on a machine, and a service may serve several, so the id
+    alone would have two Study homes that each hold a Topic of one name share a collection.
+    The path is not the agent's to choose, and every name ends with the hash, so no two
+    Topics share one. A Study home that is moved has its Sources indexed again. A Topic
+    that is removed and another made later under its id do share one, so a search is to be
+    limited to the Sources the Topic has.
+  - `study source index <topic> [<source>…]` is the one thing that asks a plugin to index,
+    and it is CLI-only, like `study check`: run in the agent's shell or by the learner, so
+    the sandbox and approval prompts apply to what a command plugin reads and fetches. No
+    MCP tool has a plugin index, or the MCP server would have it read any file the agent
+    named and hand its text back through a search. Adding a Source records it and indexes
+    nothing. The command asks for the Sources that are not indexed, one after the other,
+    follows each by asking `status` until the plugin is done with it, and reports each
+    Source's state. A Source that fails is no error of the command.
+  - **A Source is its content.** A file is handed over by its real path, links followed,
+    and its content hash, and only when the file on this machine is the one the Topic
+    records: `study` reads it once more, just before it asks for it, and skips a file that
+    is missing or has other content now. **The plugin keeps nothing of a file whose bytes
+    are not the hash it was handed**, and fails the Source: a file inside the Study home is
+    the agent's to exchange for a link to any file of the learner's once `study` has read
+    it, and so the hash `study` checked is the only content that can come to be indexed. A
+    Source counts as indexed only when the plugin's hash is the Source's. The command shows
+    each path it hands over.
+  - **Stopping.** When the command is stopped its context is cancelled, and a call made
+    with it asks a plugin nothing. So it tells the plugin to stop, with `cancel`, under a
+    context of its own that lasts 10 seconds, and then stops a command plugin, whose
+    indexing ends with it: nothing indexes behind a command that has exited. A service that
+    cannot be told is reported as possibly still indexing. What was indexed stays, and the
+    next run carries on.
+  - **`sources` and `status` say what is indexed**, in the CLI and over MCP: each Source is
+    `indexed`, `indexing`, `failed`, `not_indexed` or `unknown`, with `study source index`
+    as the one action when a Source is not indexed and the command would hand it over. A
+    Source that failed is shown with the plugin's reason and is no action: it is tried
+    again when someone runs the command for it. Nor is the command the action for a file
+    that is missing, has changed or cannot be read, which it skips: `status` then names
+    `study source list`, which says what to do about the file. Whether a Source is indexed
+    is the plugin's to say on this machine: it records no Event and is in no file.
+  - **Nothing waits for a plugin.** For those two, reading the registry, starting the
+    plugin or reaching it, and its answers share a deadline of 2 seconds
+    (`core.PluginGlanceTimeout`), against the 30 a plugin has when it is asked to index. A
+    plugin that misses it is stopped, and its Sources are `unknown`, with the command that
+    says what is wrong. So are those of a Topic whose plugin this machine lacks, or that
+    does not start or speak the contract: the Topic is treated as `none`. Plugins are asked
+    side by side, each once, and a Topic without Sources starts none. The Topics that name
+    one plugin share its time and are asked one after the other, the Active topic first,
+    and `status` asks only about Topics that are active. Opening a Session asks no plugin
+    anything. The session-start hook of the Claude Code plugin prints `status`, so it asks
+    as `status` does.
+  - **A plugin is started for one thing and stopped again.** Each command and each tool
+    call that needs a plugin starts it, asks, and stops it before it answers. Nothing is
+    kept between two tool calls in `study mcp`: a program kept running there would be one
+    outside the agent's sandbox for as long as the agent's session lasts, and one that
+    outlived a change of the registry. The cost is a start for every `status`.
+  - **What a tool may do with a plugin** is checked by what the tools do. A test registers
+    a command that records what it is asked and a service that does the same, has the
+    Topic name one of them, calls every tool, and fails when the plugin was asked anything
+    but which contract it speaks and what it has indexed, when the other plugin was
+    reached at all, or when the registry changed. The Topic names the plugin and has a
+    Source it has not indexed from before the first tool is called, so that every tool is
+    called on a Topic a plugin could index for. It also fixes which tools ask a plugin
+    anything: `status` and `sources`. A second test reads the core: a plugin's `index` is
+    asked in one function, which only `IndexSources` reaches, which the server cannot name;
+    `cancel`, `search` and `passage` are watched in the same way, and the core does without
+    reflection, which calls by a name no test can read. A third holds the client to asking
+    each tool in the one method named after it.
+  - A command plugin keeps its index in a folder `study` gives it in the learner's state
+    folder, outside the Study home, so a sandbox `study source index` runs in must allow
+    that folder. `study` makes sure of it before it starts a plugin to index, by writing in
+    it: a sandbox refuses what the folder's mode allows. The error for a folder that
+    cannot be made or written in gives both ways out, and the skill teaches them.
 - **Still to build for v2.0** (ADR-0012): the rest of Knowledge base plugins, so the agent
   can search a Topic's Sources with no account anywhere.
   - The agent talks to `study`, and `study` is the MCP client of the Topic's plugin. `study`
     ships no retrieval and still never parses a document.
-  - A plugin is registered per machine with `study knowledge-base add` (built, above). A
-    Topic records only its name (`kind = "plugin"`, `plugin = "<name>"`), so nothing a Topic
-    holds decides which program runs (ADR-0009). A Topic whose plugin this machine lacks is
-    treated as `none`, and `status` says how to fix it. A command is started by the
-    absolute path recorded at registration, from the registry's folder and never from the
-    Topic. A plugin reached by URL is a service outside any sandbox, so it must itself be
-    told what it may read and fetch.
-  - `study source index` is the one thing that asks a plugin to index, and it is CLI-only,
-    like `study check`: run in the agent's shell or by the learner, so the sandbox and
-    approval prompts apply to what a command plugin reads and fetches. No MCP tool starts
-    indexing, or the MCP server would read any file the agent named and hand its text back
-    through a search. Adding a Source records it and indexes nothing. Whether a Source is
-    indexed is the plugin's to say on this machine: it records no Event, and `sources` and
-    `status` show it and give the command. A command plugin keeps its index in a folder
-    `study` gives it in the learner's state folder, outside the Study home, so a sandbox
-    `study source index` runs in must allow that folder. Nothing waits for a plugin.
+  - A plugin reached by URL is a service outside any sandbox, so it must itself be told
+    what it may read and fetch.
   - `evidence_search` returns Passages. Evidence recorded with a Passage's id is checked:
     `study` reads the Passage again, refuses a quote that is not in it, and takes the
     location from it. That is a new Event type. Evidence without a Passage stays possible,
@@ -1050,9 +1120,9 @@ with drafts and Reviews, History with replay, Checkpoints, Assessment, Goal, Pac
 recording Level signals); sync for one machine at a time; the Library in Go; the CLI with
 terminal Reviews; the MCP server; the `lamplight` skill; the Claude Code plugin and
 `study setup` for Claude Code and Codex; Linux and macOS releases with an install script;
-`study import`; and Knowledge base plugins (ADR-0012): the registry, the contract and `study`
-as its client, which are built, and, still to build, Topics that name a plugin,
-`study source index`, `evidence_search` with the quote check, and Shelf with keyword and
+`study import`; and Knowledge base plugins (ADR-0012): the registry, the contract, `study`
+as its client, Topics that name a plugin and `study source index`, which are built, and,
+still to build, `evidence_search` with the quote check, and Shelf with keyword and
 embedding search and optional reranking.
 
 **Order of work**: the tracer bullet, then the History engine (its file formats are settled
@@ -1069,9 +1139,17 @@ layout-aware conversion, and recordings, video and images as Sources.
 
 ## Known risks
 
-- Until Knowledge base plugins exist (ADR-0012), the agent reads the Sources itself, which
-  is slow in a long book.
+- Until a Knowledge base plugin can be searched (ADR-0012), the agent reads the Sources
+  itself, which is slow in a long book.
+- A plugin has 2 seconds to say what it has indexed, started anew each time: one that
+  takes longer to start, as a program that loads a model first would, shows its Sources as
+  not known in `status`, though `study source index` works with it.
 - A plugin is handed a file's path, so one on another machine must see the same files.
+- An agent can add any file the learner can read as a Source. `study source index` shows
+  where each file really is before a plugin reads it, and `--dry-run` shows them first;
+  a learner who runs it without reading that list has the plugin index those files, and a
+  search then gives their text to the agent. Asking before files outside the Study home
+  are handed over for the first time is not built.
 - Formulas extract garbled from PDFs, so a formula is quoted as extracted or left unchecked.
 - Approvals are tamper-evident only: an agent with a shell can still edit files.
 - Agents that read both `~/.agents/skills` and `~/.claude/skills` may list the skill twice.

@@ -47,6 +47,11 @@ type Topic struct {
 	// KnowledgeBase is where the Topic's Sources are searched for Evidence;
 	// absent until one is chosen.
 	KnowledgeBase *KnowledgeBase `json:"knowledge_base,omitempty"`
+	// Indexing is what the Topic's Knowledge base plugin says of its Sources
+	// on this computer, when status asked it: which are indexed, and the one
+	// command to run when some are not. It is absent for a Topic that names
+	// no plugin, and wherever else a Topic is returned.
+	Indexing *Indexing `json:"indexing,omitempty"`
 	// Flags are what replaying the History found that needs the learner's
 	// attention.
 	Flags []Flag `json:"flags,omitempty"`
@@ -112,7 +117,9 @@ type TopicChanges struct {
 	Title *string
 	// Goal replaces the goal; an empty goal removes it.
 	Goal *string
-	// KnowledgeBase chooses the Topic's Knowledge base.
+	// KnowledgeBase chooses the Topic's Knowledge base: the kind "none", or
+	// the kind "plugin" with the name of a Knowledge base plugin, which
+	// need not be registered on this computer.
 	KnowledgeBase *KnowledgeBase
 	// Deadline sets the Goal's deadline, YYYY-MM-DD; empty removes it.
 	Deadline *string
@@ -145,7 +152,12 @@ type TopicUpdate struct {
 	// title of one already there is that Task. In a dry run, a new Task
 	// has no id yet.
 	AddedTasks []Task `json:"added_tasks,omitempty"`
-	DryRun     bool   `json:"dry_run,omitempty"`
+	// Note says, when the update names a Knowledge base plugin that this
+	// computer cannot use as its registry has it, what is wrong and the
+	// command that puts it right. The name is recorded all the same:
+	// another of the learner's computers may have the plugin.
+	Note   string `json:"note,omitempty"`
+	DryRun bool   `json:"dry_run,omitempty"`
 }
 
 // topicSettings is the content of topic.toml.
@@ -466,7 +478,13 @@ func (c *Core) UpdateTopic(ctx context.Context, id string, changes TopicChanges)
 	if err != nil {
 		return TopicUpdate{}, err
 	}
-	return TopicUpdate{Topic: topic, Changed: len(events) > 0, AddedTasks: added, DryRun: changes.DryRun}, nil
+	updated := TopicUpdate{Topic: topic, Changed: len(events) > 0, AddedTasks: added, DryRun: changes.DryRun}
+	if kb != nil && kb.Kind == KnowledgeBasePlugin {
+		// A name is recorded whether or not this computer has the plugin,
+		// so a name that was mistyped is recorded too: say so at once.
+		updated.Note = c.pluginNote(ctx, id, kb.Plugin)
+	}
+	return updated, nil
 }
 
 // planTitleAndGoal plans changing the title or the goal; applied receives
@@ -713,27 +731,50 @@ func (c *Core) readTopic(id string) (Topic, error) {
 // topic.toml; the History gives the creation time and the flags. It writes
 // nothing: an interrupted write is flagged, and the next write finishes it.
 func (c *Core) loadTopic(home *os.Root, id string) (Topic, error) {
+	topic, _, err := c.loadTopicSources(home, id)
+	return topic, err
+}
+
+// loadTopicSources is loadTopic for whoever goes on to ask the Topic's
+// Knowledge base plugin about its Sources: it returns them too, in the
+// order they were added, for a Topic whose Knowledge base is a plugin.
+func (c *Core) loadTopicSources(home *os.Root, id string) (Topic, []Source, error) {
 	root, err := home.OpenRoot(id)
 	if err != nil {
-		return Topic{}, internalError("opening Topic "+id, err)
+		return Topic{}, nil, internalError("opening Topic "+id, err)
 	}
 	defer root.Close()
+	topic, s, err := c.loadOpenedTopic(home, root, id)
+	if err != nil || topic.KnowledgeBase == nil || topic.KnowledgeBase.Kind != KnowledgeBasePlugin {
+		return topic, nil, err
+	}
+	k := s.knowledge()
+	sources := make([]Source, 0, len(k.order))
+	for _, source := range k.order {
+		sources = append(sources, *k.sources[source])
+	}
+	return topic, sources, nil
+}
+
+// loadOpenedTopic reads the Topic whose folder is root, and returns it with
+// its History as replayed.
+func (c *Core) loadOpenedTopic(home, root *os.Root, id string) (Topic, *replayed, error) {
 	data, exists, err := readItem(root, topicFile)
 	if err != nil {
-		return Topic{}, err
+		return Topic{}, nil, err
 	}
 	if !exists {
-		return Topic{}, corruptf("%s of %s is missing", topicFile, id)
+		return Topic{}, nil, corruptf("%s of %s is missing", topicFile, id)
 	}
 	settings, err := parseTopicSettings(data, filepath.Join(c.home, id, topicFile))
 	if err != nil {
-		return Topic{}, err
+		return Topic{}, nil, err
 	}
 	topic := Topic{ID: id, Title: settings.Title, Goal: settings.Goal, Path: filepath.Join(c.home, id),
 		KnowledgeBase: knowledgeBaseOf(settings)}
 	h, err := readHistory(root, id)
 	if err != nil {
-		return Topic{}, err
+		return Topic{}, nil, err
 	}
 	s := replayHistory(h)
 	topic.Created = s.created
@@ -763,7 +804,7 @@ func (c *Core) loadTopic(home *os.Root, id string) (Topic, error) {
 		topic.Flags = append(topic.Flags, newFlag(FlagInterruptedWrite, "", nil, "",
 			"a write to this Topic was interrupted; the next change to it finishes the write"))
 	}
-	return topic, nil
+	return topic, s, nil
 }
 
 func validateTopicID(id string) error {

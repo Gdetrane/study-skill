@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 
 	"github.com/mordor-forge/lamplight/v2/internal/pluginregistry"
 	"github.com/mordor-forge/lamplight/v2/internal/xdg"
@@ -38,14 +39,23 @@ func DataFolder(getenv func(string) string, name string) (string, error) {
 	return filepath.Join(state, "lamplight", FoldersName, name), nil
 }
 
+// sandboxed is what a message about a plugin's folder says to whoever runs
+// study inside a sandbox, as an agent's shell does: the folder is outside
+// the Study home, on purpose, and a sandbox that allows the Study home alone
+// refuses it. There are two ways out, and the message gives both.
+const sandboxed = "Inside a sandbox, as in an agent's shell, either allow that folder in the sandbox, or run the " +
+	"command in a shell of your own"
+
 // makeDataFolder finds the plugin's folder, makes what is missing of it for
 // the learner alone to read, and returns its path with every symbolic link
-// on the way followed, which is what the plugin is told.
+// on the way followed, which is what the plugin is told. For a plugin that
+// is started to index (writes), it also checks that the folder can be
+// written in.
 //
 // The registry's rule decides where it may be: a state folder that is the
 // Study home, is inside it or is reached through it is refused, and nothing
 // is made there.
-func makeDataFolder(guard *pluginregistry.Guard, env pluginregistry.Env, name string) (string, error) {
+func makeDataFolder(guard *pluginregistry.Guard, env pluginregistry.Env, name string, writes bool) (string, error) {
 	path, err := DataFolder(env.Getenv, name)
 	if err != nil {
 		return "", &Error{Code: CodeFailedPrecondition, Err: err, Message: "study cannot find the state folder Knowledge base " +
@@ -61,7 +71,7 @@ func makeDataFolder(guard *pluginregistry.Guard, env pluginregistry.Env, name st
 	case err != nil:
 		return "", &Error{Code: CodeFailedPrecondition, Err: err, Message: "study cannot make the folder Knowledge base plugin " +
 			name + " keeps its index in, " + path + " (" + pathReason(err) + "). Check that every folder on the way is one " +
-			"you may pass through, and that you can write in your state folder"}
+			"you may pass through, and that you can write in your state folder. " + sandboxed}
 	}
 	defer folder.Close()
 	// The folder is the learner's alone: an index holds the text of their
@@ -74,8 +84,34 @@ func makeDataFolder(guard *pluginregistry.Guard, env pluginregistry.Env, name st
 			"writes it writes what a search finds: remove the folder so that study makes it anew, or set XDG_STATE_HOME " +
 			"to a folder that is yours alone"}
 	}
+	// A plugin asked to index writes its index here. Where it cannot, it
+	// could only say that its index cannot be written, each plugin in its
+	// own words, and the one who reads that would not learn that a sandbox
+	// decided it. Only writing tells: a sandbox refuses what the folder's
+	// mode allows.
+	if writes {
+		if err := (*checkWritable.Load())(folder); err != nil {
+			return "", &Error{Code: CodeFailedPrecondition, Err: err, Message: "Knowledge base plugin " + name + " cannot keep " +
+				"an index: nothing can be written in its folder, " + resolved + " (" + pathReason(err) + "). " + sandboxed +
+				". Outside a sandbox, check that the folder is yours to write in"}
+		}
+	}
 	return resolved, nil
 }
+
+// checkWritable is how makeDataFolder learns whether a folder can be
+// written in. A test replaces it, to have a folder refuse as a sandbox
+// refuses: no folder of the test's own does.
+var checkWritable atomic.Pointer[func(folder *os.File) error]
+
+func init() {
+	check := writable
+	checkWritable.Store(&check)
+}
+
+// probeName is how the name of the file writable makes and removes begins.
+// A plugin passes over a name in its folder that begins so.
+const probeName = ".lamplight-write-check-"
 
 // private makes an open folder one that only its owner reads and writes,
 // and fails, with what is wrong, when it is not one afterwards.

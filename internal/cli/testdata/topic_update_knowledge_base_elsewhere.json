@@ -1,0 +1,20 @@
+{
+  "ok": true,
+  "data": {
+    "topic": {
+      "id": "linear-algebra",
+      "title": "Linear algebra",
+      "path": "$HOME/study/linear-algebra",
+      "created": "2026-10-01T09:30:00Z",
+      "knowledge_base": {
+        "kind": "plugin",
+        "plugin": "shelf"
+      },
+      "state": "active",
+      "new_cards_per_day": 10
+    },
+    "changed": true,
+    "note": "no Knowledge base plugin named shelf is registered on this computer. Until that is put right, linear-algebra works on this computer as a Topic without a Knowledge base. Run: study knowledge-base add shelf -- <command>",
+    "dry_run": true
+  }
+}
