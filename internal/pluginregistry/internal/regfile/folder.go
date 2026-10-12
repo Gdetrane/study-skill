@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 )
 
 // Folder is Lamplight's configuration folder as one command finds it: found
@@ -81,7 +82,7 @@ func (f *Folder) walk() error {
 	case err != nil:
 		return &Error{Code: CodeFailedPrecondition, Err: err, Message: "study cannot reach Lamplight's configuration " +
 			"folder, " + f.Path + ", which holds the Knowledge base plugin registry (" + Reason(err) + "): check that " +
-			"every folder on the way is one you can read"}
+			"every folder on the way is one you may pass through"}
 	case place.Leaf != "":
 		place.Close()
 		return notReadyf("%s is not a folder, so it cannot be Lamplight's configuration folder, which holds the "+
@@ -123,7 +124,7 @@ func (f *Folder) Exists() bool { return len(f.place.Missing) == 0 }
 
 // Dir is the folder, open, or nil when it is not there yet. Everything in
 // the folder is read and written through it.
-func (f *Folder) Dir() *os.Root {
+func (f *Folder) Dir() *Dir {
 	if !f.Exists() {
 		return nil
 	}
@@ -133,7 +134,7 @@ func (f *Folder) Dir() *os.Root {
 // Nearest is the deepest folder on the way that exists, open, and its path
 // as the walk went: the folder itself, or the one study would start making
 // it in.
-func (f *Folder) Nearest() (*os.Root, string) { return f.place.Folder(), f.place.Path() }
+func (f *Folder) Nearest() (*Dir, string) { return f.place.Folder(), f.place.Path() }
 
 // CanCreate says, without making anything, why Create would fail for a
 // folder that is not there: nothing when it would not. A dry run asks it so
@@ -166,7 +167,7 @@ func (f *Folder) Create() error {
 		return err
 	}
 	dir, path := f.Nearest()
-	opened := []*os.Root{}
+	opened := []*Dir{}
 	defer func() {
 		for _, d := range opened {
 			_ = d.Close()
@@ -178,7 +179,7 @@ func (f *Folder) Create() error {
 			return &Error{Code: CodeFailedPrecondition, Err: err, Message: "study cannot make " + path + " (" + Reason(err) +
 				"), where the Knowledge base plugin registry goes: check that you can write in the folder that holds it"}
 		}
-		next, err := dir.OpenRoot(name)
+		next, err := dir.OpenDir(name)
 		if err != nil {
 			return &Error{Code: CodeFailedPrecondition, Err: err, Message: "study cannot open " + path + " (" + Reason(err) +
 				"), where the Knowledge base plugin registry goes"}
@@ -235,10 +236,17 @@ var ErrNotRegular = errors.New("not a regular file")
 
 var errTooLarge = errors.New("too large")
 
+// Opener is an open folder that a file is looked at and opened in: one a
+// walk opened, or an os.Root.
+type Opener interface {
+	Lstat(name string) (fs.FileInfo, error)
+	OpenFile(name string, flag int, perm fs.FileMode) (*os.File, error)
+}
+
 // ReadRegular reads the file called name in an open folder, up to max bytes.
 // The name must be a regular file's own: a symbolic link is not followed,
 // and what is read is the file that was looked at, or nothing is.
-func ReadRegular(dir *os.Root, name string, max int64) (data []byte, found bool, err error) {
+func ReadRegular(dir Opener, name string, max int64) (data []byte, found bool, err error) {
 	file, _, err := OpenRegular(dir, name, os.O_RDONLY)
 	if file == nil || err != nil {
 		return nil, false, err
@@ -265,14 +273,15 @@ var afterLook func(name string)
 
 // OpenRegular opens the regular file called name in an open folder, and
 // returns nil when nothing has the name. It follows no symbolic link:
-// opening through the folder would follow one that stays in the folder, so
+// opening through an os.Root would follow one that stays in the folder, so
 // the file is looked at first and the one that is opened must be the same
 // file. Anything but a regular file is ErrNotRegular.
 //
 // Another study may replace the file between the look and the open, as a
-// change to the registry does. Then the two are different files, and it
-// looks again; after a few times it gives up with ErrChanging.
-func OpenRegular(dir *os.Root, name string, flag int) (*os.File, fs.FileInfo, error) {
+// change to the registry does. Then the two are different files, or the
+// open finds nothing, or a link, which a Dir does not follow; and it looks
+// again. After a few times it gives up with ErrChanging.
+func OpenRegular(dir Opener, name string, flag int) (*os.File, fs.FileInfo, error) {
 	for range 20 {
 		info, err := dir.Lstat(name)
 		if errors.Is(err, fs.ErrNotExist) {
@@ -288,13 +297,13 @@ func OpenRegular(dir *os.Root, name string, flag int) (*os.File, fs.FileInfo, er
 			afterLook(name)
 		}
 		file, err := dir.OpenFile(name, flag, 0)
-		if errors.Is(err, fs.ErrNotExist) {
+		if errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ELOOP) {
 			continue
 		}
 		if err != nil {
 			return nil, nil, err
 		}
-		if opened, err := file.Stat(); err == nil && os.SameFile(info, opened) {
+		if opened, err := file.Stat(); err == nil && same(info, opened) {
 			return file, opened, nil
 		}
 		_ = file.Close()

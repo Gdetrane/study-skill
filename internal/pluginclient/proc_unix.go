@@ -45,7 +45,7 @@ func sealInherited() {
 	// Nowhere lists them: every number a descriptor can have, then.
 	most := 65536
 	var limit syscall.Rlimit
-	if err := syscall.Getrlimit(syscall.RLIMIT_NOFILE, &limit); err == nil && limit.Cur < uint64(most) {
+	if err := syscall.Getrlimit(syscall.RLIMIT_NOFILE, &limit); err == nil && uint64(limit.Cur) < uint64(most) {
 		most = int(limit.Cur)
 	}
 	for fd := 3; fd < most; fd++ {

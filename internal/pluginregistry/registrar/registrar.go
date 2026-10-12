@@ -189,6 +189,17 @@ func newPlugin(env pluginregistry.Env, w *regfile.Walker, spec Spec) (pluginregi
 		// there was something to allow.
 		if i, arg := w.InsideArgument(env, p.Command); i > 0 {
 			if !spec.AllowStudyHomeArguments {
+				// A path study cannot follow is refused like one inside the
+				// Study home, and the message says which of the two it is.
+				if err := w.Unfollowed(env, arg); err != nil {
+					return none, &regfile.Error{Code: regfile.CodeFailedPrecondition, Err: err, Message: "argument " +
+						strconv.Itoa(i) + " of the command, " + strconv.Quote(arg) + ", names a path study cannot follow " +
+						"to its end (" + regfile.Reason(err) + "), so it cannot tell whether the path leads into the Study " +
+						"home, " + env.StudyHome + ", where your agent can write. study starts a Knowledge base plugin " +
+						"outside the agent's sandbox, and takes no path it cannot follow for one outside the Study home. " +
+						"Give a path through folders you may pass through; or, if the plugin only reads it as data, " +
+						"register with --allow-study-home-arguments"}
+				}
 				return none, regfile.Errorf(regfile.CodeInvalidArgument, "argument %d of the command, %s, names something "+
 					"inside the Study home, %s, or reached through it, where your agent can write. study starts a "+
 					"Knowledge base plugin outside the agent's sandbox, so whatever the plugin loads from there, the "+
@@ -291,14 +302,24 @@ func planAndChange(ctx context.Context, folder *regfile.Folder, dryRun bool, hoo
 	}
 	// Only the holder of the lock writes here, so a temporary file of the
 	// registry's is what a study that crashed left.
-	if entries, err := fs.ReadDir(dir.FS(), "."); err == nil {
-		for _, e := range entries {
-			if strings.HasPrefix(e.Name(), tempPrefix) {
-				_ = dir.Remove(e.Name())
+	if names, err := list(dir); err == nil {
+		for _, name := range names {
+			if strings.HasPrefix(name, tempPrefix) {
+				_ = dir.Remove(name)
 			}
 		}
 	}
 	return write(dir, folder.Registry, data)
+}
+
+// list names what is in the open folder dir.
+func list(dir *regfile.Dir) ([]string, error) {
+	d, err := dir.File()
+	if err != nil {
+		return nil, err
+	}
+	defer d.Close()
+	return d.Readdirnames(-1)
 }
 
 // canChange says, without making anything, why a change would fail on what
@@ -327,7 +348,7 @@ const tempPrefix = "." + regfile.FileName + ".lamplight-tmp-"
 // temporary file, syncs it and renames it over the registry, so a reader
 // sees the old registry or the new one, never a part. The registry is made
 // for the learner alone to read: a plugin's URL may carry a key.
-func write(dir *os.Root, registry string, data []byte) error {
+func write(dir *regfile.Dir, registry string, data []byte) error {
 	suffix := make([]byte, 8)
 	_, _ = rand.Read(suffix) // crypto/rand.Read never returns an error.
 	tmp := tempPrefix + hex.EncodeToString(suffix)
@@ -351,7 +372,7 @@ func write(dir *os.Root, registry string, data []byte) error {
 	}
 	// Best effort: some file systems cannot sync a folder, and the data
 	// itself is synced.
-	if d, err := dir.Open("."); err == nil {
+	if d, err := dir.File(); err == nil {
 		_ = d.Sync()
 		_ = d.Close()
 	}
@@ -377,7 +398,7 @@ const lockWait = 30 * time.Second
 // the operating system releases if the process dies, waiting up to lockWait
 // for another process to release it. A deadline of the caller's that passes
 // first is the same thing with less time allowed, and is busy too.
-func lock(ctx context.Context, dir *os.Root, folderPath string) (unlock func(), err error) {
+func lock(ctx context.Context, dir *regfile.Dir, folderPath string) (unlock func(), err error) {
 	f, err := openLock(dir, folderPath, true)
 	if err != nil {
 		return nil, err
@@ -421,7 +442,7 @@ func lock(ctx context.Context, dir *os.Root, folderPath string) (unlock func(), 
 // not to be made. The lock is a regular file of its own. A symbolic link is
 // not followed: one that led to the registry's own name would have study
 // make an empty registry by opening its lock.
-func openLock(dir *os.Root, folderPath string, create bool) (*os.File, error) {
+func openLock(dir *regfile.Dir, folderPath string, create bool) (*os.File, error) {
 	path := filepath.Join(folderPath, regfile.LockName)
 	for range 5 {
 		f, _, err := regfile.OpenRegular(dir, regfile.LockName, os.O_RDWR)

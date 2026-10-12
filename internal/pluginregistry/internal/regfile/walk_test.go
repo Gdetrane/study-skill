@@ -169,11 +169,18 @@ func TestWalkRefusesTheStudyHomeAtEveryHop(t *testing.T) {
 		w.Close()
 	}
 
-	// A path that cannot be followed for another reason is not inside.
+	// A path that cannot be followed for another reason is not known to
+	// lead through the Study home, and not known to stay outside it either:
+	// it counts as inside (#92).
 	w := NewWalker(c.Study)
 	defer w.Close()
-	if w.Inside(filepath.Join(tool, "x")) || w.Inside("relative/path") {
-		t.Error("a path that cannot be followed counts as inside the Study home")
+	for _, path := range []string{filepath.Join(tool, "x"), "relative/path"} {
+		if err := w.Follow(path); err == nil || IsInside(err) {
+			t.Errorf("Follow(%s) = %v; want an error that is not about the Study home", path, err)
+		}
+		if !w.Inside(path) {
+			t.Errorf("Inside(%s) = false: a path that cannot be followed counts as outside the Study home", path)
+		}
 	}
 }
 

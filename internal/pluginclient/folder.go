@@ -61,7 +61,7 @@ func makeDataFolder(guard *pluginregistry.Guard, env pluginregistry.Env, name st
 	case err != nil:
 		return "", &Error{Code: CodeFailedPrecondition, Err: err, Message: "study cannot make the folder Knowledge base plugin " +
 			name + " keeps its index in, " + path + " (" + pathReason(err) + "). Check that every folder on the way is one " +
-			"you can read, and that you can write in your state folder"}
+			"you may pass through, and that you can write in your state folder"}
 	}
 	defer folder.Close()
 	// The folder is the learner's alone: an index holds the text of their
@@ -87,7 +87,7 @@ func private(folder *os.File) error {
 	if info.Mode().Perm() == 0o700 {
 		return nil
 	}
-	changed := folder.Chmod(0o700)
+	changed := chmodFolder(folder, 0o700)
 	if now, err := folder.Stat(); err == nil {
 		if info = now; info.Mode().Perm()&0o077 == 0 {
 			return nil

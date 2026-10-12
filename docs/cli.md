@@ -35,7 +35,7 @@ that scripts and agents can rely on. Terms follow [GLOSSARY.md](../GLOSSARY.md).
 | `study evidence record <topic> --lesson L --source S --quote Q [--location LOC --location-from F] [--dry-run]` | Records an exact quote from a Source that a Lesson cites. `--quote -` reads the quote from stdin. Recording the same Evidence twice changes nothing. |
 | `study evidence retract <topic> <evidence> [--dry-run]` | Takes back Evidence recorded by mistake. The retraction is recorded, never deleted; retracting twice changes nothing. |
 | `study evidence list <topic> [--lesson L] [--all]` | Lists the Evidence recorded in the Topic, or only what one Lesson cites. Retracted Evidence is listed only with `--all`. |
-| `study knowledge-base add <name> [--allow-study-home-arguments] [--replace] [--dry-run] (--url URL \| -- <command> [args...])` | Registers a Knowledge base plugin on this computer under a name, by the command that starts it, given after `--`, or by the http or https URL it answers at. The command's program is found on `PATH`, or at the path given, and registered by its absolute path. A program inside the Study home, or reached through it, is `invalid_argument`; so is an argument that names something there, unless `--allow-study-home-arguments` is given, and one that names a file relative to the folder `study` is started in. Registering a plugin as it is registered already changes nothing (`changed: false`); a name registered as something else is `already_exists` unless `--replace` is given. It records no Event, and agents have no tool for it. See [Knowledge base plugins](#knowledge-base-plugins). |
+| `study knowledge-base add <name> [--allow-study-home-arguments] [--replace] [--dry-run] (--url URL \| -- <command> [args...])` | Registers a Knowledge base plugin on this computer under a name, by the command that starts it, given after `--`, or by the http or https URL it answers at. The command's program is found on `PATH`, or at the path given, and registered by its absolute path. A program inside the Study home, or reached through it, is `invalid_argument`; so is an argument that names something there, unless `--allow-study-home-arguments` is given, and one that names a file relative to the folder `study` is started in. A program, or an argument that is not allowed so, named by a path `study` cannot follow to its end is `failed_precondition`: it is never taken for one outside the Study home. Registering a plugin as it is registered already changes nothing (`changed: false`); a name registered as something else is `already_exists` unless `--replace` is given. It records no Event, and agents have no tool for it. See [Knowledge base plugins](#knowledge-base-plugins). |
 | `study knowledge-base list` | Lists the Knowledge base plugins registered on this computer, by name, and where the registry is. A plugin `study` does not use as it is registered carries a `problem`. |
 | `study knowledge-base remove <name> [--dry-run]` | Removes a Knowledge base plugin from this computer's registry, leaving its program or service as it is; a name that is not registered is `not_found`. It records no Event, and agents have no tool for it. |
 | `study knowledge-base check <name>` | Starts the Knowledge base plugin registered under the name, or reaches it at its URL, asks which version of Lamplight's contract it speaks and what it can do, and stops it again. The result is `{"name", "command"?, "address"?, "contract": {"version", "sources", "search", "locations"}, "server": {"name", "version"?}, "data_folder"?}`. A name that is not registered is `not_found`; a plugin that cannot be started, does not start, does not answer in time, is no MCP server or does not speak the contract is `failed_precondition`, with what to do; one that speaks a newer contract is `newer_format`. Nothing is left running. It indexes and searches nothing, records no Event, and agents have no tool for it. See [Knowledge base plugins](#knowledge-base-plugins). |
@@ -1115,6 +1115,15 @@ or searched.
     learner allowed it, as `allow_study_home_arguments`, only when there was something to
     allow, and `add` and `list` say so. Allowing it for a plugin that is registered
     already is a change to the registration, so it needs `--replace`.
+  - A folder on the way has to be one you may pass through (its `x` permission), as it
+    has to be for anything that uses the path. It need not be one you may list: `/home`
+    on a shared computer, with mode 711, is followed like any other folder.
+  - **A path `study` cannot follow to its end is never taken for one outside the Study
+    home.** Where it leads is not known: a folder you may not pass through, a file where a
+    folder should be, links without end, or a folder exchanged while `study` looked at it
+    stops `study`, and need not stop a plugin. So a program by such a path is
+    `failed_precondition`, and so is an argument that names one, unless
+    `--allow-study-home-arguments` is given; the message says what stopped `study`.
   - The Study home is known by what it is, not by what it is called: the folders are
     compared by file identity. Another letter case of its name, on a file system that
     ignores case, another link to it and another mount of it are all the Study home. A
@@ -1144,7 +1153,11 @@ or searched.
   `study knowledge-base` command fails with `failed_precondition` and says how to keep
   the two apart. The same holds when `XDG_CONFIG_HOME`, or `HOME` when it places the
   folder, is not an absolute path, since the registry would then be wherever `study` is
-  started, inside a Topic too. Everything else in `study` works as before.
+  started, inside a Topic too. And it holds when `study` cannot follow the path to the
+  folder, because a folder on the way is one you may not pass through: where the folder
+  is cannot be told then, and the message says what stopped `study`. A folder on the way
+  that you may pass through and not list, as `/home` is on many shared computers, is no
+  obstacle. Everything else in `study` works as before.
 - **A registry study cannot use**: one in a newer format is `newer_format`, and is never
   rewritten; the format is read before anything else is judged, so a newer registry of
   another shape is still newer, not damaged. A damaged one is `corrupt`, with where it is
@@ -1181,7 +1194,8 @@ returns `{"registry": path, "plugins": [...]}`, where `registry` is given whethe
 the file exists yet. A dry run adds `"dry_run": true` and reports what the real run would.
 
 In `list`, a plugin can carry a `problem`: its program, or an argument the learner did not
-allow, is inside the Study home this `study` uses or is reached through it. That is
+allow, is inside the Study home this `study` uses or is reached through it, or is named by
+a path `study` cannot follow to its end, so that nobody knows where it leads. That is
 checked at every listing, because the Study home can be another than when the plugin was
 registered, and a link can come to lead elsewhere. `study` does not use such a plugin;
 the `problem` says how to register it again.
@@ -1295,13 +1309,16 @@ is a command.
 What is wrong is `failed_precondition`, and the message says which of these it is and what
 to do: the program is gone, is no program, or is inside the Study home; it is a script
 whose interpreter is, or is named by a relative path; the state folder is inside the Study
-home; it could not be run; it exited before it answered, with its exit status and the last
-it wrote on its standard error; it wrote something on its standard output that is no MCP
-message; it sent `study` a request; it did not answer in time; it is an MCP server without
-the contract's tools; its `contract` tool gave back something else than the contract
-describes; or nothing answers as an MCP server at its address. A plugin that speaks a newer version of the contract than this `study`
-knows is `newer_format`: upgrade `study`. A name that is not registered is `not_found`, and
-one that could not be a name is `invalid_argument`.
+home; the program, an argument the learner did not allow, the interpreter or the state
+folder is named by a path `study` cannot follow to its end, which it never takes for one
+outside the Study home; it could not be run; it exited before it answered, with its exit
+status and the last it wrote on its standard error; it wrote something on its standard
+output that is no MCP message; it sent `study` a request; it did not answer in time; it is
+an MCP server without the contract's tools; its `contract` tool gave back something else
+than the contract describes; or nothing answers as an MCP server at its address. A plugin
+that speaks a newer version of the contract than this `study` knows is `newer_format`:
+upgrade `study`. A name that is not registered is `not_found`, and one that could not be a
+name is `invalid_argument`.
 
 Shell completion offers the registered names to `study knowledge-base remove`,
 `study knowledge-base check`, and `study knowledge-base add --replace`.

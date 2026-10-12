@@ -55,8 +55,10 @@ func (a *app) knowledgeBaseCommand() *cobra.Command {
 			"A plugin is started outside your agent's sandbox, and your agent can write in the Study\n" +
 			"home. So a program inside the Study home, or reached through a link there, is refused.\n" +
 			"So is an argument that names something there, such as a script kept in a Topic, unless\n" +
-			"you pass --allow-study-home-arguments. That check catches the honest mistake; it cannot\n" +
-			"see what a command such as sh -c or npx goes on to load.\n\n" +
+			"you pass --allow-study-home-arguments. A path study cannot follow to its end, because\n" +
+			"you may not pass through a folder on the way, is refused like one there: nobody can\n" +
+			"tell where it leads. That check catches the honest mistake; it cannot see what a\n" +
+			"command such as sh -c or npx goes on to load.\n\n" +
 			"A plugin is started from the registry's folder, so give files in its arguments by their\n" +
 			"full path. Registering a plugin as it is registered already changes nothing. A name that\n" +
 			"stands for something else is refused unless you pass --replace.",

@@ -283,7 +283,7 @@ func (w *Walker) openProgram(path string, open bool) (*Program, error) {
 			"is part of: install it outside the Study home"}
 	case err != nil:
 		return nil, &Error{Code: CodeFailedPrecondition, Err: err, Message: "study cannot follow " + path + " to check the " +
-			"program (" + Reason(err) + "): give a path through folders you can read"}
+			"program (" + Reason(err) + "): give a path through folders you may pass through"}
 	}
 	defer place.Close()
 	notRunnable := &Error{Code: CodeInvalidArgument, Err: errNotAProgram, Message: fmt.Sprintf("%q is not a program you can "+
@@ -313,14 +313,16 @@ func (w *Walker) openProgram(path string, open bool) (*Program, error) {
 			Reason(err) + "): it must be a program you can read"}
 	case file == nil:
 		return nil, &Error{Code: CodeNotFound, Err: fs.ErrNotExist, Message: fmt.Sprintf("there is no program at %q", path)}
-	case !os.SameFile(place.LeafInfo, info):
+	case !same(place.LeafInfo, info):
 		// What is opened is the file the walk looked at and the system
 		// was asked about, or nothing is: another file put under the name
 		// meanwhile is one nobody checked.
 		_ = file.Close()
 		return nil, notReadyf("%s changed while study was checking it: try again", path)
 	}
-	folder, err := place.Folder().Open(".")
+	// The folder is handed on as it is open: to list when study may list
+	// it, and otherwise only to name the program in.
+	folder, err := place.Folder().File()
 	if err != nil {
 		_ = file.Close()
 		return nil, &Error{Code: CodeFailedPrecondition, Err: err, Message: "study cannot open the folder of " + path +
@@ -339,9 +341,23 @@ func candidates(arg string) []string {
 	return out
 }
 
+// paths are the paths an argument names: the argument, as a whole or after
+// an =, when that is absolute or starts with ~/.
+func paths(env Env, arg string) []string {
+	var out []string
+	for _, c := range candidates(arg) {
+		if c == "~" || strings.HasPrefix(c, "~/") || filepath.IsAbs(c) {
+			out = append(out, expandKeeping(env, c))
+		}
+	}
+	return out
+}
+
 // InsideArgument returns the first argument of a command that names
 // something inside the Study home, or reached through it, and its number
-// from 1; 0 when none does.
+// from 1; 0 when none does. An argument that names a path study cannot
+// follow to its end is returned like one inside: where it leads is not
+// known, so it is not taken for outside. Unfollowed tells the two apart.
 //
 // An argument is taken for a path when it is absolute or starts with ~/, as
 // a whole or after an =. It catches the honest mistake, a script or a
@@ -353,16 +369,29 @@ func (w *Walker) InsideArgument(env Env, command []string) (int, string) {
 		if i == 0 {
 			continue
 		}
-		for _, c := range candidates(arg) {
-			if c != "~" && !strings.HasPrefix(c, "~/") && !filepath.IsAbs(c) {
-				continue
-			}
-			if w.Inside(expandKeeping(env, c)) {
+		for _, path := range paths(env, arg) {
+			if w.Inside(path) {
 				return i, arg
 			}
 		}
 	}
 	return 0, ""
+}
+
+// Unfollowed says why study cannot follow a path that an argument names to
+// its end, or nil when it can. For an argument InsideArgument returned, nil
+// means that the argument is known to lead through the Study home, and
+// anything else that nobody knows where it leads.
+func (w *Walker) Unfollowed(env Env, arg string) error {
+	for _, path := range paths(env, arg) {
+		if err := w.Follow(path); err != nil {
+			if IsInside(err) {
+				return nil
+			}
+			return err
+		}
+	}
+	return nil
 }
 
 // expandKeeping makes ~ the home folder and leaves the rest of the path as

@@ -102,7 +102,10 @@ Study home. So `study` starts a plugin with nothing the agent could have prepare
   - Descriptor 3 is that folder, open for reading. It is the one thing a compiled program
     sees that it would not see when started from a terminal: its first argument is the path
     it is registered by, the system calls the process by the program's name, and
-    `/proc/self/exe` leads to the program.
+    `/proc/self/exe` leads to the program. When the folder is one the learner may pass
+    through and not list (mode 711, say), descriptor 3 is open only to find names in it:
+    it cannot be read to list the folder, which the learner could not list from a
+    terminal either.
   - A script is handed `/proc/self/fd/3/<name>` as its own name (`$0`, `sys.argv[0]`,
     `__file__`). What is beside the script is found through that name, as from a terminal,
     for as long as descriptor 3 is open, in the script and in the programs it starts. A
