@@ -127,20 +127,28 @@ func (c *Core) Now() time.Time { return c.now() }
 // expandPath makes a path the learner or agent gave absolute: a leading ~
 // is the home folder, as in STUDY_HOME, and a relative path is relative to
 // the folder study started in.
-func (c *Core) expandPath(path string) string {
+//
+// It fails when the path starts with ~ and the home folder cannot be found,
+// as with a relative HOME. Left as it is, the path would be a relative one
+// and name a folder called ~ in the folder study started in: a file the
+// agent wrote in a Topic would be read as one from the learner's home.
+func (c *Core) expandPath(path string) (string, error) {
 	if path == "~" || strings.HasPrefix(path, "~/") {
 		getenv := c.getenv
 		if getenv == nil {
 			getenv = os.Getenv
 		}
-		if home, err := xdg.Home(getenv); err == nil {
-			path = filepath.Join(home, strings.TrimPrefix(path, "~"))
+		home, err := xdg.Home(getenv)
+		if err != nil {
+			return "", &Error{Code: CodeInvalidArgument, Err: err, Message: fmt.Sprintf("%s starts with ~, your home "+
+				"folder, which cannot be found (%v): set HOME to its absolute path", path, err)}
 		}
+		path = filepath.Join(home, strings.TrimPrefix(path, "~"))
 	}
 	if !filepath.IsAbs(path) {
 		path = filepath.Join(c.dir, path)
 	}
-	return filepath.Clean(path)
+	return filepath.Clean(path), nil
 }
 
 // config is the global configuration file, config.toml.

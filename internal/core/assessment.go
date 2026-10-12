@@ -774,7 +774,11 @@ func viewSettings(view *topicView, topicID string) (topicSettings, error) {
 // assessment_record tool takes; a relative path counts from the folder study
 // started in.
 func (c *Core) ReadAssessmentFile(name string) (AssessmentSpec, error) {
-	data, err := readRegularFile(c.expandPath(name), maxAssessmentFileBytes)
+	file, err := c.expandPath(name)
+	if err != nil {
+		return AssessmentSpec{}, err
+	}
+	data, err := readRegularFile(file, maxAssessmentFileBytes)
 	if err != nil {
 		return AssessmentSpec{}, err
 	}

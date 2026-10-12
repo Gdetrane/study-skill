@@ -131,7 +131,9 @@ func (c *Core) findSourceFile(ctx context.Context, topicID, file string) (foundF
 	if path == "" {
 		return foundFile{}, invalidf("give the Source's file")
 	}
-	path = c.expandPath(path)
+	if path, err = c.expandPath(path); err != nil {
+		return foundFile{}, err
+	}
 	hash, size, modTime, err := hashFile(ctx, path)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):

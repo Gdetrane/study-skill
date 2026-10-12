@@ -117,3 +117,71 @@ func TestDoctorWarnsAboutARelativeXDGFolder(t *testing.T) {
 		}
 	}
 }
+
+// TestCompletionAsksForHomeOnlyWhenItNeedsIt: an install whose every path is
+// absolute works whatever HOME is, and one that needs the home folder fails
+// on a relative HOME, names it, and writes nothing in the folder study
+// started in.
+func TestCompletionAsksForHomeOnlyWhenItNeedsIt(t *testing.T) {
+	work := t.TempDir()
+	// A relative path is one from the folder the process is in.
+	t.Chdir(work)
+	config, state, zfunc := t.TempDir(), t.TempDir(), t.TempDir()
+	record := filepath.Join(state, "lamplight", "completions.json")
+
+	for _, tc := range []struct {
+		name   string
+		env    map[string]string
+		args   []string
+		script string
+	}{
+		{"fish, with XDG_CONFIG_HOME and XDG_STATE_HOME absolute",
+			map[string]string{"HOME": "rel", "SHELL": "/usr/bin/fish", "XDG_CONFIG_HOME": config, "XDG_STATE_HOME": state},
+			nil, filepath.Join(config, "fish", "completions", "study.fish")},
+		{"zsh, with --dir and XDG_STATE_HOME absolute",
+			map[string]string{"HOME": "rel", "SHELL": "/bin/zsh", "XDG_STATE_HOME": state},
+			[]string{"--dir", zfunc}, filepath.Join(zfunc, "_study")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			install := append([]string{"completion", "install", "--json"}, tc.args...)
+			if r := runEnv(t, tc.env, work, nil, install...); r.code != cli.ExitOK {
+				t.Fatalf("install: exit %d, %s%s", r.code, r.stdout, r.stderr)
+			}
+			if !exists(tc.script) || !exists(record) {
+				t.Errorf("after install: script %v, record %v", exists(tc.script), exists(record))
+			}
+			if r := runEnv(t, tc.env, work, nil, "completion", "uninstall", "--json"); r.code != cli.ExitOK {
+				t.Fatalf("uninstall: exit %d, %s%s", r.code, r.stdout, r.stderr)
+			}
+			if exists(tc.script) || exists(record) {
+				t.Errorf("after uninstall: script %v, record %v", exists(tc.script), exists(record))
+			}
+		})
+	}
+
+	// What needs the home folder says so. (runEnv writes $HOME for the
+	// value of HOME.)
+	for _, tc := range []struct {
+		name string
+		env  map[string]string
+		args []string
+	}{
+		{"fish, its folder by default", map[string]string{"HOME": "rel", "SHELL": "/usr/bin/fish", "XDG_STATE_HOME": state}, nil},
+		{"bash, its folder by default", map[string]string{"HOME": "rel", "SHELL": "/bin/bash", "XDG_STATE_HOME": state}, nil},
+		{"zsh, a --dir in the home folder", map[string]string{"HOME": "rel", "SHELL": "/bin/zsh", "XDG_STATE_HOME": state}, []string{"--dir", "~/.zfunc"}},
+		{"zsh, its rc file", map[string]string{"HOME": "rel", "SHELL": "/bin/zsh", "XDG_STATE_HOME": state, "XDG_DATA_HOME": config}, []string{"--yes"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := runEnv(t, tc.env, work, nil, append([]string{"completion", "install", "--json"}, tc.args...)...)
+			if r.code == cli.ExitOK || !strings.Contains(r.stdout, `cannot find your home folder: HOME is \"$HOME\", which is not an absolute path`) {
+				t.Errorf("install: exit %d, %s%s", r.code, r.stdout, r.stderr)
+			}
+		})
+	}
+	if left := tree(t, work); !slices.Equal(left, []string{"."}) {
+		t.Errorf("the folder study started in holds %v", left)
+	}
+	if exists(record) {
+		t.Error("a failed install left its record")
+	}
+}

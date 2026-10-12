@@ -78,7 +78,11 @@ the XDG Base Directory Specification says, and its default under the home folder
 (`~/.config`, `~/.local/share`, `~/.local/state`, `~/.cache`): the folder would otherwise be
 wherever `study` is started, inside a Topic too, and a file there would choose the Study
 home. `study doctor` warns about it and says how to fix it. A relative `HOME` is not used
-either, and has no default: a command that needs the home folder fails and says so. git is
+either, and has no default: a command that needs the home folder fails and says so, and so
+does one given a path that starts with `~` (`invalid_argument`), which is never taken for a
+folder called `~` where `study` is started. A command that needs no home folder, such as
+`study completion install` when every folder it writes to is given as an absolute path,
+works whatever `HOME` is. git is
 started without the ones that are relative, so it looks for your configuration where `study`
 does. The Knowledge base plugin registry is stricter: it is not read at all from a
 configuration folder that is not an absolute path (see
