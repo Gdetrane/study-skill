@@ -190,6 +190,32 @@ func TestTheTimeToStartCountsFromWhenStudySetOut(t *testing.T) {
 	}
 }
 
+// A plugin that writes something that is no MCP message when nothing is
+// asked of it is over as well: nothing more is read from it. Whoever holds
+// the Connection finds it ended, and the program is stopped, though no call
+// was under way to notice.
+func TestAPluginThatBabblesWhenIdleIsStopped(t *testing.T) {
+	ctx := context.Background()
+	c := plugintest.NewComputer(t)
+	record := filepath.Join(t.TempDir(), "record.json")
+	plugin := c.Register(t, "kb", plugintest.Command("--record", record, "--babble", "--stubborn")...)
+	s, err := pluginclient.Start(ctx, c.Env(""), plugin, quick(c))
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer s.Close()
+	for deadline := time.Now().Add(10 * time.Second); !s.Ended(); time.Sleep(5 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("the Connection has not ended, although the plugin wrote what is no MCP message")
+		}
+	}
+	gone(t, record)
+	_, err = s.Status(ctx, "c")
+	if want := "Knowledge base plugin kb can no longer be asked: it wrote something that is no MCP message, and study stopped it"; codeOf(err) != pluginclient.CodeFailedPrecondition || !strings.Contains(err.Error(), want) {
+		t.Errorf("Status afterwards = %v\nwant failed_precondition with %q", err, want)
+	}
+}
+
 // A program that cannot be run at all says why, and how to look.
 func TestAProgramThatCannotBeRun(t *testing.T) {
 	c := plugintest.NewComputer(t)
@@ -310,6 +336,15 @@ func TestAScriptStartedThroughEnv(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(empty, "kb-python"), []byte("no program\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// A program whose name has a space in it, in a folder of PATH: what env
+	// runs when it is handed "kb-python -u" as one word.
+	spaced := filepath.Join(c.Home, "spaced")
+	if err := os.MkdirAll(spaced, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(inTopic, filepath.Join(spaced, "kb-python -u")); err != nil {
+		t.Fatal(err)
+	}
 	// A script that is called env, and names what the agent wrote.
 	scripted := filepath.Join(linked, "env")
 	if err := os.WriteFile(scripted, []byte("#!"+inTopic+"\n"), 0o755); err != nil {
@@ -371,8 +406,22 @@ func TestAScriptStartedThroughEnv(t *testing.T) {
 			[]string{notRun + inTopic + " is inside the Study home"}},
 		// What else env is given decides what is started in ways study does
 		// not follow.
-		"env is given an option": {"#!" + env + " -i kb-python", path(tools),
+		// Without -S, everything after env is one name to it, spaces and
+		// all: study would check kb-python, and env would look for a program
+		// called "kb-python -u", which a folder of PATH can hold.
+		"env is given a name and more": {"#!" + env + " kb-python -u", path(tools, spaced),
+			[]string{notRun + "it gives env kb-python -u, and env takes all of that for the name of one program",
+				"#!/usr/bin/env -S python3 -u"}},
+		"env is given an option": {"#!" + env + " -S -i kb-python", path(tools),
 			[]string{notRun + "it has env start -i, and study cannot tell which program that is", "#!/usr/bin/env python3"}},
+		"env is given something quoted": {"#!" + env + ` -S "kb-python"`, path(tools),
+			[]string{"study cannot tell which program that is"}},
+		// Systems read different amounts of a long first line, so what one
+		// of them starts is past what another saw.
+		"a first line too long to be read alike": {"#!" + env + " -S " + strings.Repeat(" ", 250) + inTopic, path(tools),
+			[]string{notRun + "its first line is longer than 255 bytes"}},
+		"a first line saved with Windows line endings": {"#!" + env + " kb-python\r", path(tools),
+			[]string{notRun + "its first line holds a character that is no text"}},
 		"env is given a setting": {"#!" + env + " -S PATH=" + filepath.Dir(inTopic) + " kb-python", path(tools),
 			[]string{"study cannot tell which program that is"}},
 	} {

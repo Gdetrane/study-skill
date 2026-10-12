@@ -126,8 +126,15 @@ Study home. So `study` starts a plugin with nothing the agent could have prepare
   link in `~/.local/bin` to a Topic's virtual environment is, the plugin is not started,
   whatever comes later in `PATH`. A plugin with no `PATH`, or with none that has the name,
   is not started either. Anything else given to `env` on that line, an option or a
-  `NAME=value` setting, is refused: `study` cannot tell what it would start. A file called
-  `env` that is itself a script is followed as any script is.
+  `NAME=value` setting, is refused: `study` cannot tell what it would start. Without `-S`
+  the line gives `env` a name and nothing after it: Linux hands `env` the rest of the line
+  as one word, so `#!/usr/bin/env python3 -u` looks for a program called `python3 -u`. A
+  file called `env` that is itself a script is followed as any script is.
+
+  **Keep the first line short and plain**: it ends within 255 bytes, with a plain line
+  ending and no other control character. Systems differ in how much of a longer line they
+  read and in what they make of a carriage return, and `study` starts nothing it cannot
+  read as they all do.
 
   **Every interpreter must be readable, and four in a row is the most.** The system reads
   a program's first line whether or not you may read the file, so an interpreter `study`

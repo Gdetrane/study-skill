@@ -422,12 +422,23 @@ func (s *Connection) wasAsked(method string) {
 }
 
 // readNoMCP is told what reading from the plugin failed with, when the
-// plugin wrote something that is no MCP message.
+// plugin wrote something that is no MCP message. Nothing more is read from
+// such a plugin, so the Connection is over, whether or not a call is under
+// way to say so: a command is stopped, and whoever holds the Connection
+// finds it ended.
 func (s *Connection) readNoMCP(err error) {
+	const why = "it wrote something that is no MCP message, and study stopped it"
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.misread == nil {
 		s.misread = err
+	}
+	over := s.ended != ""
+	if !over {
+		s.ended = why
+	}
+	s.mu.Unlock()
+	if !over {
+		go s.drop(why)
 	}
 }
 
@@ -1009,9 +1020,10 @@ func (s *Connection) failure(parent, limited context.Context, doing, tool string
 		s.drop("it did not answer in time")
 		return errorf(CodeFailedPrecondition, "Knowledge base plugin %s did not %s within %s. Check that the service at %s "+
 			"is running and is not busy: study knowledge-base list shows its whole address", s.name, doing, limit, Address(s.address))
-	case ended != "" && !exited:
+	case ended != "" && !exited && misread == nil:
 		// The Connection was closed, or given up, under this call: that is
-		// what happened to this call too.
+		// what happened to this call too. What the plugin wrote that was no
+		// MCP message is said below, with what it was.
 		return s.over()
 	case answered != nil:
 		// The plugin answered, with an error of the protocol's own.

@@ -128,6 +128,12 @@ func (g *Guard) Outside(path string) bool {
 // without going through the Study home at any hop.
 func (g *Guard) CheckProgram(path string) error { return g.walker.CheckProgram(path) }
 
+// OpenProgram checks a program as CheckProgram does and returns it open: the
+// file the walk looked at, and not whatever its path names a moment later.
+// It is for reading the program, to see whether it is a script. The caller
+// closes it.
+func (g *Guard) OpenProgram(path string) (*os.File, error) { return g.walker.OpenProgram(path) }
+
 // MakeFolder finds the folder at an absolute path outside the Study home,
 // makes what is missing of it for the learner alone to read, and returns it
 // open, with its path as every symbolic link on the way leads. A path that

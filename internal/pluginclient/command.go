@@ -1,11 +1,14 @@
 package pluginclient
 
 import (
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
 	"strings"
@@ -403,9 +406,11 @@ func searched(environ []string) []string {
 //
 // It is checked by its path, since the system finds it by its path. No hop
 // of that path is in the Study home, or the check fails: so the agent,
-// which writes there, cannot make the path lead elsewhere afterwards. A
-// path that is not absolute is refused: the system would find it from the
-// folder the plugin is started in, and nothing was checked there.
+// which writes there, cannot make the path lead elsewhere afterwards. What
+// is then read, to see whether the interpreter is a script too, is the file
+// that was checked, as the walk opened it. A path that is not absolute is
+// refused: the system would find it from the folder the plugin is started
+// in, and nothing was checked there.
 //
 // A first line such as #!/usr/bin/env python3 names env, which is no
 // interpreter: it starts the program its argument names, found in the
@@ -420,31 +425,23 @@ func checkInterpreter(guard *pluginregistry.Guard, program *os.File, path []stri
 		}
 	}()
 	for range maxInterpreters {
-		words := firstLine(script)
-		if len(words) == 0 {
-			return nil
+		interpreter, argument, err := firstLine(script)
+		if err != nil || interpreter == "" {
+			return err
 		}
-		interpreter := words[0]
 		if !filepath.IsAbs(interpreter) {
 			return notAbsolute(interpreter)
 		}
-		if err := guard.CheckProgram(interpreter); err != nil {
-			return err
-		}
-		next, err := openInterpreter(interpreter)
+		next, err := openInterpreter(guard, interpreter)
 		if err != nil {
 			return err
 		}
 		// A file called env that is a script is a script, and is followed
 		// as one: the system runs what its own first line names. Only env
 		// the program starts what it is given.
-		if filepath.Base(interpreter) == "env" && len(firstLine(next)) == 0 {
+		if filepath.Base(interpreter) == "env" && !isScript(next) {
 			_ = next.Close()
-			started, err := startedByEnv(guard, words[1:], path)
-			if err != nil || started == "" {
-				return err
-			}
-			if next, err = openInterpreter(started); err != nil {
+			if next, err = startedByEnv(guard, argument, path); err != nil || next == nil {
 				return err
 			}
 		}
@@ -455,7 +452,7 @@ func checkInterpreter(guard *pluginregistry.Guard, program *os.File, path []stri
 	}
 	// The system follows a few more than anyone needs. What is left
 	// unchecked after this many is refused, not passed.
-	if len(firstLine(script)) > 0 {
+	if isScript(script) {
 		return fmt.Errorf("it is a script whose interpreter is a script, %d times over, and study follows no more: name "+
 			"an interpreter that is a program", maxInterpreters)
 	}
@@ -466,18 +463,25 @@ func checkInterpreter(guard *pluginregistry.Guard, program *os.File, path []stri
 // script: the script's, that one's own when it is a script too, and so on.
 const maxInterpreters = 4
 
-// openInterpreter opens a program that was checked, to see whether it is a
-// script itself. The system reads a program's first line whether or not
-// this user may read the file, and follows it: one that study cannot read is
-// one whose interpreter nobody checked, and is refused.
-func openInterpreter(path string) (*os.File, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, fmt.Errorf("study cannot read %s to see whether it is a script too (%s): a program you may run and not "+
-			"read can name an interpreter that nobody checked. Make it readable for you, or name another interpreter",
-			clean(path, 200), pathReason(err))
+// openInterpreter checks a program a script would be run by and returns it
+// open, to see whether it is a script itself. The system reads a program's
+// first line whether or not this user may read the file, and follows it:
+// one that study cannot read is one whose interpreter nobody checked, and
+// is refused.
+func openInterpreter(guard *pluginregistry.Guard, path string) (*os.File, error) {
+	// Checked first, so that what is wrong with the path or the program is
+	// said as it is for any program; what is left to go wrong when it is
+	// then opened is that it may not be read.
+	if err := guard.CheckProgram(path); err != nil {
+		return nil, err
 	}
-	return file, nil
+	file, err := guard.OpenProgram(path)
+	if errors.Is(err, fs.ErrPermission) {
+		return nil, fmt.Errorf("study cannot read %s to see whether it is a script too (permission denied): a program you "+
+			"may run and not read can name an interpreter that nobody checked. Make it readable for you, or name another "+
+			"interpreter", clean(path, 200))
+	}
+	return file, err
 }
 
 func notAbsolute(interpreter string) error {
@@ -486,82 +490,123 @@ func notAbsolute(interpreter string) error {
 		"argument", clean(interpreter, 200))
 }
 
+// envName is a name, or a path, that env starts and nothing else: no
+// option, no NAME=value setting, nothing quoted or escaped and nothing for
+// env to fill in.
+var envName = regexp.MustCompile(`^[A-Za-z0-9._+/][A-Za-z0-9._+/-]*$`)
+
 // startedByEnv finds the program env starts when a script's first line
-// gives it words, and checks it as an interpreter is checked. It returns the
-// program's path, or nothing when env starts none.
+// gives it argument, checks it as an interpreter is checked, and returns it
+// open: nil when env starts none.
 //
 // Two forms are read: env NAME, and env -S NAME ARGUMENTS, which is how a
-// first line gives an interpreter arguments. NAME is looked up as env looks
-// it up: in each folder of path, in order, the first that has a program of
-// that name which this user may run. A folder of path is outside the Study
-// home already (childEnviron), but what a name in it leads to need not be: a
-// link there can point into a Topic's virtual environment. The first match
-// is the one env starts, so when it is inside the Study home nothing later
-// is looked at.
+// first line gives an interpreter arguments. Without -S the whole of what
+// follows env is one name to it, spaces and all, so anything more than a
+// name there is refused: study would check one program, and env would look
+// for another.
+//
+// NAME is looked up as env looks it up: in each folder of path, in order,
+// the first that has a program of that name which this user may run. A
+// folder of path is outside the Study home already (childEnviron), but what
+// a name in it leads to need not be: a link there can point into a Topic's
+// virtual environment. The first match is the one env starts, so when it is
+// inside the Study home nothing later is looked at.
 //
 // Whatever else the line gives env, an option or a setting before the name,
 // decides what is started in ways study does not follow, and is refused
 // rather than guessed at.
-func startedByEnv(guard *pluginregistry.Guard, words, path []string) (string, error) {
-	if len(words) > 0 {
-		if rest, split := strings.CutPrefix(words[0], "-S"); split {
-			if words = words[1:]; rest != "" {
-				words = append([]string{rest}, words...)
-			}
-		}
+func startedByEnv(guard *pluginregistry.Guard, argument string, path []string) (*os.File, error) {
+	name := argument
+	split := false
+	if rest, ok := strings.CutPrefix(argument, "-S"); ok {
+		// env splits what follows -S itself, at spaces and tabs.
+		split = true
+		name, _, _ = strings.Cut(strings.ReplaceAll(strings.TrimLeft(rest, " \t"), "\t", " "), " ")
 	}
-	if len(words) == 0 {
-		return "", nil // env alone prints its environment and starts nothing
-	}
-	name := words[0]
 	switch {
-	case strings.HasPrefix(name, "-") || strings.ContainsAny(name, "=\"'\\$"):
-		return "", fmt.Errorf("it has env start %s, and study cannot tell which program that is. Have env start the "+
+	case name == "":
+		return nil, nil // env alone prints its environment and starts nothing
+	case !split && strings.ContainsAny(name, " \t"):
+		return nil, fmt.Errorf("it gives env %s, and env takes all of that for the name of one program: a first line "+
+			"hands over what follows the interpreter as one word. Have env split it, as in #!/usr/bin/env -S python3 "+
+			"-u, or name the interpreter by its full path", clean(name, 200))
+	case !envName.MatchString(name):
+		return nil, fmt.Errorf("it has env start %s, and study cannot tell which program that is. Have env start the "+
 			"interpreter by its name alone, as in #!/usr/bin/env python3, or name the interpreter by its full path",
 			clean(name, 200))
 	case filepath.IsAbs(name):
-		return name, guard.CheckProgram(name)
+		return openInterpreter(guard, name)
 	case strings.ContainsRune(name, '/'):
-		return "", notAbsolute(name)
+		return nil, notAbsolute(name)
 	case len(path) == 0:
-		return "", fmt.Errorf("it has env look for %s in the folders of PATH, and study gives this plugin no PATH: no "+
-			"folder of yours is known to be outside the Study home. Name the interpreter by its full path", clean(name, 200))
+		return nil, fmt.Errorf("it has env look for %s in the folders of PATH, and study gives this plugin no PATH: no "+
+			"folder of yours is known to be outside the Study home. Name the interpreter by its full path", name)
 	}
 	for _, folder := range path {
 		candidate := strings.TrimRight(folder, "/") + "/" + name
-		err := guard.CheckProgram(candidate)
+		file, err := openInterpreter(guard, candidate)
 		switch {
 		case err == nil:
-			return candidate, nil
+			return file, nil
 		case pluginregistry.IsInside(err):
-			return "", fmt.Errorf("it has env look for %s in the folders of PATH, and the first one found is one your "+
-				"agent can change: %w", clean(name, 200), err)
+			return nil, fmt.Errorf("it has env look for %s in the folders of PATH, and the first one found is one your "+
+				"agent can change: %w", name, err)
 		case pluginregistry.CodeOf(err) == CodeNotFound || pluginregistry.CodeOf(err) == CodeInvalidArgument:
 			// Not there, or nothing this user may run: env goes on to the
 			// next folder too.
 		default:
-			// It cannot be followed, so it cannot be said to be outside.
-			return "", err
+			// It cannot be followed, or cannot be read, so it cannot be
+			// said to be outside, or to be no script.
+			return nil, err
 		}
 	}
-	return "", fmt.Errorf("it has env look for %s in the folders of the PATH study gives a plugin (%s), and none of "+
+	return nil, fmt.Errorf("it has env look for %s in the folders of the PATH study gives a plugin (%s), and none of "+
 		"them has a program of that name. Install it in one of them, or name the interpreter by its full path",
-		clean(name, 200), clean(strings.Join(path, string(os.PathListSeparator)), 400))
+		name, clean(strings.Join(path, string(os.PathListSeparator)), 400))
 }
 
-// firstLine returns the words of a script's first line after #!: the
-// program the system runs for the script, and what the line gives that
-// program. It returns nothing for a file that is no script.
-func firstLine(file *os.File) []string {
-	// The system reads this much of a script's first line.
-	head := make([]byte, 256)
+// firstLineBytes is how much of a file's start the system reads to find a
+// script's first line. Linux reads 256 bytes and macOS 512, and each does
+// its own thing with a line that does not fit. A line that ends within 255
+// bytes is read whole by both.
+const firstLineBytes = 256
+
+// firstLine reads a script's first line as the system does: the interpreter
+// it names after #!, and the one argument that the rest of the line is,
+// spaces within it kept. Both are empty for a file that is no script.
+//
+// It fails for a first line the systems study runs on would not all read
+// alike: one that does not end within what the shortest of them reads, or
+// one with a character in it that ends the line for one of them. What
+// study checked must be what is started.
+func firstLine(file *os.File) (interpreter, argument string, err error) {
+	head := make([]byte, firstLineBytes)
 	n, _ := file.ReadAt(head, 0)
-	line, _, _ := strings.Cut(string(head[:n]), "\n")
-	rest, isScript := strings.CutPrefix(line, "#!")
+	rest, isScript := strings.CutPrefix(string(head[:n]), "#!")
 	if !isScript {
-		return nil
+		return "", "", nil
 	}
-	return strings.Fields(rest)
+	line, _, ended := strings.Cut(rest, "\n")
+	if !ended && n == firstLineBytes {
+		return "", "", fmt.Errorf("its first line is longer than %d bytes: systems differ in how much of such a line "+
+			"they read, so study cannot tell what they would start. Shorten it", firstLineBytes-1)
+	}
+	for _, b := range []byte(line) {
+		if (b < 0x20 && b != '\t') || b == 0x7f {
+			return "", "", errors.New("its first line holds a character that is no text, such as the carriage return of " +
+				"a file saved with Windows line endings: systems differ in what they make of it. Save the script with " +
+				"plain line endings")
+		}
+	}
+	interpreter, argument, _ = strings.Cut(strings.ReplaceAll(strings.Trim(line, " \t"), "\t", " "), " ")
+	return interpreter, strings.Trim(argument, " "), nil
+}
+
+// isScript reports whether a file begins as a script does.
+func isScript(file *os.File) bool {
+	head := make([]byte, 2)
+	n, _ := file.ReadAt(head, 0)
+	return string(head[:n]) == "#!"
 }
 
 // hasExited reports whether the program exited, waiting up to d for it.
