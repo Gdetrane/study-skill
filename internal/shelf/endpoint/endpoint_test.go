@@ -347,7 +347,7 @@ func TestWhatAnEndpointGetsWrongIsAReason(t *testing.T) {
 			case <-r.Context().Done():
 			}
 			return true
-		}, want: []string{"did not answer within 100ms"}},
+		}, change: func(e *endpoint.Embedding) { e.Timeout = 100 * time.Millisecond }, want: []string{"did not answer within 100ms"}},
 		{name: "too few vectors", answer: func(w http.ResponseWriter, _ *http.Request, _ map[string]any) bool {
 			vectors(w, ones(600))
 			return true
@@ -411,8 +411,10 @@ func TestWhatAnEndpointGetsWrongIsAReason(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			at := shelftest.NewEndpoint(t)
 			at.Answer(tc.answer)
+			// The time an endpoint has is the one Shelf gives it by itself,
+			// but where the endpoint is to be too slow: an answer that only
+			// took its time on a busy computer is no failure.
 			cfg := prefixed(at)
-			cfg.Timeout = 100 * time.Millisecond
 			if tc.change != nil {
 				tc.change(&cfg)
 			}
@@ -427,8 +429,13 @@ func TestWhatAnEndpointGetsWrongIsAReason(t *testing.T) {
 			if asked := at.Asked(); len(asked) != 1 || asked[0].Key != key || len(asked[0].Texts()) != 3 {
 				t.Errorf("the endpoint was asked %+v; want the three texts, once", asked)
 			}
-			// It answers again, and so does Shelf.
+			// It answers again, and so does Shelf: with all the time it gives
+			// an endpoint, for this answer is to arrive.
 			at.Answer(nil)
+			if cfg.Timeout != 0 {
+				cfg.Timeout = 0
+				e = embedder(t, cfg)
+			}
 			if _, err := e.Documents(ctx, "A book", []string{"one", "two", "three"}, nil); err != nil {
 				t.Errorf("once the endpoint answers again: %v", err)
 			}

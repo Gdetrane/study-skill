@@ -231,12 +231,19 @@ func (s *Shelf) embed(ctx context.Context, title string, texts []string, advance
 // again comes to when the learner gave Shelf an endpoint, or another model,
 // after the Source was indexed. The Passages and their ids stay.
 func (s *Shelf) embedIndexed(ctx context.Context, c *index.Collection, in plugincontract.IndexInput, j *job, shown *index.Work) error {
+	s.at(PointGivingVectors)
 	hash, texts, err := c.Texts(ctx, in.Source.ID)
 	if err != nil {
 		return err
 	}
-	if hash == "" || len(texts) == 0 {
+	const anew = "its content was indexed anew while its Passages were being embedded. Index it again"
+	switch {
+	case hash == "" || len(texts) == 0:
 		return wrong("what was indexed of it is no longer there. Index it again")
+	case in.Source.Kind == plugincontract.SourceFile && hash != in.Source.Hash:
+		// Another copy of Shelf put other content in its place since index
+		// answered: that is not the content that was asked for.
+		return wrong(anew)
 	}
 	vectors, made, err := s.embed(ctx, in.Source.Title, texts, func(share float64) {
 		j.advance(0.98 * share)
@@ -250,7 +257,7 @@ func (s *Shelf) embedIndexed(ctx context.Context, c *index.Collection, in plugin
 	}
 	err = shown.Embed(context.WithoutCancel(ctx), hash, made, vectors)
 	if errors.Is(err, index.ErrChanged) {
-		return wrong("its content was indexed anew while its Passages were being embedded. Index it again")
+		return wrong(anew)
 	}
 	return err
 }

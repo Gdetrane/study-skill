@@ -148,7 +148,7 @@ type Options struct {
 	Settings Settings
 	// Crash is only for tests, and must be nil otherwise. It is called at
 	// each point of a write of the index where a crash could happen (see
-	// index.Options), and at PointPagesRead.
+	// index.Options), at PointPagesRead and at PointGivingVectors.
 	Crash func(point string)
 }
 
@@ -156,6 +156,11 @@ type Options struct {
 // and its hash is about to be taken again: where a test changes the file, to
 // see that Shelf notices.
 const PointPagesRead = "the file's pages are read"
+
+// PointGivingVectors is the point where the Passages that are indexed for a
+// Source are about to be read, to be given vectors: where a test has another
+// Shelf put other content in their place, to see that Shelf notices.
+const PointGivingVectors = "the Passages that are indexed are about to be given vectors"
 
 // Shelf is one running Shelf: one index, served to any number of MCP
 // sessions.

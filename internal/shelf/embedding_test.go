@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -477,14 +478,19 @@ func TestAnEndpointThatFailsLeavesTheSourceFailed(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			at := shelftest.NewEndpoint(t)
-			var change []func(*endpoint.Embedding)
-			if tc.change != nil {
-				change = append(change, tc.change)
-			}
 			folder := t.TempDir()
-			_, s := startWith(t, folder, shelf.Settings{Embedder: embedderAt(t, at, change...)})
+			_, s := startWith(t, folder, shelf.Settings{Embedder: embedderAt(t, at)})
 			before := file(t, "kept.a1", leaves("A book that was indexed before speaks of determinants."))
 			s.indexed("failing", before)
+			// The Shelf that meets the failure: with less time for the
+			// endpoint, or less room for its answer, where the endpoint is
+			// to go over them. What is to be indexed is asked of the Shelf
+			// above, which gives an endpoint all the time it has: an answer
+			// that only took its time on a busy computer is no failure.
+			asking := s
+			if tc.change != nil {
+				_, asking = startWith(t, folder, shelf.Settings{Embedder: embedderAt(t, at, tc.change)})
+			}
 
 			var lines []string
 			for n := range 40 {
@@ -494,7 +500,7 @@ func TestAnEndpointThatFailsLeavesTheSourceFailed(t *testing.T) {
 			at.Forget()
 			at.Answer(tc.answer)
 			began := time.Now()
-			failed := s.fails("failing", book, append(tc.want, "the embedding endpoint "+at.Host, "index it again once the endpoint answers")...)
+			failed := asking.fails("failing", book, append(tc.want, "the embedding endpoint "+at.Host, "index it again once the endpoint answers")...)
 			if took := time.Since(began); took > time.Minute {
 				t.Errorf("it took %s to find out", took)
 			}
@@ -585,9 +591,13 @@ func TestAnEndpointThatIsDownLeavesWhatWasIndexed(t *testing.T) {
 func TestASearchFallsBackToKeywordWhenTheEndpointFails(t *testing.T) {
 	at := shelftest.NewEndpoint(t)
 	folder := t.TempDir()
-	_, s := startWith(t, folder, shelf.Settings{Embedder: embedderAt(t, at, func(e *endpoint.Embedding) { e.QueryTimeout = 200 * time.Millisecond })})
+	_, s := startWith(t, folder, shelf.Settings{Embedder: embedderAt(t, at)})
 	book := file(t, "book.a1", leaves("The first page speaks of functors.", "The second page speaks of natural transformations."))
 	s.indexed("fallback", book)
+	// A Shelf that gives the endpoint a fifth of a second, for the endpoint
+	// that is to be too slow, and for no other: an answer that only took its
+	// time on a busy computer is no failure.
+	_, hurried := startWith(t, folder, shelf.Settings{Embedder: embedderAt(t, at, func(e *endpoint.Embedding) { e.QueryTimeout = 200 * time.Millisecond })})
 
 	release := make(chan struct{})
 	defer close(release)
@@ -612,7 +622,11 @@ func TestASearchFallsBackToKeywordWhenTheEndpointFails(t *testing.T) {
 		at.Answer(answer)
 		at.Forget()
 		began := time.Now()
-		got := s.find("fallback", "functors", 5)
+		asking := s
+		if strings.HasPrefix(name, "did not answer within") {
+			asking = hurried
+		}
+		got := asking.find("fallback", "functors", 5)
 		if took := time.Since(began); took > time.Minute {
 			t.Errorf("%s: the search took %s", name, took)
 		}
@@ -834,6 +848,67 @@ func TestVectorsOfAnotherMakingAreReportedAndPutRightByIndexingAgain(t *testing.
 	s.indexed("changed", plain)
 	if got := vectorsOf(t, folder, "changed", plain.ID); got.model != "model-b" || got.count != 1 {
 		t.Errorf("the collection keeps %+v for the Source", got)
+	}
+}
+
+// Vectors are given to the content that was asked for, or to none. Another
+// copy of Shelf may put other content of a file in the Source's place
+// between the moment index answers and the moment the Passages are read:
+// those Passages are not embedded in the place of the ones asked for.
+func TestVectorsAreNotGivenToContentThatWasNotAskedFor(t *testing.T) {
+	warm(t)
+	at := shelftest.NewEndpoint(t)
+	folder := t.TempDir()
+	first, s := start(t, folder)
+	asked := file(t, "book.a1", leaves("The first edition speaks of motives."))
+	s.indexed("swapped", asked)
+	first.Close()
+
+	// The other copy, and the content it indexes meanwhile.
+	_, other := start(t, folder)
+	later := asked
+	data := leaves("The second edition speaks of periods.")
+	later.Path = filepath.Join(t.TempDir(), "second-edition.pdf")
+	if err := os.WriteFile(later.Path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	later.Hash = hashOf(data)
+
+	// The work waits, where it is about to read the Passages, until the
+	// other copy has indexed.
+	reached, swapped := make(chan struct{}), make(chan struct{})
+	var once, release sync.Once
+	t.Cleanup(func() { release.Do(func() { close(swapped) }) })
+	plugin := shelf.New(shelf.Options{Folder: folder, Settings: shelf.Settings{Embedder: embedderAt(t, at)}, Crash: func(point string) {
+		if point == shelf.PointGivingVectors {
+			once.Do(func() { close(reached) })
+			<-swapped
+		}
+	}})
+	t.Cleanup(plugin.Close)
+	s = connect(t, plugin)
+	if began := s.index("swapped", asked); began.State != plugincontract.StateIndexing {
+		t.Fatalf("index answered %+v", began)
+	}
+	select {
+	case <-reached:
+	case <-time.After(patience):
+		t.Fatal("the work never came to read the Passages")
+	}
+	other.indexed("swapped", later)
+	release.Do(func() { close(swapped) })
+	now, _ := s.settled("swapped", asked.ID)
+	if now.State != plugincontract.StateFailed || now.Hash != later.Hash || !strings.Contains(now.Reason, "its content was indexed anew") {
+		t.Errorf("status says %+v; want the work failed, and the content the other copy indexed still found", now)
+	}
+	if sent := at.Asked(); len(sent) != 0 {
+		t.Errorf("the Passages of content nobody asked to have embedded were sent to the endpoint: %+v", sent)
+	}
+	if got := vectorsOf(t, folder, "swapped", asked.ID); got != (kept{}) {
+		t.Errorf("the collection keeps %+v for the Source", got)
+	}
+	if found := s.search("swapped", "periods", 5); len(found) != 1 {
+		t.Errorf("the content the other copy indexed is found %d times", len(found))
 	}
 }
 

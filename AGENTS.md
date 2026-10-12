@@ -281,8 +281,10 @@ GOOS=darwin go vet ./...            # macOS is supported too
 - An endpoint in a test is `shelftest.Endpoint`, a server on this computer with no model
   behind it, which remembers what it was asked: a test that says an endpoint was asked
   something asserts what it received, the keys of the request among it, and one that says
-  it was not asked counts none. Give Shelf short deadlines (`endpoint.Embedding.Timeout`,
-  `QueryTimeout`) where a test waits for one, and never the defaults. The built
+  it was not asked counts none. Give Shelf a short deadline (`endpoint.Embedding.Timeout`,
+  `QueryTimeout`) where a test has an endpoint miss it, so that no test waits out a
+  default, and there alone: a Shelf that must get its answer keeps the defaults, since an
+  answer that took its time on a busy computer is no failure. The built
   `study-shelf` is told of the endpoint by a settings file in the test computer's
   configuration folder, as a learner tells it. One test asks a real model,
   `TestTheRecipeAgainstARealEndpoint`, and only when `LAMPLIGHT_TEST_EMBEDDING_ENDPOINT`
