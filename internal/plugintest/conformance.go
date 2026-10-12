@@ -1085,6 +1085,16 @@ func (s *suite) files(t *testing.T) {
 					"indexed again", again, ok)
 			}
 		}
+		// And however often the plugin is started: study starts a command
+		// anew for each of its own commands, so the one that shows the
+		// learner what failed is never the one that saw it fail. A service
+		// is asked over another connection.
+		later := s.connect(t)
+		if again, ok := s.status(t, later, collection)[b.source.ID]; !ok || again.State != plugincontract.StateFailed ||
+			strings.TrimSpace(again.Reason) == "" {
+			t.Fatalf("a Source failed, and asked over a new connection the plugin says %+v (listed: %v): a Source stays failed, "+
+				"with its reason, until it is indexed again, however often the plugin is started", again, ok)
+		}
 		// Asked again with a file that is there, it is indexed.
 		s.indexed(t, cs, collection, good)
 

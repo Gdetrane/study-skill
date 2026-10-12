@@ -39,7 +39,9 @@ indexes, and adding a Source indexes nothing.
   did not answer in time, and the Topic works as one without a Knowledge base. Tell the
   learner the problem and its `action` once, then read the Sources yourself.
 - A Source `failed`: tell the learner the reason the plugin gave, such as a scan without
-  text, and read that Source yourself.
+  text, and read that Source yourself. It is no `action`, and stays `failed` until it is
+  indexed again: run `study source index <topic> <source>` for it only once what the reason
+  names has been put right.
 - A Source the command skipped has a file that is missing or has changed since it was
   added: the output says which, and what to do.
 

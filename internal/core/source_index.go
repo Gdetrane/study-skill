@@ -110,7 +110,9 @@ type Indexing struct {
 	Problem string `json:"problem,omitempty"`
 	// Action is the one command to run next: what puts Problem right, or
 	// study source index when a Source is not indexed. It is empty when
-	// there is nothing to do.
+	// there is nothing to do, and when all that is not indexed has failed:
+	// a failure is shown with its reason, and tried again by whoever runs
+	// study source index for it.
 	Action string `json:"action,omitempty"`
 	// Sources are the Topic's Sources, in the order they were added, each
 	// with its state. A listing of a Topic's Sources gives each state with
@@ -182,7 +184,15 @@ var kindsOfSource = map[string]string{SourceFile: "files", SourceURL: "web pages
 
 // indexOf is the index state of a Source, given what its Topic's plugin
 // said of it, which is nothing when the plugin did not list it, and whether
-// study source index would ask the plugin to index it.
+// study source index is the next thing to do for it (wanted).
+//
+// It is for a Source the plugin has not tried, or holds other content of. A
+// Source whose indexing failed is shown as failed, with the plugin's reason,
+// and is no next action: the plugin tried, and trying again helps only once
+// what the reason names is put right. A scan without text would otherwise
+// have study source index as the one thing to do for ever, and every Session
+// would run it. Whoever runs study source index has it tried again all the
+// same.
 func indexOf(src Source, said *plugincontract.SourceStatus, contract plugincontract.Contract, plugin string) (index SourceIndex, wanted bool) {
 	can := slices.Contains(contract.Sources, src.Kind)
 	switch {
@@ -194,7 +204,7 @@ func indexOf(src Source, said *plugincontract.SourceStatus, contract plugincontr
 	case said.State == plugincontract.StateIndexing:
 		return SourceIndex{State: IndexIndexing, Progress: said.Progress}, false
 	case said.State == plugincontract.StateFailed:
-		return SourceIndex{State: IndexFailed, Reason: said.Reason}, can
+		return SourceIndex{State: IndexFailed, Reason: said.Reason}, false
 	case src.Kind == SourceFile && said.Hash != src.Hash:
 		// A file Source is its content: what the plugin read was another
 		// file's, or this one's after it changed.

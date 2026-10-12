@@ -6,7 +6,8 @@ strang.<id>  Strang
   indexed
 scan.<id>  Scan
   $HOME/Books/scan.txt
-  ! not indexed
+  ! indexing failed: there is no text in it
+    To have it tried again, run: study source index linear-algebra scan.<id>
 lost.<id>  Lost
   lost.txt
   ! not found on this computer: say where it is with study source update --path,

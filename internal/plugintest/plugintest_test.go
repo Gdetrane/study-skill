@@ -154,6 +154,8 @@ var broken = map[string]struct {
 		want: "a search reads the index and never the Source"},
 	"it forgets that a Source failed": {cfg: plugintest.Config{Breaks: []string{plugintest.BreakFailedForgotten}},
 		want: "a Source stays failed until it is indexed again"},
+	"it loses a failure when it stops": {args: []string{"--break", plugintest.BreakFailedLost},
+		want: "however often the plugin is started"},
 	"it gives a score with a Passage": {cfg: plugintest.Config{Twist: replaced("passage", `"text":`, `"score":0.5,"text":`, false)},
 		want: "with a score: a score belongs to one search"},
 	"it refuses a field it does not know": {cfg: plugintest.Config{Breaks: []string{plugintest.BreakStrict}},

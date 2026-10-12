@@ -458,8 +458,10 @@ Says what is indexed in a collection.
   halfway and is started again says nothing is `indexing` until `index` is called: then it
   carries on, or starts over.
 - `failed`: the last indexing failed. The Source stays `failed`, with its `reason`,
-  however often `status` is asked, until it is indexed again, or at least until the plugin
-  stops.
+  however often `status` is asked **and however often the plugin is started**, until it is
+  asked to be indexed again. `study` starts a command anew for each of its own commands, so
+  the one that shows the learner what failed is never the one that saw it fail: keep a
+  failure where the index is kept.
 - `status` answers from what the plugin knows, and never waits for indexing: asked while a
   Source is being indexed, it says `indexing`, at once.
 

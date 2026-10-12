@@ -35,7 +35,8 @@ func addKnowledgeTools(server *mcp.Server, c *core.Core) {
 			"base plugin, and each Source has an index: its state on this computer is indexed, indexing (with its " +
 			"progress), failed (with the plugin's reason), not_indexed or unknown. indexing names the plugin and gives " +
 			"the one action to take: study source index for Sources that are not indexed, or, with a problem, the " +
-			"command that says what is wrong with the plugin. With a problem every state is unknown and the Topic " +
+			"command that says what is wrong with the plugin. A Source that failed is no action: it stays failed, with " +
+			"the reason, until someone runs study source index for it again. With a problem every state is unknown and the Topic " +
 			"works as one without a Knowledge base (Instruction 14).",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, OpenWorldHint: &closedWorld},
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in topicInput) (*mcp.CallToolResult, core.SourceList, error) {

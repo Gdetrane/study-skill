@@ -272,6 +272,16 @@ changed one of the ones above:
   in the contract: the Source is failed, with the plugin's reason, the others are indexed,
   and the command exits with 0. It fails when it could not do its work at all: no plugin,
   one that does not start or stops answering, a folder it cannot write in.
+- **A failure outlives the plugin's program, and is no next action.** The contract let a
+  plugin forget that a Source failed once it stopped. A command is now stopped after every
+  `study` command, so the one that shows the learner what failed is never the one that saw
+  it fail: `status` said "not indexed" of a scan without text, the one action was to index
+  it, and indexing it failed again, every Session. The contract now has a Source stay
+  `failed`, with its reason, however often the plugin is started, until it is asked to be
+  indexed again, and the conformance suite asks over a new connection. And a failed Source
+  is shown with its reason without being the next action: `study source index` is offered
+  for Sources the plugin has not tried, and has the failed ones tried again when someone
+  runs it.
 - **A folder that cannot be written in is found before the plugin starts.** A sandbox
   refuses what a folder's mode allows, and a plugin would only say, each in its own words,
   that its index cannot be written. `study` makes and removes an empty file in the

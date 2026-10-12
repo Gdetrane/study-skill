@@ -452,12 +452,35 @@ func TestAFailedSourceCarriesThePluginsReason(t *testing.T) {
 	if !reflect.DeepEqual(res.Sources, want) {
 		t.Errorf("IndexSources = %+v\nwant %+v", res.Sources, want)
 	}
-	// The plugin of the next command remembers nothing of the failure: the
-	// Sources are not indexed, and the command to index them is the one
-	// thing to do.
+	// The plugin of the next command is another start of its program, and
+	// says the same: the Sources have failed, each with its reason. A failure
+	// is no next action, so there is none.
 	list := s.sources(t)
-	if got := states(list); !slices.Equal(got, []string{"indexed", "not_indexed", "not_indexed"}) || list.Indexing.Action != "study source index c" {
-		t.Errorf("afterwards the Sources are %v, and the action %q", got, list.Indexing.Action)
+	if got := states(list); !slices.Equal(got, []string{"indexed", "failed", "failed"}) || list.Indexing.Action != "" {
+		t.Errorf("afterwards the Sources are %v, and the action %q; want the failures shown, and nothing to run", got, list.Indexing.Action)
+	}
+	if got := list.Sources[1].Indexed; got == nil || got.Reason != "there is no text in it" {
+		t.Errorf("afterwards the empty file's index is %+v; want it failed with the plugin's reason", got)
+	}
+	// Whoever runs the command has them tried again.
+	again := s.index(t, core.IndexSpec{})
+	if len(again.Sources) != 3 || again.Sources[0].Asked || !again.Sources[1].Asked || !again.Sources[2].Asked {
+		t.Errorf("run again, the plugin was asked for %+v; want the two that failed, and not the one that is indexed", again.Sources)
+	}
+}
+
+// A Source that failed beside one that was never tried: the command is the
+// next action, for the one that was never tried.
+func TestAFailureIsNoNextActionAndAnUntriedSourceIs(t *testing.T) {
+	s := newShelf(t)
+	s.book(t, "empty.txt", " \n\n ")
+	s.index(t, core.IndexSpec{})
+	if list := s.sources(t); !slices.Equal(states(list), []string{"failed"}) || list.Indexing.Action != "" {
+		t.Fatalf("after a failure the Sources are %v, and the action %q", states(list), list.Indexing.Action)
+	}
+	s.book(t, "good.txt", pages(2, "one"))
+	if list := s.sources(t); !slices.Equal(states(list), []string{"failed", "not_indexed"}) || list.Indexing.Action != "study source index c" {
+		t.Errorf("with a Source that was never tried the Sources are %v, and the action %q", states(list), list.Indexing.Action)
 	}
 }
 
@@ -480,9 +503,9 @@ func TestAServicesFailureIsShownWithItsReason(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := &core.SourceIndex{State: core.IndexFailed, Reason: "there is no text in it"}
-	if len(list.Sources) != 1 || !reflect.DeepEqual(list.Sources[0].Indexed, want) || list.Indexing.Action != "study source index c" ||
+	if len(list.Sources) != 1 || !reflect.DeepEqual(list.Sources[0].Indexed, want) || list.Indexing.Action != "" ||
 		list.Sources[0].ID != empty.ID {
-		t.Errorf("ListSources = %+v, %+v; want the Source failed, with the reason", list.Sources, list.Indexing)
+		t.Errorf("ListSources = %+v, %+v; want the Source failed, with the reason, and no action", list.Sources, list.Indexing)
 	}
 	// A service gets no folder from study.
 	if _, err := os.Stat(c.DataFolder("remote")); err == nil {
@@ -645,15 +668,16 @@ func TestTheIndexDryRunSaysWhatTheRealRunDoes(t *testing.T) {
 			}
 		})
 	}
-	// What the first of them said: the one to index, and why each of the
-	// others is not asked for.
+	// What a dry run says after them: the one that failed in those runs is
+	// still failed, and would be asked for again, and why each of the others
+	// is not asked for.
 	s.registerWith(t, "--sources", "file")
 	dry := s.index(t, core.IndexSpec{DryRun: true})
 	var got []string
 	for _, src := range dry.Sources {
 		got = append(got, fmt.Sprintf("%s asked=%v skipped=%v", src.State, src.Asked, src.Skipped != ""))
 	}
-	want := []string{"indexed asked=false skipped=false", "indexed asked=false skipped=false", "not_indexed asked=true skipped=false",
+	want := []string{"indexed asked=false skipped=false", "indexed asked=false skipped=false", "failed asked=true skipped=false",
 		"not_indexed asked=false skipped=true", "not_indexed asked=false skipped=true"}
 	if !slices.Equal(got, want) {
 		t.Errorf("the dry run = %q\nwant %q", got, want)

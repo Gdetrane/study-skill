@@ -753,8 +753,10 @@ hours before any learning happens is exactly what v1 produced.
     next run carries on.
   - **`sources` and `status` say what is indexed**, in the CLI and over MCP: each Source is
     `indexed`, `indexing`, `failed`, `not_indexed` or `unknown`, with `study source index`
-    as the one action when a Source is not indexed. Whether a Source is indexed is the
-    plugin's to say on this machine: it records no Event and is in no file.
+    as the one action when a Source is not indexed. A Source that failed is shown with the
+    plugin's reason and is no action: it is tried again when someone runs the command for
+    it. Whether a Source is indexed is the plugin's to say on this machine: it records no
+    Event and is in no file.
   - **Nothing waits for a plugin.** For those two, reading the registry, starting the
     plugin or reaching it, and its answers share a deadline of 2 seconds
     (`core.PluginGlanceTimeout`), against the 30 a plugin has when it is asked to index. A

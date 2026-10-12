@@ -413,6 +413,11 @@ func writeSourceList(w io.Writer, l core.SourceList) error {
 		case text == "":
 		case attention:
 			fmt.Fprintf(&b, "  %s %s\n", styleWarn.Render("!"), text)
+			if s.Indexed.State == core.IndexFailed {
+				// A failure is no next action: it is tried again by whoever
+				// put right what the reason names.
+				fmt.Fprintf(&b, "    To have it tried again, run: %s\n", styleAccent.Render("study source index "+l.Topic+" "+printable(s.ID)))
+			}
 		default:
 			fmt.Fprintf(&b, "  %s\n", styleDim.Render(text))
 		}
