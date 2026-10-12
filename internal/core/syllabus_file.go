@@ -415,7 +415,11 @@ const maxSyllabusFileBytes = 4 << 20
 // a relative path is relative to the folder study started in. It must be a
 // regular file, so a FIFO or a device never makes it wait.
 func (c *Core) ReadSyllabusFile(path string) (Syllabus, error) {
-	data, err := readRegularFile(c.expandPath(path), maxSyllabusFileBytes)
+	file, err := c.expandPath(path)
+	if err != nil {
+		return Syllabus{}, err
+	}
+	data, err := readRegularFile(file, maxSyllabusFileBytes)
 	if err != nil {
 		return Syllabus{}, err
 	}

@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/mordor-forge/lamplight/v2/internal/xdg"
 )
 
 // Errors returned by SnapshotWork for work whose snapshot would have a
@@ -293,18 +295,16 @@ func (r *repo) ignoreDigest(sub string, ignored map[string]bool) string {
 }
 
 // globalExcludes is the learner's global ignore file: core.excludesFile, or
-// git's default under XDG_CONFIG_HOME or HOME.
+// git's default under XDG_CONFIG_HOME or HOME, found as git finds it in the
+// environment it is given (see environ): a relative folder is not used.
 func (r *repo) globalExcludes() string {
 	for _, o := range r.overrides {
 		if o[0] == "core.excludesFile" {
 			return o[1]
 		}
 	}
-	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
-		return filepath.Join(xdg, "git", "ignore")
-	}
-	if home, err := os.UserHomeDir(); err == nil {
-		return filepath.Join(home, ".config", "git", "ignore")
+	if base, err := xdg.ConfigHome.Dir(os.Getenv); err == nil {
+		return filepath.Join(base, "git", "ignore")
 	}
 	return ""
 }

@@ -305,7 +305,10 @@ func (c *Core) v1Dir(dir string) (string, error) {
 	if strings.ContainsFunc(dir, func(r rune) bool { return r < ' ' || r == 0x7f }) {
 		return "", invalidf("the folder's path contains a control character")
 	}
-	dir = c.expandPath(dir)
+	dir, err := c.expandPath(dir)
+	if err != nil {
+		return "", err
+	}
 	info, err := os.Stat(dir)
 	if errors.Is(err, fs.ErrNotExist) {
 		return "", &Error{Code: CodeNotFound, Message: dir + " does not exist"}
@@ -858,7 +861,11 @@ func (c *Core) v1SourceFile(ctx context.Context, src *os.Root, srcPath, file str
 	}
 	rel := ""
 	if strings.HasPrefix(file, "~") || filepath.IsAbs(file) {
-		file = c.expandPath(file)
+		expanded, err := c.expandPath(file)
+		if err != nil {
+			return foundFile{}, false, "its file cannot be found on this computer: " + err.Error()
+		}
+		file = expanded
 		if inside(srcPath, resolvedPath(file)) {
 			if r, err := filepath.Rel(srcPath, resolvedPath(file)); err == nil {
 				rel = filepath.ToSlash(r)

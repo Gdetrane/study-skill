@@ -17,6 +17,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/mordor-forge/lamplight/v2/internal/core"
+	"github.com/mordor-forge/lamplight/v2/internal/xdg"
 )
 
 const (
@@ -481,42 +482,52 @@ func (a *app) undoRecord(rec completionRecord, dryRun bool) (undoOutcome, error)
 
 // completionTarget decides where a shell's completions go. Only zsh may need
 // a line in its rc file: it has no per-user completion folder of its own.
+//
+// The home folder is asked for only where a path needs it: the default of a
+// base folder that is not set, a --dir that starts with ~, and zsh's rc file
+// when ZDOTDIR does not say where it is. An install whose every path is
+// absolute works whatever HOME is.
 func (a *app) completionTarget(shell, dir string) (completionRecord, error) {
 	getenv := a.opts.Getenv
-	home := getenv("HOME")
-	if home == "" {
-		var err error
-		if home, err = os.UserHomeDir(); err != nil {
-			return completionRecord{}, fmt.Errorf("cannot find your home folder: %w", err)
-		}
-	}
-	xdg := func(key, fallback string) string {
-		if v := getenv(key); filepath.IsAbs(v) {
-			return v
-		}
-		return filepath.Join(home, fallback)
+	noHome := func(err error) (completionRecord, error) {
+		return completionRecord{}, fmt.Errorf("cannot find your home folder: %w", err)
 	}
 	rec := completionRecord{Shell: shell}
 	switch shell {
 	case "fish":
-		rec.File = filepath.Join(xdg("XDG_CONFIG_HOME", ".config"), "fish", "completions", "study.fish")
+		base, err := xdg.ConfigHome.Dir(getenv)
+		if err != nil {
+			return noHome(err)
+		}
+		rec.File = filepath.Join(base, "fish", "completions", "study.fish")
 	case "bash":
 		// bash-completion reads BASH_COMPLETION_USER_DIR as a list of
 		// folders; the first one is ours.
-		base := ""
+		userDir := ""
 		for _, d := range filepath.SplitList(getenv("BASH_COMPLETION_USER_DIR")) {
 			if filepath.IsAbs(d) {
-				base = d
+				userDir = d
 				break
 			}
 		}
-		if base == "" {
-			base = filepath.Join(xdg("XDG_DATA_HOME", filepath.Join(".local", "share")), "bash-completion")
+		if userDir == "" {
+			base, err := xdg.DataHome.Dir(getenv)
+			if err != nil {
+				return noHome(err)
+			}
+			userDir = filepath.Join(base, "bash-completion")
 		}
-		rec.File = filepath.Join(base, "completions", "study")
+		rec.File = filepath.Join(userDir, "completions", "study")
 	case "zsh":
 		if dir != "" {
-			abs, err := filepath.Abs(expandHome(dir, home))
+			if dir == "~" || strings.HasPrefix(dir, "~/") {
+				home, err := xdg.Home(getenv)
+				if err != nil {
+					return noHome(err)
+				}
+				dir = filepath.Join(home, strings.TrimPrefix(dir, "~"))
+			}
+			abs, err := filepath.Abs(dir)
 			if err != nil {
 				return rec, err
 			}
@@ -527,10 +538,16 @@ func (a *app) completionTarget(shell, dir string) (completionRecord, error) {
 			rec.File = filepath.Join(found, "_study")
 			return rec, nil
 		}
-		rec.File = filepath.Join(xdg("XDG_DATA_HOME", filepath.Join(".local", "share")), "lamplight", "completions", "_study")
+		base, err := xdg.DataHome.Dir(getenv)
+		if err != nil {
+			return noHome(err)
+		}
+		rec.File = filepath.Join(base, "lamplight", "completions", "_study")
 		zdotdir := getenv("ZDOTDIR")
 		if !filepath.IsAbs(zdotdir) {
-			zdotdir = home
+			if zdotdir, err = xdg.Home(getenv); err != nil {
+				return noHome(err)
+			}
 		}
 		rec.RCFile = filepath.Join(zdotdir, ".zshrc")
 		rec.RCLine = fmt.Sprintf("(( $+functions[compdef] )) && source %s  # %s", shellQuote(rec.File), rcMarker)
@@ -642,13 +659,6 @@ func writableDir(dir string) bool {
 		}
 		dir = parent
 	}
-}
-
-func expandHome(path, home string) string {
-	if path == "~" || strings.HasPrefix(path, "~/") {
-		return filepath.Join(home, strings.TrimPrefix(path, "~"))
-	}
-	return path
 }
 
 func shellQuote(s string) string {

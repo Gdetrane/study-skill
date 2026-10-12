@@ -19,6 +19,8 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+
+	"github.com/mordor-forge/lamplight/v2/internal/xdg"
 )
 
 // FormatVersion is the format number written to every file the core owns.
@@ -125,23 +127,28 @@ func (c *Core) Now() time.Time { return c.now() }
 // expandPath makes a path the learner or agent gave absolute: a leading ~
 // is the home folder, as in STUDY_HOME, and a relative path is relative to
 // the folder study started in.
-func (c *Core) expandPath(path string) string {
+//
+// It fails when the path starts with ~ and the home folder cannot be found,
+// as with a relative HOME. Left as it is, the path would be a relative one
+// and name a folder called ~ in the folder study started in: a file the
+// agent wrote in a Topic would be read as one from the learner's home.
+func (c *Core) expandPath(path string) (string, error) {
 	if path == "~" || strings.HasPrefix(path, "~/") {
-		home := ""
-		if c.getenv != nil {
-			home = c.getenv("HOME")
+		getenv := c.getenv
+		if getenv == nil {
+			getenv = os.Getenv
 		}
-		if home == "" {
-			home, _ = os.UserHomeDir()
+		home, err := xdg.Home(getenv)
+		if err != nil {
+			return "", &Error{Code: CodeInvalidArgument, Err: err, Message: fmt.Sprintf("%s starts with ~, your home "+
+				"folder, which cannot be found (%v): set HOME to its absolute path", path, err)}
 		}
-		if home != "" {
-			path = filepath.Join(home, strings.TrimPrefix(path, "~"))
-		}
+		path = filepath.Join(home, strings.TrimPrefix(path, "~"))
 	}
 	if !filepath.IsAbs(path) {
 		path = filepath.Join(c.dir, path)
 	}
-	return filepath.Clean(path)
+	return filepath.Clean(path), nil
 }
 
 // config is the global configuration file, config.toml.
@@ -189,27 +196,29 @@ func resolveHome(getenv func(string) string) (string, error) {
 }
 
 // userHomeDir returns the learner's home folder: HOME, or the operating
-// system's answer when HOME is unset.
+// system's answer when HOME is unset. A relative HOME is not one (see
+// package xdg).
 func userHomeDir(getenv func(string) string) (string, error) {
-	if h := getenv("HOME"); h != "" {
-		return h, nil
-	}
-	h, err := os.UserHomeDir()
+	h, err := xdg.Home(getenv)
 	if err != nil {
-		return "", &Error{Code: CodeInvalidArgument,
-			Message: "cannot find your home folder: set STUDY_HOME to the absolute path of your Study home", Err: err}
+		return "", noHomeFolder(err)
 	}
 	return h, nil
 }
 
+func noHomeFolder(err error) error {
+	return &Error{Code: CodeInvalidArgument, Err: err, Message: "cannot find your home folder (" + err.Error() +
+		"): set STUDY_HOME to the absolute path of your Study home"}
+}
+
+// configPath is where config.toml is: in lamplight in XDG_CONFIG_HOME, or in
+// ~/.config when that is unset or relative. A relative one is ignored, as
+// the specification says: it would name a folder wherever study is started,
+// and a Topic could then hold the file that says where the Study home is.
 func configPath(getenv func(string) string) (string, error) {
-	base := getenv("XDG_CONFIG_HOME")
-	if base == "" {
-		h, err := userHomeDir(getenv)
-		if err != nil {
-			return "", err
-		}
-		base = filepath.Join(h, ".config")
+	base, err := xdg.ConfigHome.Dir(getenv)
+	if err != nil {
+		return "", noHomeFolder(err)
 	}
 	return filepath.Join(base, "lamplight", "config.toml"), nil
 }
@@ -235,12 +244,14 @@ func loadConfig(path string) (config, error) {
 // gitCommand returns a git command that runs in dir with a clean environment:
 // the caller's GIT_* variables are dropped, because GIT_DIR, GIT_WORK_TREE and
 // their friends would point git at another repository, and the system
-// configuration is not read. stdin is /dev/null.
+// configuration is not read. Nor is a relative HOME or XDG folder passed on:
+// git takes one as it is, and would look for the learner's configuration
+// under dir, where study does not (package xdg). stdin is /dev/null.
 func gitCommand(ctx context.Context, dir string, args ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
 	env := make([]string, 0, len(os.Environ())+1)
-	for _, kv := range os.Environ() {
+	for _, kv := range xdg.Environ(os.Environ()) {
 		if !strings.HasPrefix(kv, "GIT_") {
 			env = append(env, kv)
 		}

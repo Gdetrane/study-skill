@@ -129,6 +129,8 @@ GOOS=darwin go vet ./...            # macOS is supported too
 - `internal/checkpoint`: hardened git: Checkpoints, work snapshots for Attempts, changes
   since a Checkpoint, and reading history.
 - `internal/library`: building and searching the Library index.
+- `internal/xdg`: the one place the home folder and the `XDG_*` folders are read from the
+  environment. A relative one is ignored, as the XDG specification says.
 - `internal/cli`: the `study` command line (cobra and fang), including `study setup`.
 - `internal/mcpserver`: the MCP server, its tools and its Instructions for agents.
 - `internal/claudeplugin` and `.claude-plugin/marketplace.json`: the Claude Code plugin,

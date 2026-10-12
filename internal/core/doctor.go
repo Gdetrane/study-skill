@@ -18,6 +18,7 @@ import (
 	"github.com/BurntSushi/toml"
 
 	"github.com/mordor-forge/lamplight/v2/internal/library"
+	"github.com/mordor-forge/lamplight/v2/internal/xdg"
 )
 
 // Diagnosis is what study doctor found: every Finding, and whether the setup
@@ -82,6 +83,9 @@ func Diagnose(ctx context.Context, opts Options) Diagnosis {
 		getenv = os.Getenv
 	}
 	d := Diagnosis{Healthy: true, Findings: []Finding{}}
+	if env, found := diagnoseEnvironment(getenv); found {
+		d.Add(env)
+	}
 	config := diagnoseConfig(getenv)
 	d.Add(config)
 
@@ -119,11 +123,34 @@ func Diagnose(ctx context.Context, opts Options) Diagnosis {
 	return d
 }
 
+// diagnoseEnvironment warns about HOME or an XDG folder set to a relative
+// path, which study does not use (see package xdg): nothing else would say
+// why the folder the learner named is not the one study reads. There is no
+// Finding when there is nothing to warn about.
+func diagnoseEnvironment(getenv func(string) string) (Finding, bool) {
+	var messages, fixes []string
+	for _, name := range xdg.Ignored(getenv) {
+		is := fmt.Sprintf("%s is %q, which is not an absolute path, so study ", name, getenv(name))
+		if name == "HOME" {
+			messages = append(messages, is+"does not use it and cannot find your home folder")
+			fixes = append(fixes, "set HOME to the absolute path of your home folder")
+			continue
+		}
+		messages = append(messages, is+"ignores it and uses its default under your home folder")
+		fixes = append(fixes, "set "+name+" to an absolute path, or unset it")
+	}
+	if len(messages) == 0 {
+		return Finding{}, false
+	}
+	return Finding{Name: "environment", Status: FindingWarn,
+		Message: strings.Join(messages, "; "), Fix: strings.Join(fixes, "; ")}, true
+}
+
 func diagnoseConfig(getenv func(string) string) Finding {
 	f := Finding{Name: "config"}
 	path, err := configPath(getenv)
 	if err != nil {
-		f.Status, f.Message, f.Fix = FindingWarn, "cannot locate config.toml: "+err.Error(), "set HOME or XDG_CONFIG_HOME"
+		f.Status, f.Message, f.Fix = FindingWarn, "cannot locate config.toml: "+err.Error(), "set HOME or XDG_CONFIG_HOME to an absolute path"
 		return f
 	}
 	if _, err := os.Stat(path); errors.Is(err, fs.ErrNotExist) {

@@ -14,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/mordor-forge/lamplight/v2/internal/xdg"
 )
 
 // hookEvents lists every hook event in githooks(5) as of git 2.55. Each one is
@@ -442,9 +444,14 @@ func (w *cappedWriter) Write(p []byte) (int, error) {
 // environ builds a child environment from ours, without any inherited GIT_*
 // variable (GIT_DIR, GIT_INDEX_FILE, GIT_EXTERNAL_DIFF, GIT_SSH_COMMAND,
 // GIT_CONFIG_PARAMETERS and so on), then adds the hardening.
+//
+// A relative HOME or XDG folder is left out too. git takes one as it is,
+// from the folder it runs in: it would not find the learner's configuration
+// and ignore file where study does (package xdg), which is the default
+// under the home folder, and would look for them wherever it happens to be.
 func (r *repo) environ(c call) []string {
 	env := make([]string, 0, len(os.Environ())+len(r.overrides)*2+16)
-	for _, kv := range os.Environ() {
+	for _, kv := range xdg.Environ(os.Environ()) {
 		name, _, _ := strings.Cut(kv, "=")
 		if strings.HasPrefix(name, "GIT_") || name == "LC_ALL" || name == "LANGUAGE" {
 			continue

@@ -1,0 +1,14 @@
+! environment   XDG_CONFIG_HOME is "rel", which is not an absolute path, so study ignores it and uses its default under your home folder; XDG_STATE_HOME is "state", which is not an absolute path, so study ignores it and uses its default under your home folder
+                fix: set XDG_CONFIG_HOME to an absolute path, or unset it; set XDG_STATE_HOME to an absolute path, or unset it
+✓ config        no $HOME/.config/lamplight/config.toml; using the defaults
+✓ study_home    $HOME/study
+✓ git           git 2.47.1
+✓ git_identity  Checkpoints are saved as Ada Lovelace <ada@example.com>
+✓ local_state   $HOME/study/.lamplight/state.toml
+✓ topics        1 Topic
+✓ library       no index yet: study library build <folder> indexes your books
+✓ log           $HOME/.local/state/lamplight/study.log (level info)
+✓ completion    skipped: $SHELL is not bash, zsh or fish
+✓ setup         no Claude Code or Codex found; other agents need an MCP server that runs study mcp
+
+Ready to study, with 1 warning.

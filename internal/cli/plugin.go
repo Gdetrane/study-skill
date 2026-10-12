@@ -12,6 +12,7 @@ import (
 
 	"github.com/mordor-forge/lamplight/v2/internal/claudeplugin"
 	"github.com/mordor-forge/lamplight/v2/internal/core"
+	"github.com/mordor-forge/lamplight/v2/internal/xdg"
 	"github.com/mordor-forge/lamplight/v2/skills/lamplight"
 )
 
@@ -137,15 +138,9 @@ func within(dir, home string) bool {
 // cacheDir is study's cache folder: $XDG_CACHE_HOME/lamplight, or
 // ~/.cache/lamplight.
 func cacheDir(getenv func(string) string) (string, error) {
-	if dir := getenv("XDG_CACHE_HOME"); filepath.IsAbs(dir) {
-		return filepath.Join(dir, "lamplight"), nil
+	base, err := xdg.CacheHome.Dir(getenv)
+	if err != nil {
+		return "", err
 	}
-	home := getenv("HOME")
-	if home == "" {
-		var err error
-		if home, err = os.UserHomeDir(); err != nil {
-			return "", err
-		}
-	}
-	return filepath.Join(home, ".cache", "lamplight"), nil
+	return filepath.Join(base, "lamplight"), nil
 }
