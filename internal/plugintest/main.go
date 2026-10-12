@@ -3,9 +3,11 @@ package plugintest
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -31,7 +33,10 @@ const Arg = "lamplight-test-plugin"
 //
 // The arguments after Arg say how the plugin behaves, and how it misbehaves:
 //
-//	--record FILE       write how it was started to FILE (see Record)
+//	--record FILE       write how it was started to FILE (see Record), and
+//	                    add each tool it is asked, with what it is asked,
+//	                    to FILE.calls (see ReadCalls)
+//	--delay TOOL=D      TOOL takes D to answer
 //	--sources KINDS     the kinds of Source it indexes: file,url
 //	--page-delay D      take D over each page it indexes
 //	--name N, --version V   what it calls itself
@@ -140,6 +145,101 @@ func ReadRecord(t testing.TB, path string) Record {
 	}
 }
 
+// Call is one call of a tool, as a test plugin received it.
+type Call struct {
+	// Tool is the tool's name, and Args what it was asked: a JSON object.
+	Tool string          `json:"tool"`
+	Args json.RawMessage `json:"args"`
+}
+
+// Collection is the collection the call names.
+func (c Call) Collection() string {
+	var args struct {
+		Collection string `json:"collection"`
+	}
+	_ = json.Unmarshal(c.Args, &args)
+	return args.Collection
+}
+
+// Source is the id of the Source the call is about: the one an index call
+// hands over, or the one a cancel call names.
+func (c Call) Source() string {
+	var args struct {
+		Source json.RawMessage `json:"source"`
+	}
+	_ = json.Unmarshal(c.Args, &args)
+	var id string
+	if json.Unmarshal(args.Source, &id) == nil {
+		return id
+	}
+	var source plugincontract.Source
+	_ = json.Unmarshal(args.Source, &source)
+	return source.ID
+}
+
+// Indexed is the Source an index call hands over.
+func (c Call) Indexed() plugincontract.Source {
+	var in plugincontract.IndexInput
+	_ = json.Unmarshal(c.Args, &in)
+	return in.Source
+}
+
+// ReadCalls reads the calls a test plugin started with --record path
+// received so far, in the order it received them, by every copy of it that
+// was started so: a plugin is started anew by each command and each tool
+// that needs it. A plugin that was asked nothing, and one that was never
+// started, give none.
+func ReadCalls(t testing.TB, path string) []Call {
+	t.Helper()
+	data, err := os.ReadFile(path + ".calls")
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	var calls []Call
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		var call Call
+		if err := json.Unmarshal([]byte(line), &call); err != nil {
+			t.Fatalf("a line of %s.calls is no call: %v: %q", path, err, line)
+		}
+		calls = append(calls, call)
+	}
+	return calls
+}
+
+// Tools are the names of the tools some calls called, in order.
+func Tools(calls []Call) []string {
+	names := make([]string, 0, len(calls))
+	for _, call := range calls {
+		names = append(names, call.Tool)
+	}
+	return names
+}
+
+// recordCall adds a call the plugin received to the calls of its record:
+// one line, written at once, so that the copies of a plugin and the calls of
+// one copy never write into each other's.
+func recordCall(record, tool string, args json.RawMessage) {
+	if len(args) == 0 {
+		args = json.RawMessage(`{}`)
+	}
+	line, err := json.Marshal(Call{Tool: tool, Args: args})
+	if err == nil {
+		var f *os.File
+		if f, err = os.OpenFile(record+".calls", os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600); err == nil {
+			_, err = f.Write(append(line, '\n'))
+			if cerr := f.Close(); err == nil {
+				err = cerr
+			}
+		}
+	}
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "the test plugin could not record a call:", err)
+	}
+}
+
 // pairs collects flags given as TOOL=VALUE.
 type pairs map[string]string
 
@@ -194,9 +294,11 @@ func run(args []string) int {
 	flags.StringVar(&cfg.Name, "name", "", "")
 	flags.StringVar(&cfg.Version, "version", "", "")
 	flags.BoolVar(&cfg.TextOnly, "text-only", false, "")
+	delays := pairs{}
 	flags.Var(pairs(cfg.Results), "result", "")
 	flags.Var(pairs(cfg.Refusals), "refuse", "")
 	flags.Var(pairs(cfg.PlainErrors), "plain-error", "")
+	flags.Var(delays, "delay", "")
 	if err := flags.Parse(args); err != nil {
 		return 2
 	}
@@ -296,7 +398,18 @@ func run(args []string) int {
 		cfg.Results[*flood] = `{"sources":[{"id":"flood.1","state":"failed","reason":"` +
 			strings.Repeat("x", plugincontract.MaxMessageBytes+1024) + `"}]}`
 	}
+	if *record != "" {
+		cfg.Asked = func(tool string, args json.RawMessage) { recordCall(*record, tool, args) }
+	}
 	cfg.Before = func(ctx context.Context, tool string) {
+		if slow, err := time.ParseDuration(delays[tool]); err == nil {
+			// A plugin that is slow, and answers in the end: it gives up
+			// sooner only when it is told to.
+			select {
+			case <-time.After(slow):
+			case <-ctx.Done():
+			}
+		}
 		for _, messages := range []struct {
 			where   string
 			request bool

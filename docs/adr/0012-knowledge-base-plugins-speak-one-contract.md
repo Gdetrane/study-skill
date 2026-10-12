@@ -209,6 +209,82 @@ ADR-0009 stands: the core runs nothing that a Topic's files name.
 - Whether a Source is indexed is the plugin's to say, on this machine. It is not in the
   History and records no Event.
 
+Building the Topic's plugin and `study source index` showed what these rules needed, and
+changed one of the ones above:
+
+- **A tool has a plugin started, and never has it index.** The client was built with a
+  test that no MCP tool starts or reaches a plugin. `status` and `sources` have to say
+  which Sources are indexed, and only the plugin knows: so those two tools have the core
+  start the Topic's plugin, or reach it, and ask its `status` tool. What is kept is the
+  rule that matters: no tool causes `index` to be called. The test now registers plugins
+  that record what they are asked, has the Topic name one, calls every tool, and fails for
+  anything but `contract` and `status`; it also fixes which tools ask a plugin anything.
+  A second test reads the core for the one function that asks a plugin to index, and for
+  who can reach it.
+- **A plugin is not kept running.** This ADR had `study` start a command when a Topic
+  first needs it and stop it when `study` exits. That is so for one command, and it was not
+  built for `study mcp`: each tool call that needs a plugin starts it, asks, and stops it
+  before it answers. A program kept for the length of an agent's session would be a
+  second long-lived process outside the agent's sandbox, and would outlive a change of the
+  registry: a plugin the learner replaced or removed would go on being asked. The cost is
+  a start for every `status`, and it is why the next rule cuts a slow plugin off.
+- **Nothing waits for a plugin, so `status` gives one two seconds.** The client gives a
+  plugin thirty seconds to start, which is right for indexing and far too long for
+  showing where the learner is. For `status` and `sources`, reading the registry, starting
+  the plugin and its answers share one deadline of two seconds; a plugin that misses it is
+  stopped, and its Sources are shown as not known, with the command that says what is
+  wrong. Opening a Session asks no plugin anything. The cost: a plugin that takes longer
+  than that to start, as one that loads a model first would, never says in `status` what
+  it has indexed. `study source index` and `study knowledge-base check` still give it the
+  thirty seconds.
+- **A collection's name tells Study homes apart.** A plugin's folder is one for the
+  plugin on a machine, not one for each Study home, and a service may serve several
+  machines. Named after the Topic's id alone, two Study homes that each hold a Topic
+  `linear-algebra` would share a collection, and a search in one would find the other's
+  books. The name is the Topic's id, cut to fit, a hyphen, and 32 characters of a SHA-256
+  of the Study home's real path and the id. The path is one the agent does not choose: it
+  writes inside the Study home, and cannot have another folder found at that path. Every
+  name ends with the hash, so no two Topics share one, whatever their ids were cut to. A
+  Study home that is moved or renamed has its Sources indexed again; what the plugin holds
+  under the old name stays, unused, since nothing removes a collection.
+- **`cancel` is asked with a context of the command's own.** When `study source index` is
+  stopped, its context is cancelled, and the client asks a plugin nothing with a cancelled
+  context. So the plugin is told to stop under a context made then, which lasts ten
+  seconds, for the one Source the command had asked for and not seen finished. A command
+  plugin is stopped after that whatever it answered, and its indexing ends with it. A
+  service that cannot be told is reported as possibly still indexing: that much can go on
+  behind a command that has exited, and the learner is told.
+- **A Source is its content, so a file that changed is not indexed as that Source.** The
+  contract has `study` hand a file over with the hash of the content it read. A Source
+  records the hash of the file that was added, Evidence quotes that content, and a file
+  with other content is another Source. So `study` reads the file once more before it
+  hands it over, and skips one that is missing or has other content now, with what to do.
+  The plugin says the hash of what it read, and a Source counts as indexed only when that
+  is the Source's: a file that changes between the two readings is reported as not
+  indexed, and the next run asks again. The path handed over is the file's real one, with
+  every link followed, and the command shows it: a Source inside a Topic can be a link
+  the agent made, and a plugin the learner runs in their own shell reads what it is
+  handed with the learner's permissions. Handed the link, it would read wherever the link
+  leads by then. This does not make indexing in one's own shell safe against an agent
+  that added a file it should not have as a Source: it shows which files are read, and
+  `--dry-run` shows them first.
+- **What goes wrong with a Source is no error of the command**, as it is none of `index`
+  in the contract: the Source is failed, with the plugin's reason, the others are indexed,
+  and the command exits with 0. It fails when it could not do its work at all: no plugin,
+  one that does not start or stops answering, a folder it cannot write in.
+- **A folder that cannot be written in is found before the plugin starts.** A sandbox
+  refuses what a folder's mode allows, and a plugin would only say, each in its own words,
+  that its index cannot be written. `study` makes and removes an empty file in the
+  plugin's folder before it starts a plugin to index, and the error for a folder that
+  cannot be made or written in gives both ways out: allow the folder in the sandbox, or
+  run the command in a shell of one's own. A plugin passes over a name in its folder that
+  begins with `.lamplight-`.
+- **A name is recorded whether or not this machine has it**, since another may: naming a
+  plugin over MCP or the CLI never fails for a name that is not registered, and says what
+  is missing. A name is its own payload, so it is recorded by an Event type of its own,
+  `knowledge_base_plugin.set`; `knowledge_base.set` records a kind alone, as before, and
+  is read so whatever its payload holds.
+
 ### Searching
 
 - `evidence_search`, a command and an MCP tool, returns Passages for a query. A search

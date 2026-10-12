@@ -1,0 +1,58 @@
+{
+  "ok": true,
+  "data": {
+    "study_home": "$HOME/study",
+    "active_topic": {
+      "id": "linear-algebra",
+      "title": "Linear algebra",
+      "chosen_by": "recent",
+      "reason": "it is the Topic you worked on most recently"
+    },
+    "recommended": {
+      "topic": "linear-algebra",
+      "action": "plan",
+      "text": "Plan the Syllabus together, and approve it"
+    },
+    "topics": [
+      {
+        "id": "linear-algebra",
+        "title": "Linear algebra",
+        "path": "$HOME/study/linear-algebra",
+        "created": "2026-10-01T09:30:00Z",
+        "knowledge_base": {
+          "kind": "plugin",
+          "plugin": "kb"
+        },
+        "indexing": {
+          "plugin": "kb",
+          "action": "study source index linear-algebra",
+          "sources": [
+            {
+              "id": "strang.<id>",
+              "title": "Strang",
+              "state": "not_indexed"
+            },
+            {
+              "id": "scan.<id>",
+              "title": "Scan",
+              "state": "not_indexed"
+            },
+            {
+              "id": "lost.<id>",
+              "title": "Lost",
+              "state": "not_indexed"
+            },
+            {
+              "id": "go-blog.<id>",
+              "title": "Go blog",
+              "state": "not_indexed"
+            }
+          ]
+        },
+        "state": "active",
+        "new_cards_per_day": 10
+      }
+    ],
+    "problems": []
+  }
+}

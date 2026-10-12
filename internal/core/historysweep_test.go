@@ -102,7 +102,7 @@ func TestHistoryAndLessonNeverEchoText(t *testing.T) {
 		"answer", "learner_said", "question", "area", "describe", "rubric", "kind", "level", "approach", "energy",
 		"focus", "state", "rating", "draft", "role", "phase", "outcome", "grade", "criterion", "break_point",
 		"milestone", "card", "lesson", "task", "deadline", "reason", "id", "source", "flag", "session", "revision",
-		"requested_by", "commit", "for", "notebook", "url", "path"}
+		"requested_by", "commit", "for", "notebook", "url", "path", "plugin"}
 	path := filepath.Join(m.home, "c", historyFile)
 	for i, typ := range types {
 		data := map[string]any{}

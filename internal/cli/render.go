@@ -132,6 +132,9 @@ func writeTopicUpdate(w io.Writer, u core.TopicUpdate, dryRun bool) error {
 	}
 	writePlanSettings(&b, t)
 	writeFlags(&b, []core.Topic{t})
+	if u.Note != "" {
+		fmt.Fprintf(&b, "%s %s\n", styleWarn.Render("Note:"), printable(u.Note))
+	}
 	_, err := io.WriteString(w, b.String())
 	return err
 }
@@ -193,6 +196,7 @@ func writeStatus(w io.Writer, s core.Status, now time.Time) error {
 		fmt.Fprintf(&b, "  %s%s%s\n", id, printable(t.Title), kb)
 	}
 	writeLessonsWithoutEvidence(&b, s.Topics)
+	writeIndexing(&b, s.Topics)
 	writeFlags(&b, s.Topics)
 	writeProblems(&b, s.Problems)
 	_, err := io.WriteString(w, b.String())
@@ -484,6 +488,78 @@ func sentence(s string) string {
 
 // writeLessonsWithoutEvidence lists the Lessons that cite no Evidence yet.
 // They are a reminder, never a block.
+// mostTitles is how many Sources of one state status names for a Topic. It
+// names them rather than count them, and says when there are others.
+const mostTitles = 3
+
+// writeIndexing says, for each Topic whose Knowledge base plugin has
+// something to tell the learner, what: the Sources it has not indexed, or
+// what keeps it from saying, each with the one command to run. A Topic whose
+// Sources are all indexed is not listed. Titles, and whatever a plugin
+// wrote, go through printable.
+func writeIndexing(w io.Writer, topics []core.Topic) {
+	header := false
+	for _, t := range topics {
+		x := t.Indexing
+		if x == nil {
+			continue
+		}
+		said := printable(x.Problem)
+		if said == "" {
+			said = describeIndexing(x.Sources)
+		}
+		if said == "" {
+			continue
+		}
+		if !header {
+			fmt.Fprintf(w, "\n%s\n", styleLabel.Render("Knowledge base plugins:"))
+			header = true
+		}
+		fmt.Fprintf(w, "  %s: %s\n", styleLabel.Render(printable(t.ID)), said)
+		if x.Action != "" {
+			fmt.Fprintf(w, "    Run: %s\n", styleAccent.Render(printable(x.Action)))
+		}
+	}
+}
+
+// describeIndexing names the Sources a plugin has not indexed, the ones
+// whose indexing failed, with why, and the ones it is indexing now.
+func describeIndexing(sources []core.IndexedSource) string {
+	var parts []string
+	for _, group := range []struct{ state, label string }{
+		{core.IndexNotIndexed, "not indexed"}, {core.IndexFailed, "indexing failed"}, {core.IndexIndexing, "being indexed"},
+	} {
+		var titles []string
+		others := false
+		for _, src := range sources {
+			if src.State != group.state {
+				continue
+			}
+			if len(titles) == mostTitles {
+				others = true
+				break
+			}
+			title := printable(src.Title)
+			switch {
+			case src.State == core.IndexIndexing && src.Progress != nil:
+				title += fmt.Sprintf(" (%d%%)", int(*src.Progress*100))
+			case src.Reason != "":
+				title += " (" + printable(src.Reason) + ")"
+			}
+			titles = append(titles, title)
+		}
+		if len(titles) == 0 {
+			continue
+		}
+		part := group.label + ": " + strings.Join(titles, ", ")
+		if others {
+			part += " and others"
+		}
+		parts = append(parts, part)
+	}
+	return strings.Join(parts, "; ")
+}
+
 func writeLessonsWithoutEvidence(w io.Writer, topics []core.Topic) {
 	header := false
 	for _, t := range topics {

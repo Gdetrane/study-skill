@@ -1,0 +1,13 @@
+Study home:    $HOME/study
+Active topic:  c (C): it is the Topic you worked on most recently
+Do next:       Plan the Syllabus together, and approve it
+
+Topics:
+  c               C  Knowledge base: plugin shelf
+  linear-algebra  Linear algebra  Knowledge base: plugin kb
+
+Knowledge base plugins:
+  c: no Knowledge base plugin named shelf is registered on this computer
+    Run: study knowledge-base add shelf -- <command>
+  linear-algebra: not indexed: Scan, Lost
+    Run: study source index linear-algebra

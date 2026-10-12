@@ -118,6 +118,13 @@ type Options struct {
 	// Start is called: finding the plugin in the registry comes first, and
 	// StartTimeout counts from there. Zero is the moment Start is called.
 	Began time.Time
+	// Indexes says that the plugin is started to be asked to index, which
+	// has a command write in its folder. Start then checks that the folder
+	// can be written in, and fails with what to do when it cannot: a sandbox
+	// that lets study write in the Study home alone refuses it. A plugin
+	// that is only asked what it has indexed, or to search, needs no such
+	// folder, and is not held to one.
+	Indexes bool
 	// StartTimeout, CallTimeout, SearchTimeout and StopGrace replace the
 	// defaults above when they are not zero.
 	StartTimeout  time.Duration

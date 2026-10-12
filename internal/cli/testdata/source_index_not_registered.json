@@ -1,0 +1,7 @@
+{
+  "ok": false,
+  "error": {
+    "code": "failed_precondition",
+    "message": "Topic c names the Knowledge base plugin shelf, which is not registered on this computer: register it with study knowledge-base add shelf -- <command>, or name another with study topic update c --knowledge-base <name>"
+  }
+}

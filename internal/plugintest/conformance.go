@@ -1456,6 +1456,39 @@ func (s *suite) links(t *testing.T) {
 		s.hangUp(cs)
 	}
 
+	// Before it starts a plugin to index, study makes an empty file whose
+	// name begins with .lamplight- in the plugin's folder and removes it
+	// again, to learn whether the folder can be written in. Another copy of
+	// the plugin may be running meanwhile, and may see the file.
+	s.sub(t, "it passes over a file study leaves in its folder for a moment", func(t *testing.T) {
+		stray := filepath.Join(s.dataFolder, ".lamplight-write-check-conformance")
+		if err := os.WriteFile(stray, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Remove(stray) })
+		collection := s.collection("stray")
+		cs := s.connect(t)
+		b := s.write(t, "stray")
+		a := s.call(t, cs, plugincontract.ToolIndex, plugincontract.IndexInput{Collection: collection, Source: b.source})
+		if a.refused {
+			t.Fatalf("with a file called %s in its folder, the plugin refused to index: a plugin passes over a name there "+
+				"that begins with .lamplight-, which study makes and removes to learn whether the folder can be written in",
+				filepath.Base(stray))
+		}
+		status, ok := s.settled(t, cs, collection, b.source.ID)
+		if !ok || status.State != plugincontract.StateIndexed {
+			t.Fatalf("with a file called %s in its folder, the plugin did not index a Source: status says %+v (listed: %v). "+
+				"A plugin passes over a name there that begins with .lamplight-", filepath.Base(stray), status, ok)
+		}
+		if listed := s.status(t, cs, collection); len(listed) != 1 {
+			t.Errorf("with a file called %s in its folder, status lists %d Sources of a collection that holds one: %v",
+				filepath.Base(stray), len(listed), listed)
+		}
+		if found := s.search(t, cs, plugincontract.SearchInput{Collection: collection, Query: b.word, Limit: 5}); len(found) == 0 {
+			t.Errorf("with a file called %s in its folder, a search finds nothing of what was indexed", filepath.Base(stray))
+		}
+	})
+
 	s.sub(t, "it follows no link out of its folder that was there before it", func(t *testing.T) {
 		collection := s.collection("link")
 		outside := t.TempDir()

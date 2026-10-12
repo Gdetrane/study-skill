@@ -165,6 +165,8 @@ var broken = map[string]struct {
 	"it writes where it is started": {args: []string{"--litter"}, want: "a plugin writes in its own folder"},
 	"it follows a link out of its folder": {args: []string{"--break", plugintest.BreakFollowsLinks},
 		want: "the plugin wrote outside its folder, through a symbolic link"},
+	"it minds a file study leaves in its folder": {args: []string{"--break", plugintest.BreakMindsStrays},
+		want: "A plugin passes over a name there that begins with .lamplight-"},
 	"it sends study requests": {args: []string{"--ask", "status"},
 		want: "the plugin sent a request (ping), which ended the session"},
 	// And one that stops answering is waited for once.

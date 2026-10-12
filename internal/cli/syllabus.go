@@ -50,14 +50,14 @@ func topicForReading(cmd *cobra.Command, c *core.Core, args []string) (string, e
 	if len(args) > 0 {
 		return args[0], nil
 	}
-	status, err := c.Status(cmd.Context())
+	active, err := c.ActiveTopic(cmd.Context())
 	if err != nil {
 		return "", err
 	}
-	if status.ActiveTopic == nil {
+	if active == nil {
 		return "", usageError{errors.New("there is no Active topic: name the Topic")}
 	}
-	return status.ActiveTopic.ID, nil
+	return active.ID, nil
 }
 
 // revisionCommand is study revision: proposing a change to a Syllabus, and

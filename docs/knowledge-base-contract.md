@@ -37,6 +37,13 @@ A plugin may answer with an earlier revision it speaks. `study` then lists the p
 calls `contract`. All of that must be done within 30 seconds of `study` setting out to start
 the plugin.
 
+**Be quick to start, and to say what is indexed.** `study status`, and whatever else shows
+the learner where they are, asks a plugin which Sources it has indexed, and waits for no
+plugin: there, starting the plugin, the answer of `contract` and every answer of `status`
+have **2 seconds, all of them together**, and the plugin is started anew each time. One
+that takes longer is stopped, and its Sources are shown as not known. So load what is slow
+to load, a model say, when `index` or `search` first needs it, and not when you start.
+
 **A plugin answers what it is asked, and sends `study` no requests.** `study` offers a
 plugin nothing to call back: no roots, no sampling and no questions to the learner. The first
 request a plugin sends, a `ping` or a `roots/list` as much as any other, ends the session:
@@ -146,10 +153,11 @@ Study home. So `study` starts a plugin with nothing the agent could have prepare
 - **Stopping.** `study` stops the plugin when it is done with it: it closes the plugin's
   standard input and output. **Exit when your standard input closes**, whatever you are
   doing. A plugin still running 2 seconds later gets `SIGTERM`, sent to its process group,
-  and 2 seconds after that the group is killed. When the program exits, whatever it started
-  and left in its process group is killed with it. **A program the plugin moved to a
-  process group or a session of its own is not stopped by `study`**: a plugin that starts
-  one stops it itself.
+  and 2 seconds after that the group is killed. A plugin that was only asked what it has
+  indexed has nothing to finish, and gets a quarter of a second each time. When the program
+  exits, whatever it started and left in its process group is killed with it. **A program
+  the plugin moved to a process group or a session of its own is not stopped by `study`**:
+  a plugin that starts one stops it itself.
 - **Signals to `study`.** On `SIGINT`, `SIGTERM` and `SIGHUP`, `study` stops the request,
   sends `notifications/cancelled` for the call under way, and stops the plugin as above
   before it exits. A `study` that is killed (`SIGKILL`) stops nothing: its end of the
@@ -186,7 +194,14 @@ Two things follow for whoever writes or runs a plugin:
   run inside an agent's sandbox starts the plugin inside that sandbox, and the plugin writes
   its index in the learner's state folder, which a sandbox that allows only the Study home
   does not let it do. Allow `$XDG_STATE_HOME/lamplight/knowledge-base-plugins` there, or
-  index from a shell of the learner's own.
+  index from a shell of the learner's own. `study` says so itself when the folder cannot be
+  made, or cannot be written in.
+- **Pass over a name in the folder that begins with `.lamplight-`.** Before it starts a
+  plugin to index, `study` makes an empty file with such a name in the folder and removes
+  it again, to learn whether the folder can be written in: a sandbox refuses what a
+  folder's mode allows. Another copy of the plugin may see the file for a moment. It is
+  no part of an index, and no collection. The conformance suite leaves such a file in the
+  folder and fails a plugin that does not index beside it.
 
 ### A plugin reached by URL
 
@@ -222,6 +237,9 @@ with `application/json` or with a stream of server-sent events.
 | `index`, `status`, `cancel`, `passage`: each call | 30 seconds |
 | `search` | 60 seconds |
 | Exiting once standard input is closed, and again after `SIGTERM` | 2 seconds |
+| Starting, `contract` and every `status`, together, when `study` shows what is indexed | 2 seconds |
+| Exiting then, once standard input is closed, and again after `SIGTERM` | 250 milliseconds |
+| Answering `cancel`, when `study source index` was stopped | 10 seconds |
 | One MCP message from the plugin | 16,777,216 bytes |
 | Values in one MCP message from the plugin | 250,000 |
 | A Passage's `text` | 32,768 bytes of UTF-8 |
@@ -305,7 +323,7 @@ format the plugin cannot read, a page that cannot be fetched: `index` answers, a
 
 | What | Who chooses it | It is |
 |---|---|---|
-| A collection's name | `study` | Lowercase letters, digits and single hyphens, up to 64 characters: `linear-algebra`. It is safe as a file's name. |
+| A collection's name | `study` | Lowercase letters, digits and single hyphens, up to 64 characters: `linear-algebra`. It is safe as a file's name. The name `study` gives a Topic's collection is the Topic's id and a hash that tells the learner's Study homes apart, such as `linear-algebra-mfrggzdfmztwq2lknnwg23tpobyxe43u`: a plugin makes nothing of what a name says. |
 | A Source's id | `study` | Lowercase letters, digits, hyphens and dots, starting with a letter or a digit, up to 128 characters: `strang-linear-algebra.k3f9a2`. |
 | A Passage's id | the plugin | Letters, digits, dots, underscores, colons and hyphens, not starting with a hyphen, up to 128 characters. It names one Passage within its collection. |
 | A content hash | whoever read the bytes | `sha256:` and the 64 lowercase hexadecimal digits of the SHA-256 of the bytes: of the file, or of a web page's body as it was fetched. |

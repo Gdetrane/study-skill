@@ -1,0 +1,12 @@
+Knowledge base plugin kb would be asked to index 3 Sources of linear-algebra:
+  strang.<id>   Strang
+    $HOME/Books/strang.txt
+    not indexed, and would be indexed
+  scan.<id>     Scan
+    $HOME/Books/scan.txt
+    not indexed, and would be indexed
+! lost.<id>     Lost
+    not indexed; skipped: its file is not on this computer: say where it is with study source update linear-algebra lost.<id> --path <file>
+  go-blog.<id>  Go blog
+    http://127.0.0.1:PORT/blog
+    not indexed, and would be indexed

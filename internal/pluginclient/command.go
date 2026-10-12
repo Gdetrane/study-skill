@@ -84,7 +84,8 @@ var beforeStart atomic.Pointer[func()]
 //   - Its environment is a small one study makes (see childEnviron), not
 //     the one study was started with.
 //   - It is given a folder of its own for its index, outside the Study home
-//     (see DataFolder), which LAMPLIGHT_PLUGIN_DATA names.
+//     (see DataFolder), which LAMPLIGHT_PLUGIN_DATA names. When it is started
+//     to index (Options.Indexes), the folder is one that can be written in.
 func StartCommand(env pluginregistry.Env, plugin pluginregistry.Plugin, opts Options) (*Command, error) {
 	opts = opts.withDefaults()
 	name := plugin.Name
@@ -113,7 +114,7 @@ func StartCommand(env pluginregistry.Env, plugin pluginregistry.Plugin, opts Opt
 	}
 	// Its folder is made once the program is one study starts: a plugin
 	// that is refused leaves nothing behind.
-	dataFolder, err := makeDataFolder(guard, env, name)
+	dataFolder, err := makeDataFolder(guard, env, name, opts.Indexes)
 	if err != nil {
 		return nil, err
 	}

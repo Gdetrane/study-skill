@@ -69,6 +69,10 @@ const (
 	// BreakAnyCase takes an argument under its name in any letter case, as
 	// a JSON library that matches names loosely does.
 	BreakAnyCase = "any-case"
+	// BreakMindsStrays writes nothing into a folder that holds a name it
+	// did not make, such as the file study leaves there for a moment to
+	// learn whether the folder can be written in.
+	BreakMindsStrays = "minds-strays"
 )
 
 // Config says how a test plugin behaves.
@@ -100,6 +104,11 @@ type Config struct {
 	TextOnly bool
 	// Breaks are the rules of the contract it breaks: the Break constants.
 	Breaks []string
+	// Asked, when set, is told each call as it arrives, before anything
+	// else is done with it: the tool's name and what it is asked. It is for
+	// a test to see what a plugin was asked, and can be called from several
+	// goroutines.
+	Asked func(tool string, args json.RawMessage)
 	// Before, when set, is called with a tool's name before the tool
 	// answers: for a test to hold a call up.
 	Before func(ctx context.Context, tool string)
@@ -222,6 +231,9 @@ func (p *Plugin) Server() *mcp.Server {
 		}
 		server.AddTool(&mcp.Tool{Name: tool.name, Description: tool.description, InputSchema: json.RawMessage(`{"type":"object"}`)},
 			func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				if p.cfg.Asked != nil {
+					p.cfg.Asked(tool.name, req.Params.Arguments)
+				}
 				if p.cfg.Before != nil {
 					p.cfg.Before(ctx, tool.name)
 				}
@@ -778,6 +790,15 @@ func (p *Plugin) save(collection string, entry stored) error {
 			return reasonOf(err)
 		}
 		return reasonOf(os.Rename(dir+tmp, dir+final))
+	}
+	if p.breaks(BreakMindsStrays) {
+		if entries, err := fs.ReadDir(root.FS(), "."); err == nil {
+			for _, entry := range entries {
+				if strings.HasPrefix(entry.Name(), ".") {
+					return errors.New("the index holds something this plugin did not make")
+				}
+			}
+		}
 	}
 	if err := root.MkdirAll(collection, 0o700); err != nil {
 		return fmt.Errorf("the index cannot be written: %v", reasonOf(err))

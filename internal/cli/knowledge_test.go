@@ -67,10 +67,11 @@ func TestKnowledgeCommands(t *testing.T) {
 		golden(t, name, r.stdout)
 	}
 
-	// none is the only kind this version has.
+	// A Knowledge base is none, or the name of a Knowledge base plugin. What
+	// is neither, a command line for one, is refused.
 	check("knowledge_base_set.json", cli.ExitOK, "", "topic", "update", "linear-algebra", "--knowledge-base", "none", "--json")
-	check("knowledge_base_unknown_kind.json", cli.ExitUsage, "",
-		"topic", "update", "linear-algebra", "--knowledge-base", "rag", "--json")
+	check("knowledge_base_not_a_name.json", cli.ExitUsage, "",
+		"topic", "update", "linear-algebra", "--knowledge-base", "study-shelf --stdio", "--json")
 
 	// A relative path is resolved against the folder study started in.
 	strang := dataID(t, home, "source", "source", "add", "linear-algebra", "--file", "Books/strang_linear_algebra.pdf", "--json")

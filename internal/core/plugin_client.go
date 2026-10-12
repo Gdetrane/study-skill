@@ -16,12 +16,27 @@ import (
 // and the Study home of this run, and the adapters reach a plugin only
 // through the core.
 //
-// So far one operation does: CheckPlugin, for study knowledge-base check,
-// which is for the learner and CLI-only. No MCP tool starts or reaches a
-// plugin yet, and tests in internal/mcpserver keep it so until a Topic can
-// name one: one calls every tool with plugins registered that record being
-// started or reached, and one reads this package and that one for whatever
-// could start a plugin from anywhere but CheckPlugin.
+// Three things start a plugin, each through startPlugin:
+//
+//   - CheckPlugin, for study knowledge-base check, which asks which contract
+//     the plugin speaks. It is for the learner and CLI-only.
+//   - IndexSources, for study source index, which asks the Topic's plugin to
+//     index. It is CLI-only too, and the one thing that asks a plugin to
+//     index (source_index.go).
+//   - askPlugins, for status and for a Topic's Sources, which asks the
+//     plugin what it has indexed and nothing else, with a short deadline.
+//     It is the one of the three that an MCP tool reaches.
+//
+// So an MCP tool can have a plugin started, to ask its status tool, and can
+// never have one index: the MCP server runs outside the agent's sandbox, and
+// a plugin that indexed for it would read any file the agent named as a
+// Source there. Tests in internal/mcpserver keep it so: one calls every
+// tool with plugins registered that record what they are asked, and one
+// reads this package for whatever could ask a plugin to index from anywhere
+// but IndexSources.
+//
+// Nothing is kept between two of them: each starts the plugin and stops it
+// again before it returns.
 
 // PluginOptions says how Knowledge base plugins are started and how long
 // they have. Zero values select the production defaults.
@@ -39,6 +54,16 @@ type PluginOptions struct {
 	CallTimeout   time.Duration
 	SearchTimeout time.Duration
 	StopGrace     time.Duration
+	// GlanceTimeout is how long status and a Topic's Sources give the
+	// Topic's plugin to say what it has indexed: finding it, starting it
+	// and its answers, all of it. Defaults to PluginGlanceTimeout.
+	GlanceTimeout time.Duration
+	// IndexPoll is how often study source index asks a plugin how far it
+	// is with a Source. Defaults to DefaultIndexPoll.
+	IndexPoll time.Duration
+	// CancelTimeout is how long a plugin has to stop indexing when study
+	// source index is stopped. Defaults to DefaultIndexCancelTimeout.
+	CancelTimeout time.Duration
 }
 
 // PluginContract is what a Knowledge base plugin says of itself: the
@@ -98,7 +123,7 @@ func (c *Core) CheckPlugin(ctx context.Context, name string) (PluginCheck, error
 	if err != nil {
 		return PluginCheck{}, err
 	}
-	session, err := c.startPlugin(ctx, plugin, began)
+	session, err := c.startPlugin(ctx, plugin, began, pluginUse{})
 	if err != nil {
 		return PluginCheck{}, err
 	}
@@ -111,13 +136,9 @@ func (c *Core) CheckPlugin(ctx context.Context, name string) (PluginCheck, error
 	return check, nil
 }
 
-// plugin finds the Knowledge base plugin registered under name on this
-// computer.
-func (c *Core) plugin(ctx context.Context, name string) (Plugin, error) {
-	list, err := c.Plugins(ctx)
-	if err != nil {
-		return Plugin{}, err
-	}
+// registered finds the plugin registered under name among the ones a
+// reading of the registry gave.
+func registered(list PluginList, name string) (Plugin, error) {
 	for _, p := range list.Plugins {
 		if p.Name == name {
 			return p, nil
@@ -127,48 +148,61 @@ func (c *Core) plugin(ctx context.Context, name string) (Plugin, error) {
 		"computer: study knowledge-base list shows the ones that are, and study knowledge-base add registers one"}
 }
 
-// pluginInTime finds the plugin as plugin does, within the time a plugin
-// has to start, and no longer than the command lasts. It returns the plugin
-// and when the look began, which is when the time to start it began too:
-// finding a plugin and starting it share one deadline.
-//
-// Finding it reads the registry and looks at the program of every plugin
-// in it, each on whatever drive it is. A drive that does not answer holds
-// such a look for as long as it likes, and nothing in this program can
-// interrupt it: so the look is left to finish by itself, and the command
-// does not wait for it.
+// pluginInTime finds the plugin registered under name, within the time a
+// plugin has to start, and no longer than the command lasts. It returns the
+// plugin and when the look began, which is when the time to start it began
+// too: finding a plugin and starting it share one deadline.
 func (c *Core) pluginInTime(ctx context.Context, name string) (Plugin, time.Time, error) {
 	limit := c.plugins.StartTimeout
 	if limit <= 0 {
 		limit = pluginclient.DefaultStartTimeout
 	}
-	began := time.Now()
-	type found struct {
-		plugin Plugin
-		err    error
+	list, began, err := c.registryInTime(ctx, limit)
+	switch {
+	case err != nil && ctx.Err() != nil:
+		return Plugin{}, began, &Error{Code: CodeCanceled, Err: ctx.Err(), Message: "the command was stopped before Knowledge base " +
+			"plugin " + name + " was started"}
+	case err != nil:
+		return Plugin{}, began, err
 	}
-	done := make(chan found, 1)
+	plugin, err := registered(list, name)
+	return plugin, began, err
+}
+
+// registryInTime reads the Knowledge base plugin registry within limit, and
+// no longer than the command lasts. It returns what the registry holds and
+// when the reading began.
+//
+// Reading it looks at the program of every plugin in it, each on whatever
+// drive it is. A drive that does not answer holds such a look for as long
+// as it likes, and nothing in this program can interrupt it: so the look is
+// left to finish by itself, and the command does not wait for it.
+func (c *Core) registryInTime(ctx context.Context, limit time.Duration) (PluginList, time.Time, error) {
+	began := time.Now()
+	type read struct {
+		list PluginList
+		err  error
+	}
+	done := make(chan read, 1)
 	go func() {
 		if hook := beforePluginLookup.Load(); hook != nil {
 			(*hook)()
 		}
-		plugin, err := c.plugin(ctx, name)
-		done <- found{plugin, err}
+		list, err := c.Plugins(ctx)
+		done <- read{list, err}
 	}()
 	timer := time.NewTimer(limit)
 	defer timer.Stop()
-	late := &Error{Code: CodeFailedPrecondition, Message: "study could not read the Knowledge base plugin registry " +
-		"within " + limit.String() + ": reading it, or looking at the program of a plugin registered in it, took that " +
-		"long. Check that Lamplight's configuration folder and the programs study knowledge-base list shows are on " +
-		"drives that answer"}
 	select {
-	case f := <-done:
-		return f.plugin, began, f.err
+	case r := <-done:
+		return r.list, began, r.err
 	case <-ctx.Done():
-		return Plugin{}, began, &Error{Code: CodeCanceled, Err: ctx.Err(), Message: "the command was stopped before Knowledge base " +
-			"plugin " + name + " was started"}
+		return PluginList{}, began, ctx.Err()
 	case <-timer.C:
-		return Plugin{}, began, late
+		return PluginList{}, began, &Error{Code: CodeFailedPrecondition, Message: "study could not read the Knowledge base " +
+			"plugin registry within " + limit.String() + ": reading it, or looking at the program of a plugin registered in " +
+			"it, took that long. Check that Lamplight's configuration folder and the programs study knowledge-base list " +
+			"shows are on drives that answer"}
 	}
 }
 
@@ -177,11 +211,27 @@ func (c *Core) pluginInTime(ctx context.Context, name string) (Plugin, time.Time
 // look.
 var beforePluginLookup atomic.Pointer[func()]
 
+// pluginUse is what a plugin is started for, where that changes how it is
+// started. The zero value is a plugin with the time PluginOptions give it.
+type pluginUse struct {
+	// within, when it is not zero, is how long the plugin has to start and
+	// then to answer any one call, in place of what PluginOptions say: for
+	// whoever must not wait for a plugin.
+	within time.Duration
+	// grace, when it is not zero, is the most a command has to exit when it
+	// is asked, and again when it is signalled, in place of a longer
+	// StopGrace.
+	grace time.Duration
+	// indexes says that the plugin is started to be asked to index, so its
+	// folder must be one that can be written in.
+	indexes bool
+}
+
 // startPlugin starts a registered plugin, or reaches it, and returns the
 // Connection with it, which the caller closes: that is what stops a command.
 // The time the plugin has to start counts from began, when study set out to
 // find it.
-func (c *Core) startPlugin(ctx context.Context, plugin pluginregistry.Plugin, began time.Time) (*pluginclient.Connection, error) {
+func (c *Core) startPlugin(ctx context.Context, plugin pluginregistry.Plugin, began time.Time, use pluginUse) (*pluginclient.Connection, error) {
 	// An Environ that returns nothing is an empty environment, not the
 	// default.
 	environ := []string{}
@@ -190,14 +240,22 @@ func (c *Core) startPlugin(ctx context.Context, plugin pluginregistry.Plugin, be
 	} else if given := c.plugins.Environ(); given != nil {
 		environ = given
 	}
-	return pluginclient.Start(ctx, c.PluginRegistryEnv(), plugin, pluginclient.Options{
+	opts := pluginclient.Options{
 		Version:       c.version,
 		Environ:       environ,
 		Logger:        c.log,
 		Began:         began,
+		Indexes:       use.indexes,
 		StartTimeout:  c.plugins.StartTimeout,
 		CallTimeout:   c.plugins.CallTimeout,
 		SearchTimeout: c.plugins.SearchTimeout,
 		StopGrace:     c.plugins.StopGrace,
-	})
+	}
+	if use.within > 0 {
+		opts.StartTimeout, opts.CallTimeout = use.within, use.within
+	}
+	if use.grace > 0 && (opts.StopGrace <= 0 || opts.StopGrace > use.grace) {
+		opts.StopGrace = use.grace
+	}
+	return pluginclient.Start(ctx, c.PluginRegistryEnv(), plugin, opts)
 }
