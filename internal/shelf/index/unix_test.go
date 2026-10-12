@@ -3,8 +3,11 @@
 package index_test
 
 import (
+	"bufio"
+	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -16,14 +19,14 @@ import (
 	"github.com/mordor-forge/lamplight/v2/internal/shelf/index"
 )
 
-// names are the four names SQLite opens for a collection: its file, and
-// what it keeps beside it.
+// names are the names Shelf has for a collection: its file, what SQLite
+// keeps beside it, and the file its work is locked in.
 func names(collection string) []string {
 	file := collection + ".sqlite"
-	return []string{file, file + "-wal", file + "-shm", file + "-journal"}
+	return []string{file, file + "-wal", file + "-shm", file + "-journal", collection + ".lock"}
 }
 
-// A link in Shelf's folder, under any name SQLite opens for a collection, is
+// A link in Shelf's folder, under any name Shelf has for a collection, is
 // not followed: nothing is written where it leads, whether it leads to a
 // file that is there, to a copy of the collection's own file, or nowhere.
 func TestNoLinkInTheFolderIsFollowed(t *testing.T) {
@@ -148,20 +151,51 @@ func TestAFileWithASecondNameIsRefused(t *testing.T) {
 }
 
 // crashEnv names, to a test binary started as the helper below, the folder
-// to write in and the point to be killed at.
+// to write in and the point to be killed at. workEnv names, in its place,
+// the Source another copy of Shelf is to be seen working on.
 const (
 	crashDirEnv   = "SHELF_INDEX_TEST_CRASH_DIR"
 	crashPointEnv = "SHELF_INDEX_TEST_CRASH_POINT"
+	workEnv       = "SHELF_INDEX_TEST_WORK"
 )
 
-// TestMain runs this test binary as a Shelf that is killed in the middle of
-// a write, when it was started as one: it indexes new content of a Source
-// and, at the point it was given, is killed as a power cut or a kill -9
-// would kill it. Nothing of the process survives to tidy up.
+// TestMain runs this test binary as another copy of Shelf, when it was
+// started as one.
+//
+// As a Shelf that is killed in the middle of a write, it indexes new content
+// of a Source and, at the point it was given, is killed as a power cut or a
+// kill -9 would kill it. Nothing of the process survives to tidy up.
+//
+// As a Shelf at work, it says that it is indexing a Source and how far it
+// is, says "working" once that is said, and goes on until its input closes,
+// when it ends the work as work that was stopped, or until it is killed.
 func TestMain(m *testing.M) {
 	dir, point := os.Getenv(crashDirEnv), os.Getenv(crashPointEnv)
 	if dir == "" {
 		os.Exit(m.Run())
+	}
+	if source := os.Getenv(workEnv); source != "" {
+		f, err := index.Open(dir, index.Options{})
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(3)
+		}
+		c, err := f.Collection(ctx, "worked-on", true)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(3)
+		}
+		work, err := c.Begin(ctx, source)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(3)
+		}
+		work.Progress(ctx, 0.25)
+		fmt.Println("working")
+		_, _ = io.Copy(io.Discard, os.Stdin)
+		work.End()
+		_ = f.Close()
+		os.Exit(0)
 	}
 	f, err := index.Open(dir, index.Options{Crash: func(at string) {
 		if at == point {
@@ -184,6 +218,145 @@ func TestMain(m *testing.M) {
 	}
 	// The point was not reached.
 	os.Exit(4)
+}
+
+// another starts another copy of Shelf that works on a Source in the folder
+// at dir, and returns once it has said so. stop ends its work as work that
+// was stopped, and kill ends the program as a kill -9 does.
+func another(t *testing.T, dir, source string) (stop, kill func()) {
+	t.Helper()
+	cmd := exec.Command(os.Args[0], "-test.run=^$")
+	cmd.Env = append(os.Environ(), crashDirEnv+"="+dir, workEnv+"="+source)
+	input, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	output, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	ended := false
+	end := func(how func()) func() {
+		return func() {
+			if !ended {
+				ended = true
+				how()
+				_ = cmd.Wait()
+			}
+		}
+	}
+	stop, kill = end(func() { _ = input.Close() }), end(func() { _ = cmd.Process.Kill() })
+	t.Cleanup(kill)
+	if line, err := bufio.NewReader(output).ReadString('\n'); err != nil || line != "working\n" {
+		kill()
+		t.Fatalf("the other copy of Shelf did not get to work: %q, %v\n%s", line, err, stderr.String())
+	}
+	return stop, kill
+}
+
+// rows counts the rows of work in a collection's file, whoever they are of.
+func rows(t *testing.T, dir, collection string) int {
+	t.Helper()
+	db := raw(t, filepath.Join(dir, collection+".sqlite"))
+	defer db.Close()
+	var n int
+	if err := db.QueryRow("SELECT count(*) FROM work").Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+// study starts a Shelf for every question it has, so the one that is asked
+// what is being indexed is seldom the one that indexes. It sees the other's
+// work for as long as the other lives, and not a moment longer: a Shelf that
+// was killed halfway is not indexing, whatever it left written.
+func TestAnotherCopysWorkIsSeenWhileItLives(t *testing.T) {
+	f, dir := folder(t)
+	c := collection(t, f, "worked-on")
+	working := func() map[string]*float64 {
+		t.Helper()
+		got, err := c.Working(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	if got := working(); len(got) != 0 {
+		t.Fatalf("in a collection nobody indexes, Working = %v", got)
+	}
+
+	// Another copy indexes a book, and has said how far it is.
+	_, kill := another(t, dir, "book.a1")
+	got := working()
+	if progress, ok := got["book.a1"]; len(got) != 1 || !ok || progress == nil || *progress != 0.25 {
+		t.Fatalf("while another copy indexes a Source, Working = %v; want that Source, a quarter done", got)
+	}
+	// What this copy indexes itself is its own to know, and is not among
+	// the others' work.
+	own, err := c.Begin(ctx, "own.b2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := working(); len(got) != 1 || got["book.a1"] == nil {
+		t.Errorf("Working = %v; want the other copy's work alone", got)
+	}
+	// And a second copy on a Source of its own.
+	stop, _ := another(t, dir, "page.c3")
+	if got := working(); len(got) != 2 {
+		t.Errorf("with two other copies at work, Working = %v", got)
+	}
+
+	// The first is killed in the middle of it. Its row is still written,
+	// and counts for nothing: nobody is indexing that Source now.
+	kill()
+	if n := rows(t, dir, "worked-on"); n != 3 {
+		t.Fatalf("the collection holds %d rows of work, want the three that were begun", n)
+	}
+	if got := working(); len(got) != 1 || got["page.c3"] == nil {
+		t.Errorf("after the copy that indexed a Source was killed, Working = %v; want the other one's work alone", got)
+	}
+	// The second is stopped, and takes its row with it.
+	stop()
+	if got := working(); len(got) != 0 {
+		t.Errorf("after the other copies ended, Working = %v", got)
+	}
+	// The row of the one that was killed is swept out by the next work.
+	next, err := c.Begin(ctx, "next.d4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := rows(t, dir, "worked-on"); n != 2 {
+		t.Errorf("the collection holds %d rows of work, want this copy's two", n)
+	}
+	// Work that ends takes its row with it, however it ends.
+	own.End()
+	source, passages := book("next.d4", "d", "A page about pivots.")
+	if err := next.Replace(ctx, source, passages); err != nil {
+		t.Fatal(err)
+	}
+	next.End()
+	failing, err := c.Begin(ctx, "bad.e5")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := failing.Fail(ctx, index.Source{ID: "bad.e5", Kind: "file", Title: "Bad"}, hash("e"), "the file is not a PDF"); err != nil {
+		t.Fatal(err)
+	}
+	failing.End()
+	if n := rows(t, dir, "worked-on"); n != 0 {
+		t.Errorf("the collection holds %d rows of work once all of it has ended", n)
+	}
+	if got, err := c.Source(ctx, "bad.e5"); err != nil || got == nil || got.Failed != "the file is not a PDF" || got.Asked != hash("e") {
+		t.Errorf("the Source whose work failed = %+v, %v", got, err)
+	}
+	if found := search(t, c, "pivots", 5); len(found) != 1 {
+		t.Errorf("the content of work that ended well is found %d times", len(found))
+	}
 }
 
 func oldContent() (index.Source, []index.Passage) {

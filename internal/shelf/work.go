@@ -78,25 +78,56 @@ func wrong(format string, args ...any) error {
 // index as it was.
 func (s *Shelf) work(k key, in plugincontract.IndexInput, j *job) {
 	ctx := j.ctx
-	err := s.run(ctx, k, in, j)
+	source := index.Source{ID: k.source, Kind: in.Source.Kind, Title: in.Source.Title}
+	// What the indexing was asked with, which a failure is recorded with.
+	asked := in.Source.Hash
+	if in.Source.Kind == plugincontract.SourceURL {
+		source.Address, asked = in.Source.URL, in.Source.URL
+	}
+
+	var c *index.Collection
+	var shown *index.Work
+	err := error(errStopped)
+	select {
+	case s.slots <- struct{}{}:
+		// One of the few Sources that are worked on at once.
+		defer func() { <-s.slots }()
+		if c, err = s.collection(ctx, k.collection, true); err == nil {
+			// From here on the other copies of Shelf see the Source being
+			// indexed, and no longer as the one whose last indexing failed.
+			if shown, err = c.Begin(ctx, k.source); err == nil {
+				err = s.run(ctx, in, source, j, shown)
+			}
+		}
+	case <-ctx.Done():
+	}
+
 	stopped := err != nil && ctx.Err() != nil
 	unwritten := ""
 	if err != nil && !stopped {
 		reason := reasonOf(err)
-		// Told to the index, where a copy of Shelf started later finds it:
-		// the learner reads the reason after study source index has exited.
-		// An index that cannot be told is why the Source failed, or will
-		// say so itself; the reason is then kept here for as long as this
-		// copy runs.
+		// Told to the index, where the next Shelf finds it: study starts one
+		// for every question, and the learner reads the reason long after
+		// the Shelf that met it has exited. An index that cannot be told is
+		// why the Source failed, or will say so itself; the reason is then
+		// kept here for as long as this copy runs.
 		told, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
-		c, cerr := s.collection(told, k.collection, true)
-		if cerr == nil {
-			cerr = c.Fail(told, index.Source{ID: k.source, Kind: in.Source.Kind, Title: in.Source.Title}, reason)
+		failed := err
+		switch {
+		case shown != nil:
+			failed = shown.Fail(told, source, asked, reason)
+		case c != nil:
+			failed = c.Fail(told, source, asked, reason)
 		}
 		cancel()
-		if cerr != nil {
+		if failed != nil {
 			unwritten = reason
 		}
+	}
+	if shown != nil {
+		// Before the job leaves the list: once cancel has answered, no copy
+		// of Shelf says the Source is being indexed.
+		shown.End()
 	}
 	s.mu.Lock()
 	j.stopped = stopped
@@ -113,30 +144,18 @@ func (s *Shelf) work(k key, in plugincontract.IndexInput, j *job) {
 
 // run reads a Source, cuts it into Passages and puts them in the index. It
 // returns nil once the new content is there, and otherwise why it is not.
-func (s *Shelf) run(ctx context.Context, k key, in plugincontract.IndexInput, j *job) error {
-	select {
-	case s.slots <- struct{}{}:
-		defer func() { <-s.slots }()
-	case <-ctx.Done():
-		return errStopped
+func (s *Shelf) run(ctx context.Context, in plugincontract.IndexInput, source index.Source, j *job, shown *index.Work) error {
+	// How far the work is, for whoever asks this Shelf and for the others.
+	advance := func(to float64) {
+		j.advance(to)
+		shown.Progress(ctx, to)
 	}
-	c, err := s.collection(ctx, k.collection, true)
-	if err != nil {
-		return err
-	}
-	// Indexed again, the Source is no longer the one whose last indexing
-	// failed, whatever becomes of this one.
-	if err := c.Recover(ctx, k.source); err != nil {
-		return err
-	}
-
 	var pages []cut.Page
-	source := index.Source{ID: k.source, Kind: in.Source.Kind, Title: in.Source.Title}
+	var err error
 	switch in.Source.Kind {
 	case plugincontract.SourceFile:
-		pages, source.Hash, err = s.readFile(ctx, in.Source.Path, j)
+		pages, source.Hash, err = s.readFile(ctx, in.Source, advance)
 	case plugincontract.SourceURL:
-		source.Address = in.Source.URL
 		pages, source.Hash, err = s.fetchPage(ctx, in.Source.URL)
 	}
 	if err != nil {
@@ -155,15 +174,16 @@ func (s *Shelf) run(ctx context.Context, k key, in plugincontract.IndexInput, j 
 	// From here on nothing stops it: the write is one short transaction,
 	// and a cancel that arrives now is told, truthfully, that it stopped
 	// nothing.
-	return c.Replace(context.WithoutCancel(ctx), source, passages)
+	return shown.Replace(context.WithoutCancel(ctx), source, passages)
 }
 
-// readFile reads the PDF at path and returns the text of its pages, cleaned,
-// and the content hash of the bytes that were read.
-func (s *Shelf) readFile(ctx context.Context, path string, j *job) ([]cut.Page, string, error) {
+// readFile reads the PDF a file Source names and returns the text of its
+// pages, cleaned, and the content hash of the bytes that were read: the
+// hash it was handed with, or the file is not indexed.
+func (s *Shelf) readFile(ctx context.Context, asked plugincontract.Source, advance func(float64)) ([]cut.Page, string, error) {
 	// Opened without waiting: a path that names a pipe would otherwise hold
 	// the work until someone wrote to it.
-	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	file, err := os.OpenFile(asked.Path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
 		return nil, "", wrong("the file is not there: it was moved or removed since it was added")
@@ -197,14 +217,22 @@ func (s *Shelf) readFile(ctx context.Context, path string, j *job) ([]cut.Page, 
 		}
 		return err
 	}
-	// The hash is of the bytes Shelf read, which may no longer be the ones
-	// study hashed. It is taken before the pages are read and again after:
-	// a file that changed in between is one whose pages belong to no hash.
-	// The reader is given as many bytes as were hashed, and no other count.
+	// The hash is of the bytes Shelf read, from the one file it holds open,
+	// and never the one it was handed: study counts a Source as indexed when
+	// the two are the same. So a file that is no longer what study read is
+	// not indexed at all, and the learner is told to ask again: indexed
+	// under its new hash it would be a Source study does not count, and
+	// under the old one a lie.
 	before, size, err := hashOf(ctx, file)
 	if err != nil {
 		return nil, "", slow(err)
 	}
+	if before != asked.Hash {
+		return nil, "", wrong("the file changed since study read it. Index it again")
+	}
+	// It is taken again once the pages are read: a file that changed in
+	// between is one whose pages belong to no hash. And the reader is given
+	// as many bytes as were hashed, and no other count.
 	var pages []cut.Page
 	text := false
 	err = pdf.Read(ctx, file, size, func(number, of int, raw string) error {
@@ -212,7 +240,7 @@ func (s *Shelf) readFile(ctx context.Context, path string, j *job) ([]cut.Page, 
 		text = text || page.Text != ""
 		pages = append(pages, page)
 		// The last of the work is the writing of the index.
-		j.advance(0.95 * float64(number) / float64(of))
+		advance(0.95 * float64(number) / float64(of))
 		return nil
 	})
 	switch {
@@ -228,6 +256,7 @@ func (s *Shelf) readFile(ctx context.Context, path string, j *job) ([]cut.Page, 
 	default:
 		return nil, "", slow(err)
 	}
+	s.at(PointPagesRead)
 	after, _, err := hashOf(ctx, file)
 	if err != nil {
 		return nil, "", slow(err)

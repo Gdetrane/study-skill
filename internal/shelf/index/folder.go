@@ -9,7 +9,8 @@
 //   - before every connection, the names SQLite is about to open, the
 //     collection's file and the three it keeps beside it, are looked at
 //     through the held folder: each is a plain file with one name, or not
-//     there;
+//     there. So is the collection's lock file, which Shelf opens itself,
+//     through the held folder (work.go);
 //   - SQLite follows no link at the last name of a path it opens
 //     (O_NOFOLLOW), and never makes the collection's file itself: Shelf
 //     makes it, through the held folder;
@@ -23,6 +24,12 @@
 // A collection's file holds its Sources and their Passages, and a full-text
 // index of the Passages (FTS5). It carries a format number, and a file in a
 // newer format is refused, never opened and guessed at.
+//
+// study starts a Shelf for every question it has and stops it again, so
+// several are at one folder at once and none lives long. What one has to
+// tell the next is therefore in the collection: what is indexed, why an
+// indexing failed, and which Sources are being indexed now, by a Shelf that
+// holds a lock for as long as it does (work.go).
 package index
 
 import (
@@ -34,6 +41,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/mordor-forge/lamplight/v2/internal/plugincontract"
@@ -130,7 +138,7 @@ func (f *Folder) Close() error {
 	f.closed = true
 	var first error
 	for name, c := range f.open {
-		if err := c.db.Close(); err != nil && first == nil {
+		if err := c.close(); err != nil && first == nil {
 			first = err
 		}
 		delete(f.open, name)
@@ -167,7 +175,7 @@ func (f *Folder) Collection(ctx context.Context, name string, create bool) (*Col
 		if now, err := f.root.Lstat(file); err == nil && os.SameFile(now, c.info) {
 			return c, nil
 		}
-		_ = c.db.Close()
+		_ = c.close()
 		delete(f.open, name)
 	}
 
@@ -183,6 +191,9 @@ func (f *Folder) Collection(ctx context.Context, name string, create bool) (*Col
 		switch {
 		case err == nil:
 			_ = made.Close()
+		case errors.Is(err, fs.ErrPermission) || errors.Is(err, syscall.EROFS):
+			return nil, fmt.Errorf("the index of collection %s cannot be written: Shelf may not write in its folder here. Allow the "+
+				"folder where study is run, or index from a shell of your own", name)
 		case !errors.Is(err, fs.ErrExist): // another copy of Shelf made it just now
 			return nil, fmt.Errorf("the index of collection %s cannot be made: %w", name, reasonOf(err))
 		}
@@ -196,7 +207,7 @@ func (f *Folder) Collection(ctx context.Context, name string, create bool) (*Col
 	db.SetMaxOpenConns(4)
 	db.SetMaxIdleConns(2)
 	db.SetConnMaxIdleTime(5 * time.Minute)
-	c := &Collection{name: name, db: db, info: info, crash: f.crash}
+	c := &Collection{name: name, db: db, info: info, crash: f.crash, folder: f, mine: map[int64]bool{}}
 	empty, err := c.empty(ctx)
 	if err == nil && empty && create {
 		err = c.initialise(ctx)
@@ -212,13 +223,13 @@ func (f *Folder) Collection(ctx context.Context, name string, create bool) (*Col
 	return c, nil
 }
 
-// plain looks, through the held folder, at the file of a collection and at
-// what SQLite keeps beside it: each is a plain file with one name, or is not
-// there. It returns what the collection's file is, and nil when it is not
-// there.
+// plain looks, through the held folder, at the file of a collection, at what
+// SQLite keeps beside it and at the file its work is locked in: each is a
+// plain file with one name, or is not there. It returns what the
+// collection's file is, and nil when it is not there.
 func (f *Folder) plain(collection, file string) (fs.FileInfo, error) {
 	var main fs.FileInfo
-	for _, name := range append([]string{file}, besides(file)...) {
+	for _, name := range append([]string{file, collection + lockExtension}, besides(file)...) {
 		info, err := f.root.Lstat(name)
 		switch {
 		case errors.Is(err, fs.ErrNotExist):

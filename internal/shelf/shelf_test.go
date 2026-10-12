@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -152,7 +153,7 @@ func TestAFileThatCannotBeIndexedSaysWhy(t *testing.T) {
 		t.Error("a good book indexed after the bad ones is not found")
 	}
 
-	// A Shelf that is started later, as the one in the agent's MCP server is
+	// A Shelf that is started later, as one is for every question study has
 	// after study source index has exited, still says why each failed.
 	before := s.status("bad")
 	_, later := start(t, folder)
@@ -203,23 +204,38 @@ func TestAChangedFileReplacesWhatWasIndexed(t *testing.T) {
 			t.Errorf("the id of a Passage of the old content now names %+v", got)
 		}
 	}
-	// The hash study took before the file changed is not the one Shelf
-	// gives: it says what it read.
+	// A file that is no longer what study read is not indexed: study counts
+	// a Source as indexed when Shelf gives the hash it handed over, so under
+	// its new hash the file would be a Source study does not count, and
+	// under the old one a lie.
 	stale := after
 	stale.ID, stale.Hash = "stale.b2", before.Hash
-	if now := s.indexed("notes", stale); now.Hash != after.Hash {
-		t.Errorf("status gives the hash %s for a file that hashes to %s", now.Hash, after.Hash)
+	if failed := s.fails("notes", stale, "changed since study read it", "Index it again"); failed.Hash != "" {
+		t.Errorf("status gives the hash %s for a file nothing was indexed of", failed.Hash)
+	}
+	if found := s.search("notes", "octonions", 10, stale.ID); len(found) != 0 {
+		t.Errorf("a search finds %d Passages of a file that was not what study read", len(found))
+	}
+	// The same for a Source that is indexed: what was indexed stays, with
+	// its hash, beside the reason.
+	changed := after
+	changed.Hash = hashOf([]byte("what study read, and the file no longer holds"))
+	if failed := s.fails("notes", changed, "changed since study read it"); failed.Hash != after.Hash {
+		t.Errorf("status of an indexed Source whose file changed gives the hash %q, want the one of what is still found", failed.Hash)
+	}
+	if found := s.search("notes", "octonions", 10, after.ID); len(found) != 1 {
+		t.Errorf("what was indexed is found %d times after the file changed", len(found))
 	}
 }
 
 // A file that changes while Shelf reads it: its pages belong to no one
-// content, so Shelf says so, or it gives the hash of content the file did
-// hold. It never gives a hash for pages that were read of another content.
-func TestAFileThatChangesWhileItIsReadIsNotIndexedUnderAnotherHash(t *testing.T) {
+// content, so Shelf says so and indexes nothing. It never gives a hash for
+// pages that were read of another content: it is indexed, under the hash it
+// was handed with, only when it held those bytes from the first to the last
+// that was read.
+func TestAFileThatChangesWhileItIsReadIsNotIndexed(t *testing.T) {
 	_, s := start(t, t.TempDir())
-	data := long(1500, "moving")
-	book := file(t, "moving.a1", data)
-	held := map[string]bool{book.Hash: true}
+	book := file(t, "moving.a1", long(1500, "moving"))
 	growing, err := os.OpenFile(book.Path, os.O_APPEND|os.O_WRONLY, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -228,26 +244,52 @@ func TestAFileThatChangesWhileItIsReadIsNotIndexedUnderAnotherHash(t *testing.T)
 
 	s.index("moving", book)
 	var status plugincontract.SourceStatus
-	listed := true
-	for deadline := time.Now().Add(patience); time.Now().Before(deadline); {
+	listed, changes := true, 0
+	for deadline := time.Now().Add(patience); time.Now().Before(deadline); changes++ {
 		// A comment after its end leaves a PDF a PDF, with other bytes.
-		line := []byte("% a line added while Shelf reads\n")
-		if _, err := growing.Write(line); err != nil {
+		if _, err := growing.WriteString("% a line added while Shelf reads\n"); err != nil {
 			t.Fatal(err)
 		}
-		data = append(data, line...)
-		held[hashOf(data)] = true
 		if status, listed = s.status("moving")[book.ID]; !listed || status.State != plugincontract.StateIndexing {
 			break
 		}
 	}
-	switch {
-	case listed && status.State == plugincontract.StateFailed && strings.Contains(status.Reason, "changed while it was being read") && status.Hash == "":
-	case listed && status.State == plugincontract.StateIndexed && held[status.Hash]:
-		t.Log("the file was read between two changes: Shelf gave the hash of what it held then")
-	default:
-		t.Errorf("status of a file that changed while it was read = %+v (listed: %v); want it failed for that, or indexed under a hash "+
-			"of content the file held", status, listed)
+	if !listed || status.State != plugincontract.StateFailed || !strings.Contains(status.Reason, "the file changed") || status.Hash != "" {
+		t.Errorf("status of a file that changed %d times while it was read = %+v (listed: %v); want it failed for that, with no hash",
+			changes, status, listed)
+	}
+	if found := s.search("moving", "moving1 moving750 moving1500", 5); len(found) != 0 {
+		t.Errorf("a search finds %d Passages of a file that changed while it was read", len(found))
+	}
+}
+
+// The same, at the one moment the test above cannot be sure to meet: the
+// file is what study read when Shelf begins, its pages are read, and it
+// changes before Shelf has looked at it again.
+func TestAFileThatChangesOnceItsPagesAreReadIsNotIndexed(t *testing.T) {
+	warm(t)
+	book := file(t, "late.a1", pdf([]string{"A book that changes late speaks of cohomology."}))
+	plugin := shelf.New(shelf.Options{Folder: t.TempDir(), Crash: func(point string) {
+		if point != shelf.PointPagesRead {
+			return
+		}
+		growing, err := os.OpenFile(book.Path, os.O_APPEND|os.O_WRONLY, 0)
+		if err == nil {
+			_, err = growing.WriteString("% a line added once the pages were read\n")
+			_ = growing.Close()
+		}
+		if err != nil {
+			t.Errorf("the file could not be changed: %v", err)
+		}
+	}})
+	t.Cleanup(plugin.Close)
+	s := connect(t, plugin)
+	failed := s.fails("late", book, "the file changed while it was being read", "Index it again")
+	if failed.Hash != "" {
+		t.Errorf("status gives the hash %s for a file whose pages belong to no hash", failed.Hash)
+	}
+	if found := s.search("late", "cohomology", 5); len(found) != 0 {
+		t.Errorf("a search finds %d Passages of it", len(found))
 	}
 }
 
@@ -407,15 +449,24 @@ func TestTwoCollectionsAreKeptApart(t *testing.T) {
 			t.Errorf("the id of a Passage of %s names %+v in %s", collection, p, other)
 		}
 	}
-	// One file for each, and nothing else that stays.
+	// One file for each, what SQLite keeps beside it while it is open, and
+	// the file its work is locked in: nothing else.
 	entries, err := os.ReadDir(folder)
 	if err != nil {
 		t.Fatal(err)
 	}
+	var names []string
 	for _, entry := range entries {
 		name := entry.Name()
-		if !strings.HasPrefix(name, "geometry.sqlite") && !strings.HasPrefix(name, "algebra.sqlite") {
+		names = append(names, name)
+		collection, rest, _ := strings.Cut(name, ".")
+		if (collection != "geometry" && collection != "algebra") || !slices.Contains([]string{"sqlite", "sqlite-wal", "sqlite-shm", "lock"}, rest) {
 			t.Errorf("Shelf's folder holds %s", name)
+		}
+	}
+	for _, want := range []string{"algebra.lock", "algebra.sqlite", "geometry.lock", "geometry.sqlite"} {
+		if !slices.Contains(names, want) {
+			t.Errorf("Shelf's folder holds no %s: it holds %v", want, names)
 		}
 	}
 }
@@ -559,6 +610,59 @@ func TestShelfStartsWithoutItsFolder(t *testing.T) {
 	}
 	if _, err := os.Stat(missing); err == nil {
 		t.Error("Shelf made the folder it was to find")
+	}
+}
+
+// Inside a sandbox that lets Shelf read its folder and not write there, as
+// an agent's shell is when the learner allowed no more: what is indexed is
+// said and found, and a Source that is asked for fails with the reason and
+// what to do, in the Topic it is in and in one that has no index yet.
+func TestShelfReadsWhereItMayNotWrite(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root writes where nobody may")
+	}
+	folder := t.TempDir()
+	first, s := start(t, folder)
+	book := file(t, "book.a1", pdf([]string{"A book that was indexed before speaks of functors."}))
+	s.indexed("sandboxed", book)
+	first.Close()
+	entries, err := os.ReadDir(folder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if err := os.Chmod(filepath.Join(folder, entry.Name()), 0o400); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Chmod(folder, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(folder, 0o700) })
+
+	_, s = start(t, folder)
+	if now := s.status("sandboxed")[book.ID]; now.State != plugincontract.StateIndexed || now.Hash != book.Hash {
+		t.Errorf("status = %+v; want the book indexed", now)
+	}
+	found := s.search("sandboxed", "functors", 5)
+	if len(found) != 1 {
+		t.Fatalf("a search finds %d Passages", len(found))
+	}
+	if again, ok := s.passage("sandboxed", found[0].ID); !ok || again.Text != found[0].Text {
+		t.Errorf("passage gave %+v (found: %v)", again, ok)
+	}
+	if again := s.index("sandboxed", book); again.State != plugincontract.StateIndexed {
+		t.Errorf("index of what is indexed gave %+v", again)
+	}
+	other := file(t, "other.b2", pdf([]string{"A book that cannot be indexed here."}))
+	for _, collection := range []string{"sandboxed", "not-yet-indexed"} {
+		failed := s.fails(collection, other, "Shelf may not write in its folder here", "Allow the folder", "index from a shell of your own")
+		if failed.Hash != "" {
+			t.Errorf("status gives the hash %s for a Source that was not indexed", failed.Hash)
+		}
+	}
+	if left, _ := os.ReadDir(folder); len(left) != len(entries) {
+		t.Errorf("Shelf's folder held %d files, and holds %v now", len(entries), left)
 	}
 }
 

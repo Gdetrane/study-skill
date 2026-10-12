@@ -22,6 +22,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -93,9 +94,18 @@ func run(args []string, stdout, stderr io.Writer) int {
 	err := plugin.Server().Run(ctx, &mcp.StdioTransport{})
 	stop()
 	// Whatever was being indexed is stopped, and nothing is waited for
-	// longer than study waits for a plugin: the index is whole wherever the
-	// work was (docs/shelf.md).
-	plugin.Close()
+	// longer than study waits for a plugin, which after a glance is a
+	// quarter of a second: the index is whole wherever the work was
+	// (docs/shelf.md), so the program may end under it.
+	closed := make(chan struct{})
+	go func() {
+		defer close(closed)
+		plugin.Close()
+	}()
+	select {
+	case <-closed:
+	case <-time.After(shelf.StopsWithin + 50*time.Millisecond):
+	}
 	if err != nil && ctx.Err() == nil && !errors.Is(err, io.EOF) {
 		// Last on standard error, where study looks for the reason.
 		fmt.Fprintf(stderr, "%s: the session ended: %v\n", shelf.Name, err)

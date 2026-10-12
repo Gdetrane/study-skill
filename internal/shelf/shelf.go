@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"regexp"
 	"runtime/debug"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -116,15 +117,23 @@ type Options struct {
 	// Settings are how Shelf works. Each that is left at zero is as in
 	// DefaultSettings.
 	Settings Settings
-	// Crash is only for tests that simulate a crash, and must be nil
-	// otherwise: see index.Options.
+	// Crash is only for tests, and must be nil otherwise. It is called at
+	// each point of a write of the index where a crash could happen (see
+	// index.Options), and at PointPagesRead.
 	Crash func(point string)
 }
+
+// PointPagesRead is the point of a file's indexing where its pages are read
+// and its hash is about to be taken again: where a test changes the file, to
+// see that Shelf notices.
+const PointPagesRead = "the file's pages are read"
 
 // Shelf is one running Shelf: one index, served to any number of MCP
 // sessions.
 type Shelf struct {
 	settings Settings
+	// at is Options.Crash, or nothing.
+	at func(point string)
 	// folder is the index, and folderErr why its folder could not be
 	// opened: Shelf then still says which contract it speaks, and every
 	// other tool says what is wrong.
@@ -161,15 +170,25 @@ func New(opts Options) *Shelf {
 		slots:     make(chan struct{}, settings.Workers),
 		jobs:      map[key]*job{},
 		unwritten: map[key]string{},
+		at:        opts.Crash,
+	}
+	if s.at == nil {
+		s.at = func(string) {}
 	}
 	s.folder, s.folderErr = index.Open(opts.Folder, index.Options{Crash: opts.Crash})
 	return s
 }
 
+// StopsWithin is how long Close waits for what Shelf is indexing to have
+// stopped. study gives a plugin a quarter of a second to exit once its
+// input has closed, after a glance at what is indexed, and two seconds
+// otherwise.
+const StopsWithin = 150 * time.Millisecond
+
 // Close stops whatever Shelf is indexing, and lets go of its folder. It
-// does not wait long: study gives a plugin two seconds to exit once its
-// input has closed, and an index that was being written is whole whether or
-// not the writing ended (index.Collection.Replace).
+// does not wait long (StopsWithin): an index that was being written is whole
+// whether or not the writing ended (index.Collection.Replace), and work that
+// was cut short is known for that by the lock it no longer holds.
 func (s *Shelf) Close() {
 	s.mu.Lock()
 	s.closing = true
@@ -181,7 +200,7 @@ func (s *Shelf) Close() {
 	for _, j := range jobs {
 		j.stop()
 	}
-	patience := time.After(time.Second)
+	patience := time.After(StopsWithin)
 	for _, j := range jobs {
 		select {
 		case <-j.done:
@@ -320,7 +339,7 @@ func (s *Shelf) index(ctx context.Context, args json.RawMessage) (any, *pluginco
 	// Work that was told to stop, and has not stopped yet, is no work on it.
 	if running != nil && running.indexes(in.Source) && running.ctx.Err() == nil {
 		s.mu.Unlock()
-		status, _ := statusOf(have, running, "")
+		status, _ := statusOf(have, working{job: running}, "")
 		return plugincontract.IndexResult{Source: status}, nil
 	}
 	s.mu.Unlock()
@@ -367,7 +386,7 @@ func (s *Shelf) index(ctx context.Context, args json.RawMessage) (any, *pluginco
 	s.jobs[k] = j
 	s.mu.Unlock()
 	go s.work(k, in, j)
-	status, _ := statusOf(have, j, "")
+	status, _ := statusOf(have, working{job: j}, "")
 	return plugincontract.IndexResult{Source: status}, nil
 }
 
@@ -383,22 +402,34 @@ func indexed(have *index.Source, asked plugincontract.Source) bool {
 	return have.Hash == asked.Hash
 }
 
+// working is the indexing of a Source that is going on now: this Shelf's
+// own job, or the work of another copy of Shelf, with how far that copy
+// says it is.
+type working struct {
+	job       *job
+	elsewhere bool
+	progress  *float64
+}
+
 // statusOf is what Shelf says of a Source now: have is what the index holds
-// of it, running the work on it, and unwritten the reason of a failure the
-// index could not be told. ok is false for a Source there is nothing to say
-// about.
-func statusOf(have *index.Source, running *job, unwritten string) (status plugincontract.SourceStatus, ok bool) {
+// of it, at the work on it, and unwritten the reason of a failure the index
+// could not be told. ok is false for a Source there is nothing to say about.
+func statusOf(have *index.Source, at working, unwritten string) (status plugincontract.SourceStatus, ok bool) {
 	if have != nil {
 		// The hash of what a search finds now: there while earlier content
 		// is, whatever became of the content asked for since.
 		status.ID, status.Hash = have.ID, have.Hash
 	}
 	switch {
-	case running != nil:
-		status.ID, status.State = running.source.ID, plugincontract.StateIndexing
-		if progress, known := running.progress(); known {
+	case at.job != nil:
+		status.ID, status.State = at.job.source.ID, plugincontract.StateIndexing
+		if progress, known := at.job.progress(); known {
 			status.Progress = &progress
 		}
+	case at.elsewhere:
+		// "Indexing" is Shelf working on the Source now, whichever copy of
+		// it: the one study asks is seldom the one that indexes.
+		status.State, status.Progress = plugincontract.StateIndexing, at.progress
 	case unwritten != "":
 		status.State, status.Reason = plugincontract.StateFailed, unwritten
 	case have != nil && have.Failed != "":
@@ -438,26 +469,35 @@ func (s *Shelf) status(ctx context.Context, args json.RawMessage) (any, *pluginc
 	if err != nil && len(running) == 0 && len(unwritten) == 0 {
 		return nil, refuse(plugincontract.CodeInternal, "%v", err)
 	}
+	// Then what other copies of Shelf are indexing, and the index last, for
+	// the same reason: their work ends in the transaction that puts its
+	// content, or its failure, in the index.
+	var elsewhere map[string]*float64
 	var sources []index.Source
 	if err == nil && c != nil {
-		if sources, err = c.Sources(ctx); err != nil {
+		if elsewhere, err = c.Working(ctx); err == nil {
+			sources, err = c.Sources(ctx)
+		}
+		if err != nil {
 			return nil, refuse(plugincontract.CodeInternal, "%v", err)
 		}
 	}
 	out := plugincontract.StatusResult{Sources: []plugincontract.SourceStatus{}}
 	add := func(have *index.Source, id string) {
-		if status, ok := statusOf(have, running[id], unwritten[id]); ok {
+		progress, there := elsewhere[id]
+		if status, ok := statusOf(have, working{job: running[id], elsewhere: there, progress: progress}, unwritten[id]); ok {
 			status.ID = id
 			out.Sources = append(out.Sources, status)
 		}
 		delete(running, id)
 		delete(unwritten, id)
+		delete(elsewhere, id)
 	}
 	for i := range sources {
 		add(&sources[i], sources[i].ID)
 	}
 	// And the Sources the index holds nothing of yet.
-	for _, id := range append(keys(running), keys(unwritten)...) {
+	for _, id := range slices.Concat(keys(running), keys(unwritten), keys(elsewhere)) {
 		add(nil, id)
 	}
 	sort.Slice(out.Sources, func(i, j int) bool { return out.Sources[i].ID < out.Sources[j].ID })

@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"database/sql"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
@@ -247,9 +248,90 @@ func TestAStudyShelfThatIsKilledLeavesItsIndexWhole(t *testing.T) {
 	}
 }
 
-// Two study-shelf programs on one folder, as the one the agent's MCP server
-// keeps for searches and the one a study source index starts: each finds
-// what the other indexed, and one searches while the other indexes.
+// study keeps no plugin running: it starts a study-shelf for every question
+// it has, a glance at what is indexed among them, while the study-shelf that
+// a study source index started in another terminal is at work. The one that
+// is asked says what the other is doing: that the Source is being indexed,
+// how far, and what a search still finds of it meanwhile. And once the other
+// was killed, it says so no longer: a Source that was being indexed by a
+// program that is gone is not being indexed.
+func TestAGlanceSeesWhatAnotherStudyShelfIsIndexing(t *testing.T) {
+	const pages = 3000
+	computer := plugintest.NewComputer(t)
+	earlier := file(t, "book.a1", pdf([]string{"The first edition speaks of spectra."}))
+	later := earlier
+	data := long(pages, "leaf")
+	later.Path = filepath.Join(t.TempDir(), "second-edition.pdf")
+	if err := os.WriteFile(later.Path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	later.Hash = hashOf(data)
+	never := file(t, "new.b2", long(pages, "sheet"))
+
+	indexer, command := run(t, computer)
+	indexer.indexed("glanced", earlier)
+	// New content of the book, and a Source that was never indexed, are
+	// both asked for: the second waits for the reader the first has.
+	indexer.index("glanced", later)
+	indexer.index("glanced", never)
+
+	// Glances, each a study-shelf of its own, until one has seen the work
+	// say how far it is.
+	var seen plugincontract.SourceStatus
+	for deadline := time.Now().Add(patience); seen.Progress == nil || *seen.Progress == 0; {
+		glance, stop := run(t, computer)
+		status := glance.status("glanced")
+		now, listed := status[earlier.ID]
+		if !listed || now.State != plugincontract.StateIndexing {
+			t.Fatalf("a glance says %+v (listed: %v) of a Source another study-shelf is indexing; want it being indexed", now, listed)
+		}
+		// What a search finds meanwhile is the earlier content, and the
+		// glance gives its hash.
+		if now.Hash != earlier.Hash {
+			t.Fatalf("a glance gives the hash %q for a Source whose earlier content is still found, want %s", now.Hash, earlier.Hash)
+		}
+		if found := glance.search("glanced", "spectra", 5); len(found) != 1 {
+			t.Fatalf("while another study-shelf indexes new content, a glance finds the earlier content %d times", len(found))
+		}
+		if other, listed := status[never.ID]; !listed || other.State != plugincontract.StateIndexing || other.Hash != "" {
+			t.Fatalf("a glance says %+v (listed: %v) of a Source another study-shelf is about to index", other, listed)
+		}
+		// It is not this one's to stop.
+		if glance.cancel("glanced", earlier.ID) {
+			t.Fatal("a study-shelf says it stopped what another is indexing")
+		}
+		seen = now
+		stop.Stop()
+		if time.Now().After(deadline) {
+			t.Fatalf("no glance saw how far the indexing is: the last said %+v", now)
+		}
+	}
+	if *seen.Progress <= 0 || *seen.Progress >= 1 {
+		t.Errorf("a glance says the work is %v done", *seen.Progress)
+	}
+
+	// The one that indexes is killed. No Source is being indexed now.
+	command.Kill()
+	glance, _ := run(t, computer)
+	status := glance.status("glanced")
+	if now := status[earlier.ID]; now.State != plugincontract.StateIndexed || now.Hash != earlier.Hash {
+		t.Errorf("after the study-shelf that indexed was killed, a glance says %+v of the Source; want its earlier content indexed", now)
+	}
+	if now, listed := status[never.ID]; listed {
+		t.Errorf("after the study-shelf that indexed was killed, a glance says %+v of a Source that never was indexed; want nothing", now)
+	}
+	// Asked, this one indexes them, and says so itself.
+	glance.indexed("glanced", later)
+	glance.indexed("glanced", never)
+	if found := glance.search("glanced", "leaf3000 sheet3000", 5); len(found) != 2 {
+		t.Errorf("indexed after the kill, a search finds %d of the two last pages", len(found))
+	}
+	integrity(t, computer.DataFolder("conformance"), "glanced")
+}
+
+// Two study-shelf programs on one folder, a glance beside a study source
+// index or two of either: each finds what the other indexed, and one
+// searches while the other indexes.
 func TestTwoStudyShelvesShareOneIndex(t *testing.T) {
 	computer := plugintest.NewComputer(t)
 	searcher, _ := run(t, computer)

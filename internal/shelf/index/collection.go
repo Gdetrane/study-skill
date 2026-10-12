@@ -9,8 +9,10 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"unicode"
 
 	"github.com/mordor-forge/lamplight/v2/internal/plugincontract"
@@ -39,12 +41,20 @@ const (
 //
 // A Source's row says which content of it is indexed: hash is that
 // content's, and is NULL while nothing of the Source is. failed is why its
-// last indexing failed, and NULL when it did not. A Source can have both: new
-// content that could not be read, and earlier content that is still found.
+// last indexing failed, and NULL when it did not, and asked is what that
+// indexing was asked with: the hash it was handed for a file, the address of
+// a web page. A Source can have both a hash and a failure: new content that
+// could not be read, and earlier content that is still found.
 //
 // A Passage's text is kept once, in the full-text table, under the Passage's
 // key. Whatever else is said of a Passage, a vector for it, hangs on that
 // key.
+//
+// A row of work says that a Shelf is indexing a Source, to the other copies
+// of Shelf: study starts one for every question it has, and the one that is
+// asked what is being indexed is seldom the one that indexes. The row alone
+// would outlive a Shelf that was killed, so it counts only while that Shelf
+// holds the lock at its id (lock_unix.go).
 var schema = []string{
 	`CREATE TABLE sources (
 		id      TEXT PRIMARY KEY,
@@ -52,8 +62,14 @@ var schema = []string{
 		title   TEXT NOT NULL,
 		hash    TEXT,
 		address TEXT,
-		failed  TEXT
+		failed  TEXT,
+		asked   TEXT
 	) STRICT, WITHOUT ROWID`,
+	`CREATE TABLE work (
+		id       INTEGER PRIMARY KEY,
+		source   TEXT NOT NULL,
+		progress REAL
+	) STRICT`,
 	`CREATE TABLE passages (
 		key        INTEGER PRIMARY KEY,
 		id         TEXT NOT NULL UNIQUE,
@@ -75,6 +91,18 @@ type Collection struct {
 	// info is the collection's file as it was when it was opened.
 	info  fs.FileInfo
 	crash func(string)
+	// folder is the folder the collection's files are in, as it is held.
+	folder *Folder
+
+	// locks is the collection's lock file, opened once and kept for as long
+	// as the collection is, and mine the work this Shelf is doing: the
+	// numbers it holds locks at.
+	working sync.Mutex
+	locks   *os.File
+	// lockable says that the lock file is open for writing, which holding
+	// a lock takes.
+	lockable bool
+	mine     map[int64]bool
 }
 
 // Source is what the index says of one Source.
@@ -87,8 +115,9 @@ type Source struct {
 	// Address is the address a web page was fetched from.
 	Address string
 	// Failed is why the last indexing of the Source failed, and empty when
-	// it did not.
-	Failed string
+	// it did not. Asked is then what that indexing was asked with: the hash
+	// it was handed for a file, or a web page's address.
+	Failed, Asked string
 }
 
 // Passage is a stretch of a Source's text in the index. First and Last are
@@ -173,13 +202,19 @@ func (c *Collection) wrap(err error) error {
 	if errors.As(err, &stranger) || errors.As(err, &newer) || strings.HasPrefix(err.Error(), "the index of collection ") {
 		return err
 	}
+	if unwritable(err) {
+		// Reading goes on where Shelf may not write (connect.go). What
+		// would write says so, and what to do.
+		return fmt.Errorf("the index of collection %s cannot be written: Shelf may not write in its folder here. Allow the folder "+
+			"where study is run, or index from a shell of your own", c.name)
+	}
 	return fmt.Errorf("the index of collection %s: %w", c.name, err)
 }
 
 // Sources returns what the index says of the collection's Sources, by id,
 // and no more of them than a status may list.
 func (c *Collection) Sources(ctx context.Context) ([]Source, error) {
-	rows, err := c.db.QueryContext(ctx, `SELECT id, kind, title, coalesce(hash, ''), coalesce(address, ''), coalesce(failed, '')
+	rows, err := c.db.QueryContext(ctx, `SELECT id, kind, title, coalesce(hash, ''), coalesce(address, ''), coalesce(failed, ''), coalesce(asked, '')
 		FROM sources ORDER BY id LIMIT ?`, plugincontract.MaxSources)
 	if err != nil {
 		return nil, c.wrap(err)
@@ -188,7 +223,7 @@ func (c *Collection) Sources(ctx context.Context) ([]Source, error) {
 	var out []Source
 	for rows.Next() {
 		var s Source
-		if err := rows.Scan(&s.ID, &s.Kind, &s.Title, &s.Hash, &s.Address, &s.Failed); err != nil {
+		if err := rows.Scan(&s.ID, &s.Kind, &s.Title, &s.Hash, &s.Address, &s.Failed, &s.Asked); err != nil {
 			return nil, c.wrap(err)
 		}
 		out = append(out, s)
@@ -200,8 +235,8 @@ func (c *Collection) Sources(ctx context.Context) ([]Source, error) {
 // nothing.
 func (c *Collection) Source(ctx context.Context, id string) (*Source, error) {
 	s := Source{ID: id}
-	err := c.db.QueryRowContext(ctx, `SELECT kind, title, coalesce(hash, ''), coalesce(address, ''), coalesce(failed, '')
-		FROM sources WHERE id = ?`, id).Scan(&s.Kind, &s.Title, &s.Hash, &s.Address, &s.Failed)
+	err := c.db.QueryRowContext(ctx, `SELECT kind, title, coalesce(hash, ''), coalesce(address, ''), coalesce(failed, ''), coalesce(asked, '')
+		FROM sources WHERE id = ?`, id).Scan(&s.Kind, &s.Title, &s.Hash, &s.Address, &s.Failed, &s.Asked)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -217,6 +252,12 @@ func (c *Collection) Source(ctx context.Context, id string) (*Source, error) {
 // finds the earlier content until it commits and the new content from then
 // on, and never part of either, whatever stops Shelf on the way.
 func (c *Collection) Replace(ctx context.Context, source Source, passages []Passage) error {
+	return c.replace(ctx, source, passages, nil)
+}
+
+// replace is Replace, for the work that read the content when there is
+// one: the work is over in the transaction that puts its content there.
+func (c *Collection) replace(ctx context.Context, source Source, passages []Passage, work *Work) error {
 	if source.Hash == "" || len(passages) == 0 {
 		return errors.New("a Source is indexed with a hash and at least one Passage")
 	}
@@ -232,10 +273,15 @@ func (c *Collection) Replace(ctx context.Context, source Source, passages []Pass
 		return c.wrap(err)
 	}
 	c.crash(CrashEarlierGone)
-	if _, err := tx.ExecContext(ctx, `INSERT INTO sources (id, kind, title, hash, address, failed) VALUES (?, ?, ?, ?, nullif(?, ''), NULL)
+	if _, err := tx.ExecContext(ctx, `INSERT INTO sources (id, kind, title, hash, address) VALUES (?, ?, ?, ?, nullif(?, ''))
 		ON CONFLICT (id) DO UPDATE SET kind = excluded.kind, title = excluded.title, hash = excluded.hash,
-			address = excluded.address, failed = NULL`, source.ID, source.Kind, source.Title, source.Hash, source.Address); err != nil {
+			address = excluded.address, failed = NULL, asked = NULL`, source.ID, source.Kind, source.Title, source.Hash, source.Address); err != nil {
 		return c.wrap(err)
+	}
+	if work != nil {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM work WHERE id = ?`, work.id); err != nil {
+			return c.wrap(err)
+		}
 	}
 	passage, err := tx.PrepareContext(ctx, `INSERT INTO passages (id, source, place, first_page, last_page) VALUES (?, ?, ?, nullif(?, 0), nullif(?, 0))`)
 	if err != nil {
@@ -272,18 +318,37 @@ func (c *Collection) Replace(ctx context.Context, source Source, passages []Pass
 	return nil
 }
 
-// Fail records why the indexing of a Source failed. What was indexed for it
-// before stays, with its hash.
-func (c *Collection) Fail(ctx context.Context, source Source, reason string) error {
-	_, err := c.db.ExecContext(ctx, `INSERT INTO sources (id, kind, title, failed) VALUES (?, ?, ?, ?)
-		ON CONFLICT (id) DO UPDATE SET failed = excluded.failed`, source.ID, source.Kind, source.Title, reason)
-	return c.wrap(err)
+// Fail records that the indexing of a Source failed: why, and what it was
+// asked with, the hash a file was handed with or a web page's address. What
+// was indexed for the Source before stays, with its hash. The failure is
+// kept in the collection, since the Shelf that is asked about it later is
+// another than the one it happened to.
+func (c *Collection) Fail(ctx context.Context, source Source, asked, reason string) error {
+	return c.fail(ctx, source, asked, reason, nil)
 }
 
-// Recover forgets that the last indexing of a Source failed: it is being
-// indexed again, or what is indexed for it was asked for again.
+func (c *Collection) fail(ctx context.Context, source Source, asked, reason string, work *Work) error {
+	tx, err := c.db.BeginTx(ctx, nil)
+	if err != nil {
+		return c.wrap(err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, `INSERT INTO sources (id, kind, title, failed, asked) VALUES (?, ?, ?, ?, nullif(?, ''))
+		ON CONFLICT (id) DO UPDATE SET failed = excluded.failed, asked = excluded.asked`, source.ID, source.Kind, source.Title, reason, asked); err != nil {
+		return c.wrap(err)
+	}
+	if work != nil {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM work WHERE id = ?`, work.id); err != nil {
+			return c.wrap(err)
+		}
+	}
+	return c.wrap(tx.Commit())
+}
+
+// Recover forgets that the last indexing of a Source failed: what is
+// indexed for it was asked for again.
 func (c *Collection) Recover(ctx context.Context, id string) error {
-	_, err := c.db.ExecContext(ctx, `UPDATE sources SET failed = NULL WHERE id = ? AND failed IS NOT NULL`, id)
+	_, err := c.db.ExecContext(ctx, `UPDATE sources SET failed = NULL, asked = NULL WHERE id = ? AND failed IS NOT NULL`, id)
 	return c.wrap(err)
 }
 

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/url"
 	"path/filepath"
 	"time"
@@ -24,11 +25,58 @@ type connector struct {
 
 func (c *connector) Driver() driver.Driver { return &sqlite.Driver{} }
 
+// The ways a collection's file is opened. SQLite makes none in any of them:
+// Shelf made the file, through the folder it holds.
+const (
+	// For reading and writing, which is how Shelf opens a collection.
+	openToWrite = "mode=rw"
+	// For reading, where Shelf may not write in its folder: a glance from
+	// inside an agent's sandbox, which lets it read there and no more.
+	openToRead = "mode=ro"
+	// As a file that nobody is writing, read without any of the files
+	// SQLite keeps beside a database. That is what a collection is that no
+	// Shelf has open: the last to close one writes all of it into the one
+	// file and removes the others.
+	openAtRest = "mode=ro&immutable=1"
+)
+
 // Connect opens a connection to the collection's file, and gives it back
 // only when the file SQLite opened is the collection's, in the folder Shelf
 // holds, and in a format this Shelf reads. Nothing is written through the
 // connection before that is known.
+//
+// In a folder Shelf may not write in, the connection is one that reads:
+// what is indexed is still said and still found, and whatever would write
+// fails for that reason.
 func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
+	conn, err := c.open(ctx, openToWrite)
+	if !unwritable(err) {
+		return conn, err
+	}
+	if conn, again := c.open(ctx, openToRead); again == nil {
+		return conn, nil
+	}
+	// SQLite keeps a log beside a collection that is open somewhere, and
+	// cannot read it without writing beside it. With no log, or an empty
+	// one, the file is all there is to the collection.
+	log, lerr := c.folder.root.Lstat(c.file + "-wal")
+	if errors.Is(lerr, fs.ErrNotExist) || (lerr == nil && log.Size() == 0) {
+		return c.open(ctx, openAtRest)
+	}
+	return nil, fmt.Errorf("the index of collection %s cannot be read here: another Shelf is indexing in it, or was stopped while "+
+		"it did, and Shelf may not write in its folder. Allow the folder where study is run, or ask from a shell of your own", c.collection)
+}
+
+// unwritable reports whether an error says that the collection's file, or
+// the folder it is in, cannot be written: SQLITE_READONLY and
+// SQLITE_CANTOPEN, and the codes that say why.
+func unwritable(err error) bool {
+	var failure *sqlite.Error
+	return errors.As(err, &failure) && (failure.Code()&0xFF == 8 || failure.Code()&0xFF == 14)
+}
+
+// open opens a connection in one of the ways above, and checks it.
+func (c *connector) open(ctx context.Context, how string) (driver.Conn, error) {
 	if info, err := c.folder.plain(c.collection, c.file); err != nil {
 		return nil, err
 	} else if info == nil {
@@ -38,9 +86,9 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 		return nil, err
 	}
 	path := filepath.Join(c.folder.path, c.file)
-	// mode=rw: SQLite opens the file Shelf made, and makes none. A URI, so
-	// the path is escaped: a state folder may have any character in its name.
-	base, err := sqlite.NewConnector("file:" + (&url.URL{Path: path}).EscapedPath() + "?mode=rw&_txlock=immediate&_defensive=true")
+	// A URI, so the path is escaped: a state folder may have any character
+	// in its name.
+	base, err := sqlite.NewConnector("file:" + (&url.URL{Path: path}).EscapedPath() + "?" + how + "&_txlock=immediate&_defensive=true")
 	if err != nil {
 		return nil, c.unreadable(err)
 	}
@@ -89,18 +137,23 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 	case format > Format:
 		return nil, &NewerError{Collection: c.collection, Format: format}
 	}
-	for _, pragma := range []string{
-		// Readers do not wait for the one writer, nor it for them: a search
-		// is answered while a book is being written into the index.
-		"PRAGMA journal_mode = WAL",
-		// A transaction that committed stays, a loss of power included.
-		"PRAGMA synchronous = FULL",
+	pragmas := []string{
 		"PRAGMA foreign_keys = ON",
 		// The file holds data. No function in its schema is trusted, and
 		// nothing SQLite needs for a while is written to a temporary folder.
 		"PRAGMA trusted_schema = OFF",
 		"PRAGMA temp_store = MEMORY",
-	} {
+	}
+	if how == openToWrite {
+		pragmas = append(pragmas,
+			// Readers do not wait for the one writer, nor it for them: a
+			// search is answered while a book is being written into the
+			// index.
+			"PRAGMA journal_mode = WAL",
+			// A transaction that committed stays, a loss of power included.
+			"PRAGMA synchronous = FULL")
+	}
+	for _, pragma := range pragmas {
 		if err := patiently(ctx, func() error {
 			_, err := conn.(driver.ExecerContext).ExecContext(ctx, pragma, nil)
 			return err

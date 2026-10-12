@@ -373,39 +373,53 @@ func TestAFailureIsKeptUntilTheSourceIsIndexed(t *testing.T) {
 	f, dir := folder(t)
 	c := collection(t, f, "notes")
 	never := index.Source{ID: "scan.t8w3n5", Kind: plugincontract.SourceFile, Title: "Scanned notes"}
-	if err := c.Fail(ctx, never, "the file has no text layer"); err != nil {
+	if err := c.Fail(ctx, never, hash("5"), "the file has no text layer"); err != nil {
 		t.Fatal(err)
 	}
 	source, passages := book("book.a1", "a", "A page about elimination.")
 	replace(t, c, source, passages)
-	if err := c.Fail(ctx, source, "the file is not there"); err != nil {
+	if err := c.Fail(ctx, source, hash("b"), "the file is not there"); err != nil {
 		t.Fatal(err)
 	}
-	// Shelf is stopped and started: both are still said.
+	page := index.Source{ID: "page.m4k8s3", Kind: plugincontract.SourceURL, Title: "A page", Address: "https://example.org/page"}
+	if err := c.Fail(ctx, page, page.Address, "example.org answered 404 Not Found"); err != nil {
+		t.Fatal(err)
+	}
+	// Shelf is stopped and started, as it is after every question study
+	// has: all three are still said, each with what it was asked with.
 	if err := f.Close(); err != nil {
 		t.Fatal(err)
 	}
 	c = collection(t, reopen(t, dir), "notes")
 	sources, err := c.Sources(ctx)
-	if err != nil || len(sources) != 2 {
+	if err != nil || len(sources) != 3 {
 		t.Fatalf("Sources = %+v, %v", sources, err)
 	}
-	if got := sources[0]; got.ID != "book.a1" || got.Failed != "the file is not there" || got.Hash != hash("a") {
-		t.Errorf("a Source whose new content failed = %+v; want the reason, and the hash of what is still found", got)
+	if got := sources[0]; got.ID != "book.a1" || got.Failed != "the file is not there" || got.Asked != hash("b") || got.Hash != hash("a") {
+		t.Errorf("a Source whose new content failed = %+v; want the reason, the hash it was asked with, and the hash of what is still found", got)
 	}
-	if got := sources[1]; got.ID != "scan.t8w3n5" || got.Failed != "the file has no text layer" || got.Hash != "" {
+	if got := sources[1]; got.ID != "page.m4k8s3" || got.Failed != "example.org answered 404 Not Found" || got.Asked != page.Address || got.Hash != "" {
+		t.Errorf("a web page that could not be fetched = %+v; want the reason, its address and no hash", got)
+	}
+	if got := sources[2]; got.ID != "scan.t8w3n5" || got.Failed != "the file has no text layer" || got.Asked != hash("5") || got.Hash != "" {
 		t.Errorf("a Source that never was indexed = %+v; want the reason and no hash", got)
 	}
 	if found := search(t, c, "elimination", 5); len(found) != 1 {
 		t.Errorf("the earlier content of a Source that failed is no longer found")
 	}
-	// Asked for again, a Source is no longer failed; and indexed, neither.
+	// Asked for again as it is indexed, a Source is no longer failed; nor is
+	// one that is being indexed again, or was indexed.
 	if err := c.Recover(ctx, "scan.t8w3n5"); err != nil {
 		t.Fatal(err)
 	}
+	work, err := c.Begin(ctx, "page.m4k8s3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	work.End()
 	replace(t, c, source, passages)
-	for _, id := range []string{"scan.t8w3n5", "book.a1"} {
-		if got, err := c.Source(ctx, id); err != nil || got == nil || got.Failed != "" {
+	for _, id := range []string{"scan.t8w3n5", "book.a1", "page.m4k8s3"} {
+		if got, err := c.Source(ctx, id); err != nil || got == nil || got.Failed != "" || got.Asked != "" {
 			t.Errorf("Source(%s) = %+v, %v; want it failed no longer", id, got, err)
 		}
 	}
@@ -599,7 +613,7 @@ func TestAFileRemovedWhileShelfRunsIsGone(t *testing.T) {
 	}
 }
 
-// Two copies of Shelf on one folder, as the MCP server's and a study source
+// Two copies of Shelf on one folder, as a glance beside a study source
 // index in a shell are: each finds what the other indexed, a search goes on
 // while the other writes, and nothing either wrote is lost.
 func TestTwoCopiesShareOneIndex(t *testing.T) {
