@@ -14,7 +14,10 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          # The newest release of the Go line go.mod names. Not go-version-file:
+          # go.mod says "go 1.26.0", as its dependencies need it to, and that
+          # would be read as that one release, eight security releases back.
+          go-version: "1.26.x"
           check-latest: true
       - name: Format check
         run: test -z "$(gofmt -l cmd internal)"
@@ -34,7 +37,10 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          # The newest release of the Go line go.mod names. Not go-version-file:
+          # go.mod says "go 1.26.0", as its dependencies need it to, and that
+          # would be read as that one release, eight security releases back.
+          go-version: "1.26.x"
           check-latest: true
       - name: Check the install script
         run: shellcheck install.sh
@@ -97,7 +103,13 @@ jobs:
           export STUDY_HOME="$home/study" PATH="$home/.local/bin:$PATH"
           study knowledge-base add shelf -- study-shelf
           study knowledge-base check shelf
-      - name: Keep the archives for the macOS job
+          echo "INSTALLED_SHELF=$home/.local/bin/study-shelf" >> "$GITHUB_ENV"
+      - name: The released study-shelf keeps the contract, with PDFs
+        # The conformance suite against the program a learner would install,
+        # not one built for the test: it reads PDFs, which compiles the PDF
+        # reader to this processor's machine code.
+        run: LAMPLIGHT_TEST_SHELF="$INSTALLED_SHELF" go test ./internal/shelf -run '^TestShelfConformsAsStudyStartsIt$' -count=1
+      - name: Keep the archives for the other platforms
         uses: actions/upload-artifact@v4
         with:
           name: snapshot-archives
@@ -107,21 +119,33 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  macos:
+  platforms:
     # Not a required check either. A snapshot is built on Linux for every
-    # platform; this job is the one place its macOS programs are run, and
-    # the one place Shelf's tests run on macOS: the PDF reader is compiled to
-    # machine code when Shelf first reads a PDF, which no other system can
-    # stand in for.
-    name: Shelf and the snapshot on macOS
+    # platform; this job is the one place its programs for macOS, and for
+    # Linux on arm64, are run, and the one place Shelf's tests run there: the
+    # PDF reader is compiled to the processor's machine code when Shelf first
+    # reads a PDF, which no other system can stand in for. The programs for
+    # macOS on Intel are built and never run.
+    name: Shelf and the snapshot on ${{ matrix.name }}
     needs: release
-    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS
+            os: macos-latest
+            shell: /bin/zsh
+          - name: Linux on arm64
+            os: ubuntu-24.04-arm
+            shell: /bin/bash
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          # As above.
+          go-version: "1.26.x"
           check-latest: true
       - name: Test Shelf
         run: go test ./internal/shelf/... ./cmd/study-shelf
@@ -134,7 +158,7 @@ jobs:
         run: |
           set -eu
           home=$(mktemp -d)
-          export HOME="$home" SHELL=/bin/zsh
+          export HOME="$home" SHELL=${{ matrix.shell }}
           export XDG_CONFIG_HOME="$home/.config" XDG_DATA_HOME="$home/.local/share"
           export XDG_STATE_HOME="$home/.local/state" XDG_CACHE_HOME="$home/.cache"
           STUDY_DOWNLOAD_URL="file://$PWD/dist" sh install.sh
@@ -143,3 +167,6 @@ jobs:
           export STUDY_HOME="$home/study" PATH="$home/.local/bin:$PATH"
           study knowledge-base add shelf -- study-shelf
           study knowledge-base check shelf
+          echo "INSTALLED_SHELF=$home/.local/bin/study-shelf" >> "$GITHUB_ENV"
+      - name: The released study-shelf keeps the contract, with PDFs
+        run: LAMPLIGHT_TEST_SHELF="$INSTALLED_SHELF" go test ./internal/shelf -run '^TestShelfConformsAsStudyStartsIt$' -count=1

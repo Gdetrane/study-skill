@@ -30,7 +30,7 @@ func TestCleanTidiesWhatAReaderExtracted(t *testing.T) {
 		"indentation is kept":                             {"func f() {\n    return\n}", "func f() {\n    return\n}"},
 		"and so is what needs no tidying":                 {"Elimination produces an upper triangular system.", "Elimination produces an upper triangular system."},
 	} {
-		if got := cut.Clean(tc.in); got != tc.want {
+		if got := cut.Clean(tc.in, nil); got != tc.want {
 			t.Errorf("%s: Clean(%q) = %q, want %q", name, tc.in, got, tc.want)
 		}
 	}
@@ -40,8 +40,8 @@ func TestCleanTidiesWhatAReaderExtracted(t *testing.T) {
 // what it was cleaned once.
 func TestCleanChangesNothingTheSecondTime(t *testing.T) {
 	for _, text := range []string{"the solu\x02tion", "one\r\n\r\n\r\ntwo  ", "e\uFB03cient\x07 work", "", "\n\n"} {
-		once := cut.Clean(text)
-		if twice := cut.Clean(once); twice != once {
+		once := cut.Clean(text, nil)
+		if twice := cut.Clean(once, nil); twice != once {
 			t.Errorf("Clean(Clean(%q)) = %q, and Clean gave %q", text, twice, once)
 		}
 	}
@@ -67,7 +67,7 @@ func sentences(r *rand.Rand, n int) string {
 			b.WriteString(" ")
 		}
 	}
-	return cut.Clean(b.String())
+	return cut.Clean(b.String(), nil)
 }
 
 // Every word of every page is in exactly one Passage, in the order of the
@@ -98,16 +98,16 @@ func TestPassagesHoldEveryWordOnceInOrder(t *testing.T) {
 			case utf8.RuneCountInString(p.Text) > cut.Longest(size):
 				t.Fatalf("trial %d: Passage %d holds %d characters, and the longest for size %d is %d", trial, i,
 					utf8.RuneCountInString(p.Text), size, cut.Longest(size))
-			case p.First < 1 || p.Last < p.First || p.Last > p.First+1 || p.Last > len(pages):
-				t.Fatalf("trial %d: Passage %d is said to be on pages %d to %d of %d", trial, i, p.First, p.Last, len(pages))
+			case p.First < 1 || p.Last != p.First || p.Last > len(pages):
+				t.Fatalf("trial %d: Passage %d is said to be on pages %d to %d of %d: a Passage is on one page", trial, i, p.First, p.Last, len(pages))
 			case p.First < lastFirst:
 				t.Fatalf("trial %d: Passage %d begins on page %d, after one that begins on page %d", trial, i, p.First, lastFirst)
 			}
 			lastFirst = p.First
 			// It is on the pages it says: each of its words is a word of one
 			// of them.
-			on := strings.Join([]string{pages[p.First-1].Text, pages[p.Last-1].Text}, "\n")
-			if !strings.Contains(strings.Join(words(on), " "), strings.Join(words(p.Text), " ")) && p.First == p.Last {
+			on := pages[p.First-1].Text
+			if !strings.Contains(strings.Join(words(on), " "), strings.Join(words(p.Text), " ")) {
 				t.Fatalf("trial %d: Passage %d is not a stretch of page %d:\n%s", trial, i, p.First, p.Text)
 			}
 		}
@@ -169,52 +169,99 @@ func TestAPageThatFitsIsOnePassage(t *testing.T) {
 	}
 }
 
-// A sentence that runs over the end of a page is kept whole: the Passage it
-// begins in takes the rest of it, and is on both pages.
-func TestASentenceOverAPageBreakStaysWhole(t *testing.T) {
-	pages := []cut.Page{
-		{Number: 46, Text: "Elimination is the first step. The pivots are on the diagonal of the\n46"},
-		{Number: 47, Text: "triangle after elimination. Back substitution is the second step."},
-		{Number: 48, Text: "The third page starts a sentence of its own."},
-	}
-	passages := cut.Passages(pages, 1500)
-	if len(passages) != 3 {
-		t.Fatalf("Passages = %+v, want three", passages)
-	}
-	first := passages[0]
-	if !strings.Contains(strings.Join(words(first.Text), " "), "The pivots are on the diagonal of the 46 triangle after elimination.") {
-		t.Errorf("the first Passage does not hold the sentence that runs over the page: %q", first.Text)
-	}
-	if first.First != 46 || first.Last != 47 {
-		t.Errorf("the first Passage is on pages %d to %d, want 46 to 47", first.First, first.Last)
-	}
-	// What it took is not said twice, and the page after ends a sentence, so
-	// its Passage keeps to it.
-	if second := passages[1]; second.Text != "Back substitution is the second step." || second.First != 47 || second.Last != 47 {
-		t.Errorf("the second Passage = %+v, want the rest of page 47, on page 47", second)
-	}
-	if third := passages[2]; third.First != 48 || third.Last != 48 {
-		t.Errorf("the third Passage is on pages %d to %d, want 48", third.First, third.Last)
-	}
-}
-
-func TestAPassageKeepsToItsPageWhenItCan(t *testing.T) {
-	long := strings.Repeat("no sentence ends in the first lines of this page ", 12) // 600 characters without a stop
+// A Passage is on one page, always. A sentence that runs over the end of a
+// page is in two Passages: taking the rest of it into the first was tried,
+// and in a printed book put the next page's running header in the middle of
+// the sentence.
+func TestAPassageKeepsToItsPage(t *testing.T) {
+	long := strings.TrimSpace(strings.Repeat("no sentence ends in the first lines of this page ", 12)) // 600 characters without a stop
 	for name, pages := range map[string][]cut.Page{
+		"a sentence runs over the page":        {{Number: 46, Text: "Elimination is the first step. The pivots are on the diagonal of the"}, {Number: 47, Text: "triangle after elimination. Back substitution is the second step."}},
+		"with a running header on the next":    {{Number: 46, Text: "A sentence begins on this page and then"}, {Number: 47, Text: "3.2 Solving linear systems 47\ncontinues on the next page until it ends here."}},
 		"the page ends a sentence":             {{Number: 1, Text: "A page that ends well."}, {Number: 2, Text: "Another sentence. And more."}},
-		"it ends a question in quotes":         {{Number: 1, Text: "She asked, \"Why?\""}, {Number: 2, Text: "Nobody knew. Nobody said."}},
 		"it ends before a list":                {{Number: 1, Text: "The steps are these:"}, {Number: 2, Text: "First, eliminate. Then substitute."}},
 		"the next page ends no sentence soon":  {{Number: 1, Text: "A page that stops in the middle of"}, {Number: 2, Text: long}},
 		"the next page is empty":               {{Number: 1, Text: "A page that stops in the middle of"}, {Number: 2, Text: ""}, {Number: 3, Text: "a sentence. And more."}},
-		"the next page is not the page after":  {{Number: 1, Text: "A page that stops in the middle of"}, {Number: 3, Text: "a sentence. And more."}},
-		"a web page has no pages to run over":  {{Number: 0, Text: "A page that stops in the middle of"}, {Number: 0, Text: "a sentence. And more."}},
 		"the page number at its foot is there": {{Number: 1, Text: "A page that ends well.\n\n17"}, {Number: 2, Text: "Another sentence. And more."}},
 	} {
-		for i, p := range cut.Passages(pages, 1500) {
+		passages := cut.Passages(pages, 1500)
+		var got []string
+		for i, p := range passages {
 			if p.First != p.Last {
 				t.Errorf("%s: Passage %d is on pages %d to %d: %q", name, i, p.First, p.Last, p.Text)
 			}
+			if on := pages[indexOf(pages, p.First)].Text; !strings.Contains(on, p.Text) {
+				t.Errorf("%s: Passage %d is not a stretch of page %d: %q", name, i, p.First, p.Text)
+			}
+			got = append(got, p.Text)
 		}
+		var want []string
+		for _, page := range pages {
+			if page.Text != "" {
+				want = append(want, page.Text)
+			}
+		}
+		if strings.Join(got, "\n") != strings.Join(want, "\n") {
+			t.Errorf("%s: the Passages are %q, want each page's text as it is", name, got)
+		}
+	}
+}
+
+func indexOf(pages []cut.Page, number int) int {
+	for i, page := range pages {
+		if page.Number == number {
+			return i
+		}
+	}
+	return 0
+}
+
+// A stretch without a letter in it says nothing to search for or to quote:
+// a page that holds its number and nothing else gives no Passage.
+func TestAPageNumberAloneIsNoPassage(t *testing.T) {
+	passages := cut.Passages([]cut.Page{
+		{Number: 12, Text: "The chapter ends here."},
+		{Number: 13, Text: "13"},
+		{Number: 14, Text: "— 14 —"},
+		{Number: 15, Text: "A new chapter begins."},
+		{Number: 16, Text: "3.14159 2.71828 1.41421 1.61803"},
+	}, 1500)
+	if len(passages) != 3 || passages[0].First != 12 || passages[1].First != 15 || passages[2].First != 16 {
+		t.Errorf("Passages = %+v, want one for each page that holds words, and for the page of numbers", passages)
+	}
+}
+
+// A reader marks where a word was divided at the end of a line, and the mark
+// is the same for a word that is one, "solu-tion", and for a pair that keeps
+// its hyphen, "well-known". The Source's own words say which it is.
+func TestADividedWordIsJoinedOrKeepsItsHyphenAsTheSourceWritesIt(t *testing.T) {
+	const mark = "\x02"
+	for name, tc := range map[string]struct{ text, want string }{
+		"a word the Source holds whole elsewhere": {
+			"The solution is unique. One solu" + mark + "tion exists.", "The solution is unique. One solution exists."},
+		"a word it holds nowhere else, which most divided words are": {
+			"An electroen" + mark + "cephalogram was taken.", "An electroencephalogram was taken."},
+		"a pair whose halves are words of the Source": {
+			"It is well under" + mark + "stood? No: it is known, and well. A well" + mark + "known result.",
+			"It is well understood? No: it is known, and well. A well-known result."},
+		"a pair the Source writes with a hyphen elsewhere": {
+			"A self-adjoint operator. Every self" + mark + "adjoint operator.", "A self-adjoint operator. Every self-adjoint operator."},
+		"a pair in other letter case": {
+			"The shortest-path problem. Shortest" + mark + "path trees.", "The shortest-path problem. Shortest-path trees."},
+		"a half that is itself divided elsewhere is no word": {
+			"The algo" + mark + "rithm and the rithm of an algo" + mark + "rithm.", "The algorithm and the rithm of an algorithm."},
+		"a word set with a ligature": {
+			"To con\ufb01gure it. A con" + mark + "\ufb01gured system and a configured one.", "To configure it. A configured system and a configured one."},
+	} {
+		if got := cut.Clean(tc.text, cut.WordsOf(tc.text)); got != tc.want {
+			t.Errorf("%s:\n got %q\nwant %q", name, got, tc.want)
+		}
+	}
+	// Words of all the pages count, not only of the page a word is divided
+	// on.
+	pages := []string{"A long sec" + mark + "tion begins.", "The section ends."}
+	if got := cut.Clean(pages[0], cut.WordsOf(pages...)); got != "A long section begins." {
+		t.Errorf("a word held whole on another page: %q", got)
 	}
 }
 

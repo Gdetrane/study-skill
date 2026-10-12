@@ -736,11 +736,11 @@ hours before any learning happens is exactly what v1 produced.
     a library that follows Firefox's reader view. `status` gives the hash of the bytes
     fetched.
   - **Passages** are about 1,500 characters of the Source's own text, ending where a
-    paragraph or a sentence does, and keep to one page. The exception is a sentence that
-    runs over the end of a page, which the Passage it begins in holds whole, on both
-    pages, so that a quote of it can be checked. What a reader extracted is tidied and
-    never rewritten: a word divided at a line's end is joined, a ligature becomes its
-    letters, characters that are no text are dropped.
+    paragraph or a sentence does, and keep to one page, always: a sentence that runs over
+    the end of a page is in two Passages. What a reader extracted is tidied and never
+    rewritten: a ligature becomes its letters, characters that are no text are dropped,
+    and a word divided at a line's end is joined, or keeps its hyphen when the Source's
+    own words say it is a pair such as `well-known`.
   - **A Passage's id** is the first 16 hexadecimal digits of the SHA-256 of the Source's
     id, the content's hash, the Passage's place and its text. So it is the same wherever
     and whenever that content is indexed, and it never comes to name another text: content

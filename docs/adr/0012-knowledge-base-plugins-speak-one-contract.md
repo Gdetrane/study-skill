@@ -300,11 +300,28 @@ where two of its lines needed more than they say:
   run only where poppler is; and a parser of other people's files running with the
   learner's rights, where PDFium in WebAssembly is held to the one file by construction.
   Ten seconds for a book that is indexed once, and nine megabytes, are the price.
-- **A Passage keeps to one page, except to keep a sentence whole.** A Passage of a page
-  ends where a paragraph or a sentence does. When a page ends in the middle of a sentence,
-  the Passage takes the rest of it from the next page, up to 400 characters, and is on
-  both: a quote is a sentence, and can only be checked against a Passage that holds all
-  of it. PDFium does not tell paragraphs apart, so in a PDF it is sentences.
+- **A Passage keeps to one page, always.** A Passage of a page ends where a paragraph or
+  a sentence does; PDFium does not tell paragraphs apart, so in a PDF it is sentences.
+  Shelf was first built to take the rest of a sentence that runs over the end of a page
+  into the Passage it begins in, up to 400 characters, so that a quote of the sentence
+  could be checked against one Passage. Review tried it on real books. A printed book
+  begins each page with a running header, which then stood in the middle of the sentence:
+  in an algorithms textbook 510 of 1,880 Passages were on two pages, and four in five of
+  those held the next page's header. A page that ends in a heading, a caption or a table
+  row looked like an unfinished sentence too. So the exception did not do what it was for,
+  and gave a third of all Passages a location of two pages. A sentence over a page break
+  is now in two Passages, each on its page, and whoever checks a quote that runs from one
+  Passage into the next, over a page break or within a page, reads the two together.
+  Leaving running headers out of the text is for later: it needs telling them from the
+  page's own first line, and dropping a line is rewriting too.
+- **A word divided at the end of a line is what the Source's own words say it is.**
+  PDFium marks where a line ended inside a word, and the mark is the same for `solu-tion`
+  and for `well-known`. Joined always, as first built, the three books of the review held
+  `shortestpath`, `worstcase` and `polynomialtime` dozens of times, and a search for
+  `well-known` found nothing. Shelf now reads all of a file's words before it tidies any
+  page: a divided word is joined when the Source holds the joined word elsewhere, keeps
+  its hyphen when the Source writes the pair with one or holds each half as a word, and
+  is joined otherwise, which is what most divided words are.
 - **What one Shelf has to tell the next is in the collection.** `study` keeps no plugin
   running: it starts Shelf for every question it has and stops it again, so the Shelf
   that is asked is seldom the one that indexed, and several are at one folder at once.

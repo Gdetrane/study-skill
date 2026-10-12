@@ -15,6 +15,8 @@ import (
 	"sync"
 	"unicode"
 
+	"golang.org/x/text/unicode/norm"
+
 	"github.com/mordor-forge/lamplight/v2/internal/plugincontract"
 )
 
@@ -361,10 +363,20 @@ const mostTerms = 64
 // each quoted, so that nothing in a query is taken for the index's own
 // syntax, and any of them enough for a Passage to be found. The Passages
 // that hold more of them, and rarer ones, come first.
+//
+// A query is cut into words where the index cuts a Passage into them, or a
+// word the index holds could not be asked for. Its tokenizer keeps letters,
+// numbers of every kind, the ₂ of H₂O and the ² of m² among them, and
+// private-use characters together, with the marks that follow a letter. And
+// the query's accents are written as Passages' are (NFC): typed as a letter
+// and a mark, "é" would otherwise be cut in two.
 func terms(query string) string {
 	var quoted []string
 	seen := map[string]bool{}
-	for _, word := range strings.FieldsFunc(query, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) }) {
+	inWord := func(r rune) bool {
+		return unicode.IsLetter(r) || unicode.IsNumber(r) || unicode.IsMark(r) || unicode.Is(unicode.Co, r)
+	}
+	for _, word := range strings.FieldsFunc(norm.NFC.String(query), func(r rune) bool { return !inWord(r) }) {
 		word = strings.ToLower(word)
 		if seen[word] || len(quoted) == mostTerms {
 			continue

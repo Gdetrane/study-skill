@@ -20,7 +20,7 @@
 set -eu
 
 repo_url=https://github.com/mordor-forge/lamplight
-go_install='go install github.com/mordor-forge/lamplight/v2/cmd/study@latest'
+go_install='go install github.com/mordor-forge/lamplight/v2/cmd/study@latest github.com/mordor-forge/lamplight/v2/cmd/study-shelf@latest'
 
 say() {
 	printf '%s\n' "$*"
@@ -207,26 +207,22 @@ main() {
 		fail "the study in $archive does not run on this machine ($installed); nothing was installed"
 	# study-shelf is held to the same before either takes its place: the two
 	# are one release, and a study beside a study-shelf of another is not what
-	# was asked for. A release from before study-shelf holds none.
-	if [ -f "$tmp/files/study-shelf" ]; then
-		[ ! -d "$shelf" ] || fail "$shelf is a folder; nothing was installed"
-		stage "$tmp/files/study-shelf" "$shelf" 755 || fail "could not write $shelf; nothing was installed"
-		new_shelf=$staged
-		staged=
-		shelved=$("$new_shelf" --version 2>&1) ||
-			fail "the study-shelf in $archive does not run on this machine ($shelved); nothing was installed"
-	fi
+	# was asked for. Every release holds both.
+	[ -f "$tmp/files/study-shelf" ] ||
+		fail "$archive holds no study-shelf, which every release of Lamplight does; nothing was installed"
+	[ ! -d "$shelf" ] || fail "$shelf is a folder; nothing was installed"
+	stage "$tmp/files/study-shelf" "$shelf" 755 || fail "could not write $shelf; nothing was installed"
+	new_shelf=$staged
+	staged=
+	shelved=$("$new_shelf" --version 2>&1) ||
+		fail "the study-shelf in $archive does not run on this machine ($shelved); nothing was installed"
 	mv -f "$new_study" "$dest" || fail "could not write $dest; nothing was installed"
 	new_study=
 	say "Installed $dest ($installed)"
-	if [ -n "$new_shelf" ]; then
-		mv -f "$new_shelf" "$shelf" ||
-			fail "could not write $shelf: study was installed, and study-shelf was not. Run the script again"
-		new_shelf=
-		say "Installed $shelf ($shelved)"
-	else
-		say "This release holds no study-shelf: Shelf, the Knowledge base plugin, was not installed."
-	fi
+	mv -f "$new_shelf" "$shelf" ||
+		fail "could not write $shelf: study was installed, and study-shelf was not. Run the script again"
+	new_shelf=
+	say "Installed $shelf ($shelved)"
 
 	# man looks beside each folder on PATH: for <prefix>/bin, in <prefix>/share/man.
 	case $dir in
@@ -290,6 +286,13 @@ main() {
 	say ""
 	say "Next, install the lamplight skill and register study with Claude Code and Codex:"
 	say "  $study setup"
+	# By its whole path: study starts a registered plugin with a PATH of its
+	# own making, and the registration then holds wherever this folder is on
+	# the learner's.
+	say ""
+	say "To have Shelf index a Topic's books and web pages and search them, register it once:"
+	say "  $study knowledge-base add shelf -- \"$shelf\""
+	say "  $study knowledge-base check shelf"
 }
 
 main "$@"

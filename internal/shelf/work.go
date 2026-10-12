@@ -233,12 +233,12 @@ func (s *Shelf) readFile(ctx context.Context, asked plugincontract.Source, advan
 	// It is taken again once the pages are read: a file that changed in
 	// between is one whose pages belong to no hash. And the reader is given
 	// as many bytes as were hashed, and no other count.
+	// The pages as the reader gives them first: how a word that was divided
+	// at the end of a line is written is read from all of the file's words
+	// (cut.WordsOf), so the pages are tidied once every one of them is read.
 	var pages []cut.Page
-	text := false
 	err = pdf.Read(ctx, file, size, func(number, of int, raw string) error {
-		page := cut.Page{Number: number, Text: cut.Clean(raw)}
-		text = text || page.Text != ""
-		pages = append(pages, page)
+		pages = append(pages, cut.Page{Number: number, Text: raw})
 		// The last of the work is the writing of the index.
 		advance(0.95 * float64(number) / float64(of))
 		return nil
@@ -263,6 +263,15 @@ func (s *Shelf) readFile(ctx context.Context, asked plugincontract.Source, advan
 	}
 	if after != before {
 		return nil, "", wrong("the file changed while it was being read. Index it again")
+	}
+	raw := make([]string, len(pages))
+	for i := range pages {
+		raw[i] = pages[i].Text
+	}
+	words, text := cut.WordsOf(raw...), false
+	for i := range pages {
+		pages[i].Text = cut.Clean(pages[i].Text, words)
+		text = text || pages[i].Text != ""
 	}
 	if !text {
 		return nil, "", wrong("the file has no text layer: its pages are pictures, as in a scanned book, and Shelf reads text. " +
@@ -306,7 +315,7 @@ func (s *Shelf) fetchPage(ctx context.Context, address string) ([]cut.Page, stri
 	if err != nil {
 		return nil, "", err
 	}
-	text := cut.Clean(page.Text)
+	text := cut.Clean(page.Text, cut.WordsOf(page.Text))
 	if text == "" {
 		return nil, "", wrong("the page has no text to read")
 	}

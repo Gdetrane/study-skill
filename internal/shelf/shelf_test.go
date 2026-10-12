@@ -62,28 +62,23 @@ func TestAPDFIsIndexedWithItsPages(t *testing.T) {
 	}
 }
 
-// A sentence that runs over the end of a page is in one Passage, which is
-// on both pages: a quote of it can be checked.
-func TestAPassageOverAPageBreakIsOnBothPages(t *testing.T) {
+// A Passage is on one page, also where a sentence runs over the end of
+// one: the sentence is then in two Passages, each on its page.
+func TestAPassageKeepsToOnePage(t *testing.T) {
 	_, s := start(t, t.TempDir())
 	book := file(t, "pages.a1", pdf(
 		[]string{"The first page ends well.", "Its last sentence, about the determinant, runs on to the"},
 		[]string{"next page and ends there. The second page then goes on with something else."},
 	))
 	s.indexed("notes", book)
-	found := holding(s.search("notes", "determinant", 5), "determinant")
-	if len(found) != 1 {
-		t.Fatalf("found %+v", found)
-	}
-	if got := strings.Join(strings.Fields(found[0].Text), " "); !strings.Contains(got, "about the determinant, runs on to the next page and ends there.") {
-		t.Errorf("the Passage does not hold the whole sentence: %q", got)
-	}
-	if l := found[0].Location; l == nil || l.First != 1 || l.Last != 2 {
-		t.Errorf("the Passage's location is %+v, want pages 1 to 2", found[0].Location)
-	}
-	// And what it took from the second page is in no other Passage.
-	if twice := holding(s.search("notes", "ends there", 5), "ends there"); len(twice) != 1 {
-		t.Errorf("%d Passages hold the end of the sentence, want one", len(twice))
+	for word, page := range map[string]int{"determinant": 1, "ends there": 2} {
+		found := holding(s.search("notes", word, 5), word)
+		if len(found) != 1 {
+			t.Fatalf("%d Passages hold %q, want one: %+v", len(found), word, found)
+		}
+		if l := found[0].Location; l == nil || l.First != page || l.Last != page {
+			t.Errorf("the Passage that holds %q is on %+v, want page %d alone", word, found[0].Location, page)
+		}
 	}
 }
 

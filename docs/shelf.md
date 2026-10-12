@@ -81,11 +81,18 @@ Three more things to know about what comes out:
 
 - **A Passage is the Source's own text**, about 1,500 characters of it, ending where a
   paragraph or a sentence does. Shelf writes no word of its own into one. It does tidy what
-  a PDF holds: a word divided at the end of a line is joined, a ligature becomes its
-  letters, and characters that show nothing are dropped.
-- **A Passage keeps to one page.** The exception is a sentence that runs over the end of a
-  page: the Passage it begins in holds all of it, and is on both pages, so that a quote of
-  the sentence can be checked.
+  a PDF holds: a ligature becomes its letters, characters that show nothing are dropped,
+  and a word divided at the end of a line is put together again. Whether such a word is
+  one word, `solu-tion`, or a pair that keeps its hyphen, `well-known`, the page does not
+  say, so Shelf reads it from the book's own words: it is joined when the book holds the
+  joined word elsewhere, keeps its hyphen when the book writes the pair with one or holds
+  both halves as words, and is joined otherwise. A rare pair that the book writes once, at
+  the end of a line, can so come out as one word.
+- **A Passage keeps to one page**, always. A sentence that runs over the end of a page is
+  in two Passages, one on each page: quote the part that is on one page, or record that
+  Evidence without a Passage. A printed book's running header, the chapter's title and the
+  page number at the top of each page, is part of the page's text, and begins its first
+  Passage.
 - **Formulas come out as the PDF holds them**, which is often not as they look: a book
   typeset without a table of its symbols gives letters and odd characters where the page
   shows a sum. Quote the words around a formula, or record that Evidence without a Passage.
@@ -96,6 +103,10 @@ Shelf finds Passages by their words (SQLite's full-text index, ranked by BM25). 
 words to look for, and any of them is enough: the Passages that hold more of them, and
 rarer ones, come first. Words match without their case and their accents, and by their
 English stem, so `eliminating` finds `elimination`. Nothing in a query is an operator.
+A word is letters and numbers together, the small ones too, so `H₂O` and `m²` are words
+and are found as they are written. **Text written without spaces between words, as
+Chinese and Japanese are, cannot be searched by word**: a whole run of such text is one
+word to the index.
 
 Searching reads the index and never a Source: a book that was moved away is still found,
 and a search is answered while another book is being indexed.

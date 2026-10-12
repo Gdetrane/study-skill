@@ -59,6 +59,13 @@ func TestTheInstallScript(t *testing.T) {
 		// installed starts the study-shelf beside it, and they speak the
 		// contract.
 		in.wantShelfChecked(dest)
+		// And the script says how: nothing else tells a learner that Shelf
+		// is there to be registered.
+		for _, want := range []string{"knowledge-base add shelf -- \"" + dest + "-shelf\"", "knowledge-base check shelf"} {
+			if !strings.Contains(out, want) {
+				t.Errorf("install.sh does not print %q", want)
+			}
+		}
 		page, err := os.ReadFile(filepath.Join(in.home, ".local", "share", "man", "man1", "study.1.gz"))
 		if err != nil || !bytes.Equal(page, built.manPage) {
 			t.Errorf("the man page was not installed from the archive: %v", err)
@@ -302,18 +309,15 @@ func TestTheInstallScript(t *testing.T) {
 		}
 	})
 
-	t.Run("installs study alone from a release that holds no study-shelf", func(t *testing.T) {
-		// A release from before Shelf, named with STUDY_VERSION.
-		old := newRelease(t, []byte(standInStudy), nil, "v0.0.0-standin")
-		in := newInstall(t, old.folder(t, host))
-		out := in.mustRun()
-		dest := filepath.Join(in.home, ".local", "bin", "study")
-		in.wantStudy(dest, old.version)
-		if !strings.Contains(out, "This release holds no study-shelf") {
-			t.Errorf("the output does not say that Shelf was not installed:\n%s", out)
+	t.Run("installs nothing from an archive that holds no study-shelf", func(t *testing.T) {
+		// Every release holds both: an archive with study alone is not one.
+		half := newRelease(t, []byte(standInStudy), nil, "v0.0.0-standin")
+		in := newInstall(t, half.folder(t, host))
+		if out := in.mustFail(); !strings.Contains(out, "holds no study-shelf") || !strings.Contains(out, "nothing was installed") {
+			t.Errorf("the output does not say that the archive holds no study-shelf:\n%s", out)
 		}
-		if got := names(t, filepath.Dir(dest)); !slices.Equal(got, []string{"study"}) {
-			t.Errorf("the install folder holds %v, want study alone", got)
+		if got := names(t, filepath.Join(in.home, ".local", "bin")); len(got) != 0 {
+			t.Errorf("the install folder holds %v, want nothing", got)
 		}
 	})
 

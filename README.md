@@ -38,7 +38,7 @@ You can also download an archive, a `.deb` or an `.rpm` from the
 1.26 or later:
 
 ```bash
-go install github.com/mordor-forge/lamplight/v2/cmd/study@latest
+go install github.com/mordor-forge/lamplight/v2/cmd/study@latest github.com/mordor-forge/lamplight/v2/cmd/study-shelf@latest
 ```
 
 Then make Lamplight available to your agents:
@@ -48,6 +48,16 @@ study setup                # installs the skill and registers `study mcp` with C
 study completion install   # shell completions, if you did not use the install script
 study doctor               # checks that everything is in place
 ```
+
+To have your books and web pages indexed and searched, register Shelf, the Knowledge base
+plugin that is installed beside `study`, once on each computer:
+
+```bash
+study knowledge-base add shelf -- ~/.local/bin/study-shelf
+study knowledge-base check shelf
+```
+
+[docs/shelf.md](docs/shelf.md) says what Shelf reads, what it keeps and where.
 
 `study setup --check` finds a stale install, and `study setup --remove` undoes exactly what
 setup did. Claude Code users can install the plugin instead; other agents can run

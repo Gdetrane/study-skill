@@ -15,9 +15,10 @@ const (
 	// Passage's text, in any script.
 	MinSize = 200
 	MaxSize = 5000
-	// carryMost is how much of the next page a Passage may take to finish
-	// the sentence its page ends in.
-	carryMost = 400
+	// loneNumber is how many bytes a stretch without a letter must hold to
+	// be a Passage: fewer are a page number, with whatever is drawn around
+	// it.
+	loneNumber = 16
 )
 
 // Page is the text of one page of a Source, already cleaned (Clean). Number
@@ -29,59 +30,45 @@ type Page struct {
 }
 
 // Passage is one stretch of a Source's text. First and Last are the pages it
-// is on, and both are 0 for a Source that has none.
+// is on, which are one page, and both are 0 for a Source that has none.
 type Passage struct {
 	Text        string
 	First, Last int
 }
 
 // Longest is the most characters a Passage cut to size can hold: a third
-// over the size, so that no short tail is left on its own, and the end of a
-// sentence carried over from the next page.
-func Longest(size int) int { return bound(size) + bound(size)/3 + 1 + carryMost }
+// over the size, so that no short tail is left on its own.
+func Longest(size int) int { return bound(size) + bound(size)/3 + 1 }
 
 func bound(size int) int { return min(max(size, MinSize), MaxSize) }
 
 // Passages cuts pages into Passages of about size characters, in the order
 // of the text. Every word of every page is in exactly one Passage.
 //
-// A Passage keeps to one page, so that its location is one a reader can turn
-// to. The one exception is a sentence that runs over the end of a page: the
-// last Passage of that page takes the rest of the sentence from the next
-// one, and is on both. Evidence quotes a sentence, and a quote can only be
-// checked against a Passage that holds all of it.
+// A Passage keeps to one page, always, so that its location is one a reader
+// can turn to. A sentence that runs over the end of a page is in two
+// Passages, the last of the one page and the first of the next. Taking the
+// rest of such a sentence into the Passage it begins in was tried, so that a
+// quote of it could be checked against one Passage, and did not do that: a
+// printed book begins each page with a running header, which then stood in
+// the middle of the sentence, and a page that ends in a heading or a table
+// row looked like an unfinished sentence too. Whoever checks a quote that
+// runs from one Passage into the next reads the two together.
 //
 // Within a page a Passage ends where the text does, in this order of
 // preference: between two paragraphs, at the end of a sentence, at the end
-// of a line, between two words.
+// of a line, between two words. A few characters without a letter among
+// them, a page number alone on its page, are no Passage: there is nothing
+// in them to search for or to quote. A table of numbers is one.
 func Passages(pages []Page, size int) []Passage {
 	size = bound(size)
 	var out []Passage
-	skip := 0 // how many characters of this page the page before it took
-	for i, page := range pages {
-		text := []rune(page.Text)
-		text, skip = text[min(skip, len(text)):], 0
-		first := len(out)
-		for _, piece := range split(text, size) {
-			out = append(out, Passage{Text: piece, First: page.Number, Last: page.Number})
-		}
-		if len(out) == first || page.Number == 0 || i+1 >= len(pages) || pages[i+1].Number != page.Number+1 {
-			continue
-		}
-		// The page ends in the middle of a sentence when its last line of
-		// words does not end one. A line without a letter, a page number at
-		// the foot of the page, says nothing either way.
-		last := &out[len(out)-1]
-		if endsSentence(last.Text) {
-			continue
-		}
-		next := []rune(pages[i+1].Text)
-		if n := sentenceEnd(next, carryMost); n > 0 {
-			if rest := strings.TrimSpace(string(next[:n])); rest != "" {
-				last.Text += "\n" + rest
-				last.Last = page.Number + 1
-				skip = n
+	for _, page := range pages {
+		for _, piece := range split([]rune(page.Text), size) {
+			if len(piece) < loneNumber && !strings.ContainsFunc(piece, unicode.IsLetter) {
+				continue
 			}
+			out = append(out, Passage{Text: piece, First: page.Number, Last: page.Number})
 		}
 	}
 	return out
@@ -160,30 +147,6 @@ func sentenceEndsAt(text []rune, i int) int {
 		return 0 // 3.14, or an address
 	}
 	return end
-}
-
-// sentenceEnd returns where the first sentence of text ends, when that is
-// within most characters, and 0 otherwise.
-func sentenceEnd(text []rune, most int) int {
-	for i := 0; i < len(text) && i < most; i++ {
-		if end := sentenceEndsAt(text, i); end > 0 && end <= most {
-			return end
-		}
-	}
-	return 0
-}
-
-// endsSentence reports whether text ends where a sentence does. Lines
-// without a letter at the end of it are passed over.
-func endsSentence(text string) bool {
-	lines := strings.Split(text, "\n")
-	for len(lines) > 1 && !strings.ContainsFunc(lines[len(lines)-1], unicode.IsLetter) {
-		lines = lines[:len(lines)-1]
-	}
-	last := []rune(strings.TrimRight(strings.TrimSpace(lines[len(lines)-1]), closers))
-	// A colon or a semicolon ends what the page had to say as well: what
-	// follows is a list or a formula, not the rest of a sentence.
-	return len(last) == 0 || strings.ContainsRune(stops+":;", last[len(last)-1])
 }
 
 func trim(text []rune) []rune {

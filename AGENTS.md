@@ -147,8 +147,12 @@ GOOS=darwin go vet ./...            # macOS is supported too
     in one transaction (`Collection.Replace`). A Passage's id is made of its Source, the
     content's hash, its place and its text (`index.PassageID`), so it never comes to name
     another text: do not change how it is made.
-  - A Passage is the Source's own text. `cut.Clean` drops what is no text and writes no
-    word; nothing summarises or rewrites.
+  - A Passage is the Source's own text, on one page. `cut.Clean` drops what is no text and
+    writes no word; nothing summarises or rewrites. A word divided at the end of a line is
+    joined or keeps its hyphen as the Source's own words say (`cut.WordsOf`).
+  - Shelf fetches no page from the computer it runs on unless it was started with
+    `--allow-loopback`, and none from a link-local address, checked as the connection is
+    made (`web.Fetcher`): the agent chooses which addresses are Sources.
   - A PDF is read by PDFium inside wazero (`pdf.Read`), which can open no file and reach
     no network. Never read a Source with a program found on the `PATH`.
   - A key, when Shelf comes to need one, is read from a settings file of its own, never

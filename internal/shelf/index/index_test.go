@@ -250,6 +250,35 @@ func TestAQueryIsWordsAndNothingElse(t *testing.T) {
 	}
 }
 
+// A query is cut into words where the index cuts a Passage into them: a word
+// the index holds can be asked for, however it is typed.
+func TestAQueryFindsTheWordThePassageHolds(t *testing.T) {
+	f, _ := folder(t)
+	c := collection(t, f, "words")
+	source, passages := book("book.a1", "a",
+		"Le mathématicien Évariste Galois est mort à vingt ans.",
+		"Water is H₂O, and the plants take up CO₂ from the air.",
+		"The field covers 40 m² and the function is x² + 1.",
+		"Half of it, ½, is left over.")
+	replace(t, c, source, passages)
+	for query, want := range map[string]int{
+		"mathématicien":       1, // as one character
+		"mathe\u0301maticien": 1, // as a letter and a mark
+		"mathematicien":       1,
+		"E\u0301variste":      1,
+		"H₂O":                 1,
+		"CO₂":                 1,
+		"m²":                  1,
+		"x²":                  1,
+		"½":                   1,
+		"H2O":                 0, // another word than the page holds
+	} {
+		if got := search(t, c, query, 50); len(got) != want {
+			t.Errorf("Search(%q) found %d Passages, want %d: %q", query, len(got), want, texts(got))
+		}
+	}
+}
+
 // A Passage's id names its text for good: the same on every computer and
 // after every restart, and never the id of another text.
 func TestAPassagesIDNamesOneText(t *testing.T) {

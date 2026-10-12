@@ -10,6 +10,10 @@ import (
 	"testing"
 )
 
+// InstalledEnv is the environment variable that names a study-shelf to test
+// in place of one built from this checkout.
+const InstalledEnv = "LAMPLIGHT_TEST_SHELF"
+
 // built is the study-shelf built once for a test binary, and gives its path to
 // every test that asks. A package whose tests ask calls Main from TestMain.
 var built struct {
@@ -49,8 +53,18 @@ func Remove() {
 // of it compiles the PDF reader, which the detector makes ten times slower.
 // Shelf's own code runs under the detector in the tests that call it in
 // their own process.
+//
+// When LAMPLIGHT_TEST_SHELF names a program, that one is tested instead, and
+// nothing is built: CI sets it to the study-shelf a release's archive holds,
+// to hold the program a learner would install to what the tests ask.
 func Shelf(t testing.TB) string {
 	t.Helper()
+	if given := os.Getenv(InstalledEnv); given != "" {
+		if info, err := os.Stat(given); err != nil || !info.Mode().IsRegular() {
+			t.Fatalf("%s names %s, which is no program to test (%v)", InstalledEnv, given, err)
+		}
+		return given
+	}
 	if testing.Short() {
 		t.Skip("builds the study-shelf binary")
 	}

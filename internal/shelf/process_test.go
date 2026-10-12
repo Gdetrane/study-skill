@@ -274,10 +274,8 @@ func TestAGlanceSeesWhatAnotherStudyShelfIsIndexing(t *testing.T) {
 
 	indexer, command := run(t, computer)
 	indexer.indexed("glanced", earlier)
-	// New content of the book, and a Source that was never indexed, are
-	// both asked for: the second waits for the reader the first has.
+	// New content of the book is asked for.
 	indexer.index("glanced", later)
-	indexer.index("glanced", never)
 
 	// Glances, each a study-shelf of its own, until one has seen the work
 	// say how far it is.
@@ -297,9 +295,6 @@ func TestAGlanceSeesWhatAnotherStudyShelfIsIndexing(t *testing.T) {
 		if found := glance.search("glanced", "spectra", 5); len(found) != 1 {
 			t.Fatalf("while another study-shelf indexes new content, a glance finds the earlier content %d times", len(found))
 		}
-		if other, listed := status[never.ID]; !listed || other.State != plugincontract.StateIndexing || other.Hash != "" {
-			t.Fatalf("a glance says %+v (listed: %v) of a Source another study-shelf is about to index", other, listed)
-		}
 		// It is not this one's to stop.
 		if glance.cancel("glanced", earlier.ID) {
 			t.Fatal("a study-shelf says it stopped what another is indexing")
@@ -313,6 +308,18 @@ func TestAGlanceSeesWhatAnotherStudyShelfIsIndexing(t *testing.T) {
 	if *seen.Progress <= 0 || *seen.Progress >= 1 {
 		t.Errorf("a glance says the work is %v done", *seen.Progress)
 	}
+	// A Source that was never indexed is asked for while the book is being
+	// read: it waits for the one reader, and a glance says it is being
+	// indexed too, with no hash, since nothing of it is found yet. It is
+	// asked for only now, with the reader taken: asked for at once, it
+	// could be the one to get the reader, and be indexed before a glance
+	// looked.
+	indexer.index("glanced", never)
+	waiting, stop := run(t, computer)
+	if other, listed := waiting.status("glanced")[never.ID]; !listed || other.State != plugincontract.StateIndexing || other.Hash != "" {
+		t.Fatalf("a glance says %+v (listed: %v) of a Source another study-shelf is about to index", other, listed)
+	}
+	stop.Stop()
 
 	// The one that indexes is killed. Once it is gone, no Source is being
 	// indexed.
