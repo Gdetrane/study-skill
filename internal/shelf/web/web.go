@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -78,9 +79,33 @@ type Fetcher struct {
 	agent  string
 	// transport is what requests go out through. A test gives its own.
 	transport http.RoundTripper
-	// proxies are the proxies requests went out through so far, as host and
-	// port: a connection to one of them is not one to a page.
-	proxies sync.Map
+	// proxyFor says which proxy a request goes out through, if any: what
+	// the environment says, unless a test says otherwise.
+	proxyFor func(*http.Request) (*url.URL, error)
+}
+
+// hop is the request a fetch is making now, the page's or one it was
+// redirected to, and the proxy that request goes out through, as host and
+// port, or nothing when it goes out directly. A fetch carries one in its
+// context: the connection that is made for a request is to a page unless it
+// is to that request's own proxy.
+type hop struct {
+	mu    sync.Mutex
+	proxy string
+}
+
+type hopKey struct{}
+
+func (h *hop) through(proxy string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.proxy = proxy
+}
+
+func (h *hop) isProxy(address string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.proxy != "" && h.proxy == address
 }
 
 // Where Shelf fetches no page from.
@@ -94,7 +119,9 @@ type Fetcher struct {
 //   - The link-local addresses, 169.254.0.0/16 and fe80::/10: no web page a
 //     learner studies from lives there, and a cloud's machines hand their
 //     credentials to whoever asks at 169.254.169.254. They are refused
-//     always, with the unspecified address, which leads to this computer.
+//     always, with the unspecified address, which leads to this computer,
+//     and with the addresses where a cloud does the same outside the
+//     link-local range (metadata).
 //   - This computer itself, 127.0.0.0/8, ::1 and localhost: whatever
 //     listens there trusts whoever reaches it, since nobody else can. A
 //     learner who does study from a page they serve to themselves starts
@@ -120,16 +147,29 @@ func (r *refusal) problem() *Problem {
 		return &Problem{Reason: r.host + " is this computer itself: Shelf fetches no page from it, since whatever listens there " +
 			"trusts whoever reaches it. If you do serve the page to yourself, register Shelf with study-shelf --allow-loopback"}
 	}
-	return &Problem{Reason: r.host + " is an address of the link this computer is plugged into, where no web page is served " +
-		"and where a cloud hands out its machines' credentials: Shelf fetches nothing from it"}
+	return &Problem{Reason: r.host + " is an address where no web page to study from is served, and where a cloud hands out " +
+		"its machines' credentials: Shelf fetches nothing from it"}
+}
+
+// metadata are the addresses outside the link-local range at which a cloud
+// hands a machine its credentials and its configuration: Alibaba Cloud's
+// metadata service, which is in the range carriers share, Amazon's over
+// IPv6, which is in the range of private IPv6 networks, and Azure's
+// WireServer, which has a public address that only its machines reach.
+// Their ranges hold learners' own networks, so the addresses are named.
+var metadata = []netip.Addr{
+	netip.MustParseAddr("100.100.100.200"),
+	netip.MustParseAddr("fd00:ec2::254"),
+	netip.MustParseAddr("168.63.129.16"),
 }
 
 // refused says why Shelf fetches nothing from an address, or nil. host is
 // what is said of it.
 func (f *Fetcher) refused(host string, addr netip.Addr) *refusal {
-	addr = addr.Unmap()
+	addr = addr.Unmap().WithZone("")
 	switch {
-	case addr.IsLinkLocalUnicast(), addr.IsLinkLocalMulticast(), addr.IsInterfaceLocalMulticast(), addr.IsMulticast(), addr.IsUnspecified():
+	case addr.IsLinkLocalUnicast(), addr.IsLinkLocalMulticast(), addr.IsInterfaceLocalMulticast(), addr.IsMulticast(), addr.IsUnspecified(),
+		slices.Contains(metadata, addr):
 		return &refusal{host: host}
 	case addr.IsLoopback() && !f.limits.Loopback:
 		return &refusal{host: host, loopback: true}
@@ -153,7 +193,7 @@ func (f *Fetcher) refusedHost(u *url.URL) *refusal {
 // NewFetcher returns a Fetcher that keeps to limits and calls itself agent
 // to the servers it asks.
 func NewFetcher(limits Limits, agent string) *Fetcher {
-	f := &Fetcher{limits: limits, agent: agent}
+	f := &Fetcher{limits: limits, agent: agent, proxyFor: http.ProxyFromEnvironment}
 	// The transport is Go's own, with its defaults: it verifies
 	// certificates, and takes a proxy from the environment when one is set
 	// there. study gives a plugin no such variable, so a learner behind a
@@ -162,20 +202,27 @@ func NewFetcher(limits Limits, agent string) *Fetcher {
 	transport.MaxResponseHeaderBytes = 1 << 20
 	// One page from one server: nothing is kept open for a next request.
 	transport.DisableKeepAlives = true
+	// Which proxy a request goes out through, if any, is said for that
+	// request alone (hop): a proxy that one request used is no address
+	// every later request may connect to unchecked.
 	transport.Proxy = func(req *http.Request) (*url.URL, error) {
-		proxy, err := http.ProxyFromEnvironment(req)
-		if proxy != nil {
-			f.proxies.Store(hostPort(proxy), true)
+		proxy, err := f.proxyFor(req)
+		if h, ok := req.Context().Value(hopKey{}).(*hop); ok {
+			through := ""
+			if proxy != nil && err == nil {
+				through = hostPort(proxy)
+			}
+			h.through(through)
 		}
 		return proxy, err
 	}
-	// Every connection but one to the learner's proxy is to a page, and is
-	// refused where Shelf fetches none from. The proxy is the learner's
-	// own choice, wherever it listens.
+	// Every connection but the one to the proxy of the request it is made
+	// for is to a page, and is refused where Shelf fetches none from. The
+	// proxy is the learner's own choice, wherever it listens.
 	plain := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}
 	checked := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second, Control: f.refuseDial}
 	transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
-		if _, proxy := f.proxies.Load(address); proxy {
+		if h, ok := ctx.Value(hopKey{}).(*hop); ok && h.isProxy(address) {
 			return plain.DialContext(ctx, network, address)
 		}
 		return checked.DialContext(ctx, network, address)
@@ -223,6 +270,9 @@ func (f *Fetcher) Fetch(ctx context.Context, address string) (Page, error) {
 	}
 	ctx, cancel := context.WithTimeout(ctx, f.limits.Timeout)
 	defer cancel()
+	// One request at a time, each a fresh connection: the proxy of the
+	// request under way is the only address this fetch connects to unchecked.
+	ctx = context.WithValue(ctx, hopKey{}, &hop{})
 	client := &http.Client{
 		Transport: f.transport,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {

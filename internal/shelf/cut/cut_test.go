@@ -250,6 +250,12 @@ func TestADividedWordIsJoinedOrKeepsItsHyphenAsTheSourceWritesIt(t *testing.T) {
 			"The shortest-path problem. Shortest" + mark + "path trees.", "The shortest-path problem. Shortest-path trees."},
 		"a half that is itself divided elsewhere is no word": {
 			"The algo" + mark + "rithm and the rithm of an algo" + mark + "rithm.", "The algorithm and the rithm of an algorithm."},
+		"a pair divided before a capital, which the Source writes with a hyphen": {
+			"A non-Euclidean space. In non" + mark + "Euclidean geometry.", "A non-Euclidean space. In non-Euclidean geometry."},
+		"a word in capitals that the Source holds whole": {
+			"NASA launched it. The NA" + mark + "SA budget.", "NASA launched it. The NASA budget."},
+		"before a capital, with nothing in the Source to say what it is": {
+			"The sum" + mark + "X of a formula.", "The sum X of a formula."},
 		"a word set with a ligature": {
 			"To con\ufb01gure it. A con" + mark + "\ufb01gured system and a configured one.", "To configure it. A configured system and a configured one."},
 	} {

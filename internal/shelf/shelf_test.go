@@ -801,3 +801,34 @@ func TestShelfSaysWhatItIs(t *testing.T) {
 		t.Errorf("VersionString() = %q, want the release's", got)
 	}
 }
+
+// A collection holds no more Sources than a status can list. One more would
+// be indexed and never said to be: study follows a Source by asking status,
+// and would take it for stopped. So a Source the index holds nothing of is
+// refused when the collection is full, and what it holds can still be
+// indexed again.
+func TestAFullCollectionTakesNoFurtherSource(t *testing.T) {
+	_, s := startWith(t, t.TempDir(), shelf.Settings{MostSources: 2})
+	first := file(t, "first.a1", pdf([]string{"The first book speaks of pivots."}))
+	scan := file(t, "scan.b2", shelftest.PDF{Pages: [][]string{{"A page that is a picture."}}, Pictures: true}.Bytes())
+	s.indexed("full", first)
+	// A Source whose indexing failed is one the collection holds too.
+	s.fails("full", scan, "no text layer")
+
+	third := file(t, "zebra.c3", pdf([]string{"A third book, whose id comes last."}))
+	var out plugincontract.IndexResult
+	refusal := s.call(plugincontract.ToolIndex, plugincontract.IndexInput{Collection: "full", Source: third}, &out)
+	if refusal == nil || refusal.Code != plugincontract.CodeUnsupported || !strings.Contains(refusal.Message, "holds 2 Sources") {
+		t.Fatalf("index of a third Source in a collection that holds two gave %+v, %+v; want it refused as unsupported", out, refusal)
+	}
+	if status := s.status("full"); len(status) != 2 || status[first.ID].State != plugincontract.StateIndexed || status[scan.ID].State != plugincontract.StateFailed {
+		t.Errorf("status of the full collection = %+v; want the two it holds, as they were", status)
+	}
+	if found := s.search("full", "third", 5); len(found) != 0 {
+		t.Errorf("a search finds %d Passages of the Source that was refused", len(found))
+	}
+	// What it holds is still indexed again, and another collection is not
+	// full.
+	s.indexed("full", first)
+	s.indexed("other", third)
+}

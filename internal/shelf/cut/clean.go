@@ -114,16 +114,29 @@ func (w *Words) one(left, right string) bool {
 	if w == nil {
 		return true
 	}
+	if one, known := w.written(left, right); known {
+		return one
+	}
+	_, isWord := w.words[strings.ToLower(left)]
+	_, isWordToo := w.words[strings.ToLower(right)]
+	return !(isWord && isWordToo)
+}
+
+// written reports what the Source itself shows two halves to be, when it
+// shows it: one word, since it holds the joined word elsewhere, or a pair,
+// since it writes the two with a hyphen elsewhere.
+func (w *Words) written(left, right string) (one, known bool) {
+	if w == nil {
+		return false, false
+	}
 	left, right = strings.ToLower(left), strings.ToLower(right)
 	if _, held := w.words[left+right]; held {
-		return true
+		return true, true
 	}
 	if _, hyphenated := w.pairs[left+"-"+right]; hyphenated {
-		return false
+		return false, true
 	}
-	_, isWord := w.words[left]
-	_, isWordToo := w.words[right]
-	return !(isWord && isWordToo)
+	return false, false
 }
 
 // Clean tidies text as a reader extracted it, without rewriting it. words is
@@ -156,8 +169,11 @@ func Clean(text string, words *Words) string {
 		case isDivision(r):
 			// A division when it stands inside a word, as between "solu"
 			// and "tion"; anywhere else it is a character of a formula's
-			// font.
-			if i > 0 && i+1 < len(runes) && unicode.IsLetter(runes[i-1]) && unicode.IsLower(runes[i+1]) {
+			// font. Before a small letter it is taken for a division
+			// always. Before a capital it is one only when the Source's own
+			// words show it: "non-Euclidean" and "NASA" are divided so, and
+			// so are two symbols of a formula that happen to be letters.
+			if i > 0 && i+1 < len(runes) && unicode.IsLetter(runes[i-1]) && unicode.IsLetter(runes[i+1]) {
 				left, right := i, i+1
 				for left > 0 && unicode.IsLetter(runes[left-1]) {
 					left--
@@ -165,10 +181,17 @@ func Clean(text string, words *Words) string {
 				for right < len(runes) && unicode.IsLetter(runes[right]) {
 					right++
 				}
-				if !words.one(plain(string(runes[left:i])), plain(string(runes[i+1:right]))) {
-					b.WriteByte('-')
+				before, after := plain(string(runes[left:i])), plain(string(runes[i+1:right]))
+				one, known := words.written(before, after)
+				if unicode.IsLower(runes[i+1]) {
+					one, known = words.one(before, after), true
 				}
-				continue
+				if known {
+					if !one {
+						b.WriteByte('-')
+					}
+					continue
+				}
 			}
 			b.WriteByte(' ')
 		case r == '\n' || r == '\t':

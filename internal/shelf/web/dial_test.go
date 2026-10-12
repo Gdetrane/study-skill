@@ -3,11 +3,11 @@ package web
 import (
 	"context"
 	"errors"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"testing"
+	"time"
 )
 
 // An address is refused as the connection to it is made, with the number a
@@ -27,6 +27,10 @@ func TestAConnectionIsRefusedByWhereItLeads(t *testing.T) {
 		"0.0.0.0:80":                  {true, true},
 		"[::]:80":                     {true, true},
 		"224.0.0.1:80":                {true, true},
+		// Where a cloud hands out credentials outside the link-local range.
+		"100.100.100.200:80": {true, true},
+		"[fd00:ec2::254]:80": {true, true},
+		"168.63.129.16:80":   {true, true},
 		// The learner's own network, and the rest of the world.
 		"10.0.0.7:80":       {false, false},
 		"192.168.1.10:8080": {false, false},
@@ -74,36 +78,60 @@ func TestARefusedConnectionIsAReasonAndNothingIsSent(t *testing.T) {
 	}
 }
 
-// The learner's proxy is their own choice, wherever it listens: a
-// connection to it is not one to a page.
-func TestAConnectionToTheLearnersProxyIsNotRefused(t *testing.T) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+// The learner's proxy is their own choice, wherever it listens: the
+// connection a request makes to its own proxy is not one to a page. That
+// holds for the request that goes through the proxy and for no other: the
+// same address, asked for as a page a moment later, is refused like any
+// other on this computer.
+func TestAConnectionToARequestsOwnProxyIsNotRefused(t *testing.T) {
+	asked := map[string]int{}
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		asked[r.URL.String()]++
+		w.Header().Set("Content-Type", "text/plain")
+		_, _ = w.Write([]byte("a page the proxy fetched for " + r.URL.Host))
+	}))
+	defer proxy.Close()
+	through, err := url.Parse(proxy.URL)
 	if err != nil {
-		t.Skipf("no loopback interface to listen on: %v", err)
+		t.Fatal(err)
 	}
-	defer listener.Close()
-	go func() {
-		for {
-			conn, err := listener.Accept()
-			if err != nil {
-				return
-			}
-			_ = conn.Close()
+	f := NewFetcher(Limits{Timeout: 5 * time.Second, MaxBytes: 1 << 20, MaxRedirects: 3}, "study-shelf/test")
+	// As with HTTPS_PROXY alone in the environment would be for https: here
+	// one host's requests go through the proxy, and no other's.
+	f.proxyFor = func(req *http.Request) (*url.URL, error) {
+		if req.URL.Hostname() == "books.example" {
+			return through, nil
 		}
-	}()
-	f := NewFetcher(Limits{}, "study-shelf/test")
-	dial := f.transport.(*http.Transport).DialContext
-	if conn, err := dial(context.Background(), "tcp", listener.Addr().String()); err == nil {
-		_ = conn.Close()
-		t.Fatal("a connection to this computer was made by a Shelf that fetches nothing from it")
+		return nil, nil
 	}
-	proxy, _ := url.Parse("http://" + listener.Addr().String())
-	f.proxies.Store(hostPort(proxy), true)
-	conn, err := dial(context.Background(), "tcp", listener.Addr().String())
+	page, err := f.Fetch(context.Background(), "http://books.example/chapter-1")
+	if err != nil || page.Text != "a page the proxy fetched for books.example" || asked["http://books.example/chapter-1"] != 1 {
+		t.Fatalf("a fetch through a proxy on this computer gave %+v, %v (the proxy was asked %v)", page, err, asked)
+	}
+
+	// The proxy's own address as a page, asked through the same Fetcher's
+	// transport after the fetch above, as a name that leads there would be:
+	// past the look at how the address is written, so that only the
+	// connection can refuse it.
+	client := &http.Client{Transport: f.transport}
+	ctx := context.WithValue(context.Background(), hopKey{}, &hop{})
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, proxy.URL+"/admin", nil)
 	if err != nil {
-		t.Fatalf("a connection to the learner's proxy on this computer: %v", err)
+		t.Fatal(err)
 	}
-	_ = conn.Close()
+	_, err = client.Do(req)
+	var r *refusal
+	if !errors.As(err, &r) || !r.loopback {
+		t.Errorf("a request for the proxy's own address as a page gave %v; want it refused as the connection is made", err)
+	}
+	if n := asked["/admin"]; n != 0 {
+		t.Errorf("the proxy was asked for /admin %d times, as a page", n)
+	}
+	// And by a Fetcher's own Fetch, which refuses the number before that.
+	if _, err := f.Fetch(context.Background(), proxy.URL+"/admin"); err == nil {
+		t.Error("the proxy's own address was fetched as a page")
+	}
+
 	for address, want := range map[string]string{"http://proxy.example": "proxy.example:80", "https://proxy.example": "proxy.example:443",
 		"http://proxy.example:3128": "proxy.example:3128", "socks5://[::1]": "[::1]:1080"} {
 		u, _ := url.Parse(address)

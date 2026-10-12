@@ -139,10 +139,13 @@ into a temporary home. There it checks that the released `study` links nothing o
 registers the `study-shelf` that was installed and has `study knowledge-base check` start
 it. It needs no secrets and is not a required check.
 
-The "Shelf and the snapshot on macOS" job takes the archives that job built, installs the
-macOS one with `install.sh` on a Mac, has `study` check `study-shelf` there, and runs
-Shelf's tests: the PDF reader is compiled to machine code on the computer it runs on, which
-a build on Linux cannot show to work on a Mac. It is not a required check either.
+The two "Shelf and the snapshot on …" jobs, one on macOS and one on Linux on arm64, take
+the archives that job built, install the one for their platform with `install.sh`, have
+`study` check `study-shelf` there, run Shelf's tests, and run the conformance suite
+against the `study-shelf` that was installed, with PDFs: the PDF reader is compiled to
+machine code on the computer it runs on, which a build on another kind of computer cannot
+show to work. The snapshot job does the same for Linux on amd64. Neither is a required
+check. The programs for macOS on Intel are built and run nowhere.
 
 The "Lamplight core" job, which is required, runs `internal/e2e`'s test of `install.sh`
 against a local folder of release files that holds both programs: a good install, after

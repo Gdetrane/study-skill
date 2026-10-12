@@ -144,6 +144,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 	// returns then. A signal ends it too.
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
 	err = plugin.Server().Run(ctx, &mcp.StdioTransport{})
+	// Asked before stop, which ends the context itself: whether a signal
+	// ended the session, or something that is to be said.
+	signalled := ctx.Err() != nil
 	stop()
 	// Whatever was being indexed is stopped, and nothing is waited for
 	// longer than study waits for a plugin, which after a glance is a
@@ -158,9 +161,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 	case <-closed:
 	case <-time.After(shelf.StopsWithin + 50*time.Millisecond):
 	}
-	if err != nil && ctx.Err() == nil && !errors.Is(err, io.EOF) {
+	if err != nil && !signalled && !errors.Is(err, io.EOF) {
 		// Last on standard error, where study looks for the reason.
 		fmt.Fprintf(stderr, "%s: the session ended: %v\n", shelf.Name, err)
+		return 1
 	}
 	return 0
 }

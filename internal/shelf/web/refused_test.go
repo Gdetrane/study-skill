@@ -66,6 +66,10 @@ func TestNothingIsFetchedFromTheLinkLocalAddresses(t *testing.T) {
 		"http://[::ffff:169.254.169.254]/",
 		"http://0.0.0.0/",
 		"http://[::]/",
+		// Where a cloud does the same outside the link-local range.
+		"http://100.100.100.200/latest/meta-data/ram/security-credentials/role",
+		"http://[fd00:ec2::254]/latest/meta-data/iam/security-credentials/role",
+		"http://168.63.129.16/machine?comp=goalstate",
 	} {
 		for _, l := range []web.Limits{strict, limits} {
 			_, err := web.NewFetcher(l, "study-shelf/test").Fetch(context.Background(), address)

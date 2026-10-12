@@ -86,10 +86,13 @@ for every address it redirects to, and whatever name leads there:
   on.
 - **The link-local addresses**, `169.254.0.0/16` and `fe80::/10`, always. No page to study
   from is served there, and a cloud's machines hand out their credentials at one of them.
+  The three addresses where a cloud does the same outside that range are refused with
+  them: `100.100.100.200`, `fd00:ec2::254` and `168.63.129.16`.
 
 A proxy you set for Shelf (below) is yours to choose, wherever it listens, and it then
 makes the connections: Shelf still refuses an address that is written as one of those
-numbers, and cannot see where a name leads on the proxy's side.
+numbers, and cannot see where a name leads on the proxy's side. The proxy's own address
+is one Shelf connects to only for a request that goes through it, never as a page.
 
 Three more things to know about what comes out:
 
@@ -255,6 +258,8 @@ hundredths of a second, whatever its settings. Indexing a PDF is the work:
 - One file may take 15 minutes and 64 MB of text, and the PDF reader 1 GB of memory. A
   file that needs more fails with the reason. A web page may be 16 MB, take 60 seconds, and
   redirect five times.
+- A Topic's collection holds 10,000 Sources, as many as `study` can be told the state of. A
+  further one is refused with that as the reason.
 
 With an embedding endpoint, most of the time of indexing is the model's:
 
