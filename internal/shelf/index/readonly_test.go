@@ -59,7 +59,7 @@ func TestACollectionIsReadInAFolderThatCannotBeWritten(t *testing.T) {
 	// What would write says why it cannot, and what to do about it.
 	source, passages := book("other.b2", "b", "A page that is not written.")
 	for name, err := range map[string]error{
-		"Replace": c.Replace(ctx, source, passages),
+		"Replace": c.Replace(ctx, source, passages, nil),
 		"Fail":    c.Fail(ctx, source, hash("b"), "the file is not a PDF"),
 		"Begin":   func() error { _, err := c.Begin(ctx, source.ID); return err }(),
 	} {
@@ -111,4 +111,45 @@ func TestAnotherCopysWorkIsSeenFromAFolderThatCannotBeWritten(t *testing.T) {
 	}
 	// The other one ends its work: what it had open, it may still write.
 	stop()
+}
+
+// A file from before vectors, in a folder that cannot be written: it cannot
+// be brought up to date there, and is read as it is all the same.
+func TestAFileFromBeforeVectorsIsReadWhereItCannotBeWritten(t *testing.T) {
+	dir := t.TempDir()
+	old := formatOne(t, dir, "earlier")
+	// As the Shelf that wrote it left it: opened once, and closed.
+	first := reopen(t, dir)
+	if c, err := first.Collection(ctx, "earlier", false); err != nil || c == nil {
+		t.Fatalf("Collection = %v, %v", c, err)
+	}
+	if err := first.Close(); err != nil {
+		t.Fatal(err)
+	}
+	readOnly(t, dir)
+	before := tree(t, dir)
+
+	f := reopen(t, dir)
+	c, err := f.Collection(ctx, "earlier", false)
+	if err != nil || c == nil {
+		t.Fatalf("Collection in a folder that cannot be written = %v, %v", c, err)
+	}
+	if sources, err := c.Sources(ctx); err != nil || len(sources) != 1 || sources[0] != old {
+		t.Errorf("Sources = %+v, %v", sources, err)
+	}
+	if found := search(t, c, "determinants traces", 5); len(found) != 2 {
+		t.Errorf("a search finds %d Passages", len(found))
+	}
+	if found := nearest(t, c, made, along(8, 0, 1), 5); len(found) != 0 {
+		t.Errorf("%d Passages are found by vectors the file does not hold", len(found))
+	}
+	if err := c.Embed(ctx, old.ID, old.Hash, made, axes(2, 8, 0)); err == nil || !strings.Contains(err.Error(), "Shelf may not write in its folder here") {
+		t.Errorf("Embed in a folder that cannot be written: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if after := tree(t, dir); after != before {
+		t.Errorf("reading changed a folder that could not be written.\nbefore:\n%s\nafter:\n%s", before, after)
+	}
 }

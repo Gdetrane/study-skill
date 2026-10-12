@@ -30,6 +30,21 @@ REPO=mordor-forge/study-skill        # bash, zsh; in fish: set REPO mordor-forge
       does (ADR-0011). The work is tracked in the v2.0 milestone, so its issues are in the
       list above until they land.
 
+- [ ] Shelf's Recipes hold against a real EmbeddingGemma 2. No test in CI asks a model:
+      this one does, and runs only when it is given an endpoint's address. Run it once for
+      each Recipe, against a server of the kind the Recipe is for, on a computer of your
+      own ([docs/shelf.md](shelf.md#serving-embeddinggemma-2)):
+
+      ```sh
+      # A server that embeds a text as it is sent, such as llama.cpp's.
+      LAMPLIGHT_TEST_EMBEDDING_ENDPOINT=http://127.0.0.1:8080/v1 \
+          go test ./internal/shelf -run TestTheRecipeAgainstARealEndpoint -v
+      # A server that applies the model's prompts itself, by name.
+      LAMPLIGHT_TEST_EMBEDDING_ENDPOINT=<its address> \
+      LAMPLIGHT_TEST_EMBEDDING_RECIPE=embeddinggemma-2-prompts \
+          go test ./internal/shelf -run TestTheRecipeAgainstARealEndpoint -v
+      ```
+
 - [ ] #34's prerequisites, from `docs/release.md`, are done:
   - the `LICENSE` file at the repository root (MIT), which the archives and packages
     ship;

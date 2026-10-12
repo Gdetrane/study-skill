@@ -1,0 +1,216 @@
+//go:build unix
+
+package e2e
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/mordor-forge/lamplight/v2/internal/core"
+	"github.com/mordor-forge/lamplight/v2/internal/shelf/shelftest"
+)
+
+// The two programs of a release, with an embedding endpoint in Shelf's
+// settings file, as a learner who serves a model has it: study knowledge-base
+// check says that Shelf searches by embeddings, study source index has the
+// book indexed with its vectors, and once the learner names another model
+// in the file, study says of the book that it is found by keyword alone,
+// and why, and study source index puts it right, with --again as without.
+//
+// The endpoint is the test's own, on this computer. Shelf is told of it by
+// the file and by nothing else: study hands a plugin no variable that
+// could.
+func TestABuiltStudyHasTheBuiltShelfEmbedABook(t *testing.T) {
+	study, shelf := buildStudy(t), shelftest.Shelf(t)
+	at := shelftest.NewEndpoint(t)
+	const key = "sk-e2e-test-5b20cc91e7"
+	home := t.TempDir()
+	if real, err := filepath.EvalSymlinks(home); err == nil {
+		home = real
+	}
+	state, config := filepath.Join(home, ".local", "state"), filepath.Join(home, ".config")
+	env := []string{"HOME=" + home, "STUDY_HOME=" + filepath.Join(home, "study"), "PATH=" + os.Getenv("PATH"),
+		"XDG_CONFIG_HOME=" + config, "XDG_STATE_HOME=" + state, "LANG=C.UTF-8",
+		// What a learner's shell may hold, and Shelf must not be told by.
+		"OPENAI_API_KEY=sk-not-for-shelf", "OPENAI_BASE_URL=http://127.0.0.1:1/v1"}
+	run := func(args ...string) (string, error) {
+		t.Helper()
+		cmd := exec.Command(study, args...)
+		cmd.Env, cmd.Dir = env, home
+		out, err := cmd.Output()
+		if exit := (*exec.ExitError)(nil); err != nil && asExit(err, &exit) {
+			return string(out) + string(exit.Stderr), err
+		}
+		return string(out), err
+	}
+	must := func(args ...string) string {
+		t.Helper()
+		out, err := run(args...)
+		if err != nil {
+			t.Fatalf("study %s: %v\n%s", strings.Join(args, " "), err, out)
+		}
+		if strings.Contains(out, key) {
+			t.Fatalf("study %s shows the endpoint's key:\n%s", strings.Join(args, " "), out)
+		}
+		return out
+	}
+	settings := filepath.Join(config, "lamplight", "shelf.toml")
+	write := func(model string) {
+		t.Helper()
+		text := fmt.Sprintf("format = 1\n\n[embedding]\nendpoint = %q\nrecipe = \"embeddinggemma-2\"\nkey = %q\n", at.URL, key)
+		if model != "" {
+			text += fmt.Sprintf("model = %q\n", model)
+		}
+		if err := os.MkdirAll(filepath.Dir(settings), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(settings, []byte(text), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	book := filepath.Join(home, "Books", "elimination.pdf")
+	if err := os.MkdirAll(filepath.Dir(book), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	shelftest.WritePDF(t, book, [][]string{
+		{"Elimination turns a system of equations into a triangular one."},
+		{"Back substitution then gives the unknowns, the last one first."},
+	})
+
+	must("topic", "create", "--title", "Linear algebra")
+	must("source", "add", "linear-algebra", "--file", book)
+	must("knowledge-base", "add", "shelf", "--", shelf)
+	must("topic", "update", "linear-algebra", "--knowledge-base", "shelf")
+	write("")
+
+	var check struct {
+		Data core.PluginCheck `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(must("knowledge-base", "check", "shelf", "--json")), &check); err != nil {
+		t.Fatal(err)
+	}
+	if got := fmt.Sprint(check.Data.Contract.Search); got != "[keyword embedding]" {
+		t.Errorf("study knowledge-base check says Shelf searches by %s; want by embeddings too, with an endpoint in its settings file", got)
+	}
+	if asked := at.Asked(); len(asked) != 0 {
+		t.Fatalf("to say what it can do, Shelf asked the endpoint %+v", asked)
+	}
+
+	// index runs study source index, and returns what came of the book.
+	index := func(args ...string) core.IndexOutcome {
+		t.Helper()
+		var indexed struct {
+			Data core.IndexResult `json:"data"`
+		}
+		if err := json.Unmarshal([]byte(must(append([]string{"source", "index", "linear-algebra", "--json"}, args...)...)), &indexed); err != nil {
+			t.Fatal(err)
+		}
+		if len(indexed.Data.Sources) != 1 {
+			t.Fatalf("study source index = %+v", indexed.Data.Sources)
+		}
+		return indexed.Data.Sources[0]
+	}
+	// listed is what study source list says of the book, which a Shelf
+	// started for the question answers. A busy computer may leave it less
+	// than its two seconds once, not five times running.
+	listed := func() core.SourceStatus {
+		t.Helper()
+		var list struct {
+			Data core.SourceList `json:"data"`
+		}
+		for tries := 1; ; tries++ {
+			list.Data = core.SourceList{}
+			if err := json.Unmarshal([]byte(must("source", "list", "linear-algebra", "--json")), &list); err != nil {
+				t.Fatal(err)
+			}
+			if x := list.Data.Indexing; x == nil || x.Problem == "" || tries == 5 {
+				break
+			}
+		}
+		if len(list.Data.Sources) != 1 || list.Data.Sources[0].Indexed == nil {
+			t.Fatalf("study source list = %+v, with %+v", list.Data.Sources, list.Data.Indexing)
+		}
+		return list.Data.Sources[0]
+	}
+	// sent checks what the endpoint was sent since it was last asked: the
+	// book's two Passages, marked as the Recipe marks a document, for the
+	// model, with the key from the file, and no request key but the two.
+	source := listed()
+	sent := func(model string) {
+		t.Helper()
+		asked := at.Asked()
+		at.Forget()
+		if len(asked) != 1 || asked[0].Path != "/v1/embeddings" || asked[0].Key != key || asked[0].Body["model"] != model ||
+			fmt.Sprint(asked[0].Keys()) != "[input model]" {
+			t.Fatalf("the endpoint was asked %+v; want the book's Passages, once, for the model %s", asked, model)
+		}
+		if got, want := fmt.Sprint(asked[0].Texts()), "[title: "+source.Title+" | text: Elimination turns a system of equations into a triangular one. "+
+			"title: "+source.Title+" | text: Back substitution then gives the unknowns, the last one first.]"; got != want {
+			t.Errorf("the endpoint was sent %s, want %s", got, want)
+		}
+	}
+
+	if got := index(); got.State != core.IndexIndexed || !got.Asked {
+		t.Fatalf("study source index = %+v; want the book indexed", got)
+	}
+	sent("google/embeddinggemma-2")
+	if now := listed().Indexed; now.State != core.IndexIndexed {
+		t.Errorf("afterwards the book is %+v", now)
+	}
+	if asked := at.Asked(); len(asked) != 0 {
+		t.Errorf("to say what is indexed, Shelf asked the endpoint %+v", asked)
+	}
+
+	// The learner serves another model, and names it. Twice: what is said
+	// of the book is put right by study source index, and by --again.
+	for model, again := range map[string][]string{"another-model": nil, "a-third-model": {"--again"}} {
+		write(model)
+		now := listed().Indexed
+		if now.State != core.IndexFailed || now.Retry != "study source index linear-algebra "+source.ID {
+			t.Fatalf("with %s named in Shelf's settings, the book is %+v; want it failed, with the command that has it indexed again", model, now)
+		}
+		for _, word := range []string{"found by keyword alone", "its vectors are of the model", "now name the model " + model, "Index it again"} {
+			if !strings.Contains(now.Reason, word) {
+				t.Errorf("the reason does not say %q: %s", word, now.Reason)
+			}
+		}
+		if status := must("status"); !strings.Contains(status, "found by keyword alone") {
+			t.Errorf("study status does not say that the book is found by keyword alone:\n%s", status)
+		}
+		if asked := at.Asked(); len(asked) != 0 {
+			t.Errorf("to say so, Shelf asked the endpoint %+v", asked)
+		}
+		if got := index(again...); got.State != core.IndexIndexed || !got.Asked {
+			t.Fatalf("study source index %s = %+v; want the book asked for, and indexed", strings.Join(again, " "), got)
+		}
+		sent(model)
+		if now := listed().Indexed; now.State != core.IndexIndexed || now.Reason != "" {
+			t.Errorf("once it was indexed again, the book is %+v", now)
+		}
+	}
+	// With its vectors the model's, --again asks and changes nothing.
+	if got := index("--again"); got.State != core.IndexIndexed || !got.Asked {
+		t.Errorf("study source index --again = %+v", got)
+	}
+	if asked := at.Asked(); len(asked) != 0 {
+		t.Errorf("indexing again what is indexed, vectors and all, Shelf asked the endpoint %+v", asked)
+	}
+
+	// A settings file Shelf cannot use: study says so, with Shelf's reason,
+	// where it says what is wrong with a plugin, and repeats no key.
+	if err := os.WriteFile(settings, []byte("format = 1\n[embedding]\nendpoint = \"http://127.0.0.1:1/v1\"\nrecipe = \"embeddinggemma-2\"\nkey = \""+key+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := run("knowledge-base", "check", "shelf")
+	if err == nil || !strings.Contains(out, "Shelf's settings file") || !strings.Contains(out, "is not valid TOML at line 5") {
+		t.Errorf("study knowledge-base check, with a settings file Shelf cannot read: %v\n%s", err, out)
+	}
+	if strings.Contains(out, key) {
+		t.Errorf("study repeats the key that the file holds:\n%s", out)
+	}
+}

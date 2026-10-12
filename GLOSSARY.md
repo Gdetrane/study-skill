@@ -217,8 +217,16 @@ _Avoid_: Backend, RAG, extension, adapter
 The Knowledge base plugin that ships with Lamplight, as the `study-shelf` program.
 
 **Recipe**:
-A named set of Shelf's settings for one embedding model.
+A named set of Shelf's settings for one embedding model: the model's name, how a question
+and a Passage are marked for it, the size of its vectors, and how long a Passage may be. A
+model has a second Recipe when servers differ in who marks the texts.
 _Avoid_: Preset, profile
+
+**Endpoint**:
+A service the learner names in Shelf's settings file and runs or chooses themselves: the
+embedding endpoint turns text into vectors, by the OpenAI embeddings API, and the reranking
+endpoint orders a search's Passages. Shelf asks one only to index and to search.
+_Avoid_: Provider, backend, model server
 
 **Indexed**:
 Said of a Source whose content the Topic's Knowledge base plugin holds on this machine, so

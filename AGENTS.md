@@ -28,7 +28,9 @@ Read these before changing behaviour:
   whoever writes one. `internal/plugincontract` is the same contract in Go, and a test
   keeps the two in step: every field, kind, code and limit, and every example on the page.
 - `docs/shelf.md`: Shelf for the learner: what it reads and what it does not, with the
-  reason it gives for each, and where its index is. Keep it true when Shelf changes.
+  reason it gives for each, how it searches, its settings file and Recipes, how to serve
+  a model for it, the measurements behind its choices, and where its index is. Keep it
+  true when Shelf changes.
 
 ## Development Commands
 
@@ -51,6 +53,7 @@ go test ./skills/...                # the skill against the real tools and comma
 go test ./internal/e2e              # the learner loop, the v2.0 acceptance walkthrough, install.sh
 go test ./internal/shelf/...        # Shelf, and the conformance suite against a built study-shelf
 go test -short ./internal/shelf/... # the same without what builds study-shelf: seconds, not minutes
+go test ./internal/shelf/index -run '^$' -bench Nearest -benchtime 10x   # what a search by vectors costs
 go test -shuffle=on ./...           # no test may depend on another's order
 GOOS=darwin go vet ./...            # macOS is supported too
 ```
@@ -187,10 +190,46 @@ GOOS=darwin go vet ./...            # macOS is supported too
     made (`web.Fetcher`): the agent chooses which addresses are Sources.
   - A PDF is read by PDFium inside wazero (`pdf.Read`), which can open no file and reach
     no network. Never read a Source with a program found on the `PATH`.
-  - A key, when Shelf comes to need one, is read from a settings file of its own, never
-    from an argument or the environment.
+  - Shelf's settings are a file of the learner's, `shelf.toml` in Lamplight's
+    configuration folder (`settings.Load`): an embedding endpoint, a Recipe or a model's
+    own settings, a key, a reranking endpoint. Nothing is a setting in an argument or in
+    the environment, which says only where that folder is. A file Shelf cannot use ends
+    `study-shelf` with the reason on standard error, never a quiet search by keyword, and
+    the reason names a line or a setting and repeats no value: a value may be the key. A
+    file inside Shelf's own folder, or reached through it, is refused, by what the folders
+    are and not by their names: the learner may have let an agent's sandbox write there.
+  - An endpoint is asked only through `internal/shelf/endpoint`. A request holds the model,
+    the texts and what the settings name, and no key of Shelf's own choosing: some servers
+    refuse a key they do not know. A question and a Passage are marked by text Shelf
+    writes or by fields of the request, never both (`endpoint.Marking`). Every request has
+    a deadline, every answer is read up to a limit and checked (the number of vectors,
+    their size) before it is used, no redirect is followed, and what goes wrong is an
+    `*endpoint.Problem`, which names the endpoint by its host and never holds the key or
+    the rest of the address: a server's own words reach it only through `caller.said`.
+  - An endpoint is the learner's choice, so it is not held to `web.Fetcher`'s rule, and is
+    usually on the computer Shelf runs on. Never loosen that rule for Sources to make an
+    endpoint reachable, and never fetch a Source's page through the endpoint's client.
+  - Only indexing and searching ask an endpoint. Starting, `contract` and `status` ask
+    none (`TestAGlanceIsQuick` counts the requests): `contract` lists `embedding` because
+    the settings name an endpoint, whether or not it answers.
+  - A Source is indexed with a vector for each of its Passages or not at all: the vectors
+    are written in the transaction that writes the Passages (`Collection.Replace`), or
+    given to Passages that are there in one of their own (`Collection.Embed`), which
+    leaves the Passages and their ids as they are. An endpoint that fails leaves the
+    Source `failed`. A question's vector is compared only with vectors made the same way
+    (`index.Made`: model, marking, size).
+  - A Source that is indexed and has no such vectors, though the settings name an
+    endpoint, is `failed` with the hash of what is still found and the reason
+    (`Shelf.behind`): the one state whose reason `study` shows, and which `study source
+    index` asks for again. Keep the reason under the 300 bytes `study` shows of one.
+  - A search is by keyword always, and an endpoint that fails takes from it only what it
+    would have added: the answer then says so in Shelf's own fields beside the Passages
+    (`search`, `reranked`, `notice`). The two rankings are taken two of the embeddings'
+    for one of keyword's (`merge`), which was measured against reciprocal rank fusion
+    (docs/shelf.md): do not change it without measuring again.
 - Every file Lamplight owns carries a `format` number, and newer formats are refused. A
-  collection's file carries `index.Format` in its header.
+  collection's file carries `index.Format` in its header, and Shelf's settings file names
+  `settings.Format` in its first setting.
 - Text from files or the History goes through `printable()` before it reaches a terminal;
   `--json` output never triggers terminal queries.
 - The learner never sees overdue counts, "behind" or streaks: show where they are and one
@@ -234,7 +273,20 @@ GOOS=darwin go vet ./...            # macOS is supported too
   checkout (`shelftest.Shelf`, which a `-short` run skips), on a `plugintest.Computer`.
   No test reads a real book: a PDF is written for the test (`shelftest.PDF`), and a web
   page is served by the test. A new point where a write of the index could be cut short
-  gets a name in `index` and a row in the test that kills Shelf there.
+  gets a name in `index` and a row in the test that kills Shelf there. The tests that
+  run a built `study-shelf` for a minute, the conformance suite with and without endpoints
+  and the kills, run beside each other (`t.Parallel`), each on a computer of its own: the
+  package would otherwise near go's ten minutes on a busy computer. A test that measures
+  by the clock, as `TestAGlanceIsQuick` does, is never one of them.
+- An endpoint in a test is `shelftest.Endpoint`, a server on this computer with no model
+  behind it, which remembers what it was asked: a test that says an endpoint was asked
+  something asserts what it received, the keys of the request among it, and one that says
+  it was not asked counts none. Give Shelf short deadlines (`endpoint.Embedding.Timeout`,
+  `QueryTimeout`) where a test waits for one, and never the defaults. The built
+  `study-shelf` is told of the endpoint by a settings file in the test computer's
+  configuration folder, as a learner tells it. One test asks a real model,
+  `TestTheRecipeAgainstARealEndpoint`, and only when `LAMPLIGHT_TEST_EMBEDDING_ENDPOINT`
+  names its address: never set that in a run of your own to an address that is not yours.
 - Tests must pass with no git identity configured (CI has none), and in any order.
 
 ## Important Paths
@@ -258,13 +310,15 @@ GOOS=darwin go vet ./...            # macOS is supported too
   temporary folders (`Computer`), and the conformance suite.
 - `cmd/study-shelf`: Shelf's entry point: its few flags, and the MCP server over the
   standard streams.
-- `internal/shelf`: Shelf. The package itself holds the six tools (`shelf.go`) and the
-  indexing of one Source, which goes on after `index` has answered (`work.go`). Below it:
-  `index`, one SQLite file for each collection, with the format, the full-text search and
-  what keeps SQLite inside Shelf's folder; `pdf`, a PDF's pages through PDFium;
-  `web`, a web page fetched within limits and its readable text; `cut`, text tidied and
-  cut into Passages; and `shelftest`, for tests only: PDFs written for a test, and the
-  built `study-shelf`.
+- `internal/shelf`: Shelf. The package itself holds the six tools (`shelf.go`), the
+  indexing of one Source, which goes on after `index` has answered (`work.go`), and one
+  search, by keyword, by vectors and with a reranker (`search.go`). Below it:
+  `index`, one SQLite file for each collection, with the format, the full-text search, the
+  Passages' vectors and what keeps SQLite inside Shelf's folder; `pdf`, a PDF's pages
+  through PDFium; `web`, a web page fetched within limits and its readable text; `cut`,
+  text tidied and cut into Passages; `endpoint`, the embedding and the reranking endpoint
+  as Shelf asks them; `settings`, Shelf's settings file and the Recipes; and `shelftest`,
+  for tests only: PDFs written for a test, the test endpoint, and the built `study-shelf`.
 - `internal/pluginregistry`: the Knowledge base plugin registry, which is the computer's
   and not the Study home's. The package itself only reads (`Read`, and `OpenCommand`,
   `OpenFolder` and `Guard` for starting a plugin). `registrar` below it registers and removes

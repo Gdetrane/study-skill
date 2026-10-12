@@ -508,6 +508,106 @@ where two of its lines needed more than they say:
   (`ncruces/go-sqlite3`, SQLite itself as WebAssembly on the runtime Shelf already has)
   would close it, and is worth a look when Shelf is next opened up.
 
+Building Shelf's embedding search, Recipes and reranking settled the rest of that list,
+and changed three of its lines: how the two rankings are merged, that embedding carries on
+where it was stopped, and what a Recipe holds.
+
+- **Shelf's settings are one file of the learner's, and nothing else is a setting.**
+  `shelf.toml` in the folder `lamplight` of their configuration folder, beside
+  `config.toml` and the registry: TOML, since a person writes it, with a `format` number,
+  and a file in a newer format is refused. The environment `study` gives a plugin tells
+  Shelf where that folder is and nothing more, so a key in the learner's shell never
+  reaches it, and an argument would show in the process list and be one more path for the
+  registry to judge. The cost of one place: two Shelves registered on one computer share
+  their settings.
+  - **A file Shelf cannot use stops it**, with the reason last on its standard error, which
+    `study knowledge-base check` shows. Searching by keyword instead was rejected: the
+    learner who wrote an endpoint into the file would think it in use. The reason names a
+    line or a setting and never repeats a value, which may be the key.
+  - **A settings file inside the folder Shelf keeps its index in, or reached through it, is
+    refused.** The contract already has a plugin load no settings from its folder. It
+    matters because that folder is the one the learner is told to let their agent's
+    sandbox write in, so that `study source index` can run there. A settings file found
+    through it would be the agent's to write, and with it the address every Passage is
+    sent to, and the key, by a Shelf that the MCP server starts outside the sandbox. Shelf
+    follows the path to the file one name at a time and tells folders apart by what they
+    are. It does not look for the Study home, which it is not told of: `study` starts a
+    plugin in the configuration folder only when that is outside it.
+- **A Recipe says who marks the texts, and Shelf sends nothing its settings do not name.**
+  The list above has a Recipe hold "the text the model wants before a query and before a
+  document". A real EmbeddingGemma 2 service showed that this is one of two ways: it
+  applies the model's prompts itself, by a name in the request, and refuses a request for
+  a key it does not know. Text that Shelf had marked would be marked twice there, and a
+  key of Shelf's own choosing, sent to a server that does not know it, fails the request.
+  So a question and a Passage are marked either by text Shelf writes around them, which is
+  what llama.cpp, Ollama and vLLM need, or by fields Shelf adds to the request, never
+  both, and EmbeddingGemma 2 has a Recipe for each. A request holds the model, the texts
+  and what the settings add. Whether the size is asked for is a setting too: whatever
+  comes back, Shelf checks it, cuts a longer vector and makes it of length 1 again, and
+  fails the Source for a shorter one.
+- **The Recipe keeps 512 of the model's 768 numbers.** On the vectors of the four books the
+  right Passage was first for 50.3% of the questions with 512 and 51.0% with 768, and in
+  the first five for 83.3% and 84.0%: two questions of 300. A third less is kept, read and
+  compared for every search, by a Shelf that is started anew each time.
+- **Vectors are in the collection's file, and a search reads all of them.** They are kept
+  in runs, one row for the vectors of up to 1,024 Passages that follow each other, since a
+  row for each Passage was two and a half times slower to read. A freshly started Shelf
+  opens a collection of 5,000 Passages, compares every vector with the question's and has
+  the best fifty in 10 ms, and one of 50,000 in 122 ms: the question's own vector takes
+  90 ms on a processor. So no vector extension is loaded and no index of the vectors is
+  kept. The file's format is 2. It was raised, and not only added to, because a Shelf that
+  knows nothing of vectors would replace a Source's Passages under them: it now refuses
+  the file. A file in format 1 is read as it is, where Shelf may not write too, and is
+  brought to format 2 in the transaction that next writes content into it.
+- **A Source is indexed with a vector for each Passage or not at all, and embedding starts
+  over.** The list above has embedding carry on where it was stopped. It was built as one
+  transaction instead, vectors and Passages together, so that no Source is half found by
+  meaning, and every point of that transaction where Shelf can be killed is tested. The
+  cost: an indexing stopped near its end, or an endpoint that fails at the last batch,
+  loses the minutes a processor took. Keeping the vectors that were made, by the hash of
+  their text, would give them back, and is not built.
+- **The two rankings are taken two for one, not fused.** "Merged by rank" was first built
+  as reciprocal rank fusion, the usual way, and then measured on the experiment's vectors.
+  With its usual constant every Passage that is in both rankings, about twenty of fifty,
+  comes before one that is first in one of them alone: a Passage only keyword search found
+  stood at place 20, and the right Passage was in the first ten for 87.7% of the questions
+  where the embeddings alone had it for 91.7%. Two Passages of the embedding ranking, then
+  one of the keyword ranking, each once, has it there for 92.3%, in the first thirty, which
+  is what a reranker is handed, for 97.0% against 95.7%, and puts the keyword ranking's
+  best in the first three whatever the model made of it. That is what "an exact name is
+  not lost" needs, and no question of the experiment asks for a name, so it is by
+  construction and not by measurement. Fusion with a constant of 5 found as much without
+  that promise. The reranker was measured over the fused order's best thirty, and not
+  again over this one's.
+- **An endpoint that fails takes from a search only what it would have added.** Without
+  the question's vector the search is by keyword, and without the reranker's answer in the
+  order it had, each after a deadline that leaves time for the rest: 15 and 30 seconds of
+  the minute `study` gives a search. The contract has no word for a search that did less
+  than it could, so Shelf says it in three fields of its own beside the Passages, `search`,
+  `reranked` and `notice`, which `study` reads past until it is taught them. While a Source
+  is indexed there is nothing to fall back to: the Source is `failed`, with a reason that
+  names the endpoint's host and never its key.
+- **Vectors of another making are `failed`, with the hash.** A question's vector is
+  compared only with vectors of the model, the marking and the size the settings name now.
+  A Source whose Passages have others, or none because it was indexed before there was an
+  endpoint, is still found by keyword. The contract has three states: `indexed` would say
+  nothing and `study` would show nothing, so Shelf says `failed`, with the hash of what is
+  still found and the reason, which is the state `study` shows with its reason and has
+  `study source index` ask for again, with `--again` or without. Asked for that content
+  again, Shelf gives vectors to the Passages that are there: it reads no Source for it, so
+  the Passages and their ids stay, as the contract has it for content that is indexed, and
+  a web page is not fetched without `refetch`. Two things are stretched and want a word of
+  the contract's own: `failed` here is no failed indexing, and `index` of content that is
+  indexed does not "do nothing".
+- **An endpoint is the learner's, so it is not held to the rule for web pages.** Shelf
+  fetches no Source's page from the computer it runs on because the agent names Sources.
+  The settings file is the learner's and outside the Study home, and an endpoint is
+  usually on that computer. It is held to other things: no redirect is followed, so the
+  key goes to the address in the file alone; every request has a deadline and every answer
+  a size it is read up to; and nothing but indexing and searching asks one, so starting
+  Shelf and saying what is indexed stay as quick as they were. `contract` lists
+  `embedding` when the settings name an endpoint, whether or not it answers.
+
 Considered and rejected:
 
 - **Retrieval inside `study`.** Smaller to ship, but it ties the core to one way of

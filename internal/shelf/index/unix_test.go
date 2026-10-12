@@ -111,7 +111,7 @@ func TestALinkThatTakesAnOpenCollectionsPlaceIsNotFollowed(t *testing.T) {
 				}
 				changed, passages := book("book.a1", "b", fmt.Sprintf("Other content, number %d, about pivots.", n))
 				changed.Hash = "sha256:" + fmt.Sprintf("%064x", n)
-				_ = c.Replace(ctx, changed, passages)
+				_ = c.Replace(ctx, changed, passages, nil)
 				_, _ = c.Search(ctx, "pivots elimination", 5, nil)
 			}
 			if err := f.Close(); err != nil {
@@ -153,10 +153,27 @@ func TestAFileWithASecondNameIsRefused(t *testing.T) {
 // crashEnv names, to a test binary started as the helper below, the folder
 // to write in and the point to be killed at. workEnv names, in its place,
 // the Source another copy of Shelf is to be seen working on.
+//
+// crashVectorsEnv says what the Shelf that is killed writes: nothing of it,
+// new content without vectors; "replace", new content with its vectors; and
+// "embed", new vectors for the content that is there.
 const (
-	crashDirEnv   = "SHELF_INDEX_TEST_CRASH_DIR"
-	crashPointEnv = "SHELF_INDEX_TEST_CRASH_POINT"
-	workEnv       = "SHELF_INDEX_TEST_WORK"
+	crashDirEnv     = "SHELF_INDEX_TEST_CRASH_DIR"
+	crashPointEnv   = "SHELF_INDEX_TEST_CRASH_POINT"
+	crashVectorsEnv = "SHELF_INDEX_TEST_CRASH_VECTORS"
+	workEnv         = "SHELF_INDEX_TEST_WORK"
+)
+
+// crashRun is how many Passages' vectors a row holds in the test that kills
+// Shelf: few enough for the content's vectors to be several rows, so that
+// half of them can be written.
+const crashRun = 16
+
+// What the vectors of the earlier content, and of what the killed Shelf
+// writes, were made with.
+var (
+	oldMade = index.Made{Model: "the-earlier-model", Document: "{text}", Dimensions: 8}
+	newMade = index.Made{Model: "the-new-model", Document: "title: {title} | text: {text}", Dimensions: 12}
 )
 
 // TestMain runs this test binary as another copy of Shelf, when it was
@@ -207,10 +224,21 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(3)
 	}
+	index.SetRunLength(crashRun)
 	c, err := f.Collection(ctx, "crashed", true)
 	if err == nil {
-		source, passages := newContent()
-		err = c.Replace(ctx, source, passages)
+		switch os.Getenv(crashVectorsEnv) {
+		case "embed":
+			source, passages := oldContent()
+			err = c.Embed(ctx, source.ID, source.Hash, newMade, directions(len(passages), newMade.Dimensions))
+		case "replace":
+			source, passages := newContent()
+			source.Made = newMade
+			err = c.Replace(ctx, source, passages, directions(len(passages), newMade.Dimensions))
+		default:
+			source, passages := newContent()
+			err = c.Replace(ctx, source, passages, nil)
+		}
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -336,7 +364,7 @@ func TestAnotherCopysWorkIsSeenWhileItLives(t *testing.T) {
 	// Work that ends takes its row with it, however it ends.
 	own.End()
 	source, passages := book("next.d4", "d", "A page about pivots.")
-	if err := next.Replace(ctx, source, passages); err != nil {
+	if err := next.Replace(ctx, source, passages, nil); err != nil {
 		t.Fatal(err)
 	}
 	next.End()
@@ -379,41 +407,72 @@ func newContent() (index.Source, []index.Passage) {
 // was indexed before, all of it and nothing of the new, or the new content,
 // all of it and nothing of the old. And whichever it is, the next Shelf
 // reads it, and indexes the Source again.
+//
+// The same holds of a Source's vectors. They are written with its Passages,
+// or given to Passages that are there, in one transaction: a Source has the
+// vectors of one making, one for each of its Passages, or none.
 func TestAShelfKilledWhileWritingLeavesAnIndexThatIsWhole(t *testing.T) {
 	if testing.Short() {
 		t.Skip("starts this test binary again for each point")
 	}
+	t.Cleanup(index.SetRunLength(crashRun))
 	for _, tc := range []struct {
 		point string
-		// had says that the Source was indexed before the write, and whole
-		// which content the index holds after the crash: "old", "new", or
-		// "none" for a collection that was being made.
-		had   bool
-		whole string
+		// had says that the Source was indexed before the write. vectors
+		// says what the killed Shelf writes, as crashVectorsEnv has it; when
+		// it writes vectors, what was indexed before had vectors too, of
+		// another making.
+		had     bool
+		vectors string
+		// whole says which content the index holds after the crash: "old",
+		// "new", or "none" for a collection that was being made. made says
+		// which vectors it holds with it, the earlier ("old") or the new.
+		whole, made string
 	}{
-		{index.CrashFileMade, false, "none"},
-		{index.CrashSchemaHalf, false, "none"},
-		{index.CrashEarlierGone, false, "none"},
-		{index.CrashHalfWritten, false, "none"},
-		{index.CrashBeforeCommit, false, "none"},
-		{index.CrashCommitted, false, "new"},
-		{index.CrashEarlierGone, true, "old"},
-		{index.CrashHalfWritten, true, "old"},
-		{index.CrashBeforeCommit, true, "old"},
-		{index.CrashCommitted, true, "new"},
+		{index.CrashFileMade, false, "", "none", ""},
+		{index.CrashSchemaHalf, false, "", "none", ""},
+		{index.CrashEarlierGone, false, "", "none", ""},
+		{index.CrashHalfWritten, false, "", "none", ""},
+		{index.CrashBeforeCommit, false, "", "none", ""},
+		{index.CrashCommitted, false, "", "new", ""},
+		{index.CrashEarlierGone, true, "", "old", ""},
+		{index.CrashHalfWritten, true, "", "old", ""},
+		{index.CrashBeforeCommit, true, "", "old", ""},
+		{index.CrashCommitted, true, "", "new", ""},
+		// New content that comes with its vectors.
+		{index.CrashHalfWritten, false, "replace", "none", ""},
+		{index.CrashVectorsHalfWritten, false, "replace", "none", ""},
+		{index.CrashBeforeCommit, false, "replace", "none", ""},
+		{index.CrashCommitted, false, "replace", "new", "new"},
+		{index.CrashEarlierGone, true, "replace", "old", "old"},
+		{index.CrashHalfWritten, true, "replace", "old", "old"},
+		{index.CrashVectorsHalfWritten, true, "replace", "old", "old"},
+		{index.CrashBeforeCommit, true, "replace", "old", "old"},
+		{index.CrashCommitted, true, "replace", "new", "new"},
+		// New vectors for the content that is there: its Passages stay.
+		{index.CrashVectorsHalfWritten, true, "embed", "old", "old"},
+		{index.CrashEmbeddedBeforeCommit, true, "embed", "old", "old"},
+		{index.CrashEmbeddedCommitted, true, "embed", "old", "new"},
 	} {
-		t.Run(fmt.Sprintf("%s (indexed before: %v)", tc.point, tc.had), func(t *testing.T) {
+		t.Run(fmt.Sprintf("%s (indexed before: %v, vectors: %q)", tc.point, tc.had, tc.vectors), func(t *testing.T) {
 			dir := t.TempDir()
+			old, oldPassages := oldContent()
+			fresh, freshPassages := newContent()
 			if tc.had {
 				f := reopen(t, dir)
-				source, passages := oldContent()
-				replace(t, collection(t, f, "crashed"), source, passages)
+				var vectors [][]float32
+				if tc.vectors != "" {
+					old.Made, vectors = oldMade, directions(len(oldPassages), oldMade.Dimensions)
+				}
+				if err := collection(t, f, "crashed").Replace(ctx, old, oldPassages, vectors); err != nil {
+					t.Fatal(err)
+				}
 				if err := f.Close(); err != nil {
 					t.Fatal(err)
 				}
 			}
 			cmd := exec.Command(os.Args[0], "-test.run=^$")
-			cmd.Env = append(os.Environ(), crashDirEnv+"="+dir, crashPointEnv+"="+tc.point)
+			cmd.Env = append(os.Environ(), crashDirEnv+"="+dir, crashPointEnv+"="+tc.point, crashVectorsEnv+"="+tc.vectors)
 			out, err := cmd.CombinedOutput()
 			var exit *exec.ExitError
 			if !errors.As(err, &exit) || exit.Sys().(syscall.WaitStatus).Signal() != syscall.SIGKILL {
@@ -426,8 +485,6 @@ func TestAShelfKilledWhileWritingLeavesAnIndexThatIsWhole(t *testing.T) {
 			if err != nil {
 				t.Fatalf("after the crash, the collection cannot be opened: %v", err)
 			}
-			old, _ := oldContent()
-			fresh, freshPassages := newContent()
 			switch tc.whole {
 			case "none":
 				if c != nil {
@@ -437,12 +494,18 @@ func TestAShelfKilledWhileWritingLeavesAnIndexThatIsWhole(t *testing.T) {
 					if found := search(t, c, "pivots elimination", 50); len(found) != 0 {
 						t.Errorf("after a crash before anything was indexed, a search finds %d Passages", len(found))
 					}
+					for _, made := range []index.Made{oldMade, newMade} {
+						if found := nearest(t, c, made, directions(1, made.Dimensions)[0], 50); len(found) != 0 {
+							t.Errorf("after a crash before anything was indexed, %d Passages are found by their vectors", len(found))
+						}
+					}
 				}
 			default:
 				want, word, other, count := old, "elimination", "pivots", 40
 				if tc.whole == "new" {
 					want, word, other, count = fresh, "pivots", "elimination", 60
 				}
+				want.Made = map[string]index.Made{"old": oldMade, "new": newMade}[tc.made]
 				if c == nil {
 					t.Fatal("after the crash, the collection is gone")
 				}
@@ -463,7 +526,25 @@ func TestAShelfKilledWhileWritingLeavesAnIndexThatIsWhole(t *testing.T) {
 					t.Errorf("the index holds %d Passages (%v), want the %d of the %s content", passages, err, count, tc.whole)
 				}
 				_ = db.Close()
+				// And the vectors of one making, one for each Passage, or
+				// none: never some, and never those of two makings.
+				for name, made := range map[string]index.Made{"old": oldMade, "new": newMade} {
+					found, wanted := nearest(t, c, made, directions(1, made.Dimensions)[0], 100), 0
+					if name == tc.made {
+						wanted = count
+					}
+					if len(found) != wanted {
+						t.Errorf("%d Passages are found by the %s vectors, want %d: the content is the %s one, with the %s vectors",
+							len(found), name, wanted, tc.whole, cmpOr(tc.made, "no"))
+					}
+					for _, p := range found {
+						if !strings.Contains(p.Text, word) {
+							t.Errorf("a vector leads to a Passage of the content the index does not hold: %q", p.Text)
+						}
+					}
+				}
 			}
+			checkVectors(t, dir, "crashed")
 
 			// Asked again, the Source is indexed.
 			c = collection(t, f, "crashed")
@@ -478,6 +559,14 @@ func TestAShelfKilledWhileWritingLeavesAnIndexThatIsWhole(t *testing.T) {
 				t.Fatal(err)
 			}
 			checkIntegrity(t, dir, "crashed")
+			checkVectors(t, dir, "crashed")
 		})
 	}
+}
+
+func cmpOr(s, other string) string {
+	if s != "" {
+		return s
+	}
+	return other
 }

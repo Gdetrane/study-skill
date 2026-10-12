@@ -21,9 +21,10 @@
 // What that leaves is a folder above Shelf's, in the learner's state folder,
 // exchanged for a link between two of SQLite's own system calls.
 //
-// A collection's file holds its Sources and their Passages, and a full-text
-// index of the Passages (FTS5). It carries a format number, and a file in a
-// newer format is refused, never opened and guessed at.
+// A collection's file holds its Sources and their Passages, a full-text
+// index of the Passages (FTS5) and, when Shelf has an embedding endpoint,
+// the Passages' vectors. It carries a format number, and a file in a newer
+// format is refused, never opened and guessed at.
 //
 // study starts a Shelf for every question it has and stops it again, so
 // several are at one folder at once and none lives long. What one has to
@@ -51,7 +52,11 @@ const (
 	// Format is the format of a collection's file that this package writes,
 	// and the newest it reads. It is the file's user_version, which SQLite
 	// keeps in the file's header: it can be read before anything else is.
-	Format = 1
+	//
+	// Format 2 added the Passages' vectors (vectorSchema). A file in Format
+	// 1, which a Shelf without embedding search wrote, is read as it is and
+	// becomes one in Format 2 when content is next written into it.
+	Format = 2
 	// applicationID marks a file as an index of Shelf's, in the header's
 	// application_id: "Shlf".
 	applicationID = 0x53686C66
