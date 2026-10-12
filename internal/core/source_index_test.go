@@ -379,12 +379,17 @@ func TestIndexingIsFollowedStoppedAndCarriedOn(t *testing.T) {
 	for _, p := range seen {
 		if p.State != core.ProgressRunning {
 			story = append(story, fmt.Sprintf("%s %s %d/%d %s", p.Source, p.State, p.Number, p.Total, p.Outcome))
-		} else if p.Source == third.ID || p.Progress == nil || *p.Progress < 0 || *p.Progress >= 1 || p.Elapsed <= 0 {
+		} else if p.Source == third.ID || p.Progress == nil || *p.Progress < 0 || *p.Progress > 1 || p.Elapsed <= 0 {
+			// From 0 to 1, as the contract has it: a plugin that has read
+			// the last page and not yet written its index says 1.
 			t.Errorf("a report of a Source being indexed: %+v", p)
 		}
 	}
 	mu.Unlock()
-	if want := []string{first.ID + " started 1/3 ", first.ID + " finished 1/3 indexed", long.ID + " started 2/3 "}; !slices.Equal(story, want) {
+	// And, stopped, that it was telling the plugin to stop: at once, before
+	// the plugin answered.
+	if want := []string{first.ID + " started 1/3 ", first.ID + " finished 1/3 indexed", long.ID + " started 2/3 ",
+		long.ID + " stopping 2/3 "}; !slices.Equal(story, want) {
 		t.Errorf("the command reported %q, want %q", story, want)
 	}
 

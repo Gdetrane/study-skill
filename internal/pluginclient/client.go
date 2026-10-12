@@ -784,6 +784,15 @@ func (s *Connection) Close() error {
 	return nil
 }
 
+// GiveUp ends the Connection with a plugin that did not answer in the time
+// it had, for a caller that kept that time itself, with a deadline shorter
+// than the Connection's own: a command is killed at once, since it was given
+// its time already, and a service is not waited for. Close is for a plugin
+// that answered.
+func (s *Connection) GiveUp() {
+	s.drop("it did not answer in time, and study stopped it")
+}
+
 // shut ends the Connection, once. politely says whether the plugin is one to
 // wait for: a service that answers is told the session is over, and that
 // may take it a moment; one that stopped answering is not waited for again.
@@ -988,17 +997,20 @@ func (s *Connection) toolError(tool string, body plugincontract.ErrorBody) *Erro
 		said = "it gave no reason"
 	}
 	code := StudyCode(body.Code)
+	var refusal *Error
 	switch body.Code {
 	case plugincontract.CodeInvalidArgument:
-		return errorf(code, "Knowledge base plugin %s does not take what its %s tool was given: %s", s.name, tool, said)
+		refusal = errorf(code, "Knowledge base plugin %s does not take what its %s tool was given: %s", s.name, tool, said)
 	case plugincontract.CodeNotFound:
-		return errorf(code, "Knowledge base plugin %s does not have what its %s tool was asked for: %s", s.name, tool, said)
+		refusal = errorf(code, "Knowledge base plugin %s does not have what its %s tool was asked for: %s", s.name, tool, said)
 	case plugincontract.CodeUnsupported:
-		return errorf(code, "Knowledge base plugin %s cannot do what its %s tool was asked: %s", s.name, tool, said)
+		refusal = errorf(code, "Knowledge base plugin %s cannot do what its %s tool was asked: %s", s.name, tool, said)
 	default:
-		return errorf(code, "Knowledge base plugin %s failed in its %s tool: %s. The plugin's own messages may say more; "+
+		refusal = errorf(code, "Knowledge base plugin %s failed in its %s tool: %s. The plugin's own messages may say more; "+
 			"study knowledge-base check %s shows whether it still starts", s.name, tool, said, s.name)
 	}
+	refusal.AboutTheCall = true
+	return refusal
 }
 
 // within runs f, which talks to the plugin, and returns when f does, or
@@ -1042,8 +1054,8 @@ func (s *Connection) canceled(ctx context.Context) *Error {
 // notSent is the error for a request study did not send, because it is not
 // one the contract allows.
 func (s *Connection) notSent(tool string, err error) *Error {
-	return &Error{Code: CodeInvalidArgument, Err: err, Message: "Knowledge base plugin " + s.name + " was not asked (" +
-		tool + "): " + err.Error()}
+	return &Error{Code: CodeInvalidArgument, Err: err, AboutTheCall: true, Message: "Knowledge base plugin " + s.name +
+		" was not asked (" + tool + "): " + err.Error()}
 }
 
 // notTheContract is the error for a plugin that answers, and not as the

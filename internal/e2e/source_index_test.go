@@ -120,12 +120,19 @@ func TestABuiltStudyIndexesIsStoppedAndCarriesOn(t *testing.T) {
 				for _, src := range dry.Data.Sources {
 					states[src.ID] = src.State
 				}
+				// A computer busy with every other test may not leave the
+				// plugin its two seconds once. It does not fail to five
+				// times running: a study that never hears its plugin does.
 				list := listed()
+				for tries := 1; tries < 5 && list.Indexing != nil && list.Indexing.Problem != ""; tries++ {
+					t.Logf("study source list did not hear the plugin in time: %s", list.Indexing.Problem)
+					list = listed()
+				}
 				switch {
 				case list.Indexing == nil:
 					t.Errorf("study source list says nothing of the Topic's plugin: %+v", list)
 				case list.Indexing.Problem != "":
-					t.Logf("study source list did not hear the plugin in time: %s", list.Indexing.Problem)
+					t.Errorf("study source list did not hear the plugin, five times running: %s", list.Indexing.Problem)
 				default:
 					action := ""
 					for _, src := range list.Sources {
@@ -235,11 +242,28 @@ func TestABuiltStudyIndexesIsStoppedAndCarriesOn(t *testing.T) {
 			var status struct {
 				Data core.Status `json:"data"`
 			}
-			if err := json.Unmarshal([]byte(c.must("status", "--json")), &status); err != nil {
-				t.Fatal(err)
+			for tries := 1; ; tries++ {
+				status.Data = core.Status{}
+				if err := json.Unmarshal([]byte(c.must("status", "--json")), &status); err != nil {
+					t.Fatal(err)
+				}
+				// As above: a busy computer may be late once, not five
+				// times.
+				if x := status.Data.Topics[0].Indexing; x == nil || x.Problem == "" || tries == 5 {
+					break
+				}
 			}
-			if topic := status.Data.Topics[0]; topic.Indexing == nil || topic.Indexing.Plugin != "kb" || len(topic.Indexing.Sources) != 3 {
-				t.Errorf("status = %+v", topic.Indexing)
+			topic := status.Data.Topics[0]
+			if topic.Indexing == nil || topic.Indexing.Plugin != "kb" || len(topic.Indexing.Sources) != 3 {
+				t.Fatalf("status = %+v", topic.Indexing)
+			}
+			if topic.Indexing.Problem != "" {
+				t.Errorf("status did not hear the plugin, five times running: %s", topic.Indexing.Problem)
+			}
+			for _, src := range topic.Indexing.Sources {
+				if src.State == core.IndexUnknown {
+					t.Errorf("status does not know whether %s is indexed, though the plugin answered", src.ID)
+				}
 			}
 			if last := plugintest.ReadRecord(t, c.record); !plugintest.Gone(last.PID, 5*time.Second) {
 				plugintest.Kill(last.PID)

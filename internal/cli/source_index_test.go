@@ -36,6 +36,8 @@ type shelfComputer struct {
 	ids    atomic.Int64
 	// plugins says how long a plugin has.
 	plugins core.PluginOptions
+	// stdin is what study reads on its standard input.
+	stdin string
 }
 
 // newShelfComputer registers the test plugin as kb, started with args, and
@@ -75,7 +77,7 @@ func (s *shelfComputer) study(ctx context.Context, args ...string) result {
 		Plugins: s.plugins,
 	}
 	var stdout, stderr bytes.Buffer
-	code := cli.Run(ctx, args, strings.NewReader(""), &stdout, &stderr, opts)
+	code := cli.Run(ctx, args, strings.NewReader(s.stdin), &stdout, &stderr, opts)
 	norm := func(text string) string {
 		if resolved, err := filepath.EvalSymlinks(s.home); err == nil {
 			text = strings.ReplaceAll(text, resolved, "$HOME")
@@ -313,6 +315,11 @@ func TestSourceIndexStoppedAndCarriedOn(t *testing.T) {
 				!strings.Contains(said, "study source index linear-algebra carries on from there") {
 				t.Errorf("the stopped command: exit %d, and it said %q", r.code, said)
 			}
+			// It said at once that it was stopping, on stderr, with --json
+			// too: until the plugin answers, nothing else is printed.
+			if !strings.Contains(r.stderr, "Stopping: telling the plugin to stop indexing Long…") {
+				t.Errorf("the stopped command does not say that it is stopping: %q", r.stderr)
+			}
 			calls := s.calls(t)
 			if got := indexedSources(calls); !slices.Equal(got, []string{first, long}) {
 				t.Errorf("the plugin was asked to index %v, want the first two Sources", got)
@@ -385,6 +392,40 @@ func TestIndexingKeepsAPluginOffTheTerminal(t *testing.T) {
 	}
 }
 
+// The session-start hook of the Claude Code plugin gives the agent study
+// status, so it asks a Topic's plugin what it has indexed as status does,
+// and waits for it no longer: a session never starts late for a plugin.
+func TestTheSessionStartHookSaysWhatIsIndexedAndDoesNotWait(t *testing.T) {
+	s := newShelfComputer(t)
+	s.book(t, "book.txt", bookOf(2, "one"))
+	cwd, err := json.Marshal(map[string]string{"cwd": filepath.Join(s.env["STUDY_HOME"], "linear-algebra")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.stdin = string(cwd)
+	r := s.ok(t, "claude-hook", "session-start")
+	for _, want := range []string{"Knowledge base plugins:", "linear-algebra: not indexed: Book", "Run: study source index linear-algebra"} {
+		if !strings.Contains(r.stdout, want) {
+			t.Errorf("the hook does not say %q:\n%s", want, r.stdout)
+		}
+	}
+	s.nothingRunning(t)
+
+	s.registerWith(t, "--hang", "start")
+	s.plugins.GlanceTimeout = 500 * time.Millisecond
+	began := time.Now()
+	r = s.ok(t, "claude-hook", "session-start")
+	if took := time.Since(began); took > 10*time.Second {
+		t.Errorf("the hook took %s over a plugin that never answers, which has half a second", took)
+	}
+	for _, want := range []string{"Active topic:", "did not say what it has indexed within 500ms", "Run: study knowledge-base check kb"} {
+		if !strings.Contains(r.stdout, want) {
+			t.Errorf("with a plugin that never answers, the hook does not say %q:\n%s", want, r.stdout)
+		}
+	}
+	s.nothingRunning(t)
+}
+
 // With a plugin that never answers, a Topic's Sources and status are there
 // all the same, soon, and say which command shows what is wrong.
 func TestTheCommandLineNeverWaitsForAPlugin(t *testing.T) {
@@ -396,6 +437,16 @@ func TestTheCommandLineNeverWaitsForAPlugin(t *testing.T) {
 	s.ok(t, "syllabus")
 	if _, err := os.Stat(s.record); err == nil || time.Since(began) > 10*time.Second {
 		t.Errorf("study syllabus started the Topic's plugin, or waited for it: %s", time.Since(began))
+	}
+	// Nor do the other two that find the Topic so, whatever comes of them:
+	// a review of a Topic without Cards, and a Check that is run outside
+	// the Topic's folder.
+	for _, args := range [][]string{{"review"}, {"check", "a-lesson"}} {
+		began := time.Now()
+		r := s.study(context.Background(), args...)
+		if _, err := os.Stat(s.record); err == nil || time.Since(began) > 10*time.Second {
+			t.Errorf("study %v started the Topic's plugin, or waited for it: %s\n%s%s", args, time.Since(began), r.stdout, r.stderr)
+		}
 	}
 	// A plugin has half a second to say what it has indexed, and thirty to
 	// start when it is asked to index.

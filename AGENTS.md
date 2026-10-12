@@ -103,23 +103,35 @@ GOOS=darwin go vet ./...            # macOS is supported too
   a Topic's plugin has indexed. Only the last is reached by an MCP tool, and it asks a
   plugin's `status` tool and nothing else. **No MCP tool has a plugin index**: the server
   runs outside the agent's sandbox, and a plugin that indexed for it would read any file
-  the agent named as a Source. Two tests in `internal/mcpserver` keep it so.
+  the agent named as a Source. Three tests in `internal/mcpserver` keep it so.
   `TestNoToolHasAPluginIndex` registers plugins that record what they are asked, has the
-  Topic name one, calls every tool (`everyToolOn`: add a new tool there) and fails when
-  the plugin was asked anything but `contract` and `status`, or when the registry changed;
-  it also lists the tools that ask a plugin anything (`toolsThatAskAPlugin`).
-  `TestTheCoreAsksAPluginToIndexInOnePlace` reads the core: the plugin's `Index` is called
-  in `askToIndex` alone, which only `IndexSources` reaches, which the server cannot name.
-  Change them on purpose when a tool comes to search a plugin, and name nothing else in
-  the core `Index`.
+  Topic name one and hold a Source it has not indexed from before the first tool is
+  called, calls every tool (`everyToolOn`: add a new tool there) and fails when the plugin
+  was asked anything but `contract` and `status`, or when the registry changed; it also
+  lists the tools that ask a plugin anything (`toolsThatAskAPlugin`).
+  `TestTheCoreAsksAPluginToIndexInOnePlace` reads the core: a Connection's `Index` is
+  called in `indexRun.askToIndex` alone, which only `IndexSources` reaches, which the
+  server cannot name, its `Cancel` in `indexRun.ended` alone, and its `Search` and
+  `Passage` nowhere yet (`askedOfAConnection`). `TestTheClientAsksEachToolInOneMethod`
+  holds the client to naming each tool in the one method called after it. Change them on
+  purpose when a tool comes to search a plugin, name nothing else in the core `Index`,
+  `Cancel`, `Search` or `Passage`, and keep `reflect` out of the core: it calls by a name
+  those tests cannot read.
 - Nothing that shows where the learner is waits for a plugin. `askPlugins` has
   `core.PluginGlanceTimeout`, two seconds, for the registry, the start and the answers
   together, and shows the Sources as not known when it is missed. Opening a Session asks
-  no plugin anything. Never give a plugin the client's thirty seconds on such a path.
+  no plugin anything, and a command that only needs to know which Topic it is about calls
+  `ActiveTopic`, not `Status`. Never give a plugin the client's thirty seconds on such a
+  path. The one action `status` names is a command that would help: `study source index`
+  only for a Source it would hand over and the plugin has not tried, never for one that
+  failed or whose file is missing, changed or unreadable.
 - A collection is named by `collectionName`: the Topic's id and a hash of the Study home's
   real path and the id, never the id alone, since a plugin's folder is one for the plugin
   on a computer. A Source is its content: a file goes to a plugin only when it is the file
-  the Topic records, and counts as indexed only when the plugin's hash is the Source's.
+  the Topic records, read just before it is handed over, and counts as indexed only when
+  the plugin's hash is the Source's. The contract has a plugin keep nothing of a file whose
+  bytes are not the hash it was handed: a file inside the Study home is the agent's to
+  exchange for a link once `study` has read it.
 - A plugin is not trusted with `study`'s time, memory or terminal. Every call has a
   deadline, a message is read up to a limit, every answer is checked against the contract
   (`plugincontract`'s `Validate`), and text a plugin wrote reaches an error only through

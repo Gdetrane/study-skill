@@ -31,6 +31,13 @@ indexes, and adding a Source indexes nothing.
   there is teaching to do, offer the learner to run it in a terminal of their own instead,
   and go on: a Lesson never waits for it. Stopping the command is safe, and running it again
   carries on.
+- The `action` is `study source list <topic>`: a Source that is not indexed has a file that
+  is missing, has changed or cannot be read, or the plugin's time ran out before it was
+  asked about this Topic. Call `sources`, which says the same, and tell the learner what it
+  shows.
+- Any other `action` comes with a `problem` and is the learner's to run, the ones that
+  begin with `study knowledge-base` above all: pass it on as it is, and fill in nothing it
+  leaves in angle brackets.
 - The command says the plugin's folder cannot be made or written in: your shell is
   sandboxed, and the folder is outside the Study home. Tell the learner the two ways out the
   message gives: allow that folder in your sandbox, or run the command in a shell of their
@@ -38,6 +45,8 @@ indexes, and adding a Source indexes nothing.
 - `indexing` has a `problem`: the plugin is missing on this computer, does not start or
   did not answer in time, and the Topic works as one without a Knowledge base. Tell the
   learner the problem and its `action` once, then read the Sources yourself.
+- A Topic that is paused or finished has no `indexing` in `status`: nothing is to be done
+  for it. `sources` still says what is indexed of it.
 - A Source `failed`: tell the learner the reason the plugin gave, such as a scan without
   text, and read that Source yourself. It is no `action`, and stays `failed` until it is
   indexed again: run `study source index <topic> <source>` for it only once what the reason

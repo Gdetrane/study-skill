@@ -100,6 +100,12 @@ func (c *Core) where(ctx context.Context, indexing bool) (Status, error) {
 	var named func(t Topic, sources []Source)
 	if indexing {
 		named = func(t Topic, sources []Source) {
+			if t.State != TopicActive {
+				// A Topic that is paused or finished has nothing to do
+				// next, indexing included. A listing of its Sources still
+				// asks its plugin.
+				return
+			}
 			ask := newIndexAsk(t.ID, t.KnowledgeBase, sources)
 			// A Source the plugin has not indexed is looked for on this
 			// computer, as a listing of the Sources looks for it, within the
@@ -110,11 +116,11 @@ func (c *Core) where(ctx context.Context, indexing bool) (Status, error) {
 				if l == nil {
 					l = c.newLocator(ctx, home, t.ID)
 				}
-				_, state, err := l.locate(src)
+				path, state, err := l.locate(src)
 				if err != nil {
 					return ""
 				}
-				return state
+				return fileStateAt(path, state)
 			}
 			asks[t.ID] = ask
 		}
@@ -122,13 +128,30 @@ func (c *Core) where(ctx context.Context, indexing bool) (Status, error) {
 	if status.Topics, status.Problems, err = c.listTopics(ctx, home, named); err != nil {
 		return status, err
 	}
-	// In the order of the Topics, so that the same Study home is asked about
-	// in the same order every time.
+	state, err := c.readState(home)
+	if err != nil {
+		return status, err
+	}
+	status.ActiveTopic = c.activeTopic(status.Topics, len(status.Problems), state.RecentTopic)
+	// The Topics that name one plugin share its time, and are asked one
+	// after the other: the Active topic first, since it is the one the
+	// learner is on, and then in the order of the Topics, so that the same
+	// Study home is asked about in the same order every time.
 	var asked []*indexAsk
+	first := ""
+	if status.ActiveTopic != nil {
+		first = status.ActiveTopic.ID
+	}
+	if ask := asks[first]; ask != nil {
+		asked = append(asked, ask)
+	}
 	for i := range status.Topics {
-		if ask := asks[status.Topics[i].ID]; ask != nil {
-			asked = append(asked, ask)
+		id := status.Topics[i].ID
+		if ask := asks[id]; ask != nil {
 			status.Topics[i].Indexing = ask.indexing
+			if id != first {
+				asked = append(asked, ask)
+			}
 		}
 	}
 	if err := c.askPlugins(ctx, asked); err != nil {
@@ -137,15 +160,10 @@ func (c *Core) where(ctx context.Context, indexing bool) (Status, error) {
 	for _, ask := range asked {
 		// Nothing to index, and a file that is missing or is another now:
 		// the listing of the Sources says what to do about each.
-		if x := ask.indexing; ask.held && x.Problem == "" && x.Action == "" {
+		if x := ask.indexing; ask.held && x.Problem == "" && x.Action == "" && validateTopicID(ask.topic) == nil {
 			x.Action = "study source list " + ask.topic
 		}
 	}
-	state, err := c.readState(home)
-	if err != nil {
-		return status, err
-	}
-	status.ActiveTopic = c.activeTopic(status.Topics, len(status.Problems), state.RecentTopic)
 	c.addGuidance(home, &status)
 	return status, nil
 }

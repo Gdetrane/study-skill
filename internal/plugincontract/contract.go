@@ -10,6 +10,8 @@
 // because they read one description.
 package plugincontract
 
+import "time"
+
 // Version is the contract version this package describes: the newest study
 // knows. A plugin that reports a newer one is refused, like every newer
 // format.
@@ -75,6 +77,19 @@ const (
 	CodeUnsupported = "unsupported"
 	// CodeInternal: anything else that went wrong inside the plugin.
 	CodeInternal = "internal"
+)
+
+// How long a plugin has when study only shows what is indexed, as study
+// status does. study waits for no plugin there.
+const (
+	// GlanceTime is how long a plugin has to say what it has indexed, from
+	// the moment study sets out to start it or to reach it: starting, the
+	// answer of contract and every answer of status, all of them together.
+	GlanceTime = 2 * time.Second
+	// GlanceGrace is how long a command that was only asked what it has
+	// indexed has to exit once its input is closed, and again once it is
+	// signalled. It had nothing to finish.
+	GlanceGrace = 250 * time.Millisecond
 )
 
 // Limits. study refuses what goes over them, on the way out and on the way

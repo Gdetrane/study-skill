@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -60,6 +61,11 @@ const Arg = "lamplight-test-plugin"
 //	--notify WHERE      send study notifications without end, in the same
 //	                    places
 //	--stderr TEXT       write TEXT on its standard error first
+//	--escaped           read \x1b, \a, \n and the like in the texts of
+//	                    --name, --version, --stderr, --refuse and
+//	                    --plain-error as the characters they stand for: the
+//	                    registry stores no argument with such a character
+//	                    in it, and a plugin can write one all the same
 //	--exit N            exit at once with status N
 //	--garbage           write a line that is no MCP message, and wait
 //	--babble            write such a line once contract was answered, when
@@ -278,6 +284,7 @@ func run(args []string) int {
 		notify      = flags.String("notify", "", "")
 		flood       = flags.String("flood", "", "")
 		stderr      = flags.String("stderr", "", "")
+		escaped     = flags.Bool("escaped", false, "")
 		exit        = flags.Int("exit", -1, "")
 		garbage     = flags.Bool("garbage", false, "")
 		babble      = flags.Bool("babble", false, "")
@@ -301,6 +308,14 @@ func run(args []string) int {
 	flags.Var(delays, "delay", "")
 	if err := flags.Parse(args); err != nil {
 		return 2
+	}
+	if *escaped {
+		cfg.Name, cfg.Version, *stderr = unescaped(cfg.Name), unescaped(cfg.Version), unescaped(*stderr)
+		for _, texts := range []map[string]string{cfg.Refusals, cfg.PlainErrors} {
+			for tool, text := range texts {
+				texts[tool] = unescaped(text)
+			}
+		}
 	}
 
 	if *stubborn {
@@ -511,4 +526,13 @@ func writeRecord(path, script string) error {
 		err = os.Rename(tmp.Name(), path)
 	}
 	return err
+}
+
+// unescaped is text with its backslash escapes read as Go reads them in a
+// string, or the text as it is when they are not ones Go knows.
+func unescaped(text string) string {
+	if read, err := strconv.Unquote(`"` + strings.ReplaceAll(text, `"`, `\"`) + `"`); err == nil {
+		return read
+	}
+	return text
 }

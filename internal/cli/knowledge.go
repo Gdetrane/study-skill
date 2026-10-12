@@ -185,6 +185,10 @@ func indexProgress(w io.Writer, quiet bool) func(core.IndexProgress) {
 				done = fmt.Sprintf("%d%%, ", int(*p.Progress*100))
 			}
 			fmt.Fprintf(w, "  still indexing %s (%s%s)\n", printable(p.Title), done, p.Elapsed.Round(time.Second))
+		case p.State == core.ProgressStopping:
+			// At once, and with --json too: nothing else is printed until
+			// the plugin has answered, which it has seconds to do.
+			fmt.Fprintf(w, "Stopping: telling the plugin to stop indexing %s…\n", printable(p.Title))
 		}
 	}
 }

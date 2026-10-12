@@ -1072,8 +1072,13 @@ a Knowledge base plugin, which indexes its Sources
 
 For a Topic that names a Knowledge base plugin, `study status` and `study source list`, and
 the `status` and `sources` tools, ask the plugin which of the Topic's Sources it has
-indexed. Whether a Source is indexed is the plugin's to say, on this computer: it is no
-Event, it is in no file of the Topic, and it is asked each time.
+indexed. So does the session-start hook of the Claude Code plugin, which prints
+`study status`. Whether a Source is indexed is the plugin's to say, on this computer: it is
+no Event, it is in no file of the Topic, and it is asked each time.
+
+`status` asks about the Topics that are active, and gives a Topic that is paused or
+finished no `indexing`: such a Topic has nothing to do next. `study source list` asks about
+the Topic it lists, whatever its state.
 
 `source list` gives each Source an `index`, and the list an `indexing`:
 
@@ -1097,28 +1102,32 @@ Event, it is in no file of the Topic, and it is asked each time.
 
 `status` gives each such Topic the same `indexing`, with the Sources' states in it, since
 `status` lists no Sources otherwise:
-`"indexing": {"plugin", "problem"?, "action"?, "sources": [{"id", "title", "state", "progress"?, "reason"?}]}`.
+`"indexing": {"plugin", "problem"?, "action"?, "sources"?: [{"id", "title", "state", "progress"?, "reason"?}]}`.
+`sources` is left out for a Topic without Sources.
 
 | `state` | Means |
 |---|---|
 | `indexed` | The plugin holds the Source's content, and a search finds it. For a file, the hash of what the plugin holds is the Source's. |
 | `indexing` | The plugin is indexing it now; `progress` is how much is done, from 0 to 1, when the plugin can tell. A service says so to whoever asks while it works. A plugin that is a command indexes only while the `study source index` that started it runs. Another `study` starts a copy of its own meanwhile, which says `indexing` when it can tell that the work is going on, and otherwise shows the Source as it was before. |
-| `failed` | The plugin's last indexing of it failed; `reason` is why, in the plugin's words. It stays so, on every run of `study`, until the plugin is asked to index the Source again. |
-| `not_indexed` | The plugin does not hold the Source's content. `reason` is there when the plugin does not index Sources of this kind, when it holds other content for the Source than the Topic records, because the file was another when the plugin read it, and when the Source's file is not on this computer or is no longer the one added, so that there is nothing to hand the plugin. |
+| `failed` | The plugin's last indexing of it failed; `reason` is why, in the plugin's words: a file without a text layer, a page that cannot be fetched, a file that was another when the plugin read it than when `study` did. It stays so, on every run of `study`, until the plugin is asked to index the Source again. |
+| `not_indexed` | The plugin does not hold the Source's content. `reason` is there when the plugin does not index Sources of this kind; when the Source's file is not on this computer, is no longer the one added or cannot be read, so that there is nothing to hand the plugin; and when a plugin that breaks the contract holds other content for the Source than the Topic records. |
 | `unknown` | The plugin could not say: `indexing.problem` says why. |
 
 - **`indexing.action` is the one command to run next.** It is
   `study source index <topic>` when a Source is `not_indexed` and the command would hand
-  it to the plugin: the plugin indexes Sources of its kind, and a file is on this computer
-  and is the one that was added. It is the command that puts a `problem` right. It is
-  absent when there is nothing to do. Human output names it under the Sources, and
-  `status` under "Knowledge base plugins", with the Sources that are not indexed, by title.
-- **A file that is missing, or is another now, is not one to index.**
+  it to the plugin: the plugin indexes Sources of its kind, and a file is on this computer,
+  is the one that was added, and can be read. It is the command that puts a `problem`
+  right. It is absent when there is nothing to do, and for a folder whose name is no Topic
+  id, which no command can name. Human output names it under the Sources, and `status`
+  under "Knowledge base plugins", with the Sources that are not indexed, by title. An
+  action that puts a `problem` right can hold a part in angle brackets, `<command>` or
+  `<name>`, which is for the learner to fill in: such a command is theirs to run.
+- **A file that is missing, is another now, or cannot be read is not one to index.**
   `study source index` skips it, so it is not the action for it: the Source is
   `not_indexed` with the `reason`, and in `status` the action is then
   `study source list <topic>`, which says what to do about each such file. In
   `study source list` itself there is no action for it beyond what the Source's own lines
-  say.
+  say. The same holds for a Source that `failed` and whose file is such a one.
 - **A Source that `failed` is shown, and is no next action.** The plugin tried, and said
   why: trying again helps only once what the `reason` names is put right, and a scan
   without text would otherwise be the one thing to do for ever. `status` names it with its
@@ -1132,9 +1141,17 @@ Event, it is in no file of the Topic, and it is asked each time.
   closed takes half a second more at most: after a quarter of a second its process group
   gets `SIGTERM`, and after another it is killed. A service that does not answer when it
   is told the session is over is waited for three quarters of a second, and no longer.
-  Several plugins are asked side by side,
+  A plugin that missed the 2 seconds is given nothing more: a command is killed at once,
+  and a service is not waited for. Several plugins are asked side by side,
   each once, however many Topics name it. A Topic without Sources has nothing to ask, so
-  its plugin is not started. **Opening a Session asks no plugin anything.**
+  its plugin is not started. **Opening a Session asks no plugin anything**, and neither
+  does a command that only has to know which Topic it is about, such as `study check`,
+  `study review` and `study syllabus`.
+- **The Topics that name one plugin share its 2 seconds**, and are asked one after the
+  other: the Active topic first, then the others in the order `status` lists them. A plugin
+  that answered about one Topic works, so a Topic the time did not reach says that, and its
+  action is `study source list <topic>`, which asks about that Topic alone with all of the
+  time.
 - **A plugin is asked what it has indexed, and nothing else**: its `status` tool, once it
   said which contract it speaks. It is started for that and stopped again before the
   command, or the tool, answers: nothing is kept running in between, in `study mcp`
@@ -1154,8 +1171,9 @@ Event, it is in no file of the Topic, and it is asked each time.
   slow to start passes it, and `study source index`, which waits as long, then says what
   is indexed.
 - **What a plugin wrote is cut short here**: a `reason` to 300 bytes, a `problem` to 600,
-  each on one line and with nothing a terminal would interpret. `study source index`
-  gives a `reason` whole, up to the 2,000 bytes `study` keeps of one.
+  the `…` that says so included, each on one line and with nothing a terminal would
+  interpret. `study source index` gives a `reason` whole, up to the 2,000 bytes `study`
+  keeps of one.
 - **The collection**: a plugin keeps collections apart and knows nothing else of Topics.
   The name `study` gives it for a Topic is the Topic's id, a hyphen, and 32 characters of a
   hash of where the Study home really is and of the Topic's id, such as
@@ -1164,9 +1182,14 @@ Event, it is in no file of the Topic, and it is asked each time.
   there. A plugin's folder is one for the plugin on a computer, and a service may serve
   several, so the Topic's id alone would have two Study homes that each hold a
   `linear-algebra` share one collection. The path is not the agent's to choose, and every
-  name ends with the hash, so no two Topics share a name. **Moving the Study home, or
-  renaming it, changes the name: the Sources are then indexed again**, and what the plugin
-  holds under the old name stays where it is, unused.
+  name ends with the hash, so no two Topics of one Study home, or of two, share a name.
+  **Moving the Study home, or renaming it, changes the name: the Sources are then indexed
+  again**, and what the plugin holds under the old name stays where it is, unused. The
+  same goes for a Study home that `study` sees under another path, as inside a sandbox that
+  shows it elsewhere: what is indexed there is not what `study` asks about outside it. A
+  Topic that is removed, and another made later under its id, share a name: nothing
+  removes a collection, so the plugin still holds the removed Topic's Sources there, under
+  their own ids.
 
 ### study source index
 
@@ -1211,12 +1234,14 @@ it runs `study check`; the learner can always run it themselves.
   link, a plugin reads what it is handed a moment later, and handed the link it would read
   wherever the link leads by then.
   **A Source is its content**: only the file the Topic records is handed over, and `study`
-  reads it once more, whole, to be sure. A file that is not on this computer, cannot be
-  read, or has other content now than was added is not asked for: `skipped` says why and
-  what to do, and what the plugin indexed for it before stays as it is. The plugin reads
-  the file itself a moment later and says the hash of what it read. When that is not the
-  Source's, because the file changed in between, the Source is `not_indexed`, with the
-  `reason`, and the next run asks again.
+  reads it once more, whole, just before it asks for it, to be sure. A file that is not on
+  this computer, cannot be read, or has other content now than was added is not asked for:
+  `skipped` says why and what to do, and what the plugin indexed for it before stays as it
+  is. The plugin reads the file itself a moment later, and **keeps nothing of a file whose
+  bytes are not the hash it was handed**: the Source is then `failed`, with the plugin's
+  reason. That is what keeps a file inside the Study home, which the agent can exchange for
+  a link to any file of yours once `study` has read it, from being indexed as something
+  else than was shown.
 - **A web page** is handed over by its address. The plugin fetches it, from where the
   plugin runs.
 - **A kind the plugin does not index**, a web page for a plugin that indexes files, is
@@ -1237,15 +1262,22 @@ it runs `study check`; the learner can always run it themselves.
 - **What goes wrong with a Source is not an error of the command.** A file without a text
   layer, a page that cannot be fetched, a Source the plugin refuses: the Source is
   `failed`, with the plugin's `reason`, the others are indexed, and the exit code is 0.
-  Look at each Source's `state`.
+  Look at each Source's `state`. A plugin that does not answer, or answers with what is
+  not the contract's, is another matter: it would do the same for the next Source, so the
+  command ends there, with `failed_precondition`.
 - **Stopped**, by Ctrl-C, `SIGTERM` or `SIGHUP`, it tells the plugin to stop indexing the
   Source it was indexing, with the plugin's `cancel` tool, and waits up to 10 seconds for
-  the plugin to say that it has: so no work goes on behind a command that has exited. A
-  plugin that is a command is stopped then, and its indexing with it, whether or not it
-  answered. A service is told, and when it cannot be told the error says that it may
-  still be indexing. The command reports `canceled`, and its message what came of the
-  stop. **What is indexed stays indexed, and running the command again carries on** with
-  what is not.
+  the plugin to say that it has: so no work goes on behind a command that has exited. It
+  says so on stderr at once (`Stopping: telling the plugin to stop indexing …`), since
+  nothing else is printed until the plugin has answered, and a second Ctrl-C does not
+  hurry it. A plugin that is a command is stopped then, and its indexing with it, whether
+  or not it answered. A service is told, and when it cannot be told, or had not yet
+  answered the request to index, the message says that it may still be indexing. The
+  command reports `canceled`, and its message what came of the stop. **What is indexed
+  stays indexed, and running the command again carries on** with what is not. A `study`
+  that is killed (`SIGKILL`), or ends on `SIGQUIT` or on a closed terminal (`SIGPIPE`),
+  stops nothing: a plugin exits by itself when its input closes, as the contract asks, and
+  one that does not is left running.
 - **Inside a sandbox.** A command plugin keeps its index in
   `lamplight/knowledge-base-plugins/<name>` in your state folder (`$XDG_STATE_HOME`, or
   `~/.local/state`), which is outside the Study home on purpose (see
@@ -1266,7 +1298,7 @@ it runs `study check`; the learner can always run it themselves.
 | `newer_format`, exit 1 | The plugin speaks a newer version of the contract: upgrade `study`. |
 | `not_found`, exit 1 | There is no such Topic, or the Topic has no such Source. |
 | `canceled`, exit 1 | The command was stopped. |
-| `invalid_argument`, exit 2 | What was given as a Source is not the id of one. |
+| `invalid_argument`, exit 2 | What was given as the Topic is not the id of one, or what was given as a Source is not the id of one. |
 
 ## Knowledge base plugins
 

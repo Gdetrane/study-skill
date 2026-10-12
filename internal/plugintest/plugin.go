@@ -60,6 +60,9 @@ const (
 	BreakSearchReadsSource = "search-reads-source"
 	// BreakFailedForgotten says once that a Source failed, and then no more.
 	BreakFailedForgotten = "failed-forgotten"
+	// BreakIndexesWhatItReads indexes a file whatever its bytes are, also
+	// when they are not the hash index was handed.
+	BreakIndexesWhatItReads = "indexes-what-it-reads"
 	// BreakFailedLost keeps what failed only for as long as its program
 	// runs: started again, it says nothing of a Source that failed.
 	BreakFailedLost = "failed-lost"
@@ -401,6 +404,11 @@ func (p *Plugin) work(ctx context.Context, in plugincontract.IndexInput, j *job)
 	sum := sha256.Sum256(content)
 	entry := stored{Format: 1, ID: in.Source.ID, Title: in.Source.Title, Kind: in.Source.Kind, Hash: "sha256:" + hex.EncodeToString(sum[:]),
 		Path: in.Source.Path}
+	// A file is the one study read only when its bytes are the hash study
+	// handed over. Of another, nothing is kept.
+	if in.Source.Kind == plugincontract.SourceFile && entry.Hash != in.Source.Hash && !p.breaks(BreakIndexesWhatItReads) {
+		return errors.New("the file changed since study read it")
+	}
 	pages := pagesOf(in.Source.Kind, string(content))
 	if len(pages) == 0 {
 		return errors.New("there is no text in it")

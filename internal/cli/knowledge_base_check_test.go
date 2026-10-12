@@ -216,20 +216,34 @@ func TestKnowledgeBaseCheckHumanOutput(t *testing.T) {
 // standard error is the plugin's own, and what study repeats of it, and of
 // its name for itself, has nothing in it a terminal would act on.
 func TestKnowledgeBaseCheckKeepsAPluginOffTheTerminal(t *testing.T) {
-	const escapes = "\x1b]0;gotcha\x07\x1b[2J"
-	for name, args := range map[string][]string{
-		"a plugin that speaks":        {"--name", "kb" + escapes, "--version", "1" + escapes, "--stderr", "ready" + escapes + "\n"},
-		"a plugin that does not":      {"--exit", "1", "--stderr", "failed" + escapes + "\n"},
-		"a plugin that breaks it":     {"--contract", `{"version": 1, "sources": ["file\u001b[2J"], "search": ["keyword"], "locations": []}`},
-		"a plugin that refuses":       {"--refuse", "contract=internal:no" + escapes},
-		"a plugin that writes no MCP": {"--garbage", "--stderr", escapes},
+	// As the plugin is told them: the registry stores no argument with such
+	// a character in it, so the plugin reads these escapes itself, and
+	// writes the characters (--escaped).
+	const escapes = `\x1b]0;gotcha\a\x1b[2J`
+	for name, tc := range map[string]struct {
+		args []string
+		// said is a text of the plugin's that study repeats, cleaned.
+		said string
+	}{
+		"a plugin that speaks":        {[]string{"--name", "kb" + escapes, "--version", "1" + escapes, "--stderr", "ready" + escapes + `\n`}, "gotcha"},
+		"a plugin that does not":      {[]string{"--exit", "1", "--stderr", "failed" + escapes + `\n`}, "failed"},
+		"a plugin that breaks it":     {[]string{"--contract", `{"version": 1, "sources": ["file\u001b[2J"], "search": ["keyword"], "locations": []}`}, ""},
+		"a plugin that refuses":       {[]string{"--refuse", "contract=internal:no way" + escapes}, "no way"},
+		"a plugin that writes no MCP": {[]string{"--garbage", "--stderr", "noise" + escapes}, "noise"},
 	} {
 		for _, mode := range [][]string{nil, {"--json"}} {
-			k := newKBComputer(t)
-			// The arguments hold what the registry refuses to store, so the
-			// plugin is written into the registry as it is.
-			writeFile(t, k.registry(), registryOf(t, plugintest.Command(args...)))
+			record := filepath.Join(t.TempDir(), "record.json")
+			k := withTestPlugin(append([]string{"--escaped", "--record", record}, tc.args...)...)(t)
 			r := k.check(t, 20*time.Second, append([]string{"knowledge-base", "check", "kb"}, mode...)...)
+			// The plugin was started, and study repeats what it wrote:
+			// without both, nothing of a plugin's was there to keep off the
+			// terminal.
+			if _, err := os.Stat(record); err != nil {
+				t.Fatalf("%s, %v: the plugin was never started (%v): exit %d, %s%s", name, mode, err, r.code, r.stdout, r.stderr)
+			}
+			if !strings.Contains(r.stdout+r.stderr, tc.said) {
+				t.Errorf("%s, %v: study does not repeat the plugin's %q: %s%s", name, mode, tc.said, r.stdout, r.stderr)
+			}
 			for _, out := range []string{r.stdout, r.stderr} {
 				if strings.ContainsAny(out, "\x1b\x07") {
 					t.Errorf("%s, %v: study wrote the plugin's escapes: %q", name, mode, out)
@@ -237,17 +251,6 @@ func TestKnowledgeBaseCheckKeepsAPluginOffTheTerminal(t *testing.T) {
 			}
 		}
 	}
-}
-
-// registryOf is a registry that holds the plugin kb with a command the
-// registry would not let anyone register.
-func registryOf(t *testing.T, command []string) string {
-	t.Helper()
-	var words []string
-	for _, word := range command {
-		words = append(words, fmt.Sprintf("%q", word))
-	}
-	return fmt.Sprintf(`{"format": 1, "plugins": [{"name": "kb", "command": [%s]}]}`, strings.Join(words, ", "))
 }
 
 // study knowledge-base check stops what it started, whatever came of it.

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -56,11 +57,11 @@ const (
 	// index (pluginclient.DefaultStartTimeout). Nothing that shows where the
 	// learner is may wait that long, so here a plugin that takes longer is
 	// stopped, and its Sources are shown as not known.
-	PluginGlanceTimeout = 2 * time.Second
+	PluginGlanceTimeout = plugincontract.GlanceTime
 	// PluginGlanceGrace is how long a command that was only asked what it
 	// has indexed has to exit once its input is closed, and again once it
 	// is signalled. It had nothing to finish.
-	PluginGlanceGrace = 250 * time.Millisecond
+	PluginGlanceGrace = plugincontract.GlanceGrace
 	// DefaultIndexPoll is how often study source index asks a plugin how
 	// far it is with a Source, once the first answers came.
 	DefaultIndexPoll = time.Second
@@ -218,12 +219,13 @@ func indexOf(src Source, said *plugincontract.SourceStatus, contract plugincontr
 }
 
 // shorten cuts text to at most max bytes, at the end of a character, and
-// says so.
+// says so with an ellipsis, which is within the max.
 func shorten(text string, max int) string {
+	const ellipsis = "…"
 	if len(text) <= max {
 		return text
 	}
-	return plugincontract.Cut(text, max) + "…"
+	return plugincontract.Cut(text, max-len(ellipsis)) + ellipsis
 }
 
 // indexAsk is one Topic of which status, or a listing of its Sources, asks
@@ -234,8 +236,9 @@ type indexAsk struct {
 	sources []Source
 	// fileState, when it is not nil, says of a file Source whether its file
 	// is on this computer and is the one that was added: SourceOK,
-	// SourceMissing or SourceChanged, or nothing when it could not tell in
-	// time. It is asked only about a Source the plugin has not indexed.
+	// SourceMissing, SourceChanged or sourceUnreadable, or nothing when it
+	// could not tell in time. It is asked only about a Source the plugin has
+	// not indexed.
 	fileState func(ctx context.Context, src Source) string
 	// held says that a Source is not indexed and cannot be handed to the
 	// plugin as things are: its file is missing, or is another now.
@@ -262,9 +265,29 @@ func (a *indexAsk) unanswered(problem, action string) {
 
 // Why a file Source that is not indexed is not one to index as things are.
 const (
-	reasonFileMissing = "its file is not on this computer"
-	reasonFileChanged = "the file here is no longer the one added"
+	reasonFileMissing    = "its file is not on this computer"
+	reasonFileChanged    = "the file here is no longer the one added"
+	reasonFileUnreadable = "its file cannot be read"
 )
+
+// sourceUnreadable is what an indexAsk's fileState says of a file that is
+// where it was found, and cannot be opened to read.
+const sourceUnreadable = "unreadable"
+
+// fileStateAt is the state of a file Source for whoever would hand it to a
+// plugin, given where it was found and in which state: a file that is there
+// and cannot be opened is none to hand over.
+func fileStateAt(path, state string) string {
+	if state != SourceOK {
+		return state
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return sourceUnreadable
+	}
+	_ = f.Close()
+	return state
+}
 
 // answered records what the plugin said of the Topic's Sources.
 //
@@ -280,19 +303,24 @@ func (a *indexAsk) answered(ctx context.Context, plugin string, contract pluginc
 	toIndex := false
 	for i, src := range a.sources {
 		index, wanted := indexOf(src, byID[src.ID], contract, plugin)
-		if wanted && src.Kind == SourceFile && a.fileState != nil {
-			switch a.fileState(ctx, src) {
-			case SourceMissing:
-				index.Reason, wanted, a.held = reasonFileMissing, false, true
-			case SourceChanged:
-				index.Reason, wanted, a.held = reasonFileChanged, false, true
+		if src.Kind == SourceFile && a.fileState != nil && (wanted || index.State == IndexFailed) {
+			why := map[string]string{SourceMissing: reasonFileMissing, SourceChanged: reasonFileChanged,
+				sourceUnreadable: reasonFileUnreadable}[a.fileState(ctx, src)]
+			if why != "" {
+				// A Source that failed keeps the plugin's reason: the file
+				// says the rest in a listing.
+				if a.held = true; wanted {
+					index.Reason, wanted = why, false
+				}
 			}
 		}
 		index.Reason = shorten(index.Reason, maxIndexTextBytes)
 		a.indexing.Sources[i].SourceIndex = index
 		toIndex = toIndex || wanted
 	}
-	if toIndex {
+	// A folder whose name is no Topic's id is a Topic all the same, and one
+	// no command can name.
+	if toIndex && validateTopicID(a.topic) == nil {
 		a.indexing.Action = "study source index " + a.topic
 	}
 }
@@ -357,8 +385,8 @@ func (c *Core) askPlugins(ctx context.Context, asks []*indexAsk) error {
 		return nil
 	}
 	list, began, readErr := c.registryInTime(ctx, limit)
-	if err := ctx.Err(); err != nil {
-		return err
+	if ctx.Err() != nil {
+		return glanceStopped(ctx)
 	}
 	deadline := began.Add(limit)
 	var wg sync.WaitGroup
@@ -381,24 +409,51 @@ func (c *Core) askPlugins(ctx context.Context, asks []*indexAsk) error {
 		}
 	}
 	wg.Wait()
-	return ctx.Err()
+	if ctx.Err() != nil {
+		return glanceStopped(ctx)
+	}
+	return nil
+}
+
+// glanceStopped is the error for a command that was stopped while it asked
+// what is indexed.
+func glanceStopped(ctx context.Context) error {
+	if !stopped(ctx) {
+		return ctx.Err()
+	}
+	return &Error{Code: CodeCanceled, Err: ctx.Err(), Message: "the command was stopped before every Knowledge base plugin " +
+		"had said what it has indexed"}
 }
 
 // askPlugin starts one plugin, asks it what it has indexed of each Topic
 // that names it, and stops it again, all before deadline.
 func (c *Core) askPlugin(ctx context.Context, plugin Plugin, began, deadline time.Time, asks []*indexAsk) {
+	// answered says that the plugin said what it has indexed of a Topic.
+	answered := false
 	// failed says why the plugin did not answer about the Topics from
 	// asks[from] on. One that ran out of time is said so in the same words
 	// wherever it was when the time ran out.
+	//
+	// The Topics that name a plugin share its time, and are asked one after
+	// the other. A plugin that answered about one works: for the Topics the
+	// time did not reach, the command that says what is wrong with a plugin
+	// would say that nothing is, so they are given the one that asks about
+	// that Topic alone, with all of the time.
+	late := false
 	failed := func(from int, err error) {
-		problem := err.Error()
-		if ctx.Err() == nil && !time.Now().Before(deadline) {
-			problem = "Knowledge base plugin " + plugin.Name + " did not say what it has indexed within " +
-				deadline.Sub(began).String() + ", and study did not wait for it"
-		}
+		late = ctx.Err() == nil && !time.Now().Before(deadline)
 		for _, a := range asks[from:] {
-			if len(a.sources) > 0 {
-				a.unanswered(problem, "study knowledge-base check "+plugin.Name)
+			switch {
+			case len(a.sources) == 0:
+			case late && answered:
+				a.unanswered("Knowledge base plugin "+plugin.Name+" had "+deadline.Sub(began).String()+" to say what it has "+
+					"indexed of every Topic that names it, and they were over before it said so of this one",
+					"study source list "+a.topic)
+			case late:
+				a.unanswered("Knowledge base plugin "+plugin.Name+" did not say what it has indexed within "+
+					deadline.Sub(began).String()+", and study did not wait for it", "study knowledge-base check "+plugin.Name)
+			default:
+				a.unanswered(err.Error(), "study knowledge-base check "+plugin.Name)
 			}
 		}
 	}
@@ -412,7 +467,13 @@ func (c *Core) askPlugin(ctx context.Context, plugin Plugin, began, deadline tim
 		failed(0, err)
 		return
 	}
-	defer conn.Close()
+	defer func() {
+		if late {
+			// It had its time: it is not given more to leave.
+			conn.GiveUp()
+		}
+		conn.Close()
+	}()
 	for i, a := range asks {
 		if len(a.sources) == 0 {
 			continue
@@ -428,6 +489,7 @@ func (c *Core) askPlugin(ctx context.Context, plugin Plugin, began, deadline tim
 		}
 		a.answered(asking, plugin.Name, conn.Contract(), said)
 		cancel()
+		answered = true
 	}
 }
 
@@ -480,7 +542,8 @@ type IndexProgress struct {
 	// Number counts the Sources the plugin is asked to index from 1, out of
 	// Total.
 	Number, Total int
-	// State is ProgressStarted, ProgressRunning or ProgressFinished.
+	// State is ProgressStarted, ProgressRunning, ProgressFinished or
+	// ProgressStopping.
 	State string
 	// Progress is how much of the Source is indexed, from 0 to 1, when the
 	// plugin can tell.
@@ -490,6 +553,12 @@ type IndexProgress struct {
 	// Outcome is the Source's index state once the indexing ended.
 	Outcome string
 }
+
+// ProgressStopping reports a Source of study source index that the plugin
+// was indexing when the command was stopped: the plugin is being told to
+// stop, and has a few seconds to say that it did. The command says so at
+// once, since nothing else is printed until the plugin answered.
+const ProgressStopping = "stopping"
 
 // IndexOutcome is one Source after study source index, or in a dry run
 // before it.
@@ -653,6 +722,13 @@ type indexRun struct {
 	// and has not seen come to an end: what the plugin is told to stop
 	// indexing when the run ends early.
 	underWay string
+	// heard says that the plugin answered the request to index underWay. A
+	// request that was stopped on its way may reach the plugin all the same,
+	// after it was told to stop.
+	heard bool
+	// stopping, when it is not nil, reports that the plugin is being told
+	// to stop indexing underWay.
+	stopping func()
 }
 
 // beforeIndexAsked, when a test sets it, is called with a Source's id after
@@ -687,13 +763,19 @@ func (r *indexRun) indexSources(ctx context.Context, spec IndexSpec, sources []S
 				// The reason says the same.
 				out.Reason = ""
 			}
-		case src.Kind == SourceFile:
+		case src.Kind == SourceFile && (spec.DryRun || src.State != SourceOK):
 			// The plugin is handed where the file really is, and that is
-			// what is shown.
+			// what is shown. A dry run reads every file now, to say what
+			// the real run would do with it.
 			if sources[i].Path, out.Skipped, err = r.c.fileToHandOver(ctx, r.topic, src); err != nil {
 				return IndexResult{}, err
 			}
 			out.Path, out.Asked = sources[i].Path, out.Skipped == ""
+		case src.Kind == SourceFile:
+			// Read just before it is handed over, below: by then the files
+			// before it are indexed, which takes minutes, and a file inside
+			// the Study home is one the agent can exchange meanwhile.
+			out.Asked = true
 		default:
 			out.Asked = true
 		}
@@ -710,6 +792,19 @@ func (r *indexRun) indexSources(ctx context.Context, spec IndexSpec, sources []S
 		every = DefaultProgressEvery
 	}
 	for n, i := range toAsk {
+		if sources[i].Kind == SourceFile {
+			// The file is read, whole, as the last thing before the plugin
+			// is asked: what is handed over is where the file really is
+			// now, and only a file that is the Source's.
+			out := &result.Sources[i]
+			if sources[i].Path, out.Skipped, err = r.c.fileToHandOver(ctx, r.topic, sources[i]); err != nil {
+				return IndexResult{}, err
+			}
+			if out.Path = sources[i].Path; out.Skipped != "" {
+				out.Asked = false
+				continue
+			}
+		}
 		src := sources[i]
 		report := func(state string, began time.Time, index SourceIndex) {
 			if spec.Progress == nil {
@@ -726,6 +821,7 @@ func (r *indexRun) indexSources(ctx context.Context, spec IndexSpec, sources []S
 		}
 		report(ProgressStarted, time.Time{}, SourceIndex{})
 		began := time.Now()
+		r.stopping = func() { report(ProgressStopping, began, SourceIndex{}) }
 		index, err := r.askToIndex(ctx, src, spec.Again)
 		if err != nil {
 			return IndexResult{}, err
@@ -735,7 +831,7 @@ func (r *indexRun) indexSources(ctx context.Context, spec IndexSpec, sources []S
 				return IndexResult{}, err
 			}
 		}
-		r.underWay = ""
+		r.underWay, r.stopping = "", nil
 		result.Sources[i].SourceIndex = index
 		report(ProgressFinished, began, index)
 	}
@@ -799,7 +895,9 @@ func (c *Core) fileToHandOver(ctx context.Context, topicID string, src SourceSta
 //
 // What the plugin refuses, or what study cannot send it as the contract
 // shapes it, is that Source's failure and the reason for it: the run goes
-// on with the next. A plugin that no longer answers ends the run.
+// on with the next. A plugin that does not answer, or not as the contract
+// has it, ends the run: it would do the same for the next Source, and what
+// it holds for this one is not known.
 func (r *indexRun) askToIndex(ctx context.Context, src SourceStatus, again bool) (SourceIndex, error) {
 	source := plugincontract.Source{ID: src.ID, Title: src.Title, Kind: src.Kind}
 	if src.Kind == SourceFile {
@@ -812,15 +910,19 @@ func (r *indexRun) askToIndex(ctx context.Context, src SourceStatus, again bool)
 	}
 	// From here on the plugin may be indexing it, whatever comes of the
 	// call: one that was stopped may have reached the plugin all the same.
-	r.underWay = src.ID
+	r.underWay, r.heard = src.ID, false
 	said, err := r.conn.Index(ctx, r.collection, source)
+	var about *pluginclient.Error
 	switch {
 	case err == nil:
+		r.heard = true
 		return r.outcome(src.Source, &said), nil
-	case ctx.Err() != nil || r.conn.Ended():
-		return SourceIndex{}, err
+	case ctx.Err() == nil && !r.conn.Ended() && errors.As(err, &about) && about.AboutTheCall:
+		// The plugin answered, and is indexing nothing for it.
+		r.underWay = ""
+		return SourceIndex{State: IndexFailed, Reason: err.Error()}, nil
 	}
-	return SourceIndex{State: IndexFailed, Reason: err.Error()}, nil
+	return SourceIndex{}, err
 }
 
 // outcome is a Source's index state as the plugin gives it to a run that
@@ -829,7 +931,7 @@ func (r *indexRun) askToIndex(ctx context.Context, src SourceStatus, again bool)
 func (r *indexRun) outcome(src Source, said *plugincontract.SourceStatus) SourceIndex {
 	if said == nil {
 		return SourceIndex{State: IndexNotIndexed, Reason: "Knowledge base plugin " + r.plugin.Name + " stopped indexing it " +
-			"and says nothing of it: something else told it to stop"}
+			"and says nothing of it: its indexing was stopped from elsewhere"}
 	}
 	index, _ := indexOf(src, said, r.conn.Contract(), r.plugin.Name)
 	if index.State == IndexNotIndexed {
@@ -892,12 +994,24 @@ func (r *indexRun) ended(ctx context.Context, cause error) error {
 		if limit <= 0 {
 			limit = DefaultIndexCancelTimeout
 		}
+		if r.stopping != nil {
+			r.stopping()
+		}
 		own, cancel := context.WithTimeout(context.WithoutCancel(ctx), limit)
 		stopped, err := r.conn.Cancel(own, r.collection, r.underWay)
 		cancel()
 		switch {
 		case err == nil && stopped:
 			told = "Knowledge base plugin " + r.plugin.Name + " was told to stop indexing Source " + r.underWay + ", and stopped"
+		case err == nil && !r.heard && len(r.plugin.Command) == 0:
+			// The request to index was on its way when the command was
+			// stopped, and a service may take it up after saying this.
+			told = "Knowledge base plugin " + r.plugin.Name + " was told to stop indexing Source " + r.underWay +
+				", and said it was not indexing it. It had not answered the request to index it, so the service may take " +
+				"it up yet: study source list " + r.topic + " shows whether it did"
+		case err == nil && !r.heard:
+			told = "Knowledge base plugin " + r.plugin.Name + " was told to stop indexing Source " + r.underWay +
+				" before it had answered the request to index it, so study stops its program, and whatever it began with it"
 		case err == nil:
 			told = "Knowledge base plugin " + r.plugin.Name + " was told to stop indexing Source " + r.underWay +
 				", and was not indexing it any more"

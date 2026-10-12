@@ -104,6 +104,10 @@ type KnowledgeBase struct {
 	// a computer that has no plugin under the name treats the Topic as one
 	// without a Knowledge base.
 	Plugin string `json:"plugin,omitempty"`
+	// unnamed says that the Topic's file holds, for a plugin's name, text no
+	// plugin can be registered under: Plugin is then what is shown of it,
+	// made safe to print, and names no plugin (pluginOf).
+	unnamed bool
 }
 
 // knowledgeBaseSetData is the payload of a knowledge_base.set Event: a kind
@@ -167,7 +171,10 @@ func knowledgeBaseOf(settings topicSettings) *KnowledgeBase {
 	kb := &KnowledgeBase{Kind: kind}
 	if kind == KnowledgeBasePlugin {
 		if kb.Plugin, _ = table["plugin"].(string); pluginregistry.CheckName(kb.Plugin) != nil {
-			kb.Plugin = derivedText(kb.Plugin, maxShownPluginRunes)
+			// What is shown of it is cleaned, and cleaning can make a name a
+			// plugin has out of one none has: " kb" becomes "kb". So the
+			// Topic is marked as naming no plugin, whatever is shown.
+			kb.Plugin, kb.unnamed = derivedText(kb.Plugin, maxShownPluginRunes), true
 		}
 	}
 	return kb
@@ -177,7 +184,7 @@ func knowledgeBaseOf(settings topicSettings) *KnowledgeBase {
 // whether it names one: its kind is "plugin", and the name is one a plugin
 // can have.
 func pluginOf(kb *KnowledgeBase) (name string, ok bool) {
-	if kb == nil || kb.Kind != KnowledgeBasePlugin || pluginregistry.CheckName(kb.Plugin) != nil {
+	if kb == nil || kb.Kind != KnowledgeBasePlugin || kb.unnamed || pluginregistry.CheckName(kb.Plugin) != nil {
 		return "", false
 	}
 	return kb.Plugin, true
@@ -621,7 +628,7 @@ func (c *Core) ListSources(ctx context.Context, topicID string) (SourceList, err
 		// Each file was found above, or was not.
 		states := map[string]string{}
 		for _, st := range list.Sources {
-			states[st.ID] = st.State
+			states[st.ID] = fileStateAt(st.Path, st.State)
 		}
 		ask.fileState = func(_ context.Context, src Source) string { return states[src.ID] }
 		if err := c.askPlugins(ctx, []*indexAsk{ask}); err != nil {

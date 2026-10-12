@@ -220,7 +220,14 @@ changed one of the ones above:
   that record what they are asked, has the Topic name one, calls every tool, and fails for
   anything but `contract` and `status`; it also fixes which tools ask a plugin anything.
   A second test reads the core for the one function that asks a plugin to index, and for
-  who can reach it.
+  who can reach it. Review showed both too weak as first written. The first named the
+  plugin and added a Source halfway through, so seventeen tools were never called on a
+  Topic a plugin could index for: the Topic now has both from before the first call, and
+  the test fails when its Source is gone or indexed at the end. The second read names
+  alone: it now tells a method from one of the same name on another type, watches the
+  `cancel`, `search` and `passage` of a Connection as it watches `index`, refuses
+  reflection in the core, which calls by a name no test can read, and a third test holds
+  the client to asking each tool in the one method named after it.
 - **A plugin is not kept running.** This ADR had `study` start a command when a Topic
   first needs it and stop it when `study` exits. That is so for one command, and it was not
   built for `study mcp`: each tool call that needs a plugin starts it, asks, and stops it
@@ -236,7 +243,13 @@ changed one of the ones above:
   wrong. Opening a Session asks no plugin anything. The cost: a plugin that takes longer
   than that to start, as one that loads a model first would, never says in `status` what
   it has indexed. `study source index` and `study knowledge-base check` still give it the
-  thirty seconds.
+  thirty seconds. The Topics that name one plugin share those two seconds and are asked
+  one after the other, the Active topic first. `status` asks only about Topics that are
+  active: one that is paused or finished has nothing to do next. A Topic the time did not
+  reach says so, and its action is `study source list`, which asks about it alone: the
+  command that says what is wrong with a plugin would say that nothing is. The
+  session-start hook of the Claude Code plugin prints `status`, so it asks too, and a
+  session starts at most that much later for a plugin that hangs.
 - **A collection's name tells Study homes apart.** A plugin's folder is one for the
   plugin on a machine, not one for each Study home, and a service may serve several
   machines. Named after the Topic's id alone, two Study homes that each hold a Topic
@@ -246,7 +259,12 @@ changed one of the ones above:
   writes inside the Study home, and cannot have another folder found at that path. Every
   name ends with the hash, so no two Topics share one, whatever their ids were cut to. A
   Study home that is moved or renamed has its Sources indexed again; what the plugin holds
-  under the old name stays, unused, since nothing removes a collection.
+  under the old name stays, unused, since nothing removes a collection. Two limits follow.
+  A Study home that `study` sees under another path, inside a sandbox that shows it
+  elsewhere, is another collection there. And a Topic that is removed and another made
+  later under its id share one, with the removed Topic's Sources still in it under their
+  own ids: so a search must be limited to the Sources the Topic has, by their ids, and to
+  the content the Topic records, by its hash.
 - **`cancel` is asked with a context of the command's own.** When `study source index` is
   stopped, its context is cancelled, and the client asks a plugin nothing with a cancelled
   context. So the plugin is told to stop under a context made then, which lasts ten
@@ -254,24 +272,48 @@ changed one of the ones above:
   plugin is stopped after that whatever it answered, and its indexing ends with it. A
   service that cannot be told is reported as possibly still indexing: that much can go on
   behind a command that has exited, and the learner is told.
-- **A Source is its content, so a file that changed is not indexed as that Source.** The
+- **A Source is its content, so a plugin keeps nothing of a file that is another.** The
   contract has `study` hand a file over with the hash of the content it read. A Source
   records the hash of the file that was added, Evidence quotes that content, and a file
   with other content is another Source. So `study` reads the file once more before it
   hands it over, and skips one that is missing or has other content now, with what to do.
-  The plugin says the hash of what it read, and a Source counts as indexed only when that
-  is the Source's: a file that changes between the two readings is reported as not
-  indexed, and the next run asks again. The path handed over is the file's real one, with
-  every link followed, and the command shows it: a Source inside a Topic can be a link
-  the agent made, and a plugin the learner runs in their own shell reads what it is
-  handed with the learner's permissions. Handed the link, it would read wherever the link
-  leads by then. This does not make indexing in one's own shell safe against an agent
-  that added a file it should not have as a Source: it shows which files are read, and
-  `--dry-run` shows them first.
+  The path handed over is the file's real one, with every link followed, and the command
+  shows it: a Source inside a Topic can be a link the agent made, and a plugin the learner
+  runs in their own shell reads what it is handed with the learner's permissions.
+
+  The contract first let a plugin index whatever it read and say so through the hash, and
+  `study` read every file before it asked for the first. Review showed what that allowed.
+  A plain file inside the Study home is the agent's to exchange for a link, to any file of
+  the learner's, once `study` has read it; for the second Source it had as long as the
+  first took to index. The plugin then read the learner's file, with the learner's
+  permissions, and held its text in the Topic's collection for the next search, while the
+  command reported a file that "changed while it was indexed". So the rule is now the
+  plugin's: **it keeps nothing of a file whose bytes are not the hash it was handed**, and
+  the Source is failed. The hash `study` checked is then the only content that can come to
+  be indexed, whatever a path leads to by the time the plugin reads it. `study` also reads
+  each file just before it asks for it, which leaves the agent milliseconds and not
+  minutes, and still counts a Source as indexed only when the plugin's hash is the
+  Source's, for a plugin that breaks the rule.
+
+  This does not make indexing in one's own shell safe against an agent that added a file
+  it should not have as a Source. `source_add` records any file the learner can read, the
+  command shows where each file really is, on a line under a title the agent chose, and
+  `--dry-run` shows them first: whoever runs it without reading that list has a plugin
+  read those files, and the next search gives their text to the agent. What a sandbox
+  keeps an agent from reading, it can ask for this way. Asking the learner before files
+  outside the Study home are handed over for the first time would close it, and is not
+  built.
 - **What goes wrong with a Source is no error of the command**, as it is none of `index`
   in the contract: the Source is failed, with the plugin's reason, the others are indexed,
   and the command exits with 0. It fails when it could not do its work at all: no plugin,
-  one that does not start or stops answering, a folder it cannot write in.
+  one that does not start or stops answering, a folder it cannot write in. A plugin that
+  answers `index` with what is not the contract's is one of those: only what the plugin
+  refuses, as the contract has a refusal, is a Source's failure.
+- **What `study` cannot stop.** A `study` that is killed, or ends on `SIGQUIT` or on a
+  closed terminal, stops nothing: a plugin exits when its input closes, and one that does
+  not is left running. A program a plugin moved out of its process group is left by every
+  `status`, which an agent can now call as often as it likes. Both are a plugin breaking
+  the contract, and the learner registered it.
 - **A failure outlives the plugin's program, and is no next action.** The contract let a
   plugin forget that a Source failed once it stopped. A command is now stopped after every
   `study` command, so the one that shows the learner what failed is never the one that saw

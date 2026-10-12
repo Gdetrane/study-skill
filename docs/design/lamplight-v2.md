@@ -731,7 +731,9 @@ hours before any learning happens is exactly what v1 produced.
     folder is one for the plugin on a machine, and a service may serve several, so the id
     alone would have two Study homes that each hold a Topic of one name share a collection.
     The path is not the agent's to choose, and every name ends with the hash, so no two
-    Topics share one. A Study home that is moved has its Sources indexed again.
+    Topics share one. A Study home that is moved has its Sources indexed again. A Topic
+    that is removed and another made later under its id do share one, so a search is to be
+    limited to the Sources the Topic has.
   - `study source index <topic> [<source>…]` is the one thing that asks a plugin to index,
     and it is CLI-only, like `study check`: run in the agent's shell or by the learner, so
     the sandbox and approval prompts apply to what a command plugin reads and fetches. No
@@ -742,9 +744,13 @@ hours before any learning happens is exactly what v1 produced.
     Source's state. A Source that fails is no error of the command.
   - **A Source is its content.** A file is handed over by its real path, links followed,
     and its content hash, and only when the file on this machine is the one the Topic
-    records: `study` reads it once more to be sure, and skips a file that is missing or has
-    other content now. The plugin says the hash of what it read, and a Source counts as
-    indexed only when that is the Source's. The command shows each path it hands over.
+    records: `study` reads it once more, just before it asks for it, and skips a file that
+    is missing or has other content now. **The plugin keeps nothing of a file whose bytes
+    are not the hash it was handed**, and fails the Source: a file inside the Study home is
+    the agent's to exchange for a link to any file of the learner's once `study` has read
+    it, and so the hash `study` checked is the only content that can come to be indexed. A
+    Source counts as indexed only when the plugin's hash is the Source's. The command shows
+    each path it hands over.
   - **Stopping.** When the command is stopped its context is cancelled, and a call made
     with it asks a plugin nothing. So it tells the plugin to stop, with `cancel`, under a
     context of its own that lasts 10 seconds, and then stops a command plugin, whose
@@ -753,18 +759,23 @@ hours before any learning happens is exactly what v1 produced.
     next run carries on.
   - **`sources` and `status` say what is indexed**, in the CLI and over MCP: each Source is
     `indexed`, `indexing`, `failed`, `not_indexed` or `unknown`, with `study source index`
-    as the one action when a Source is not indexed. A Source that failed is shown with the
-    plugin's reason and is no action: it is tried again when someone runs the command for
-    it. Whether a Source is indexed is the plugin's to say on this machine: it records no
-    Event and is in no file.
+    as the one action when a Source is not indexed and the command would hand it over. A
+    Source that failed is shown with the plugin's reason and is no action: it is tried
+    again when someone runs the command for it. Nor is the command the action for a file
+    that is missing, has changed or cannot be read, which it skips: `status` then names
+    `study source list`, which says what to do about the file. Whether a Source is indexed
+    is the plugin's to say on this machine: it records no Event and is in no file.
   - **Nothing waits for a plugin.** For those two, reading the registry, starting the
     plugin or reaching it, and its answers share a deadline of 2 seconds
     (`core.PluginGlanceTimeout`), against the 30 a plugin has when it is asked to index. A
     plugin that misses it is stopped, and its Sources are `unknown`, with the command that
     says what is wrong. So are those of a Topic whose plugin this machine lacks, or that
     does not start or speak the contract: the Topic is treated as `none`. Plugins are asked
-    side by side, each once, and a Topic without Sources starts none. Opening a Session
-    asks no plugin anything.
+    side by side, each once, and a Topic without Sources starts none. The Topics that name
+    one plugin share its time and are asked one after the other, the Active topic first,
+    and `status` asks only about Topics that are active. Opening a Session asks no plugin
+    anything. The session-start hook of the Claude Code plugin prints `status`, so it asks
+    as `status` does.
   - **A plugin is started for one thing and stopped again.** Each command and each tool
     call that needs a plugin starts it, asks, and stops it before it answers. Nothing is
     kept between two tool calls in `study mcp`: a program kept running there would be one
@@ -774,9 +785,14 @@ hours before any learning happens is exactly what v1 produced.
     a command that records what it is asked and a service that does the same, has the
     Topic name one of them, calls every tool, and fails when the plugin was asked anything
     but which contract it speaks and what it has indexed, when the other plugin was
-    reached at all, or when the registry changed. It also fixes which tools ask a plugin
+    reached at all, or when the registry changed. The Topic names the plugin and has a
+    Source it has not indexed from before the first tool is called, so that every tool is
+    called on a Topic a plugin could index for. It also fixes which tools ask a plugin
     anything: `status` and `sources`. A second test reads the core: a plugin's `index` is
-    asked in one function, which only `IndexSources` reaches, which the server cannot name.
+    asked in one function, which only `IndexSources` reaches, which the server cannot name;
+    `cancel`, `search` and `passage` are watched in the same way, and the core does without
+    reflection, which calls by a name no test can read. A third holds the client to asking
+    each tool in the one method named after it.
   - A command plugin keeps its index in a folder `study` gives it in the learner's state
     folder, outside the Study home, so a sandbox `study source index` runs in must allow
     that folder. `study` makes sure of it before it starts a plugin to index, by writing in
@@ -1129,6 +1145,11 @@ layout-aware conversion, and recordings, video and images as Sources.
   takes longer to start, as a program that loads a model first would, shows its Sources as
   not known in `status`, though `study source index` works with it.
 - A plugin is handed a file's path, so one on another machine must see the same files.
+- An agent can add any file the learner can read as a Source. `study source index` shows
+  where each file really is before a plugin reads it, and `--dry-run` shows them first;
+  a learner who runs it without reading that list has the plugin index those files, and a
+  search then gives their text to the agent. Asking before files outside the Study home
+  are handed over for the first time is not built.
 - Formulas extract garbled from PDFs, so a formula is quoted as extracted or left unchecked.
 - Approvals are tamper-evident only: an agent with a shell can still edit files.
 - Agents that read both `~/.agents/skills` and `~/.claude/skills` may list the skill twice.

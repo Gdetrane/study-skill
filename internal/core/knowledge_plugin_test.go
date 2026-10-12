@@ -291,7 +291,7 @@ func TestAKindEventNeverNamesAPlugin(t *testing.T) {
 	}
 	// A kind plugin without a name names no plugin.
 	topic, err := m.readTopic("c")
-	if err != nil || topic.KnowledgeBase == nil || *topic.KnowledgeBase != (KnowledgeBase{Kind: KnowledgeBasePlugin}) {
+	if kb := topic.KnowledgeBase; err != nil || kb == nil || kb.Kind != KnowledgeBasePlugin || kb.Plugin != "" {
 		t.Errorf("the Topic's Knowledge base = %+v, %v", topic.KnowledgeBase, err)
 	}
 	if name, ok := pluginOf(topic.KnowledgeBase); ok {

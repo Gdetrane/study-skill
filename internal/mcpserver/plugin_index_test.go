@@ -21,6 +21,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/mordor-forge/lamplight/v2/internal/core"
+	"github.com/mordor-forge/lamplight/v2/internal/plugincontract"
 	"github.com/mordor-forge/lamplight/v2/internal/plugintest"
 )
 
@@ -180,10 +181,20 @@ func TestNoToolHasAPluginIndex(t *testing.T) {
 				}
 			}
 
+			// Every tool was called on a Topic with a Source the plugin
+			// had not indexed: one was there from before the first call,
+			// and it is still not indexed after the last.
+			left, err := k.ListSources(context.Background(), "c")
+			if err != nil || len(left.Sources) < 2 || left.Sources[0].Title != "Notes" || left.Sources[0].Indexed == nil ||
+				left.Sources[0].Indexed.State != core.IndexNotIndexed {
+				t.Fatalf("after every tool the Topic's Sources are %+v, %v; want the Source that was there from the start, not "+
+					"indexed: without it a tool that had a plugin index would have had nothing to index", left.Sources, err)
+			}
+
 			// The record is real: indexing the one supported way has the
-			// plugin index the Topic's Source.
+			// plugin index the Topic's Sources.
 			res, err := k.IndexSources(context.Background(), core.IndexSpec{Topic: "c"})
-			if err != nil || len(res.Sources) != 1 || !res.Sources[0].Asked {
+			if err != nil || len(res.Sources) < 2 || !res.Sources[0].Asked {
 				t.Fatalf("study source index c = %+v, %v", res, err)
 			}
 			if got := plugintest.Tools(asked()[named]); !slices.Contains(got, "index") {
@@ -256,7 +267,8 @@ func TestTheCoreAsksAPluginToIndexInOnePlace(t *testing.T) {
 	}
 	// The core is read as this test expects: each is used where it may be,
 	// as often as it may be.
-	for name, want := range map[string]int{"Start": 1, "startPlugin": 3, "Index": 1, "askToIndex": 1, "indexSources": 1} {
+	for name, want := range map[string]int{"Start": 1, "startPlugin": 3, "Index": 1, "Cancel": 2, "Search": 1, "Passage": 0,
+		"askToIndex": 1, "indexSources": 1} {
 		if found[name] != want {
 			t.Errorf("%s is used %d times in the core, want %d: this test no longer reads the core as it is", name, found[name], want)
 		}
@@ -279,6 +291,8 @@ func (c *Core) askPlugin() { conn, _ := c.startPlugin(); conn.Status(nil, "c") }
 func (c *Core) IndexSources() { conn, _ := c.startPlugin(); (&indexRun{conn: conn}).indexSources() }
 func (r *indexRun) indexSources() { r.askToIndex() }
 func (r *indexRun) askToIndex() { r.conn.Index(nil, "c", plugincontract.Source{}) }
+func (r *indexRun) ended() { r.conn.Cancel(nil, "c", "s") }
+func (c *Core) SearchLibrary() { ix.Search("q", 5) }
 func (c *Core) startPlugin() (*pluginclient.Connection, error) {
 	return pluginclient.Start(nil, pluginregistry.Env{}, pluginregistry.Plugin{}, pluginclient.Options{})
 }
@@ -300,6 +314,24 @@ func (c *Core) Status() { index := conn.Index; index(nil, "c", plugincontract.So
 		"the plugin's index tool is asked through an interface": `package core
 type indexer interface{ Index(ctx context.Context, collection string, source plugincontract.Source) }
 func (c *Core) Status() { indexer(conn).Index(nil, "c", plugincontract.Source{}) }
+`,
+		"what a tool reaches tells the plugin to stop indexing": `package core
+func (c *Core) askPlugin() { conn.Cancel(nil, "c", "s") }
+`,
+		"an operation a tool calls searches the plugin": `package core
+func (c *Core) ListEvidence() { conn.Search(nil, "c", "q", 5, nil) }
+`,
+		"an operation a tool calls reads a Passage of the plugin": `package core
+func (c *Core) RecordEvidence() { conn.Passage(nil, "c", "p") }
+`,
+		"a method of the same name on another type asks the plugin to index": `package core
+type sly struct{}
+func (sly) askToIndex() { conn.Index(nil, "c", plugincontract.Source{}) }
+func (c *Core) Status() { sly{}.askToIndex() }
+`,
+		"the plugin's index tool is called by a name made at run time": `package core
+import "reflect"
+func (c *Core) Status() { reflect.ValueOf(conn).MethodByName("Ind" + "ex").Call(nil) }
 `,
 		"another operation calls IndexSources": `package core
 func (c *Core) AddSource() { c.IndexSources(nil, IndexSpec{Topic: "c"}) }
@@ -360,12 +392,14 @@ type coreSource struct{ name, text string }
 // the core may use, and the one function each may be used in: anywhere, when
 // empty. A name that is not here is one this test was not taught.
 var pluginClientNames = map[string]string{
-	"Start":   "startPlugin",
-	"Options": "startPlugin",
+	"Start":   "Core.startPlugin",
+	"Options": "Core.startPlugin",
 	// What a reading returns, and how an address is shown.
 	"Connection": "",
 	"Server":     "",
 	"Address":    "",
+	// An error of the client's, which says whether it is about one call.
+	"Error": "",
 	// How long a plugin has to start: a number, which starts nothing.
 	"DefaultStartTimeout": "",
 }
@@ -374,17 +408,46 @@ var pluginClientNames = map[string]string{
 // or asked to index, and the functions each may be used in. CheckPlugin and
 // IndexSources may be used nowhere in the core: they are for the command
 // line, which names them, and the server cannot.
+//
+// A function is named with the type it is a method of: a method of the same
+// name on another type is another function.
 var usedOnlyIn = map[string][]string{
-	"startPlugin":  {"CheckPlugin", "askPlugin", "IndexSources"},
-	"askToIndex":   {"indexSources"},
-	"indexSources": {"IndexSources"},
+	"startPlugin":  {"Core.CheckPlugin", "Core.askPlugin", "Core.IndexSources"},
+	"askToIndex":   {"indexRun.indexSources"},
+	"indexSources": {"Core.IndexSources"},
 	"CheckPlugin":  nil,
 	"IndexSources": nil,
 }
 
-// notAPlugins are the packages of the core's imports that have a name Index
-// which is no plugin's tool: the Library's index.
-var notAPlugins = []string{"library"}
+// askedOfAConnection are the methods of a Connection that ask a plugin for
+// more than which contract it speaks and what it has indexed, and the
+// functions of the core each may be called in. Index and Cancel are for
+// study source index alone. No operation searches a plugin or reads a
+// Passage of one yet: when one comes to, say here where, on purpose. The
+// one Search the core has is the Library's, which is no plugin, and
+// ownProcessGroup sets how a Check's program is stopped, which is no
+// plugin's either.
+var askedOfAConnection = map[string][]string{
+	"Index":   {"indexRun.askToIndex"},
+	"Cancel":  {"indexRun.ended", "ownProcessGroup"},
+	"Search":  {"Core.SearchLibrary"},
+	"Passage": nil,
+}
+
+// asksAPlugin reports whether a name is one of those methods.
+func asksAPlugin(name string) bool {
+	_, asks := askedOfAConnection[name]
+	return asks
+}
+
+// notAPlugins are the packages of the core's imports that have such a name
+// for what is no plugin's tool: the Library's index, and the contract's
+// types, which ask nothing.
+var notAPlugins = []string{"library", "plugincontract"}
+
+// byNameAlone are the packages that call a function by a name this test
+// cannot read: it reads the names the core writes down.
+var byNameAlone = []string{"reflect", "unsafe", "plugin"}
 
 // pluginUses reads source files of the core and returns how often each
 // name that starts a plugin, or asks one to index, is used, and what is
@@ -401,6 +464,10 @@ func pluginUses(t *testing.T, sources []coreSource) (found map[string]int, probl
 		// The name the file knows the package by.
 		local := ""
 		for _, imp := range file.Imports {
+			if path := strings.Trim(imp.Path.Value, `"`); slices.Contains(byNameAlone, path) {
+				problem("%s imports %s: with it a function is called by a name this test cannot read, a plugin's index "+
+					"tool among them. The core does without it", source.name, path)
+			}
 			if strings.Trim(imp.Path.Value, `"`) != pluginClient {
 				continue
 			}
@@ -420,6 +487,9 @@ func pluginUses(t *testing.T, sources []coreSource) (found map[string]int, probl
 			in := ""
 			if fn, ok := decl.(*ast.FuncDecl); ok {
 				in = fn.Name.Name
+				if fn.Recv != nil && len(fn.Recv.List) == 1 {
+					in = receiverOf(fn.Recv.List[0].Type) + "." + in
+				}
 			}
 			where := func() string {
 				if in == "" {
@@ -448,13 +518,14 @@ func pluginUses(t *testing.T, sources []coreSource) (found map[string]int, probl
 					if name == "Start" {
 						found["Start"]++
 					}
-				case name == "Index" && (pkg == nil || !slices.Contains(notAPlugins, pkg.Name)):
+				case asksAPlugin(name) && (pkg == nil || !slices.Contains(notAPlugins, pkg.Name)):
 					// Whatever it is asked of: a Connection, or anything
 					// that stands for one.
-					found["Index"]++
-					if in != "askToIndex" {
-						problem("%s uses Index, which asks a Knowledge base plugin to index: only askToIndex may, which "+
-							"only study source index reaches, so that no MCP tool has a plugin index (ADR-0012)", where())
+					found[name]++
+					if !slices.Contains(askedOfAConnection[name], in) {
+						problem("%s uses %s, which a Knowledge base plugin's Connection has: only %v may, so that no MCP tool "+
+							"has a plugin index, or stop indexing, and none searches one unnoticed (ADR-0012)", where(), name,
+							askedOfAConnection[name])
 					}
 				case guarded:
 					found[name]++
@@ -474,6 +545,78 @@ func pluginUses(t *testing.T, sources []coreSource) (found map[string]int, probl
 	return found, problems
 }
 
+// receiverOf is the name of the type a method is declared on.
+func receiverOf(expr ast.Expr) string {
+	switch x := expr.(type) {
+	case *ast.StarExpr:
+		return receiverOf(x.X)
+	case *ast.IndexExpr:
+		return receiverOf(x.X)
+	case *ast.IndexListExpr:
+		return receiverOf(x.X)
+	case *ast.Ident:
+		return x.Name
+	}
+	return "?"
+}
+
+// The client asks each of a plugin's tools in one method of a Connection,
+// which is what the test above counts on: it reads the core for who calls
+// Index and Cancel, and that says who has a plugin index only while no
+// other method of a Connection asks for it. So each tool's name is used in
+// the one method that is called after it, and nowhere is a tool named by a
+// text of the client's own.
+func TestTheClientAsksEachToolInOneMethod(t *testing.T) {
+	files, err := filepath.Glob(filepath.Join("..", "pluginclient", "*.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	only := map[string]string{"ToolIndex": "Connection.Index", "ToolStatus": "Connection.Status", "ToolCancel": "Connection.Cancel",
+		"ToolSearch": "Connection.Search", "ToolPassage": "Connection.Passage"}
+	found := map[string]int{}
+	for _, name := range files {
+		if strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		file, err := parser.ParseFile(token.NewFileSet(), name, nil, parser.SkipObjectResolution)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, decl := range file.Decls {
+			in := ""
+			if fn, ok := decl.(*ast.FuncDecl); ok {
+				in = fn.Name.Name
+				if fn.Recv != nil && len(fn.Recv.List) == 1 {
+					in = receiverOf(fn.Recv.List[0].Type) + "." + in
+				}
+			}
+			ast.Inspect(decl, func(n ast.Node) bool {
+				switch x := n.(type) {
+				case *ast.SelectorExpr:
+					if may, guarded := only[x.Sel.Name]; guarded {
+						found[x.Sel.Name]++
+						if in != may {
+							t.Errorf("%s: %s uses %s: only %s asks a plugin that tool, so that who has a plugin index is "+
+								"whoever calls that method", name, in, x.Sel.Name, may)
+						}
+					}
+				case *ast.BasicLit:
+					if x.Kind == token.STRING && slices.Contains(plugincontract.Tools, strings.Trim(x.Value, "`\"")) {
+						t.Errorf("%s: %s names a plugin's tool by the text %s: the client names a tool by the contract's "+
+							"name for it, which this test can follow", name, in, x.Value)
+					}
+				}
+				return true
+			})
+		}
+	}
+	for tool := range only {
+		if found[tool] == 0 {
+			t.Errorf("the client does not use plugincontract.%s, so this test no longer reads the client as it is", tool)
+		}
+	}
+}
+
 // topic_update names a Knowledge base plugin, and that is all it gives one:
 // a name the registry could hold. A command line, a program's path and an
 // address are refused, and so is whatever else is no name. A name this
@@ -482,7 +625,10 @@ func TestAToolNamesAPluginAndNothingElse(t *testing.T) {
 	c := plugintest.NewComputer(t)
 	record := filepath.Join(t.TempDir(), "record.json")
 	c.Register(t, "kb", plugintest.Command("--record", record)...)
-	session := connectOn(t, c.Getenv, c.Home, nil, nil, nil, core.PluginOptions{Environ: func() []string { return c.Environ() }})
+	// Time enough on a busy computer: nothing here is about a plugin that
+	// is late.
+	session := connectOn(t, c.Getenv, c.Home, nil, nil, nil, core.PluginOptions{Environ: func() []string { return c.Environ() },
+		GlanceTimeout: 20 * time.Second})
 	call(t, session, "topic_create", map[string]any{"title": "C", "id": "c"})
 	for _, kb := range []map[string]any{
 		{"kind": "plugin"},

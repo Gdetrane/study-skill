@@ -30,9 +30,15 @@ func checkTopic(t *testing.T, session *mcp.ClientSession, home string) (marker s
 
 // checkTopicIn is checkTopic for a Study home that is not the folder the
 // marker is kept in.
-func checkTopicIn(t *testing.T, session *mcp.ClientSession, home, studyHome string) (marker string) {
+//
+// created, when given, is called once the Topic exists and before any other
+// tool is called on it.
+func checkTopicIn(t *testing.T, session *mcp.ClientSession, home, studyHome string, created ...func()) (marker string) {
 	t.Helper()
 	call(t, session, "topic_create", map[string]any{"title": "C", "id": "c"})
+	for _, f := range created {
+		f()
+	}
 	var p core.RevisionProposal
 	decode(t, call(t, session, "revision_propose", map[string]any{"topic": "c", "summary": "A first Syllabus",
 		"syllabus": firstSyllabus}), &p)
@@ -150,7 +156,28 @@ func everyToolOn(t *testing.T, home, studyHome string, options everyToolOptions)
 		t.Fatal(err)
 	}
 	session := connectOn(t, getenv, home, nil, nil, prepare, options.plugins)
-	marker := checkTopicIn(t, session, home, studyHome)
+	// A Topic that is to name a plugin names it, and has a Source the plugin
+	// has not indexed, from before the first tool is called on it: every
+	// tool is then called on a Topic a plugin could be asked to index for.
+	// Both are done through the core here, not by a tool, so that no tool
+	// is left out for coming before the ones that do it.
+	marker := checkTopicIn(t, session, home, studyHome, func() {
+		name, _ := options.knowledgeBase["plugin"].(string)
+		if name == "" {
+			return
+		}
+		if _, err := c.UpdateTopic(ctx, "c", core.TopicChanges{KnowledgeBase: &core.KnowledgeBase{Kind: core.KnowledgeBasePlugin,
+			Plugin: name}}); err != nil {
+			t.Fatal(err)
+		}
+		notes := filepath.Join(home, "Books", "notes.txt")
+		if err := os.WriteFile(notes, []byte("Notes the plugin has not indexed.\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := c.AddSource(ctx, core.SourceSpec{Topic: "c", File: notes}); err != nil {
+			t.Fatal(err)
+		}
+	})
 	runs := func() int {
 		data, err := os.ReadFile(marker)
 		if errors.Is(err, fs.ErrNotExist) {

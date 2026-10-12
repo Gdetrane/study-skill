@@ -120,9 +120,9 @@ func writeTopicUpdate(w io.Writer, u core.TopicUpdate, dryRun bool) error {
 	case !u.Changed:
 		fmt.Fprintf(&b, "Topic %s already has those settings: nothing changed\n", t.ID)
 	case dryRun:
-		fmt.Fprintf(&b, "Would update Topic %s (%s)\n", styleAccent.Render(t.ID), t.Title)
+		fmt.Fprintf(&b, "Would update Topic %s (%s)\n", styleAccent.Render(t.ID), printable(t.Title))
 	default:
-		fmt.Fprintf(&b, "Updated Topic %s (%s)\n", styleAccent.Render(t.ID), t.Title)
+		fmt.Fprintf(&b, "Updated Topic %s (%s)\n", styleAccent.Render(t.ID), printable(t.Title))
 	}
 	if t.Goal != "" {
 		fmt.Fprintf(&b, "  Goal: %s\n", t.Goal)
@@ -165,7 +165,7 @@ func writeStatus(w io.Writer, s core.Status, now time.Time) error {
 	fmt.Fprintf(&b, "%s%s\n", styleLabel.Render(pad("Study home:", labels)), s.StudyHome)
 	if t := s.ActiveTopic; t != nil {
 		fmt.Fprintf(&b, "%s%s (%s): %s\n", styleLabel.Render(pad("Active topic:", labels)),
-			styleAccent.Render(t.ID), t.Title, styleDim.Render(t.Reason))
+			styleAccent.Render(printable(t.ID)), printable(t.Title), styleDim.Render(printable(t.Reason)))
 		for _, topic := range s.Topics {
 			if topic.ID == t.ID {
 				writeActiveTopic(&b, topic, s.Recommended, labels, now)
@@ -179,13 +179,15 @@ func writeStatus(w io.Writer, s core.Status, now time.Time) error {
 		fmt.Fprintf(&b, "%s%s\n", styleLabel.Render(pad("Learner profile:", labels)), s.LearnerProfile)
 	}
 	fmt.Fprintf(&b, "\n%s\n", styleLabel.Render("Topics:"))
+	// A Topic's id is its folder's name, which is whatever someone called
+	// a folder of the Study home.
 	ids := make([]string, len(s.Topics))
 	for i, t := range s.Topics {
-		ids[i] = t.ID
+		ids[i] = printable(t.ID)
 	}
 	width := widest(ids) + 2
 	for _, t := range s.Topics {
-		id := pad(t.ID, width)
+		id := pad(printable(t.ID), width)
 		if s.ActiveTopic != nil && t.ID == s.ActiveTopic.ID {
 			id = styleAccent.Render(id)
 		}
@@ -570,6 +572,6 @@ func writeLessonsWithoutEvidence(w io.Writer, topics []core.Topic) {
 			fmt.Fprintf(w, "\n%s\n", styleLabel.Render("Lessons without Evidence:"))
 			header = true
 		}
-		fmt.Fprintf(w, "  %s: %s\n", styleLabel.Render(t.ID), strings.Join(t.LessonsWithoutEvidence, ", "))
+		fmt.Fprintf(w, "  %s: %s\n", styleLabel.Render(printable(t.ID)), printable(strings.Join(t.LessonsWithoutEvidence, ", ")))
 	}
 }

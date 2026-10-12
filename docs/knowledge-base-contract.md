@@ -166,7 +166,11 @@ Study home. So `study` starts a plugin with nothing the agent could have prepare
   session of its own.
 - **More than one copy can run at once**, on the same folder: the MCP server the agent
   uses and a `study source index` in a shell each start their own. A copy must find what
-  another indexed, and searching while another copy indexes must work.
+  another indexed, and searching while another copy indexes must work. A copy that can
+  tell that another is indexing a Source **now** says `indexing` of it, and one that
+  cannot says what the index holds: never `indexing` for work that a copy which was
+  stopped left unfinished. `cancel` stops what the copy that is asked is indexing itself,
+  and answers `false` for another copy's work.
 - **Nothing is kept between runs but what is in the folder.** Indexing goes on only while
   the copy that was asked runs.
 
@@ -405,10 +409,17 @@ Source: `status` then says `failed` too. A plugin that finds out only later answ
   answer is `indexed`, at once, and the Passages and their ids stay as they are.
 - Otherwise the plugin reads the file at `path`. Its content replaces what the index held
   for the Source: the old Passages are no longer found.
-- **`status` gives the hash of the bytes the plugin read**, which it computes itself. The
-  file may have changed since `study` hashed it. Then the plugin indexes what it read and
-  says so through that hash, or fails the Source: it never gives the hash it was handed for
-  content it did not hash.
+- **A file is indexed only when its bytes are the `hash` it was handed.** The plugin
+  hashes the bytes it reads, the same bytes it indexes, in one reading. When they are not
+  the `hash` of the `index` call, the file is not the one `study` read: it changed since,
+  or its path leads elsewhere by now. The plugin then **keeps nothing of what it read**.
+  The Source is `failed`, with a reason such as "the file changed since study read it",
+  and what was indexed for it before is still found. This is no formality. A Source can be
+  a file inside the Study home, where the learner's agent writes: the agent could exchange
+  it for a link to any file of the learner's once `study` has read it, and a plugin that
+  indexed what it found there would hand that file's text to the next search.
+- **`status` gives the hash of the bytes the plugin read**, which it computes itself: it
+  never gives the hash it was handed for content it did not hash.
 - **A web page has no hash until it is fetched.** The plugin fetches it, and `status`
   gives the hash of what it fetched. A page that is indexed is fetched again only when
   `refetch` is `true`: otherwise the answer is `indexed`, at once.
