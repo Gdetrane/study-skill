@@ -106,14 +106,14 @@ func (c *Collection) Begin(ctx context.Context, source string) (*Work, error) {
 	w := &Work{c: c, source: source}
 	// A number no other work has, to hold the lock at: one of four million
 	// million million, taken again in the case nobody will see.
-	for tries := 0; ; tries++ {
+	for tries := 0; tries < 8; tries++ {
 		var raw [8]byte
 		if _, err := rand.Read(raw[:]); err != nil {
 			return nil, err
 		}
 		id := int64(binary.BigEndian.Uint64(raw[:])>>2) + 1
 		c.working.Lock()
-		err := errors.New("it is this Shelf's own")
+		err := errTaken
 		if !c.mine[id] {
 			if err = hold(locks, id); err == nil {
 				c.mine[id] = true
@@ -122,12 +122,15 @@ func (c *Collection) Begin(ctx context.Context, source string) (*Work, error) {
 		c.working.Unlock()
 		if err == nil {
 			w.id = id
+		}
+		if !errors.Is(err, errTaken) {
 			break
 		}
-		if tries == 8 {
-			return nil, fmt.Errorf("the index of collection %s: its lock file cannot be locked: %w", c.name, err)
-		}
 	}
+	// Where the folder is on a file system that has no such locks, the work
+	// is done all the same and not shown (its number stays 0): a row without
+	// a lock behind it would count for nothing, and the other copies say
+	// what is indexed, as if nobody were indexing.
 	if err := c.begin(ctx, w, locks); err != nil {
 		w.over = true
 		w.End()
@@ -170,8 +173,10 @@ func (c *Collection) begin(ctx context.Context, w *Work, locks *os.File) error {
 	if _, err := tx.ExecContext(ctx, `UPDATE sources SET failed = NULL, asked = NULL WHERE id = ? AND failed IS NOT NULL`, w.source); err != nil {
 		return c.wrap(err)
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO work (id, source) VALUES (?, ?)`, w.id, w.source); err != nil {
-		return c.wrap(err)
+	if w.id != 0 {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO work (id, source) VALUES (?, ?)`, w.id, w.source); err != nil {
+			return c.wrap(err)
+		}
 	}
 	return c.wrap(tx.Commit())
 }

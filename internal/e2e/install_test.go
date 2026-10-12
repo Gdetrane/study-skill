@@ -782,6 +782,7 @@ func (in *install) wantShelfChecked(study string) {
 		if err := json.Unmarshal(out, &checked); err != nil || !checked.OK {
 			in.t.Fatalf("study knowledge-base check shelf: %v\n%s", err, out)
 		}
+		in.t.Logf("study knowledge-base check shelf --json printed:\n%s", out)
 		got := checked.Data
 		if got.Contract.Version != 1 || !slices.Equal(got.Contract.Sources, []string{"file", "url"}) ||
 			!slices.Equal(got.Contract.Search, []string{"keyword"}) || !slices.Equal(got.Contract.Locations, []string{"pages"}) {

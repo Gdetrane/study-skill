@@ -3,6 +3,7 @@
 package index
 
 import (
+	"errors"
 	"os"
 	"syscall"
 )
@@ -18,13 +19,22 @@ import (
 // descriptor of the file, so a collection opens its lock file once and keeps
 // it (Collection.lockFile).
 
+// errTaken says that another program holds the lock that was asked for.
+var errTaken = errors.New("the lock is held")
+
 func lockAt(id int64, kind int16) *syscall.Flock_t {
 	return &syscall.Flock_t{Type: kind, Whence: 0, Start: id, Len: 1}
 }
 
-// hold takes the lock of the work with that number.
+// hold takes the lock of the work with that number. It gives errTaken when
+// another program holds it, and the system's error when the file can hold
+// no lock at all, as on a file system that has none.
 func hold(f *os.File, id int64) error {
-	return syscall.FcntlFlock(f.Fd(), syscall.F_SETLK, lockAt(id, syscall.F_WRLCK))
+	err := syscall.FcntlFlock(f.Fd(), syscall.F_SETLK, lockAt(id, syscall.F_WRLCK))
+	if errors.Is(err, syscall.EAGAIN) || errors.Is(err, syscall.EACCES) {
+		return errTaken
+	}
+	return err
 }
 
 // release lets go of it.
