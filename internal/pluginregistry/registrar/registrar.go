@@ -232,7 +232,10 @@ func newPlugin(env pluginregistry.Env, w *regfile.Walker, spec Spec) (pluginregi
 func change(ctx context.Context, folder *regfile.Folder, dryRun bool, hook func(string) error,
 	plan func([]pluginregistry.Plugin) ([]pluginregistry.Plugin, bool, error)) error {
 	err := planAndChange(ctx, folder, dryRun, hook, plan)
-	if err != nil && ctx.Err() != nil {
+	// Only a stop, by SIGTERM or Ctrl-C, is canceled. A deadline that passed
+	// is not one, and its error says what it means: busy, in the wait for
+	// the lock (see lock).
+	if err != nil && errors.Is(ctx.Err(), context.Canceled) {
 		return &regfile.Error{Code: regfile.CodeCanceled, Err: ctx.Err(),
 			Message: "the command was stopped before it changed the Knowledge base plugin registry, so nothing was changed"}
 	}
@@ -372,7 +375,8 @@ const lockWait = 30 * time.Second
 
 // lock takes the registry's lock, an advisory lock on a file beside it that
 // the operating system releases if the process dies, waiting up to lockWait
-// for another process to release it.
+// for another process to release it. A deadline of the caller's that passes
+// first is the same thing with less time allowed, and is busy too.
 func lock(ctx context.Context, dir *os.Root, folderPath string) (unlock func(), err error) {
 	f, err := openLock(dir, folderPath, true)
 	if err != nil {
@@ -401,6 +405,10 @@ func lock(ctx context.Context, dir *os.Root, folderPath string) (unlock func(), 
 		select {
 		case <-ctx.Done():
 			_ = f.Close()
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				return nil, &regfile.Error{Code: regfile.CodeBusy, Err: ctx.Err(), Message: "another study process was " +
+					"still changing the Knowledge base plugin registry when the time this command was given ran out: try again"}
+			}
 			return nil, ctx.Err()
 		case <-time.After(wait):
 		}
