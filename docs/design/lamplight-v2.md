@@ -581,9 +581,10 @@ hours before any learning happens is exactly what v1 produced.
     one line. Duplicate Sources or Evidence added on two machines before syncing are
     accepted under the one-machine-at-a-time contract.
   - Evidence lives only in the History: `evidence.recorded`, held until its Source is known,
-    and `evidence.retracted`, which takes it back without deleting it.
-  - Location origins are `source` (read in the Source itself), `knowledge_base` (a citation
-    as the Knowledge base gave it), `learner` and `estimate`.
+    `evidence_passages.recorded` for Evidence checked against the Passages it quotes
+    (below), and `evidence.retracted`, which takes back either without deleting it.
+  - Location origins are `source` (read in the Source itself), `knowledge_base` (the
+    location of the Passage the quote is from), `learner` and `estimate`.
   - The core reads a file's bytes only to hash it, never blocking on a FIFO or device, and
     stops when the request is cancelled.
   - `status` marks the Lessons started or done that cite no Evidence, once the Topic has
@@ -715,7 +716,6 @@ hours before any learning happens is exactly what v1 produced.
     suite is known to fail them.
 - **Built** (ADR-0012): a Topic names its Knowledge base plugin, `study source index` has
   the plugin index the Topic's Sources, and `status` and `sources` say what it has indexed.
-  Nothing searches a plugin yet.
   - A Topic records the plugin's name and nothing else of it (`kind = "plugin"`,
     `plugin = "<name>"`), so nothing a Topic holds decides which program runs (ADR-0009).
     `study topic update --knowledge-base <name>` and `topic_update` set it, and `none` takes
@@ -732,8 +732,8 @@ hours before any learning happens is exactly what v1 produced.
     alone would have two Study homes that each hold a Topic of one name share a collection.
     The path is not the agent's to choose, and every name ends with the hash, so no two
     Topics share one. A Study home that is moved has its Sources indexed again. A Topic
-    that is removed and another made later under its id do share one, so a search is to be
-    limited to the Sources the Topic has.
+    that is removed and another made later under its id do share one, so a search is
+    limited to the Sources the Topic has (below).
   - `study source index <topic> [<source>…]` is the one thing that asks a plugin to index,
     and it is CLI-only, like `study check`: run in the agent's shell or by the learner, so
     the sandbox and approval prompts apply to what a command plugin reads and fetches. No
@@ -783,21 +783,70 @@ hours before any learning happens is exactly what v1 produced.
     outlived a change of the registry. The cost is a start for every `status`.
   - **What a tool may do with a plugin** is checked by what the tools do. A test registers
     a command that records what it is asked and a service that does the same, has the
-    Topic name one of them, calls every tool, and fails when the plugin was asked anything
-    but which contract it speaks and what it has indexed, when the other plugin was
-    reached at all, or when the registry changed. The Topic names the plugin and has a
-    Source it has not indexed from before the first tool is called, so that every tool is
-    called on a Topic a plugin could index for. It also fixes which tools ask a plugin
-    anything: `status` and `sources`. A second test reads the core: a plugin's `index` is
-    asked in one function, which only `IndexSources` reaches, which the server cannot name;
-    `cancel`, `search` and `passage` are watched in the same way, and the core does without
-    reflection, which calls by a name no test can read. A third holds the client to asking
-    each tool in the one method named after it.
+    Topic name one of them, calls every tool, and fails when a tool had the plugin asked
+    anything but what that tool may, when the other plugin was reached at all, or when the
+    registry changed. The Topic names the plugin, and has a Source it has not indexed and
+    one it has, from before the first tool is called, so that every tool is called on a
+    Topic a plugin could index for, with something to search. It fixes which tools ask a
+    plugin anything, and what each has it asked, in order: `status` and `sources` which
+    contract it speaks and what it has indexed, `evidence_search` those and a search, and
+    `evidence_record`, given a Passage, those and the Passage. No tool has it asked to
+    index, or to stop indexing. A second test reads the core: a plugin's `index` is asked
+    in one function, which only `IndexSources` reaches, which the server cannot name;
+    `search` is asked in one function, which only `SearchEvidence` reaches, and `passage`
+    in one that only recording Evidence with its Passages reaches; `cancel` is watched in
+    the same way, and the core does without reflection, which calls by a name no test can
+    read. A third holds the client to asking each tool in the one method named after it.
   - A command plugin keeps its index in a folder `study` gives it in the learner's state
     folder, outside the Study home, so a sandbox `study source index` runs in must allow
     that folder. `study` makes sure of it before it starts a plugin to index, by writing in
     it: a sandbox refuses what the folder's mode allows. The error for a folder that
     cannot be made or written in gives both ways out, and the skill teaches them.
+- **Built** (ADR-0012): `evidence_search`, and Evidence checked against its Passage. The
+  agent talks to `study`, and `study` is the MCP client of the Topic's plugin. `study` ships
+  no retrieval and still never parses a document.
+  - **A search** (`study evidence search`, and the `evidence_search` tool) returns Passages,
+    best first: the Source's own text, each with its id, its Source, its location when the
+    plugin knows it, and its score for that query. It reads the plugin's index and never a
+    Source, so it has a tool, as indexing has not.
+  - **It returns only what the Topic records.** The plugin is asked what it has indexed
+    first, and then to search, by their ids, the Topic's Sources of which it says, by the
+    hash, that a search finds the Source's own content, whatever their state. A removed Topic and a later one
+    of the same id share a collection, and a plugin that breaks the contract may hold
+    another file's text under a Source's id. Asked in that order, the Passages returned
+    are the best of what may be returned. The result names the Sources that were left out
+    and why, and its one next action is decided as `status` decides it: `study source
+    index` only when that would hand the plugin a Source it has not tried. A Topic without
+    Sources, or with none indexed, is searched for nothing, which is no error; a Topic
+    without a plugin, and a plugin that cannot be had, are `failed_precondition`.
+  - **One deadline for all of it**: 45 seconds (`core.PluginEvidenceTimeout`) for reading
+    the registry, starting the plugin, and its answers, for a search and for the Passages
+    of a quote alike. An agent's tool call waits for it, so it is under a minute; a plugin
+    has 30 seconds to start, and a search may have a model embed the query. A plugin that
+    misses it is stopped at once. One `study` process has at most two copies of a plugin
+    searching at a time, and an answer holds at most 256 KiB of Passages' text.
+  - **Evidence recorded with its Passages is checked.** `study` asks what the plugin has
+    indexed, then for each Passage again, refuses a Passage of another Source and a Source
+    that is not indexed as the Topic records it, and refuses a quote that is not in the
+    Passages' text. The location is the Passages', with `knowledge_base` as its origin. The
+    plugin is asked before the Topic's lock is taken, and a dry run asks it too.
+  - **What "in its text" allows**: how much white space there is and of which kind, where
+    the Passage has white space; an accent written apart, a ligature, an ellipsis
+    character; the shape of a quotation mark and the length of a dash; a character that is
+    not shown, in the Passage; and the hyphen of a word cut at a line's end. A quote begins
+    and ends where a word of the Passage does. Nothing else: not a word, not a part of
+    one, not a space added or left out, not a letter's case, not a superscript for its
+    digit. The quote is recorded as it was given, and holds no character that is not
+    shown.
+  - **A quote can run through up to five Passages**, named in order: a plugin may keep
+    every Passage on one page. It is looked for in their texts read one after the other,
+    and must begin in the first and end in the last. The contract does not say which
+    Passage follows which, so `study` cannot tell that they are adjacent.
+  - **It is a new Event type**, `evidence_passages.recorded`, whose payload is the quote,
+    the Passages' ids, the plugin's name and the location. `evidence.recorded` records
+    Evidence that was not checked, as before, and `evidence` shows which is which
+    (`checked`). A Passage's id is the recording machine's plugin's: it says what was
+    checked, and is not checked again elsewhere.
 - **Built** (ADR-0012): Shelf, the `study-shelf` program (`cmd/study-shelf`,
   `internal/shelf`), with keyword search and, when the learner names an endpoint, embedding
   search and reranking. [docs/shelf.md](../shelf.md) is the learner's page.
@@ -900,19 +949,17 @@ hours before any learning happens is exactly what v1 produced.
       or the order it had, and the answer says so in fields of Shelf's own (`search`,
       `reranked`, `notice`).
     - A Source whose vectors are of another model, marking or size, or that has none, is
-      `failed` with the hash of what is still found and the reason. Asked for again, its
-      Passages are given vectors and are not read again.
+      `outdated`: found as it is, by keyword, with the hash of what is found and the
+      reason. `study` names `study source index` as what to do next, and asked for again,
+      its Passages are given vectors and are not read again.
     - Starting, `contract` and `status` ask no endpoint anything.
-- **Still to build for v2.0** (ADR-0012): the rest of Knowledge base plugins, so the agent
-  can search a Topic's Sources with no account anywhere.
-  - The agent talks to `study`, and `study` is the MCP client of the Topic's plugin. `study`
-    ships no retrieval and still never parses a document.
+- **Still to build for v2.0** (ADR-0012): what sets Shelf up and checks it for the learner
+  (`study setup`, `study doctor`, the walkthrough), and the notices of what the two
+  programs are built from.
   - A plugin reached by URL is a service outside any sandbox, so it must itself be told
     what it may read and fetch.
-  - `evidence_search` returns Passages. Evidence recorded with a Passage's id is checked:
-    `study` reads the Passage again, refuses a quote that is not in it, and takes the
-    location from it. That is a new Event type. Evidence without a Passage stays possible,
-    unchecked. It is also what shows the learner a search's `notice`.
+  - Nothing shows the learner a search's `notice` yet: the contract has no word for a
+    search that did less than its settings ask for.
 - **Later**: a context written by a language model for each Passage, used for indexing
   only; layout-aware conversion for formulas, tables and scans; recordings, video and
   images as Sources.
@@ -931,12 +978,13 @@ apply. Search results carry an absolute path. Conversion leaves the Library.
 Every write names its Topic. Tools are named after things that happen in the domain.
 
 - **Read**: `status`, `syllabus`, `lesson`, `due_cards` (sized to Energy), `cards`, `history`,
-  `check_results`, `library_search`, `sources`, `evidence`, `tasks`, `signals` (for the
-  agent only).
+  `check_results`, `library_search`, `sources`, `evidence`, `evidence_search` (Passages of
+  the Topic's Sources, from its Knowledge base plugin), `tasks`, `signals` (for the agent
+  only).
 - **Topics**: `topic_create`, `topic_update` (Goal, Pace, Level, Approach, Knowledge base,
   Tasks, pause, finish), `task_done`, `assessment_record`, `source_add`, `source_update`,
-  `evidence_record`, `evidence_retract`. Still to build (ADR-0012): `evidence_search`.
-  Indexing has no tool: `study source index` is CLI-only.
+  `evidence_record` (with the Passages a quote is from, it is checked against them),
+  `evidence_retract`. Indexing has no tool: `study source index` is CLI-only.
 - **Syllabus**: `revision_propose`, `revision_apply`, `revision_decline`.
 - **Sessions**: `session_open`, `session_close`, `phase_set`, `break_point_reached`,
   `checkpoint`, `hint_record`, `rubric_record`, `lesson_complete`.
@@ -1219,9 +1267,9 @@ recording Level signals); sync for one machine at a time; the Library in Go; the
 terminal Reviews; the MCP server; the `lamplight` skill; the Claude Code plugin and
 `study setup` for Claude Code and Codex; Linux and macOS releases with an install script;
 `study import`; and Knowledge base plugins (ADR-0012): the registry, the contract, `study`
-as its client, Topics that name a plugin, `study source index`, and Shelf with keyword and
-embedding search and optional reranking, which are built, and, still to build,
-`evidence_search` with the quote check.
+as its client, Topics that name a plugin, `study source index`, `evidence_search` with the
+quote check, and Shelf with keyword and embedding search and optional reranking, all of
+which are built.
 
 **Order of work**: the tracer bullet, then the History engine (its file formats are settled
 before any real data is written), then a thin learner loop through every layer, then each

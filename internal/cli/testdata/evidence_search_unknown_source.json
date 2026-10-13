@@ -1,0 +1,7 @@
+{
+  "ok": false,
+  "error": {
+    "code": "not_found",
+    "message": "the History of linear-algebra has no Source other.abc123: study source list linear-algebra shows its Sources, and a line added to sources.jsonl by hand is not a Source until study source add records it"
+  }
+}

@@ -250,8 +250,10 @@ The learner's whole collection of documents across all Topics.
 _Avoid_: Catalog (that is only the index behind the Library)
 
 **Evidence**:
-An exact quote from a Source, with its location when known, cited by a Lesson.
-_Avoid_: Answer, snippet, chunk
+An exact quote from a Source, with its location when known, cited by a Lesson. Recorded
+with the Passage it quotes, it is checked: the quote is in that Passage's text. Recorded
+without one, it is not checked.
+_Avoid_: Answer, snippet, chunk, verified (for Evidence that was checked)
 
 ### Places
 

@@ -137,8 +137,8 @@ talk about what is due or late: Instructions 4 and 10.
   feedback, completion, writing for each Level, signals and hints.
 - [Cards and Reviews](references/cards-and-reviews.md): writing Cards, Reviews and
   Explore.
-- [Knowledge](references/knowledge.md): Sources, the Knowledge base, indexing with a
-  Knowledge base plugin, and Evidence.
+- [Knowledge](references/knowledge.md): Sources, the Knowledge base, indexing and searching
+  with a Knowledge base plugin, and Evidence, checked against the Passage it quotes.
 - [Goal, Pace and Forecasts](references/planning.md): deadlines, Pace, Forecasts, Triage,
   Tasks, pausing and finishing a Topic.
 - [Companions](references/companions.md): optional tools for maths, visuals, live docs and

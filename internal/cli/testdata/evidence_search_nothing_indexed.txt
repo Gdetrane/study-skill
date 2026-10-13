@@ -1,0 +1,7 @@
+Nothing of linear-algebra was searched for "elimination".
+
+! nothing was searched: Knowledge base plugin kb holds none of the 2 Sources indexed on this computer as the Topic records them
+  strang.<id>  Strang: not indexed
+  notes.<id>  Notes: not indexed
+To have Knowledge base plugin kb index what is not indexed, run:
+  study source index linear-algebra

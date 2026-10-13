@@ -44,8 +44,8 @@ func TestKnowledgeSeam(t *testing.T) {
 	var recorded core.EvidenceResult
 	decode(t, call(t, session, "evidence_record", map[string]any{"topic": "c", "lesson": "pointers",
 		"source": added.Source.ID, "quote": "A pointer is a variable that contains the address of a variable.",
-		"location": "citation 2", "location_from": "knowledge_base"}), &recorded)
-	if !recorded.Changed || recorded.Evidence.LocationFrom != core.LocationFromKnowledgeBase {
+		"location": "p. 93", "location_from": "source"}), &recorded)
+	if !recorded.Changed || recorded.Evidence.LocationFrom != core.LocationFromSource {
 		t.Fatalf("evidence_record = %+v", recorded)
 	}
 

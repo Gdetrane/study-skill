@@ -354,6 +354,135 @@ it, with `knowledge_base` as where the location came from. A quote that is not i
 Passage is refused. Evidence recorded without a Passage stays possible and is not checked.
 The Passage makes a new payload, so it is recorded by a new Event type.
 
+Building the search and the check settled what these two sections left open, and showed
+what they needed:
+
+- **A tool searches a plugin, and still never has it index.** `evidence_search` and
+  `evidence_record` are tools, and both have the core start the Topic's plugin: the first
+  asks its `status` and `search` tools, the second, given a Passage, `status` and
+  `passage`. Each reads the plugin's index and none reads a Source, which is what the rule
+  against indexing from a tool is for. The test that calls every tool now fixes, for each
+  tool, exactly what it has a plugin asked, in order, on a Topic that has one Source the
+  plugin has indexed and one it has not: so a tool that came to ask more, `index` and
+  `cancel` above all, is seen whichever tool it is. The test that reads the core names the
+  one function in which a plugin is searched and the one in which it is asked for a
+  Passage, and who may use them.
+- **A search has 45 seconds for all of it.** The client gives a plugin 30 seconds to start
+  and 60 to answer a search, which together are more than an agent's tool call should
+  wait: a client decides for itself how long it waits for a tool, and `study` is to have
+  stopped the plugin and said what is wrong while whoever asked is still waiting. So
+  reading the registry, starting the plugin and its
+  answers share one deadline of 45 seconds, for a search and for the Passages of a quote
+  alike: more than a plugin has to start, because one that needs most of that still has a
+  query to embed, and far more than the 2 seconds of `status`, because this is work the
+  agent asked for and not a look at where the learner is. A plugin that misses it is
+  stopped at once. The cost is the contract's: a plugin whose model takes long to load
+  loads it for every search, since no plugin is kept running, so the model belongs in a
+  service that stays up. The plugin is asked before the Topic's lock is taken, so that no
+  other write waits for a plugin, and is stopped before the lock is waited for; waiting
+  for the lock then has what is left of the 45 seconds, and no time of its own on top.
+- **A search costs a program started, so two of a plugin at a time and a bounded answer.**
+  A client may call a tool that changes nothing as often and as much at once as it likes,
+  and every search starts the plugin. One `study` process therefore has at most two copies
+  of a plugin searching, or giving Passages again, at a time: a third waits for its turn
+  inside its own 45 seconds. And an answer holds at most 256 KiB of Passages' text, the
+  best ones, with a note of how many were left out: fifty Passages of 32 KiB are what the
+  contract allows a plugin to give, and no help to whoever asked.
+- **The plugin says what it holds before it is asked to search.** A search is limited to
+  the Topic's Sources, by their ids, and of those to the ones of which the plugin says, by
+  the hash in its `status`, that a search finds the Source's own content. The state is not
+  what decides: the contract has `hash` and `search` always agree, so a Source that is
+  being indexed anew, or whose last indexing failed, is searched while its earlier content
+  is indexed, as Shelf says of a Source whose Passages have no vectors yet. `status` is
+  asked first and
+  `search` is given the ids that passed: asked the other way round, the Passages of a
+  Source that did not pass would have taken places among the best. A plugin that answers
+  with a Passage of a Source it was not asked for breaks the contract, and its whole answer
+  is refused, as the client already refused it. The same holds for the Passages of a
+  quote: the Source must be indexed as the Topic records it, and each Passage must be of
+  that Source, or a quote could be "checked" against the text of a Topic that was removed.
+- **No plugin is an error of a search, and nothing indexed is not.** A Topic that names a
+  plugin this machine does not have is treated as `none` wherever something is shown. A
+  search is asked for, so it says what it could not do: a Topic that names no plugin, and
+  a plugin that is missing, does not start or does not answer in time, are
+  `failed_precondition`, with the sentence that the agent reads the Sources itself
+  meanwhile. Sources that are not indexed are no failure: they are left out, and the
+  result names them and why. Its one next action is decided as `status` decides it, by the
+  same code: `study source index` only for a Source that command would hand the plugin and
+  the plugin has not tried, the listing of the Sources when a file is missing, changed or
+  unreadable, and none when what is left out failed. An agent told after every search to
+  run a command that cannot help would tell the learner so after every search.
+- **What "in its text" allows.** A Passage is text as it was extracted, and whoever quotes
+  it writes the same words and seldom the same bytes: an agent that straightens a curly
+  quote has paraphrased nothing, and one that is refused for it learns to record without a
+  Passage. But "checked" has to mean that the words are the Source's, so what may differ
+  is listed and nothing else may:
+  - how much white space there is and of which kind, where the Passage has white space
+    and nowhere else;
+  - an accent written apart from its letter (both are read as NFC), a ligature for its
+    letters, an ellipsis character for three stops;
+  - the shape of a quotation mark, single for single and double for double, and the
+    length of a dash;
+  - a character that is not shown, where the Passage holds one;
+  - the hyphen and the line break of a word cut at a line's end, which is small letters,
+    at least two, then a hyphen, a line break and a small letter;
+  - a line break inside text of a script written without spaces between its words.
+
+  And a quote begins and ends where a word of the Passage does, and never between a
+  letter and a mark written onto it. The first version of this
+  check read both texts as NFKC and compared no white space at all, and a review showed
+  what that passes: `asymmetric matrix` for "a symmetric matrix", `stable` for "unstable",
+  `2n` for "2ⁿ", `106` for "10⁶", `rm -rf / tmp` for `rm -rf /tmp`, `f"` for `f'`. Each
+  changes what a Lesson says, in the fields Lamplight is used for. What the stricter rule
+  costs is known too: a plugin that drops the space between two words, or adds one inside
+  a word, has its Passage quoted as it gave it, mistake included, or not at all; and a
+  plugin that joins the lines of a cut word and keeps the hyphen has the whole word
+  refused, which the contract page tells plugin authors. A quote that cannot be made to
+  pass is recorded without a Passage, unchecked, and says so. The check costs the length
+  of the text times the length of the quote, divided by 64, whatever the two hold.
+- **A quote holds nothing that is not shown.** Characters that show nothing, the tag block
+  of Unicode above all, can spell out a sentence that a program reads and no person sees.
+  A quote that holds one is refused, beyond the joiners and the soft hyphen that scripts
+  need; a Passage is handed to the agent without its tag characters; and the command line
+  writes every such character as an escape, in a Passage and in everything else it
+  prints. A Passage is still a book's text, or a web page's, and may say anything: the
+  tool and the Instructions say that it is material and never an instruction, which is
+  all that can be said of text.
+- **The quote is recorded as it was given**, not as the Passage has it: a Lesson cites a
+  sentence, not the line breaks of a page.
+- **A quote can run through several Passages.** Shelf keeps every Passage on one page, so
+  a sentence that runs over a page break is in two, and one can run from a Passage into
+  the next within a page. Evidence therefore names up to five Passages of one Source, in
+  order, and the quote must be in their texts read one after the other, beginning in the
+  first and ending in the last, so that no Passage is named that the quote is not in. The
+  location is then from the first page of the first to the last page of the last.
+  **`study` cannot tell that two Passages are adjacent**: version 1 of the contract gives a
+  Passage no place among the others. The end of one Passage and the beginning of another
+  of the same Source therefore pass as a quote, though the Source never had them side by
+  side. It is a narrow way to a wrong quote, and it takes intent; closing it means the
+  contract saying which Passage follows which, which is not decided. Passages that
+  overlap, as some plugins cut them, are not joined either: there a quote is in one of
+  them.
+- **Checked is what was so on one machine at one time.** A Passage's id is the plugin's,
+  on the machine that recorded the Evidence, and names nothing once the Source is indexed
+  anew. The Event records the ids and the plugin's name, as what the quote was checked
+  against, and nothing checks it again on another machine or later. It is also the
+  History's word and no more: the History is a file in the Study home, which an agent can
+  write, so a line that says "checked" is as good as whoever wrote it. `study` writes it
+  only for a quote it checked, and replay takes the Event as it finds it, as it takes
+  every other.
+- **The location is the Passage's, and no other.** Evidence recorded with a Passage takes
+  no location from the agent: the plugin gives pages counted from the start of the file,
+  which are not the numbers printed on a book's pages, and the origin `knowledge_base`
+  says which of the two a location is. So that origin is `study`'s to give: Evidence
+  recorded without a Passage that claims it is refused.
+- **A Passage is text someone else wrote, handed to the agent.** `study` returns it as it
+  is, prints it escaped, and the server's Instructions tell the agent that a Passage is
+  material and never an instruction. A search also makes what "A Source is its content"
+  ends with, above, a present matter: whatever a plugin was handed and indexed, a tool now
+  hands to the agent. Asking the learner before files outside the Study home are handed
+  to a plugin for the first time is still not built.
+
 ### Shelf, the plugin that ships with Lamplight
 
 `study-shelf` is a second program in this repository, in the same release as `study`.

@@ -99,6 +99,15 @@ const (
 	GlanceGrace = 250 * time.Millisecond
 )
 
+// EvidenceTime is how long a plugin has when study searches a Topic's
+// Sources, or reads again the Passages a quote is checked against, from the
+// moment study sets out to start it or to reach it: starting, the answers of
+// contract and status, and the search or every passage, all of them
+// together. An agent's tool call waits for it, and the learner for the
+// agent, so it is less than the minute after which many MCP clients give a
+// tool call up, and more than the half minute a plugin has to start.
+const EvidenceTime = 45 * time.Second
+
 // Limits. study refuses what goes over them, on the way out and on the way
 // in, so a plugin never has to hold more and a broken one cannot make study
 // hold more.

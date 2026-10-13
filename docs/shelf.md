@@ -106,8 +106,8 @@ Three more things to know about what comes out:
   both halves as words, and is joined otherwise. A rare pair that the book writes once, at
   the end of a line, can so come out as one word.
 - **A Passage keeps to one page**, always. A sentence that runs over the end of a page is
-  in two Passages, one on each page: quote the part that is on one page, or record that
-  Evidence without a Passage. A printed book's running header, the chapter's title and the
+  in two Passages, one on each page: Evidence that quotes it names both, in order
+  (`--passage` twice), and its location is then both pages. A printed book's running header, the chapter's title and the
   page number at the top of each page, is part of the page's text, and begins its first
   Passage.
 - **Formulas come out as the PDF holds them**, which is often not as they look: a book
@@ -115,6 +115,14 @@ Three more things to know about what comes out:
   shows a sum. Quote the words around a formula, or record that Evidence without a Passage.
 
 ## Searching
+
+Your agent searches with its `evidence_search` tool, and you can with
+`study evidence search <topic> <query>`. What comes back are Passages: the book's own
+text, each with its page. A quote the agent records as Evidence with the Passage it is
+from is checked against that Passage, and refused when it is not what the book says
+there. Quote a Passage as Shelf gives it, a joined word included: the check compares with
+the Passage, not with the page. [docs/cli.md](cli.md#searching-a-topics-sources) has the
+details.
 
 Shelf searches in two ways, and puts what they find in one order.
 
@@ -172,9 +180,9 @@ Shelf names an endpoint by its host. It never repeats the endpoint's key, nor th
 its address, and keeps neither in its index: where an endpoint's own words repeat them,
 or anything after "Bearer", Shelf takes them out before it repeats the words.
 
-`study` does not search a plugin yet: `study evidence search` and the agent's
-`evidence_search` tool are the next change (issue #82). Until then what Shelf indexed is
-found by nothing but Shelf's own tests, and nothing shows you a `notice`.
+`study` does not show you a `notice` yet: `study evidence search`, and the agent's
+`evidence_search` tool, give the Passages and what was left out of the search, and the
+contract has no word for a search that did less than its settings ask for.
 
 ### Vectors of another model
 
@@ -182,21 +190,21 @@ A question's vector is compared only with vectors that were made the same way: b
 the settings name now, of text marked as they say, with as many numbers. So when you give
 Shelf an endpoint after a Topic was indexed, or name another model or another size in the
 settings, what is indexed has no vectors a question can be compared with. It is still found
-by keyword, and `study status` and `study source list` say so of each such Source, as
-`failed`, with the reason:
+by keyword, and `study status` and `study source list` say of each such Source that it is
+`outdated`, indexed and to be indexed again, with the reason:
 
 ```
-it is found by keyword alone: its vectors are of the model nomic-embed-text, and Shelf's
-settings now name the model google/embeddinggemma-2. Index it again to have its Passages
-embedded
+its vectors are of the model nomic-embed-text, and Shelf's settings now name the model
+google/embeddinggemma-2
 ```
 
-`study source index <topic>` puts it right, with `--again` or without: a Source that
-`failed` is asked for again either way. Shelf then gives the Passages that are there their
-new vectors, in one step. It reads no file and fetches no page for that, so the Passages
-and their ids stay as they are. Until every Source is done, a search is by vectors in the
-Sources that have them and by keyword in the others, and its `notice` says how many those
-are.
+`study source index <topic>` brings it up to date, and is what `study status` names as the
+thing to do next. Shelf then gives the Passages that are there their new vectors, in one
+step. It reads no file again and fetches no page for that, so the Passages and their ids
+stay as they are. `study` hands Shelf a file only when it is on your computer and is the
+one you added, so a book you have moved away since stays `outdated`, and found by keyword,
+until it is back. Until every Source is done, a search is by vectors in the Sources that
+have them and by keyword in the others, and its `notice` says how many those are.
 
 Shelf tells the model by the name in its settings. A server that comes to serve another
 model under a name it served before is one Shelf cannot tell from the first: remove the

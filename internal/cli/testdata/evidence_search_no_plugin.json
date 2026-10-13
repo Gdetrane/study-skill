@@ -1,0 +1,7 @@
+{
+  "ok": false,
+  "error": {
+    "code": "failed_precondition",
+    "message": "Topic c names no Knowledge base plugin, so there is nothing to search: read its Sources yourself (study source list c shows where they are). To have it searched, name a plugin with study topic update c --knowledge-base <name>: study knowledge-base list shows the ones this computer has"
+  }
+}

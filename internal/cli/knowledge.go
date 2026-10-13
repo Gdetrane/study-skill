@@ -1,8 +1,10 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -196,7 +198,7 @@ func indexProgress(w io.Writer, quiet bool) func(core.IndexProgress) {
 func (a *app) evidenceCommand() *cobra.Command {
 	group := &cobra.Command{
 		Use:   "evidence",
-		Short: "Record and list the quotes from Sources that Lessons cite",
+		Short: "Search a Topic's Sources, and record and list the quotes from them that Lessons cite",
 		Args:  noArgs,
 		RunE:  a.groupHelp,
 	}
@@ -205,9 +207,22 @@ func (a *app) evidenceCommand() *cobra.Command {
 	record := &cobra.Command{
 		Use:   "record <topic>",
 		Short: "Record an exact quote from a Source that a Lesson cites",
-		Long: "Record an exact quote from one of the Topic's Sources that a Lesson cites, with its location\n" +
-			"when known and where the location came from. Pass --quote - to read the quote from stdin.",
+		Long: "Record an exact quote from one of the Topic's Sources that a Lesson cites. Pass --quote - to\n" +
+			"read the quote from stdin.\n\n" +
+			"With --passage, the id of the Passage the quote is from as study evidence search gave it,\n" +
+			"the quote is checked: study asks the Topic's Knowledge base plugin for that Passage again\n" +
+			"and refuses a quote that is not in its text. The location is then the Passage's. The\n" +
+			"quote begins and ends where a word of the Passage does. How much white space there is\n" +
+			"and of which kind, a word cut at a line's end, and the shape of a quotation mark or the\n" +
+			"length of a dash may differ from the Passage, and nothing else: not a space added or\n" +
+			"left out. A quote that runs on into the next Passage names both, in order: give\n" +
+			"--passage once for each.\n\n" +
+			"Without --passage nothing is checked: give the location when you know it, and where it\n" +
+			"came from.",
 		Example: `  study evidence record c --lesson pointers --source kernighan-ritchie.k3f9a2 \
+    --quote "A pointer is a variable that contains the address of a variable." \
+    --passage 7f3a9c12e5b04d68
+  study evidence record c --lesson pointers --source kernighan-ritchie.k3f9a2 \
     --quote "A pointer is a variable that contains the address of a variable." \
     --location "p. 93" --location-from source`,
 		Args: exactArgs(1),
@@ -224,6 +239,13 @@ func (a *app) evidenceCommand() *cobra.Command {
 				return a.fail(err)
 			}
 			spec.Topic = args[0]
+			// A Passage that is named and empty is a mistake, of a script
+			// whose variable holds nothing: without this the Evidence
+			// would be recorded unchecked, and say so only in passing.
+			if slices.ContainsFunc(spec.Passages, func(id string) bool { return strings.TrimSpace(id) == "" }) {
+				return a.fail(usageError{errors.New("--passage is given without a Passage's id: give the id a search gave, " +
+					"or leave --passage out to record Evidence that is not checked")})
+			}
 			res, err := c.RecordEvidence(cmd.Context(), spec)
 			if err != nil {
 				return a.fail(err)
@@ -237,11 +259,13 @@ func (a *app) evidenceCommand() *cobra.Command {
 	record.Flags().StringVar(&spec.Lesson, "lesson", "", "the id of the Lesson that cites it (required)")
 	record.Flags().StringVar(&spec.Source, "source", "", "the id of the Source it comes from (required)")
 	record.Flags().StringVar(&spec.Quote, "quote", "", "the exact quote, as the Source has it, or - to read it from stdin (required)")
+	record.Flags().StringArrayVar(&spec.Passages, "passage", nil,
+		"the id of the Passage the quote is from, which it is then checked against; repeat it, in order, for a quote that runs through several")
 	record.Flags().StringVar(&spec.Location, "location", "", "where the quote is, such as \"p. 93\" or \"§5.1\"")
 	record.Flags().StringVar(&spec.LocationFrom, "location-from", "",
-		"where the location came from: source, knowledge_base, learner or estimate")
+		"where the location came from: source, learner or estimate")
 	_ = record.RegisterFlagCompletionFunc("location-from", cobra.FixedCompletions([]string{
-		core.LocationFromSource, core.LocationFromKnowledgeBase, core.LocationFromLearner, core.LocationFromEstimate,
+		core.LocationFromSource, core.LocationFromLearner, core.LocationFromEstimate,
 	}, cobra.ShellCompDirectiveNoFileComp))
 	record.Flags().BoolVar(&spec.DryRun, "dry-run", false, "show the Evidence that would be recorded without recording it")
 
@@ -293,8 +317,52 @@ func (a *app) evidenceCommand() *cobra.Command {
 	}
 	list.Flags().StringVar(&query.Lesson, "lesson", "", "only the Evidence one Lesson cites")
 	list.Flags().BoolVar(&query.All, "all", false, "include retracted Evidence")
-	group.AddCommand(record, retract, list)
+	group.AddCommand(a.evidenceSearchCommand(), record, retract, list)
 	return group
+}
+
+// evidenceSearchCommand is study evidence search: the Passages of a Topic's
+// Sources that answer a query, from the Topic's Knowledge base plugin. It
+// reads the plugin's index and never a Source, so agents have a tool for it
+// too (evidence_search).
+func (a *app) evidenceSearchCommand() *cobra.Command {
+	var q core.PassageQuery
+	cmd := &cobra.Command{
+		Use:   "search <topic> <query>",
+		Short: "Search a Topic's Sources for the Passages that answer a query",
+		Long: "Ask the Knowledge base plugin a Topic names for the Passages of the Topic's Sources that\n" +
+			"answer a query, best first: each is the Source's own text, with its id, its Source, where\n" +
+			"it is in the Source when the plugin knows, and its score for this query. Quote Evidence\n" +
+			"from a Passage as it is given, and record it with the Passage's id:\n" +
+			"study evidence record --passage checks the quote against it.\n\n" +
+			"Only the Sources the plugin holds indexed on this computer, as the Topic records them,\n" +
+			"are searched. The others are left out, and the output says which, why, and the one\n" +
+			"command to run next for them. The plugin is started for the search and stopped again,\n" +
+			"and has 45 seconds for all of it. Nothing is recorded.",
+		Example: `  study evidence search linear-algebra "why does elimination produce a triangular system?"
+  study evidence search linear-algebra pivots --limit 3 --source strang-linear-algebra.k3f9a2`,
+		Args:              minArgs(2),
+		ValidArgsFunction: cobra.NoFileCompletions,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := core.Open(a.opts)
+			if err != nil {
+				return a.fail(err)
+			}
+			q.Topic, q.Query = args[0], strings.Join(args[1:], " ")
+			res, err := c.SearchEvidence(cmd.Context(), q)
+			if err != nil {
+				return a.fail(err)
+			}
+			if a.json {
+				return a.writeJSON(envelope{OK: true, Data: res})
+			}
+			return writePassageSearch(a.out, res)
+		},
+	}
+	cmd.Flags().IntVar(&q.Limit, "limit", core.DefaultPassageLimit,
+		fmt.Sprintf("most Passages to show, up to %d", core.MaxPassageLimit))
+	cmd.Flags().StringSliceVar(&q.Sources, "source", nil, "search only this Source, by its id; repeat it for several")
+	return cmd
 }
 
 // describeKnowledgeBase shows the Knowledge base as topic.toml records it: a
@@ -341,12 +409,23 @@ func describeIndex(x core.SourceIndex) (text string, attention bool) {
 }
 
 // printable quotes text that came from the file system, such as a path, if
-// it holds characters that a terminal would interpret.
+// it holds characters that a terminal would interpret, or that it would not
+// show at all (unshown).
 func printable(s string) string {
-	if strings.ContainsFunc(s, func(r rune) bool { return unicode.IsControl(r) || unicode.Is(unicode.Bidi_Control, r) }) {
+	if strings.ContainsFunc(s, unshown) {
 		return strconv.QuoteToASCII(s)
 	}
 	return s
+}
+
+// unshown reports whether a character is one a terminal acts on or shows
+// nothing of, so that what is printed would not be what is read: a control
+// character, one that changes the direction text is shown in, a separator
+// of lines or paragraphs, and a tag character, which shows nothing and can
+// spell out text that only a program reads.
+func unshown(r rune) bool {
+	return unicode.IsControl(r) || unicode.Is(unicode.Bidi_Control, r) || r == '\u2028' || r == '\u2029' ||
+		r >= 0xE0000 && r <= 0xE007F
 }
 
 func writeSourceResult(w io.Writer, r core.SourceResult, verb string) error {
@@ -500,21 +579,97 @@ func writeIndexResult(w io.Writer, r core.IndexResult) error {
 	return err
 }
 
+// writePassageSearch shows what a search of a Topic's Sources found: each
+// Passage with what Evidence quoted from it is recorded with, and then what
+// was left out of the search.
+//
+// A Passage's text is the plugin's, as it gave it. It is printed line by
+// line, each through printable, like any text from a file.
+func writePassageSearch(w io.Writer, r core.PassageSearch) error {
+	var b strings.Builder
+	topic, plugin := printable(r.Topic), styleAccent.Render(printable(r.Plugin))
+	switch searched := len(r.Searched); {
+	case searched == 0:
+		fmt.Fprintf(&b, "Nothing of %s was searched for %s.\n", topic, strconv.Quote(r.Query))
+	case len(r.Passages) == 0:
+		fmt.Fprintf(&b, "Knowledge base plugin %s found no Passage for %s in the %s of %s it searched.\n", plugin,
+			strconv.Quote(r.Query), plural(searched, "Source", strconv.Itoa(searched)+" Sources"), topic)
+	default:
+		fmt.Fprintf(&b, "Knowledge base plugin %s found %d %s for %s in %s, best first:\n", plugin, len(r.Passages),
+			plural(len(r.Passages), "Passage", "Passages"), strconv.Quote(r.Query), topic)
+	}
+	for _, p := range r.Passages {
+		where := ""
+		if p.Location != "" {
+			where = ", " + printable(p.Location)
+		}
+		fmt.Fprintf(&b, "\n%s  %s%s\n", styleAccent.Render(printable(p.ID)), printable(p.Title), where)
+		fmt.Fprintf(&b, "  %s\n", styleDim.Render("Source "+printable(p.Source)+", score "+strconv.FormatFloat(p.Score, 'g', 4, 64)))
+		for _, line := range textLines(p.Text) {
+			fmt.Fprintf(&b, "  > %s\n", line)
+		}
+	}
+	if len(r.Passages) > 0 {
+		fmt.Fprintf(&b, "\nQuote a Passage as it is given, and record the quote with the Passage's id:\n  %s\n", styleAccent.Render(
+			"study evidence record "+topic+" --lesson <lesson> --source <source> --passage <passage> --quote <quote>"))
+	}
+	if r.Note != "" {
+		fmt.Fprintf(&b, "\n%s %s\n", styleWarn.Render("!"), printable(r.Note))
+	}
+	for _, s := range r.LeftOut {
+		text, _ := describeIndex(s.SourceIndex)
+		fmt.Fprintf(&b, "  %s  %s: %s\n", styleAccent.Render(printable(s.ID)), printable(s.Title), text)
+		if s.Retry != "" {
+			fmt.Fprintf(&b, "    To have it tried again, run: %s\n", styleAccent.Render(printable(s.Retry)))
+		}
+	}
+	// The one command to run next, as status gives it: the one that
+	// indexes, or the listing that says what is wrong with a file.
+	switch {
+	case strings.HasPrefix(r.Action, "study source index "):
+		fmt.Fprintf(&b, "To have Knowledge base plugin %s index what is not indexed, run:\n  %s\n", plugin,
+			styleAccent.Render(printable(r.Action)))
+	case r.Action != "":
+		fmt.Fprintf(&b, "To see what keeps a Source's file from being indexed, run:\n  %s\n", styleAccent.Render(printable(r.Action)))
+	}
+	_, err := io.WriteString(w, b.String())
+	return err
+}
+
+// textLines are the lines of text that came from a file, a plugin or the
+// History, each made safe to print: a tab and the other white space that
+// ends no line become a space, so that a line is quoted only for what a
+// terminal would interpret.
+func textLines(text string) []string {
+	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
+	for i, line := range lines {
+		lines[i] = printable(strings.Map(func(r rune) rune {
+			switch r {
+			case '\t', '\r', '\v', '\f':
+				return ' '
+			}
+			return r
+		}, line))
+	}
+	return lines
+}
+
 func writeEvidenceResult(w io.Writer, r core.EvidenceResult, verb string) error {
 	e := r.Evidence
+	id, lesson, source := printable(e.ID), printable(e.Lesson), printable(e.Source)
 	switch {
 	case !r.Changed && verb == "retract":
-		fmt.Fprintf(w, "Evidence %s was already retracted: nothing changed\n", e.ID)
+		fmt.Fprintf(w, "Evidence %s was already retracted: nothing changed\n", id)
 	case !r.Changed:
-		fmt.Fprintf(w, "Evidence %s was already recorded: nothing changed\n", e.ID)
+		fmt.Fprintf(w, "Evidence %s was already recorded: nothing changed\n", id)
 	case verb == "retract" && r.DryRun:
-		fmt.Fprintf(w, "Would retract Evidence %s for Lesson %s\n", styleAccent.Render(e.ID), e.Lesson)
+		fmt.Fprintf(w, "Would retract Evidence %s for Lesson %s\n", styleAccent.Render(id), lesson)
 	case verb == "retract":
-		fmt.Fprintf(w, "Retracted Evidence %s for Lesson %s\n", styleAccent.Render(e.ID), e.Lesson)
+		fmt.Fprintf(w, "Retracted Evidence %s for Lesson %s\n", styleAccent.Render(id), lesson)
 	case r.DryRun:
-		fmt.Fprintf(w, "Would record Evidence for Lesson %s from Source %s\n", e.Lesson, e.Source)
+		fmt.Fprintf(w, "Would record Evidence for Lesson %s from Source %s\n", lesson, source)
 	default:
-		fmt.Fprintf(w, "Recorded Evidence %s for Lesson %s from Source %s\n", styleAccent.Render(e.ID), e.Lesson, e.Source)
+		fmt.Fprintf(w, "Recorded Evidence %s for Lesson %s from Source %s\n", styleAccent.Render(id), lesson, source)
 	}
 	writeQuote(w, e)
 	return nil
@@ -534,18 +689,31 @@ func writeEvidenceList(w io.Writer, l core.EvidenceList) error {
 		if e.Retracted {
 			retracted = styleWarn.Render(" (retracted)")
 		}
-		fmt.Fprintf(&b, "%s  Lesson %s, Source %s%s\n", styleAccent.Render(e.ID), e.Lesson, e.Source, retracted)
+		fmt.Fprintf(&b, "%s  Lesson %s, Source %s%s\n", styleAccent.Render(printable(e.ID)), printable(e.Lesson),
+			printable(e.Source), retracted)
 		writeQuote(&b, e)
 	}
 	_, err := io.WriteString(w, b.String())
 	return err
 }
 
+// writeQuote shows a piece of Evidence: its quote, where it is, and whether
+// the quote was checked against the Passages it is from. All of it is text
+// from the History, which syncs and can be edited by hand: it goes through
+// printable.
 func writeQuote(w io.Writer, e core.Evidence) {
-	for _, line := range strings.Split(e.Quote, "\n") {
+	for _, line := range textLines(e.Quote) {
 		fmt.Fprintf(w, "  > %s\n", line)
 	}
 	if e.Location != "" {
-		fmt.Fprintf(w, "  %s\n", styleDim.Render(e.Location+" (location from "+strings.ReplaceAll(e.LocationFrom, "_", " ")+")"))
+		fmt.Fprintf(w, "  %s\n", styleDim.Render(printable(e.Location)+" (location from "+
+			printable(strings.ReplaceAll(e.LocationFrom, "_", " "))+")"))
+	}
+	// Said of the Evidence that was checked, and of no other: most Evidence
+	// of a Topic without a plugin is none, and a line under each would say
+	// nothing.
+	if e.Checked {
+		fmt.Fprintf(w, "  %s\n", styleDim.Render("checked against "+plural(len(e.Passages), "Passage", "Passages")+" "+
+			printable(strings.Join(e.Passages, ", "))+" of Knowledge base plugin "+printable(e.Plugin)))
 	}
 }

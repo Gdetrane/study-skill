@@ -16,7 +16,7 @@ import (
 // and the Study home of this run, and the adapters reach a plugin only
 // through the core.
 //
-// Three things start a plugin, each through startPlugin:
+// Four things start a plugin, each through startPlugin:
 //
 //   - CheckPlugin, for study knowledge-base check, which asks which contract
 //     the plugin speaks. It is for the learner and CLI-only.
@@ -25,15 +25,21 @@ import (
 //     index (source_index.go).
 //   - askPlugins, for status and for a Topic's Sources, which asks the
 //     plugin what it has indexed and nothing else, with a short deadline.
-//     It is the one of the three that an MCP tool reaches.
+//     An MCP tool reaches it.
+//   - startTopicPlugin, for a search of a Topic's Sources and for Evidence
+//     recorded with its Passages, which asks the plugin what it has indexed
+//     and then to search, or for Passages again (evidence_search.go). An MCP
+//     tool reaches it too.
 //
-// So an MCP tool can have a plugin started, to ask its status tool, and can
-// never have one index: the MCP server runs outside the agent's sandbox, and
-// a plugin that indexed for it would read any file the agent named as a
-// Source there. Tests in internal/mcpserver keep it so: one calls every
+// So an MCP tool can have a plugin started, to ask its status, search and
+// passage tools, and can never have one index: the MCP server runs outside
+// the agent's sandbox, and a plugin that indexed for it would read any file
+// the agent named as a Source there. A search reads the plugin's index and
+// never a Source. Tests in internal/mcpserver keep it so: one calls every
 // tool with plugins registered that record what they are asked, and one
 // reads this package for whatever could ask a plugin to index from anywhere
-// but IndexSources.
+// but IndexSources, or to search from anywhere but the two functions that
+// do.
 //
 // Nothing is kept between two of them: each starts the plugin and stops it
 // again before it returns.
@@ -64,6 +70,11 @@ type PluginOptions struct {
 	// CancelTimeout is how long a plugin has to stop indexing when study
 	// source index is stopped. Defaults to DefaultIndexCancelTimeout.
 	CancelTimeout time.Duration
+	// EvidenceTimeout is how long a search of a Topic's Sources, and the
+	// reading of the Passages a quote is checked against, give the Topic's
+	// plugin: finding it, starting it and its answers, all of it. Defaults
+	// to PluginEvidenceTimeout.
+	EvidenceTimeout time.Duration
 }
 
 // PluginContract is what a Knowledge base plugin says of itself: the
@@ -215,8 +226,9 @@ var beforePluginLookup atomic.Pointer[func()]
 // started. The zero value is a plugin with the time PluginOptions give it.
 type pluginUse struct {
 	// within, when it is not zero, is how long the plugin has to start and
-	// then to answer any one call, in place of what PluginOptions say: for
-	// whoever must not wait for a plugin.
+	// then to answer any one call, a search among them, in place of what
+	// PluginOptions say: for whoever keeps one deadline for all of it, and
+	// passes it with each call.
 	within time.Duration
 	// grace, when it is not zero, is the most a command has to exit when it
 	// is asked, and again when it is signalled, in place of a longer
@@ -252,7 +264,7 @@ func (c *Core) startPlugin(ctx context.Context, plugin pluginregistry.Plugin, be
 		StopGrace:     c.plugins.StopGrace,
 	}
 	if use.within > 0 {
-		opts.StartTimeout, opts.CallTimeout = use.within, use.within
+		opts.StartTimeout, opts.CallTimeout, opts.SearchTimeout = use.within, use.within, use.within
 	}
 	if use.grace > 0 && (opts.StopGrace <= 0 || opts.StopGrace > use.grace) {
 		opts.StopGrace = use.grace

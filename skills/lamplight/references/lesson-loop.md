@@ -9,8 +9,9 @@ practicing at 3, feedback at 4.
 
 1. Teach. Call `phase_set` with `teaching`, and write `lessons/<lesson-id>.md` from the
    template below, at the learner's Level and in their words. Research the concept first
-   with the companions installed ([Companions](companions.md)), and record Evidence from
-   the Topic's Sources ([Knowledge](knowledge.md)). Write the Check's scripts as the
+   with the companions installed ([Companions](companions.md)), search the Topic's Sources
+   when it names a Knowledge base plugin, and record Evidence from them
+   ([Knowledge](knowledge.md#searching-the-sources)). Write the Check's scripts as the
    conventions below say, and the answers in Teacher's notes. Present the Lesson, then ask:
 
    ```

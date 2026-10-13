@@ -26,6 +26,10 @@ import (
 // the Study home is, which is another folder in every run of the tests.
 var collectionSuffix = regexp.MustCompile(`-[a-z2-7]{32}\b`)
 
+// passageIDs are the ids the test plugin gives its Passages: a hash of the
+// Source's id, which holds an id the tests make, and of its content.
+var passageIDs = regexp.MustCompile(`\b[0-9a-f]{24}\b`)
+
 // shelfComputer is a learner's computer on which the test plugin is
 // registered as kb, with a Topic, linear-algebra, that names it.
 type shelfComputer struct {
@@ -48,7 +52,7 @@ func newShelfComputer(t *testing.T, args ...string) *shelfComputer {
 	s.plugins = core.PluginOptions{
 		Environ:      func() []string { return []string{"HOME=" + s.home, "STUDY_HOME=" + s.env["STUDY_HOME"]} },
 		StartTimeout: 20 * time.Second, StopGrace: 300 * time.Millisecond, GlanceTimeout: 20 * time.Second,
-		IndexPoll: 10 * time.Millisecond, CancelTimeout: 5 * time.Second,
+		IndexPoll: 10 * time.Millisecond, CancelTimeout: 5 * time.Second, EvidenceTimeout: 20 * time.Second,
 	}
 	s.registerWith(t, args...)
 	s.ok(t, "topic", "create", "--title", "Linear algebra")
@@ -85,7 +89,8 @@ func (s *shelfComputer) study(ctx context.Context, args ...string) result {
 		text = strings.ReplaceAll(text, s.home, "$HOME")
 		text = strings.ReplaceAll(text, plugintest.Command()[0], "$PLUGIN")
 		text = loopback.ReplaceAllString(text, "127.0.0.1:PORT")
-		return collectionSuffix.ReplaceAllString(testIDs.ReplaceAllString(text, "<id>"), "-<collection>")
+		text = collectionSuffix.ReplaceAllString(testIDs.ReplaceAllString(text, "<id>"), "-<collection>")
+		return passageIDs.ReplaceAllString(text, "<passage>")
 	}
 	return result{code: code, stdout: norm(stdout.String()), stderr: norm(stderr.String())}
 }

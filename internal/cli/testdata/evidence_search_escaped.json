@@ -1,0 +1,22 @@
+{
+  "ok": true,
+  "data": {
+    "topic": "linear-algebra",
+    "query": "pivot",
+    "plugin": "kb",
+    "passages": [
+      {
+        "id": "<passage>",
+        "source": "notes.<id>",
+        "title": "Notes",
+        "text": "The pivot\u001b[2J is the\tfirst entry of a row.",
+        "location": "p. 1",
+        "score": 1
+      }
+    ],
+    "searched": [
+      "strang.<id>",
+      "notes.<id>"
+    ]
+  }
+}

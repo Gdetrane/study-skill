@@ -2,6 +2,6 @@
   "ok": false,
   "error": {
     "code": "invalid_argument",
-    "message": "say where the location came from: source, knowledge_base, learner or estimate"
+    "message": "say where the location came from: source, learner or estimate"
   }
 }

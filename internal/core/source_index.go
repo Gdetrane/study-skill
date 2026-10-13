@@ -23,10 +23,14 @@ import (
 // Whether a Source is indexed is the plugin's to say, on this computer: it
 // records no Event and is in no file of the Topic, so study asks each time.
 //
-// Two things ask. askPlugins is for status and for a Topic's Sources: it
+// Three things ask. askPlugins is for status and for a Topic's Sources: it
 // asks the plugin's status tool and nothing else, has a couple of seconds
 // for all of it, and shows the Sources' state as not known when that is
-// missed, so that nothing waits for a plugin. An MCP tool reaches it.
+// missed, so that nothing waits for a plugin. An MCP tool reaches it. A
+// search, and Evidence recorded with its Passage, ask it too
+// (topicPlugin.indexed, in evidence_search.go), with the time a search has,
+// and decide what is indexed and what to do about the rest by the same
+// rule, which is indexAsk's. An MCP tool reaches that as well.
 // IndexSources is study source index, the one thing that asks a plugin to
 // index. It is CLI-only, like study check (ADR-0009): a plugin that indexes
 // reads the files it is handed, the MCP server runs outside the agent's
@@ -293,6 +297,25 @@ func fileStateAt(path, state string) string {
 	}
 	_ = f.Close()
 	return state
+}
+
+// fileStateIn returns what an indexAsk asks to learn whether a file Source's
+// file is on this computer and is the one that was added: a Source the
+// plugin has not indexed is looked for as a listing of the Sources looks for
+// it, within the time the asking has. Where it is found is not written
+// down: whoever asks changes nothing.
+func (c *Core) fileStateIn(home *os.Root, topicID string) func(ctx context.Context, src Source) string {
+	var l *locator
+	return func(ctx context.Context, src Source) string {
+		if l == nil {
+			l = c.newLocator(ctx, home, topicID)
+		}
+		path, state, err := l.locate(src)
+		if err != nil {
+			return ""
+		}
+		return fileStateAt(path, state)
+	}
 }
 
 // answered records what the plugin said of the Topic's Sources.

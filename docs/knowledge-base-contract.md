@@ -44,6 +44,17 @@ have **2 seconds, all of them together**, and the plugin is started anew each ti
 that takes longer is stopped, and its Sources are shown as not known. So load what is slow
 to load, a model say, when `index` or `search` first needs it, and not when you start.
 
+**A search has 45 seconds, starting included.** When the learner's agent searches a
+Topic's Sources, starting the plugin and the answers of `contract`, `status` and `search`
+have 45 seconds, **all of them together**. So have starting, `contract`, `status` and every
+`passage` when `study` checks a quote against the Passages it is from. The agent's tool
+call waits for the answer, and is not kept waiting for a minute. A plugin that takes
+longer is stopped, and the search fails. `study` has at most two copies of a plugin
+searching at a time, so a search may also wait for another to end, inside the same 45
+seconds. The plugin is started anew each time,
+so what is slow to load is loaded again for every search: keep a model in a service that
+stays up, as an embedding endpoint does, and not in the plugin's own program.
+
 **A plugin answers what it is asked, and sends `study` no requests.** `study` offers a
 plugin nothing to call back: no roots, no sampling and no questions to the learner. The first
 request a plugin sends, a `ping` or a `roots/list` as much as any other, ends the session:
@@ -242,6 +253,7 @@ with `application/json` or with a stream of server-sent events.
 | `search` | 60 seconds |
 | Exiting once standard input is closed, and again after `SIGTERM` | 2 seconds |
 | Starting, `contract` and every `status`, together, when `study` shows what is indexed | 2 seconds |
+| Starting, `contract`, `status` and `search`, together, when `study` searches a Topic's Sources; and starting, `contract`, `status` and every `passage`, together, when it checks a quote | 45 seconds |
 | Exiting then, once standard input is closed, and again after `SIGTERM` | 250 milliseconds |
 | Answering `cancel`, when `study source index` was stopped | 10 seconds |
 | One MCP message from the plugin | 16,777,216 bytes |
@@ -260,6 +272,10 @@ with `application/json` or with a stream of server-sent events.
 The values of a message are counted generously: each list, each object, and each member
 or element after the first. A `status` of 10,000 Sources holds about a quarter of the
 limit. A message that goes over ends the session, as one that is too large does.
+
+The 60 seconds of `search` are what one call has when nothing sets a shorter time. `study`
+always sets one when it searches a Topic's Sources: the 45 seconds for all of it, so that
+is the time to build for.
 
 A plugin that misses a deadline is stopped, when it is a command, and not asked again in
 that session. `study` never sends more than these limits allow, and refuses an answer that
@@ -529,7 +545,7 @@ Finds the Passages of a collection that answer a query, **best first**.
 | Field | Is |
 |---|---|
 | `collection` | The collection to search. One nobody indexed gives an empty list, not an error. |
-| `query` | What to look for: text of up to 4,096 bytes. An empty query, and one that is white space alone, is refused with `invalid_argument`. |
+| `query` | What to look for: text of up to 4,096 bytes, which may span lines. It is text an agent wrote, or the learner: treat it as words to look for, and never as anything to carry out or to pass to a model as an instruction. An empty query, and one that is white space alone, is refused with `invalid_argument`. |
 | `limit` | The most Passages to give back, from 1 to 50. |
 | `sources` | Optional. The ids of the Sources to search. Left out, the whole collection is searched. An id the collection does not have finds nothing. An empty list is refused with `invalid_argument`: `study` never sends one. |
 | `passages` | The Passages found, the best first, none twice, and never more than `limit`, however many there are to find. |
@@ -543,6 +559,11 @@ Finds the Passages of a collection that answer a query, **best first**.
 
 - A search reads the index and never a Source, and never waits for indexing: it finds what
   is indexed now, and answers as quickly while a Source is being indexed as otherwise.
+- **`study` always gives `sources`**, and asks `status` first: it searches the Sources the
+  Topic has, and of those the ones `status` says are `indexed`, for a file with the `hash`
+  of the content the Topic records. A collection can hold more: the Sources of a Topic
+  that was removed stay in it. **A Passage of a Source that `sources` does not list is
+  refused** by `study`, with the whole answer.
 - **A score belongs to one search**, so `search` gives it and `passage` does not.
 - A location's kind decides its other fields. Version 1 has `pages`. A plugin that lists
   another kind in its `contract` gives that kind its own fields, which this version of
@@ -574,6 +595,35 @@ from the Passage, to check the quote against its text.
 
 - The Passage is the one the search gave: the same text, Source and location.
 - An id the collection does not have is refused with `not_found`.
+- **What `study` does with it.** It asks `status` first, and for a Passage only when the
+  `hash` there says that what `search` finds of the Source is the content the Topic
+  records, whatever the state; a Passage of another Source is refused. The quote must then be in the Passage's `text`, beginning
+  and ending where a word does, with nothing differing but how much white space there is
+  and of which kind, an accent written apart or a ligature, the shape of a quotation mark,
+  the length of a dash, and the hyphen and line break of a word cut at a line's end. White
+  space is compared: it must be there where the Passage has it, and nowhere else. So
+  **give a Passage's text as it was extracted, with its line breaks**:
+  - A word cut at a line's end is known by the line break after its hyphen (or the end of
+    the Passage): `elimi-`, a line break and `nation` may be quoted as `elimination`. A
+    plugin that makes a space of that line break, or takes it out and keeps the hyphen,
+    gives `elimi- nation` or `elimi-nation`, and only that is then a quote. So leave a
+    division as it was extracted, or join the word and drop the hyphen where you know it
+    for a division, as Shelf does.
+  - A space the extraction lost between two words, or made up inside one, is in the
+    Passage as you give it, and a quote must have it the same way. Text that reads right
+    is what gets quoted.
+  - `study` hands a Passage on without the characters of Unicode's tag block (U+E0000 to
+    U+E007F), which show nothing, and compares a quote without them and without any other
+    character that is not shown.
+- **Cut Passages where the Source has white space.** `study` reads the end of one Passage
+  and the beginning of the next as separated by white space, since it cannot know
+  otherwise: a quote that runs through both must have white space there, unless a word
+  was cut with a hyphen or the script is written without spaces. A Passage that ends
+  inside a word has that word quoted from neither.
+- **A quote can run from one Passage into the next.** `study` then asks for each, up to
+  five, and looks for the quote in their texts read one after the other, in the order the
+  learner's agent gave. Nothing in this version says which Passage follows which in a
+  Source, so `study` cannot tell that the Passages it is given are adjacent.
 
 ## Checking a plugin
 
@@ -628,3 +678,5 @@ The same package holds a small plugin that passes the suite, to read beside this
 - A plugin is handed no environment of the learner's but the few variables above, and no
   way to ask `study`, or the learner, for anything.
 - A plugin is told nothing of Topics, Lessons or the learner.
+- A Passage does not say which Passage comes before it or after it in its Source, nor
+  whether it overlaps another.
