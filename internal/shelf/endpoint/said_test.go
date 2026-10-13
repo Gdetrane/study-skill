@@ -115,6 +115,9 @@ func TestWhatFollowsBearerIsTakenOut(t *testing.T) {
 		"upstream refused authorization=Bearer=" + gateway:                  "upstream refused authorization=Bearer [the key]",
 		// As a server writes a header's value inside its own JSON.
 		`upstream refused {"authorization": "Bearer = \"` + gateway + `\""}`: `upstream refused {"authorization": "Bearer [the key]"}`,
+		// Behind the blank that is no white space, which study shows as a
+		// space: the key would follow "Bearer" there.
+		"upstream refused Bearer\u2800" + gateway + "\u2800again": "upstream refused Bearer [the key] again",
 		// A quotation mark that is never closed.
 		`upstream refused Bearer "` + gateway: "upstream refused Bearer [the key]",
 		// No key follows these.

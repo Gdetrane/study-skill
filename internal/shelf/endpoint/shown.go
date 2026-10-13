@@ -18,7 +18,9 @@ import (
 func shown(text string) string {
 	return strings.Join(strings.Fields(strings.Map(func(r rune) rune {
 		switch {
-		case r == '\n' || r == '\t' || r == '\r':
+		case r == '\n' || r == '\t' || r == '\r' || r == plugincontract.BrailleBlank:
+			// The blank that is no white space is one where study shows
+			// the text: what follows "Bearer" behind it follows it there.
 			return ' '
 		case !unicode.IsPrint(r) || unicode.Is(unicode.Bidi_Control, r) || plugincontract.ShowsNothing(r):
 			return -1

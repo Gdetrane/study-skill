@@ -140,14 +140,11 @@ func clean(s string, max int) string {
 	return b.String()
 }
 
-// brailleBlank is the braille pattern with no dot raised. It shows as a
-// blank that takes room and is no white space to Unicode, nor one of the
-// characters a display ignores, so a run of it would pad one line of a
+// brailleBlank is the braille pattern with no dot raised
+// (plugincontract.BrailleBlank). A run of it would pad one line of a
 // plugin's words into what looks like a second line on a terminal, with
 // whatever the plugin chose to write there. clean takes it for white space.
-// It is the one blank of its kind that is common: this is no claim that no
-// other character shows as one.
-const brailleBlank rune = 0x2800
+const brailleBlank = plugincontract.BrailleBlank
 
 // seen is text without the characters that show nothing
 // (plugincontract.ShowsNothing), and with every other byte as it was. clean
