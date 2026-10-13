@@ -43,7 +43,13 @@ type Spec struct {
 	// Replace allows the name to be registered already as something else,
 	// which this registration then replaces.
 	Replace bool
-	DryRun  bool
+	// Replacing allows that only while the name stands for exactly this
+	// plugin, command or URL and all, by the time the registry is locked:
+	// anything else under the name is refused as without Replace. It is for
+	// whoever made that registration itself, as study setup does, so that it
+	// never replaces one the learner made since.
+	Replacing *pluginregistry.Plugin
+	DryRun    bool
 }
 
 // Registration reports a Knowledge base plugin registered.
@@ -108,10 +114,9 @@ func add(ctx context.Context, env pluginregistry.Env, spec Spec, hook func(point
 		case i < 0:
 			out.Changed = true
 			return append(plugins, plugin), true, nil
-		case plugins[i].URL == plugin.URL && slices.Equal(plugins[i].Command, plugin.Command) &&
-			plugins[i].AllowStudyHomeArguments == plugin.AllowStudyHomeArguments:
+		case registeredAs(plugins[i], plugin):
 			return nil, false, nil
-		case !spec.Replace:
+		case !spec.Replace && (spec.Replacing == nil || !registeredAs(plugins[i], *spec.Replacing)):
 			return nil, false, regfile.Errorf(regfile.CodeAlreadyExists, "a Knowledge base plugin named %s is registered "+
 				"already, as something else (study knowledge-base list shows it): pass --replace to register this one "+
 				"in its place, or give this one another name", plugin.Name)
@@ -127,14 +132,38 @@ func add(ctx context.Context, env pluginregistry.Env, spec Spec, hook func(point
 	return out, nil
 }
 
+// registeredAs reports whether what a name stands for in the registry is
+// what b says: the same command or URL, allowed the same.
+func registeredAs(a, b pluginregistry.Plugin) bool {
+	return a.URL == b.URL && slices.Equal(a.Command, b.Command) && a.AllowStudyHomeArguments == b.AllowStudyHomeArguments
+}
+
 // Remove takes a Knowledge base plugin out of this computer's registry. A
 // Topic that names it is afterwards treated as one without a Knowledge
 // base. It records no Event.
 func Remove(ctx context.Context, env pluginregistry.Env, name string, dryRun bool) (Removal, error) {
-	return remove(ctx, env, name, dryRun, nil)
+	return remove(ctx, env, name, nil, dryRun, nil)
 }
 
-func remove(ctx context.Context, env pluginregistry.Env, name string, dryRun bool, hook func(point string) error) (Removal, error) {
+// RemoveExactly takes a Knowledge base plugin out of the registry only while
+// its name still stands for exactly the plugin given, command or URL and
+// all, by the time the registry is locked. It reports whether it did, or in
+// a dry run whether it would: a name that stands for something else by
+// then, or for nothing, is left as it is, and that is no error.
+//
+// It is for whoever registered the plugin itself and undoes that, as study
+// setup --remove does: what the learner registered under the name since is
+// theirs to keep. It records no Event.
+func RemoveExactly(ctx context.Context, env pluginregistry.Env, plugin pluginregistry.Plugin, dryRun bool) (bool, error) {
+	removed, err := remove(ctx, env, plugin.Name, &plugin, dryRun, nil)
+	return err == nil && removed.Plugin.Name != "", err
+}
+
+// remove takes the plugin registered under name out of the registry. With
+// only, it takes it out only while it is registered as only says, and
+// otherwise changes nothing and returns a Removal that names no plugin.
+func remove(ctx context.Context, env pluginregistry.Env, name string, only *pluginregistry.Plugin, dryRun bool,
+	hook func(point string) error) (Removal, error) {
 	folder, err := regfile.Open(env)
 	if err != nil {
 		return Removal{}, err
@@ -145,8 +174,12 @@ func remove(ctx context.Context, env pluginregistry.Env, name string, dryRun boo
 	}
 	out := Removal{Registry: folder.Registry, DryRun: dryRun}
 	err = change(ctx, folder, dryRun, hook, func(plugins []pluginregistry.Plugin) ([]pluginregistry.Plugin, bool, error) {
+		out.Plugin = pluginregistry.Plugin{}
 		i := slices.IndexFunc(plugins, func(p pluginregistry.Plugin) bool { return p.Name == name })
-		if i < 0 {
+		switch {
+		case only != nil && (i < 0 || !registeredAs(plugins[i], *only)):
+			return nil, false, nil
+		case i < 0:
 			return nil, false, regfile.Errorf(regfile.CodeNotFound, "no Knowledge base plugin named %s is registered on "+
 				"this computer: study knowledge-base list shows the ones that are", name)
 		}

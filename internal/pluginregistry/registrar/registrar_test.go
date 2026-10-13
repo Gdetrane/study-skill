@@ -567,6 +567,131 @@ func TestRemove(t *testing.T) {
 	}
 }
 
+// Whoever registered a plugin itself, as study setup does, replaces that
+// registration and removes it only while the name still stands for exactly
+// what it registered. What the learner registered under the name since is
+// left as it is, also when it reached the registry while the other waited
+// for the lock.
+func TestARegistrationIsReplacedAndRemovedOnlyWhileItIsTheOneGiven(t *testing.T) {
+	ctx := context.Background()
+	c := regtest.New(t)
+	first := regtest.Program(t, filepath.Join(c.Bin, "study-shelf"))
+	moved := regtest.Program(t, filepath.Join(c.Home, "opt", "study-shelf"))
+	own := regtest.Program(t, filepath.Join(c.Bin, "my-shelf"))
+	made, err := Add(ctx, at(c), Spec{Name: "shelf", Command: []string{first}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	registered := func() Plugin {
+		t.Helper()
+		list, err := pluginregistry.Read(ctx, at(c))
+		if err != nil || len(list.Plugins) != 1 {
+			t.Fatalf("Read = %+v, %v; want one plugin", list, err)
+		}
+		return list.Plugins[0]
+	}
+
+	// The one it made is replaced, and the dry run says so and writes nothing.
+	want := Plugin{Name: "shelf", Command: []string{moved}}
+	for _, dryRun := range []bool{true, false} {
+		got, err := Add(ctx, at(c), Spec{Name: "shelf", Command: []string{moved}, Replacing: &made.Plugin, DryRun: dryRun})
+		if err != nil || !got.Changed || got.Replaced == nil || !reflect.DeepEqual(*got.Replaced, made.Plugin) || !reflect.DeepEqual(got.Plugin, want) {
+			t.Fatalf("replacing the registration it made (dry run %v) = %+v, %v", dryRun, got, err)
+		}
+		if dryRun && !reflect.DeepEqual(registered(), made.Plugin) {
+			t.Fatal("the dry run replaced the registration")
+		}
+	}
+	if got := registered(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("registered = %+v, want %+v", got, want)
+	}
+
+	// The learner registers a program of their own under the name. The
+	// registration that was made before is no longer there to replace, or
+	// to remove.
+	learners, err := Add(ctx, at(c), Spec{Name: "shelf", Command: []string{own, "--mine"}, Replace: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, dryRun := range []bool{true, false} {
+		_, err := Add(ctx, at(c), Spec{Name: "shelf", Command: []string{first}, Replacing: &want, DryRun: dryRun})
+		if pluginregistry.CodeOf(err) != "already_exists" {
+			t.Errorf("replacing a registration the learner made since (dry run %v) = %v; want already_exists", dryRun, err)
+		}
+		if removed, err := RemoveExactly(ctx, at(c), want, dryRun); removed || err != nil {
+			t.Errorf("removing a registration the learner made since (dry run %v) = %v, %v; want it left alone", dryRun, removed, err)
+		}
+	}
+	if got := registered(); !reflect.DeepEqual(got, learners.Plugin) {
+		t.Fatalf("registered = %+v; want the learner's own, %+v", got, learners.Plugin)
+	}
+	// With the same program and other arguments it is another registration.
+	if removed, err := RemoveExactly(ctx, at(c), Plugin{Name: "shelf", Command: []string{own}}, false); removed || err != nil {
+		t.Errorf("removing the same program with other arguments = %v, %v; want it left alone", removed, err)
+	}
+	// And a name that stands for nothing has nothing to remove.
+	if removed, err := RemoveExactly(ctx, at(c), Plugin{Name: "other", Command: []string{own}}, false); removed || err != nil {
+		t.Errorf("removing a name that is not registered = %v, %v; want nothing removed, and no error", removed, err)
+	}
+
+	// The learner's registration reaches the registry while the other waits
+	// for the lock: it was planned against the registration it made, and is
+	// planned again under the lock, against the learner's.
+	theirs := Plugin{Name: "shelf", Command: []string{own, "--again"}}
+	hook, locked, release := pauseAt(pointLocked)
+	learnerDone := make(chan error, 1)
+	go func() {
+		_, err := add(ctx, at(c), Spec{Name: "shelf", Command: theirs.Command, Replace: true}, hook)
+		learnerDone <- err
+	}()
+	<-locked
+	type outcome struct {
+		removed bool
+		err     error
+	}
+	replaceDone, removeDone := make(chan error, 1), make(chan outcome, 1)
+	go func() {
+		_, err := Add(ctx, at(c), Spec{Name: "shelf", Command: []string{moved}, Replacing: &learners.Plugin})
+		replaceDone <- err
+	}()
+	go func() {
+		removed, err := RemoveExactly(ctx, at(c), learners.Plugin, false)
+		removeDone <- outcome{removed, err}
+	}()
+	select {
+	case err := <-replaceDone:
+		t.Fatalf("a replacement did not wait for the change under way: %v", err)
+	case got := <-removeDone:
+		t.Fatalf("a removal did not wait for the change under way: %+v", got)
+	case <-time.After(100 * time.Millisecond):
+	}
+	release()
+	if err := <-learnerDone; err != nil {
+		t.Fatalf("the learner's registration: %v", err)
+	}
+	if err := <-replaceDone; pluginregistry.CodeOf(err) != "already_exists" {
+		t.Errorf("the replacement that waited = %v; want already_exists", err)
+	}
+	if got := <-removeDone; got.removed || got.err != nil {
+		t.Errorf("the removal that waited = %+v; want the learner's registration left alone", got)
+	}
+	if got := registered(); !reflect.DeepEqual(got, theirs) {
+		t.Fatalf("registered = %+v; want the learner's own, %+v", got, theirs)
+	}
+
+	// What is registered exactly as given goes, and the dry run only says so.
+	before := regtest.Text(t, c.Registry())
+	if removed, err := RemoveExactly(ctx, at(c), theirs, true); !removed || err != nil || regtest.Text(t, c.Registry()) != before {
+		t.Errorf("dry run of removing the registration as it is = %v, %v; want it reported, and nothing written", removed, err)
+	}
+	if removed, err := RemoveExactly(ctx, at(c), theirs, false); !removed || err != nil {
+		t.Errorf("removing the registration as it is = %v, %v", removed, err)
+	}
+	if got := names(t, c); len(got) != 0 {
+		t.Errorf("registered after the removal: %v", got)
+	}
+}
+
 // A dry run reports what the real run then does, and makes nothing: no
 // registry, no lock file and no configuration folder.
 func TestDryRunsReportWhatTheRealRunDoes(t *testing.T) {
@@ -1427,7 +1552,7 @@ func TestAChangeInterruptedBeforeItWritesChangedNothing(t *testing.T) {
 	if _, err := add(ctx, at(c), Spec{Name: "new", Command: []string{shelf}}, crash); err != crashed {
 		t.Fatalf("add = %v; want the crash", err)
 	}
-	if _, err := remove(ctx, at(c), "old", false, crash); err != crashed {
+	if _, err := remove(ctx, at(c), "old", nil, false, crash); err != crashed {
 		t.Fatalf("remove = %v; want the crash", err)
 	}
 	if regtest.Text(t, c.Registry()) != before {
