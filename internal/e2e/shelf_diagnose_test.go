@@ -55,9 +55,15 @@ func TestABuiltStudyHasTheBuiltShelfTestItsEndpoints(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(settings), 0o700); err != nil {
 		t.Fatal(err)
 	}
+	// The embedding endpoint's key is in the settings file, and the
+	// reranking endpoint's in a file of its own beside it, as a program
+	// that keeps secrets writes one: both are sent, and neither is shown.
 	text := fmt.Sprintf("format = 1\n\n[embedding]\nendpoint = %q\nrecipe = \"embeddinggemma-2\"\nkey = %q\n\n"+
-		"[reranking]\nendpoint = %q\nmodel = \"a-reranker\"\nkey = %q\n", embedder.URL, key, reranker.URL, key)
+		"[reranking]\nendpoint = %q\nmodel = \"a-reranker\"\nkey_file = \"reranking.key\"\n", embedder.URL, key, reranker.URL)
 	if err := os.WriteFile(settings, []byte(text), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(filepath.Dir(settings), "reranking.key"), []byte(key+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	must("knowledge-base", "add", "shelf", "--", shelf)
