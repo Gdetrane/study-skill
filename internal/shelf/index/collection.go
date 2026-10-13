@@ -53,6 +53,12 @@ const (
 	CrashEmbeddedCommitted = "the vectors of indexed content are committed"
 )
 
+// PointVectorsRead is where Options.Crash is called by a search by vectors:
+// the vectors are read and compared, and the Passages they are of are not
+// read yet. It is where a test has another Shelf put other content in a
+// Source's place, to see that no Passage is ranked by another's vector.
+const PointVectorsRead = "the vectors of a search are read, and its Passages are not"
+
 // schema is what a collection's file held in Format 1, and still holds.
 //
 // A Source's row says which content of it is indexed: hash is that
@@ -775,7 +781,22 @@ func (c *Collection) Nearest(ctx context.Context, made Made, question []float32,
 		statement += ` AND v.source IN (SELECT value FROM json_each(?))`
 		args = append(args, string(list))
 	}
-	rows, err := c.db.QueryContext(ctx, statement+` ORDER BY v.source, v.first`, args...)
+	// One reading of the collection, for the vectors and then for the
+	// Passages they are of: a Passage is known to its vector by its place
+	// in the Source, and another copy of Shelf may put other content in the
+	// Source's place between the two. Read apart, the new Passage at a place
+	// would be ranked by the vector of the one that stood there before.
+	//
+	// A reading, and said to be one: a transaction of this collection takes
+	// the lock that writes it from its beginning, and a search must never
+	// keep another copy of Shelf from indexing. One that only reads holds
+	// the collection as it was when it first looked, and blocks nobody.
+	tx, err := c.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return nil, c.wrap(err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	rows, err := tx.QueryContext(ctx, statement+` ORDER BY v.source, v.first`, args...)
 	if err != nil {
 		return nil, c.wrap(err)
 	}
@@ -823,7 +844,8 @@ func (c *Collection) Nearest(ctx context.Context, made Made, question []float32,
 		}
 		return a.place < b.place
 	})
-	passage, err := c.db.PrepareContext(ctx, `SELECT p.id, passages_text.text, coalesce(p.first_page, 0), coalesce(p.last_page, 0)
+	c.crash(PointVectorsRead)
+	passage, err := tx.PrepareContext(ctx, `SELECT p.id, passages_text.text, coalesce(p.first_page, 0), coalesce(p.last_page, 0)
 		FROM passages p JOIN passages_text ON passages_text.rowid = p.key WHERE p.source = ? AND p.place = ?`)
 	if err != nil {
 		return nil, c.wrap(err)
@@ -837,7 +859,7 @@ func (c *Collection) Nearest(ctx context.Context, made Made, question []float32,
 		f := Found{Passage: Passage{Source: names[s.source]}, Score: float64(s.score)}
 		err := passage.QueryRowContext(ctx, f.Source, s.place).Scan(&f.ID, &f.Text, &f.First, &f.Last)
 		if errors.Is(err, sql.ErrNoRows) {
-			// Another copy of Shelf replaced the Source's content just now.
+			// A vector without its Passage: nothing to hand out for it.
 			continue
 		}
 		if err != nil {

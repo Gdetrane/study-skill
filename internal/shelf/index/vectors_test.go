@@ -699,3 +699,53 @@ func TestPassagesAsNearAsEachOtherComeInTheOrderOfTheText(t *testing.T) {
 		t.Errorf("the first five of them: %+v", found)
 	}
 }
+
+// A search by vectors is one reading of the collection. A Passage is known
+// to its vector by its place in the Source, and another copy of Shelf may
+// put other content in the Source's place while a search is under way: the
+// search then gives the Passages as they were when it read the vectors, and
+// never the new Passage at a place ranked by the vector of the old one.
+func TestASearchByVectorsIsOneReadingOfTheCollection(t *testing.T) {
+	dir := t.TempDir()
+	writer := collection(t, reopen(t, dir), "raced")
+	source, passages := book("book.a1", "a", "The first speaks of alpha.", "The second speaks of beta.")
+	source.Made = made
+	if err := writer.Replace(ctx, source, passages, axes(2, 8, 0)); err != nil {
+		t.Fatal(err)
+	}
+	replaced := false
+	f, err := index.Open(dir, index.Options{Crash: func(at string) {
+		if at != index.PointVectorsRead || replaced {
+			return
+		}
+		replaced = true
+		// Other content of the Source, with vectors along other axes: its
+		// first Passage stands where the one about alpha stood.
+		later, laterPassages := book("book.a1", "b", "Now the first speaks of gamma.", "And the second of delta.")
+		later.Made = made
+		if err := writer.Replace(ctx, later, laterPassages, axes(2, 8, 4)); err != nil {
+			t.Errorf("the other copy could not index while a search read the collection: %v", err)
+		}
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = f.Close() })
+	reader := collection(t, f, "raced")
+	found := nearest(t, reader, made, along(8, 0, 1), 5)
+	if !replaced {
+		t.Fatal("the content was not replaced during the search, so this test shows nothing")
+	}
+	if len(found) != 2 || found[0].Text != "The first speaks of alpha." || math.Abs(found[0].Score-1) > 1e-6 ||
+		found[1].Text != "The second speaks of beta." {
+		t.Errorf("a search during which the content was replaced found %+v; want the Passages as they were when it read the vectors, "+
+			"each with its own score", found)
+	}
+	// The next search reads the collection as it is now.
+	if found := nearest(t, reader, made, along(8, 4, 1), 5); len(found) != 2 || found[0].Text != "Now the first speaks of gamma." {
+		t.Errorf("the next search found %+v; want the content that was indexed meanwhile", found)
+	}
+	if found := nearest(t, reader, made, along(8, 0, 1), 5); len(found) != 2 || math.Abs(found[0].Score) > 1e-6 {
+		t.Errorf("by the vector of what was replaced, the next search found %+v; want nothing near it", found)
+	}
+}
