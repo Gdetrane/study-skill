@@ -118,7 +118,14 @@ func (term *terminal) send(keys string) {
 	}
 }
 
-// wait waits for study to exit and returns its exit code.
+// theEnd is what the test writes to the terminal once study has exited. A
+// terminal gives what was written to it in the order it was written, so
+// all that study printed has been read when this has.
+const theEnd = "\x00study has exited\x00"
+
+// wait waits for study to exit, and for all it printed to have been read,
+// and returns its exit code. What study printed last is otherwise still on
+// its way when the test looks at the output.
 func (term *terminal) wait() int {
 	term.t.Helper()
 	done := make(chan error, 1)
@@ -127,6 +134,23 @@ func (term *terminal) wait() int {
 	case <-done:
 	case <-time.After(10 * time.Second):
 		term.t.Fatalf("study did not exit")
+	}
+	if _, err := term.slave.WriteString(theEnd); err != nil {
+		term.t.Fatal(err)
+	}
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(5 * time.Millisecond) {
+		term.mu.Lock()
+		end := bytes.Index(term.out.Bytes(), []byte(theEnd))
+		if end >= 0 {
+			term.out.Truncate(end)
+		}
+		term.mu.Unlock()
+		if end >= 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			term.t.Fatalf("what study printed was not read to its end:\n%q", term.output())
+		}
 	}
 	return term.cmd.ProcessState.ExitCode()
 }
