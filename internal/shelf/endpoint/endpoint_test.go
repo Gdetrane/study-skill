@@ -655,3 +655,46 @@ func TestTheSearchDeadlinesLeaveTimeToAnswer(t *testing.T) {
 	}
 	reason(t, err, at.Host, "did not answer within 150ms")
 }
+
+// An endpoint's address is the learner's, and may hold what is theirs
+// alone in its path: an account's or a tenant's name. A server's own words
+// are repeated without it, whichever part of the address they name: the
+// address a request was posted to, the one the settings gave, either one's
+// path, or the name by itself. The host stays: Shelf names an endpoint by
+// it.
+func TestAServersWordsAreRepeatedWithoutTheAddress(t *testing.T) {
+	const tenant = "tok_5f3c9a1e77b2"
+	for name, says := range map[string]func(r *http.Request) string{
+		"the address a request was posted to": func(r *http.Request) string { return "no route http://" + r.Host + r.URL.Path },
+		"the address the settings gave": func(r *http.Request) string {
+			return "no model at http://" + r.Host + "/tenants/" + tenant + "/v1 for you"
+		},
+		"the path of a request":       func(r *http.Request) string { return "Cannot POST " + r.URL.Path },
+		"the path the settings gave":  func(r *http.Request) string { return "nothing is served under /tenants/" + tenant + "/v1" },
+		"the tenant's name by itself": func(r *http.Request) string { return "tenant " + tenant + " has no such model" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				http.Error(w, says(r), http.StatusNotFound)
+			}))
+			defer server.Close()
+			host := strings.TrimPrefix(server.URL, "http://")
+			address := server.URL + "/tenants/" + tenant + "/v1"
+			e := embedder(t, endpoint.Embedding{Address: address, Model: "m", Dimensions: 8})
+			_, err := e.Query(ctx, "a question")
+			said := reason(t, err, host, "answered 404 Not Found", "[the address]")
+			r, rerr := endpoint.NewReranker(endpoint.Reranking{Address: address, Model: "m"})
+			if rerr != nil {
+				t.Fatal(rerr)
+			}
+			defer r.Close()
+			_, err = r.Order(ctx, "a question", []string{"one", "two"})
+			said += " " + reason(t, err, host, "answered 404 Not Found", "[the address]")
+			for _, part := range []string{tenant, "/tenants", "/v1"} {
+				if strings.Contains(said, part) {
+					t.Errorf("the reason repeats %q of the address: %s", part, said)
+				}
+			}
+		})
+	}
+}

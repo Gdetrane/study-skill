@@ -420,6 +420,11 @@ EmbeddingGemma 2, Google's open model (Apache 2.0), which differ in who marks th
   a document itself, which has no title to put in it; `embeddinggemma-2` writes the
   Source's title before each Passage, as the measurements were made. What the title is
   worth was not measured.
+- **A new title embeds nothing again.** With `embeddinggemma-2` the title a Source had when
+  it was indexed is in what the model read of each Passage. Give the Source another title
+  later, and its vectors stay the ones made with the first: a title is no content, and a
+  Source is not indexed again for one. To have the new title in them, remove the Topic's
+  file from Shelf's folder (see below) and index again.
 - **Eight Passages in a request, with `embeddinggemma-2-prompts`.** A server of that kind
   is often the model's own library behind a small program, and takes few texts at once:
   the one this Recipe was held to refuses more than eight. Set `batch` when yours takes

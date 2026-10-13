@@ -29,6 +29,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"path"
 	"regexp"
 	"slices"
 	"sort"
@@ -323,9 +324,11 @@ type caller struct {
 	// 127.0.0.1:8080".
 	what string
 	url  string
-	// path is the address without its scheme and host: what a server names
-	// when it says what it was asked for.
-	path     string
+	// address is what of the address a server's own words are searched
+	// for, the longest first: the whole of it, then the address the
+	// settings gave, then their paths, then every name of the path that is
+	// long enough to be nobody else's.
+	address  []string
 	key      string
 	agent    string
 	maxBytes int64
@@ -352,7 +355,7 @@ func newCaller(kind string, to *url.URL, key, agent string, maxBytes int64) *cal
 		agent = "study-shelf"
 	}
 	return &caller{
-		what: kind + " " + to.Host, url: to.String(), path: to.Path, key: key, agent: agent, maxBytes: maxBytes,
+		what: kind + " " + to.Host, url: to.String(), address: namesOf(to), key: key, agent: agent, maxBytes: maxBytes,
 		client: &http.Client{
 			Transport: transport,
 			// A redirect is not followed: the key would go where the
@@ -360,6 +363,29 @@ func newCaller(kind string, to *url.URL, key, agent string, maxBytes int64) *cal
 			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 		},
 	}
+}
+
+// namesOf are the parts of an endpoint's address that a server's own words
+// are not repeated with, the longest first: the address a request is posted
+// to and the one the settings gave, which it is posted below; the path of
+// each; and every name of the path of twelve characters or more, which is
+// an account's or a tenant's and not a word of the API. The host is not
+// among them: Shelf names an endpoint by it.
+func namesOf(to *url.URL) []string {
+	base := *to
+	base.Path, base.RawPath = path.Dir(to.Path), ""
+	names := []string{to.String(), base.String()}
+	for _, part := range []string{to.Path, base.Path} {
+		if len(part) > 1 {
+			names = append(names, part)
+		}
+	}
+	for _, name := range strings.Split(to.Path, "/") {
+		if len(name) >= 12 {
+			names = append(names, name)
+		}
+	}
+	return names
 }
 
 // close lets go of the connections kept for a next request.
@@ -583,9 +609,8 @@ func (c *caller) said(text string) string {
 	}
 	// Nor the rest of the address, which a server names when it says what
 	// it was asked for, and which may hold what is the learner's alone.
-	text = strings.ReplaceAll(text, c.url, "[the address]")
-	if len(c.path) > 1 {
-		text = strings.ReplaceAll(text, c.path, "[the address]")
+	for _, part := range c.address {
+		text = strings.ReplaceAll(text, part, "[the address]")
 	}
 	const most = 300
 	if len(text) > most {
