@@ -190,7 +190,20 @@ GOOS=darwin go vet ./...            # macOS is supported too
   deadline, a message is read up to a limit, every answer is checked against the contract
   (`plugincontract`'s `Validate`), and text a plugin wrote reaches an error only through
   the client's `clean`. A Passage's text is returned as it is: print it through
-  `printable()`.
+  `printable()`. A search's `notice`, what a plugin says the search did less than it was
+  set to, is such text too: it reaches a search's result as a `reason` reaches a Source's,
+  through the client's `say`, cut to `MaxNoticeBytes`, and is no error, no next action and
+  nothing recorded. It is shown before the Passages, through `printable()`.
+- A plugin's words reach the learner's agent as they reach the learner, so `clean` tells
+  two kinds of character apart. What a terminal would interpret, a control character or a
+  mark that turns the direction of text, is written out as an escape. What shows nothing
+  (`plugincontract.ShowsNothing`: the tag block, the variation selectors, the zero-width
+  characters, the other code points every display ignores) is left out: never write an
+  escape for one, which a program reads back as easily. The braille blank is taken for
+  white space, being the one common blank that is neither. And look for nothing in a
+  plugin's words, a registered address's key say, before they are left out (`seen`): what
+  was found apart would be whole again afterwards. A Passage's text is not a plugin's
+  words: it is the Source's, and goes through `withoutTags` and `printable()` as before.
 - `study` links nothing of Shelf's (ADR-0012): not `internal/shelf`, not SQLite, not the
   PDF reader, not what reads web pages. `TestStudyLinksNothingOfShelf` fails when
   `go list -deps` of `cmd/study`, the core, the command line, the MCP server or the plugin
@@ -249,8 +262,16 @@ GOOS=darwin go vet ./...            # macOS is supported too
     writes or by fields of the request, never both (`endpoint.Marking`). Every request has
     a deadline, every answer is read up to a limit and checked (the number of vectors,
     their size) before it is used, no redirect is followed, and what goes wrong is an
-    `*endpoint.Problem`, which names the endpoint by its host and never holds the key or
-    the rest of the address: a server's own words reach it only through `caller.said`.
+    `*endpoint.Problem`, which names the endpoint by its host. A server's own words reach
+    it only through `caller.said`, which promises three things and no more
+    (`docs/shelf.md` names what it does not): Shelf's own key is taken out, whole,
+    wherever it stands and whatever it holds; so is whatever follows "Bearer"; and so is
+    the address but for its host, as it was sent and as it reads, in any letter case. The
+    order is part of it. What shows nothing is left out first (`shown`), since `study`
+    leaves it out later and a key would be whole again there; Shelf's own key comes
+    before the pattern for "Bearer", which ends at a comma, a semicolon or a quotation
+    mark that a key may hold; and each is replaced by what no later step can match part
+    of (`aKey`, `anAddress`), written out in words at the end.
     A list of an answer is decoded through `counted`, and a vector through `numbers`:
     what an answer decodes to is bounded by what was asked for, never by its bytes alone.
     An `http` endpoint is asked without the environment's proxy.
@@ -273,8 +294,12 @@ GOOS=darwin go vet ./...            # macOS is supported too
     searches the Source. Never say `failed` of what is found and only wants its vectors,
     and keep the reason under the 300 bytes `study` shows of one.
   - A search is by keyword always, and an endpoint that fails takes from it only what it
-    would have added: the answer then says so in Shelf's own fields beside the Passages
-    (`search`, `reranked`, `notice`). The two rankings are taken two of the embeddings'
+    would have added: the answer then says so in the contract's `notice`, which `study`
+    shows the learner and hands to the agent, and in Shelf's own fields beside the Passages
+    (`search`, `reranked`), which `study` does not read. A notice holds what a reason may:
+    fixed words, counts, the model's name, and an endpoint's own words as `caller.said`
+    leaves them (`TestANoticeHoldsNoKeyAndNoMoreOfAnAddressThanItsHost`).
+    The two rankings are taken two of the embeddings'
     for one of keyword's (`merge`), which was measured against reciprocal rank fusion
     (docs/shelf.md): do not change it without measuring again.
 - Every file Lamplight owns carries a `format` number, and newer formats are refused. A

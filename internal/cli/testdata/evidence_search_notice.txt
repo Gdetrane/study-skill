@@ -1,0 +1,18 @@
+Knowledge base plugin kb found 3 Passages for "elimination produces triangular" in linear-algebra, best first:
+! The plugin says of this search: These Passages were found by keyword alone: the embedding endpoint models.example did not answer within 10s.
+
+<passage>  Strang, p. 1
+  Source strang.<id>, score 3
+  > Elimination produces an upper triangular system.
+
+<passage>  Strang, p. 1
+  Source strang.<id>, score 1
+  > The pivots are on the diagonal of the triangle after elimination.
+
+<passage>  Strang, p. 2
+  Source strang.<id>, score 1
+  > Back substitution solves the triangular
+  > system from the last equation up.
+
+Quote a Passage as it is given, and record the quote with the Passage's id:
+  study evidence record linear-algebra --lesson <lesson> --source <source> --passage <passage> --quote <quote>

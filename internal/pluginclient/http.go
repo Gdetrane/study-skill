@@ -168,32 +168,36 @@ func Address(registered string) string {
 // each long piece of the two. Text a service wrote is shown without them: a
 // service that repeats the address it was asked at would otherwise have
 // study print what it never prints itself.
+//
+// Each part is as it reads where it is looked for: a service's words are
+// searched without the characters that show nothing (seen), and an address
+// may hold one, in its path or its key. Left as registered, such a part
+// would be found nowhere in them.
 func secrets(registered string) []string {
-	u, err := url.Parse(registered)
-	if err != nil {
-		return []string{registered}
-	}
-	found := map[string]bool{registered: true}
+	found := map[string]bool{}
 	add := func(part string, least int) {
-		if len(part) >= least {
+		if part = seen(part); part != "" && len(part) >= least {
 			found[part] = true
 		}
 	}
-	add(u.RequestURI(), 2)
-	add(u.EscapedPath(), 2)
-	add(u.Path, 2)
-	add(u.RawQuery, 1)
-	for _, piece := range strings.Split(u.Path, "/") {
-		add(piece, 8)
-	}
-	for _, piece := range strings.Split(u.EscapedPath(), "/") {
-		add(piece, 8)
-	}
-	for _, pair := range strings.Split(u.RawQuery, "&") {
-		_, value, _ := strings.Cut(pair, "=")
-		add(value, 6)
-		if plain, err := url.QueryUnescape(value); err == nil {
-			add(plain, 6)
+	add(registered, 1)
+	if u, err := url.Parse(registered); err == nil {
+		add(u.RequestURI(), 2)
+		add(u.EscapedPath(), 2)
+		add(u.Path, 2)
+		add(u.RawQuery, 1)
+		for _, piece := range strings.Split(u.Path, "/") {
+			add(piece, 8)
+		}
+		for _, piece := range strings.Split(u.EscapedPath(), "/") {
+			add(piece, 8)
+		}
+		for _, pair := range strings.Split(u.RawQuery, "&") {
+			_, value, _ := strings.Cut(pair, "=")
+			add(value, 6)
+			if plain, err := url.QueryUnescape(value); err == nil {
+				add(plain, 6)
+			}
 		}
 	}
 	parts := make([]string, 0, len(found))
