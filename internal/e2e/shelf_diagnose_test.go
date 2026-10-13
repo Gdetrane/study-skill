@@ -208,4 +208,37 @@ func TestABuiltStudyHasTheBuiltShelfTestItsEndpoints(t *testing.T) {
 			"indexing may fail until it is put right" {
 		t.Errorf("of a Topic whose book is not indexed, with Shelf's embedding endpoint down, study doctor says: %+v", indexing)
 	}
+
+	// Shelf's settings as a link to a file in the Study home, which the
+	// learner's agent can write. Shelf is not told where the Study home is,
+	// and reads its settings through the link as before: the reranking
+	// endpoint they name is tested, and is all right. study is told, and
+	// says of that same file that it is the agent's to change.
+	inside := filepath.Join(home, "study", "shelf.toml")
+	if err := os.Rename(settings, inside); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(inside, settings); err != nil {
+		t.Fatal(err)
+	}
+	var linked struct {
+		Data core.Diagnosis `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(must("doctor", "--json")), &linked); err != nil {
+		t.Fatal(err)
+	}
+	var warned, read bool
+	for _, f := range linked.Data.Findings {
+		switch f.Name {
+		case "shelf_settings":
+			warned = f.Status == core.FindingWarn && f.Fix != "" &&
+				strings.HasPrefix(f.Message, "Shelf's settings file, "+settings+", is in the Study home or is reached through it")
+		case "knowledge_base:shelf:reranking":
+			read = f.Status == core.FindingOK
+		}
+	}
+	if !warned || !read || !linked.Data.Healthy {
+		t.Errorf("with Shelf's settings a link into the Study home, study doctor says: %+v; want Shelf's findings as before, and a "+
+			"warning of the file Shelf read them from", linked.Data.Findings)
+	}
 }

@@ -557,6 +557,9 @@ func (a *app) runDoctor(cmd *cobra.Command, _ []string) error {
 	for _, f := range a.diagnoseKnowledgeBase(cmd.Context()) {
 		d.Add(f)
 	}
+	if f, wrong := a.diagnoseShelfSettings(); wrong {
+		d.Add(f)
+	}
 	// The plugins are what the doctor waits for, and where it is stopped.
 	if err := doctorStopped(cmd.Context()); err != nil {
 		return a.fail(err)

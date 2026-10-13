@@ -115,6 +115,12 @@ func (g *Guard) Close() { g.walker.Close() }
 // when what is there of it is.
 func (g *Guard) Outside(path string) bool { return g.walker.Follow(path) == nil }
 
+// Follow is Outside with why not: nil for a path known to stay outside the
+// Study home at every hop, an error IsInside tells for one that leads
+// through it, and any other error for one that could not be followed, of
+// which nothing is known. It is for whoever has to say which.
+func (g *Guard) Follow(path string) error { return g.walker.Follow(path) }
+
 // CheckProgram checks a program that starting a plugin would run without
 // its being the plugin's own, such as the interpreter a script's first line
 // names: it is a regular file that the user study runs as may run, reached
