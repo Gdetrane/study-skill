@@ -72,12 +72,26 @@ func StudyCode(pluginCode string) string {
 // terminal: one line, cut to max bytes, with nothing a terminal would
 // interpret. A plugin is not trusted with the learner's terminal.
 //
-// Nor is it trusted to say to an agent what the learner cannot see. The
-// characters of Unicode's tag block show nothing, anywhere, and spell out
-// text that a program reads and a person does not; a reason and a notice
-// reach an agent through the tools as they reach a terminal. A tag is
-// written out as an escape, like a control character: both then read the
-// same.
+// Nor is it trusted to say to an agent what the learner cannot see: a reason
+// and a notice reach an agent through the tools as they reach a terminal.
+// So the two kinds of character that are not shown are told apart:
+//
+//   - What a terminal would interpret is written out as an escape: a control
+//     character, and a mark that turns the direction of text. The learner
+//     and the agent then read the same of it.
+//   - What shows nothing is left out (plugincontract.ShowsNothing): the tag
+//     block, the variation selectors, the zero-width characters and the
+//     other code points every display ignores. A sentence can be spelled in
+//     them, and an escape written for each would still be that sentence, for
+//     a program to read back. Leaving one out makes no space, and joins no
+//     two words that white space stood between.
+//
+// White space of any kind and length is one space, and so is the braille
+// blank, which shows as one (brailleBlank).
+//
+// Whoever looks for something in a plugin's words, to take it out, looks
+// once what shows nothing is out of them (seen), and not in what clean was
+// handed: what was found apart would be whole again here.
 //
 // It reads the text once and stops where the cleaned text is full, so what
 // it costs is what it keeps: a plugin's message can be as long as a message
@@ -95,13 +109,19 @@ func clean(s string, max int) string {
 			continue
 		}
 		wasInvalid = invalid
-		if !invalid && unicode.IsSpace(r) {
+		if !invalid && (unicode.IsSpace(r) || r == brailleBlank) {
 			space = b.Len() > 0
 			continue
 		}
 		piece := string(r)
-		if !invalid && (unicode.IsControl(r) || unicode.Is(unicode.Bidi_Control, r) || isTag(r)) {
+		switch {
+		case invalid:
+		case unicode.IsControl(r) || unicode.Is(unicode.Bidi_Control, r):
 			piece = fmt.Sprintf("\\u%04x", r)
+		case plugincontract.ShowsNothing(r):
+			// As if it had not been written: white space before it is
+			// still to come, and none is made of it.
+			continue
 		}
 		need := len(piece)
 		if space {
@@ -120,8 +140,33 @@ func clean(s string, max int) string {
 	return b.String()
 }
 
-// isTag reports whether r is in Unicode's tag block.
-func isTag(r rune) bool { return r >= 0xE0000 && r <= 0xE007F }
+// brailleBlank is the braille pattern with no dot raised. It shows as a
+// blank that takes room and is no white space to Unicode, nor one of the
+// characters a display ignores, so a run of it would pad one line of a
+// plugin's words into what looks like a second line on a terminal, with
+// whatever the plugin chose to write there. clean takes it for white space.
+// It is the one blank of its kind that is common: this is no claim that no
+// other character shows as one.
+const brailleBlank rune = 0x2800
+
+// seen is text without the characters that show nothing
+// (plugincontract.ShowsNothing), and with every other byte as it was. clean
+// leaves the same characters out: this is for leaving them out earlier,
+// before anything is looked for in the text.
+func seen(text string) string {
+	if !strings.ContainsFunc(text, plugincontract.ShowsNothing) {
+		return text
+	}
+	var b strings.Builder
+	for len(text) > 0 {
+		r, size := utf8.DecodeRuneInString(text)
+		if !plugincontract.ShowsNothing(r) {
+			b.WriteString(text[:size])
+		}
+		text = text[size:]
+	}
+	return b.String()
+}
 
 // cleanEnd is clean for text whose end matters more than its start, such as
 // what a program wrote before it failed: the last max bytes of the cleaned
@@ -155,7 +200,7 @@ func reason(err error, address string) string {
 	for errors.As(err, &withURL) {
 		err = withURL.Err
 	}
-	return clean(without(libraryPrefix.ReplaceAllString(err.Error(), ""), address), 400)
+	return clean(without(seen(libraryPrefix.ReplaceAllString(err.Error(), "")), address), 400)
 }
 
 // without takes the parts of a registered address that may be a key out of

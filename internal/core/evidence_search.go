@@ -113,7 +113,9 @@ type PassageSearch struct {
 	// Notice is what the plugin says this search did less than the plugin
 	// was set to, and why, when it says so: found by keyword alone because
 	// an embedding endpoint did not answer, say. The Passages are then not
-	// the best the Sources hold, so it comes before them. It is the
+	// the best the Sources hold, so it comes before them here, which is
+	// where study evidence search --json writes it; a tool's result is
+	// written with its names in the order of the alphabet. It is the
 	// plugin's own text, on one line, which study cleaned and cut short as
 	// it does a reason: print it through printable. It is no error, and
 	// nothing follows from it but what the learner makes of it.

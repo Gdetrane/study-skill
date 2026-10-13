@@ -261,7 +261,7 @@ with `application/json` or with a stream of server-sent events.
 | A Passage's `text` | 32,768 bytes of UTF-8 |
 | A `query` | 4,096 bytes of UTF-8 |
 | `limit` of a search | 50 |
-| A search's `notice`, as `study` shows it | 2,000 bytes |
+| A search's `notice`, as `study` shows it | 2,000 bytes at most, and `…` after them when it was cut |
 | Sources in a `status` answer, and in the `sources` of a search | 10,000 |
 | A collection's name | 64 characters |
 | The id of a Source or of a Passage | 128 characters |
@@ -322,7 +322,7 @@ Every tool takes one JSON object as its arguments and gives back one JSON object
 |---|---|
 | `error` | An object with `code` and `message`. |
 | `code` | One of the codes below. Any other, and none, is read as `internal`. |
-| `message` | What went wrong, in words for the learner. `study` puts it on one line, escapes what a terminal would interpret and the characters of Unicode's tag block, which show nothing and spell out text, and shows the first 2,000 bytes. |
+| `message` | What went wrong, in words for the learner. `study` puts it on one line, escapes what a terminal would interpret, leaves out the characters that show nothing, and shows the first 2,000 bytes. |
 
 | `code` | When | `study` reports it as |
 |---|---|---|
@@ -337,6 +337,24 @@ error response, is read as `invalid_argument` when its code is `-32602` (invalid
 and as `internal` otherwise. So a plugin that lets its library refuse malformed arguments
 needs no code of its own for that; where this page names a code, `not_found` and
 `unsupported`, the plugin must give it.
+
+**Words a plugin writes for the learner reach the learner's agent too**: a `reason`, a
+`notice` and an error's `message`. `study` shows each on one line, cut short where the
+table of limits says, and deals with two kinds of character that are not shown:
+
+- **What a terminal would interpret is written out as an escape** that names it: a control
+  character, and a mark that turns the direction of text.
+- **What shows nothing is left out**: Unicode's format characters, other than those marks
+  and than the signs that are written before digits and show; its variation selectors;
+  and the other code points every display ignores. The tag block (U+E0000 to U+E007F) and
+  the zero-width characters are among them. A sentence can be spelled in such characters,
+  for a program to read and no person, and an escape written for each would still spell
+  it: so none is written.
+
+A plugin that takes a key or an address out of the words it repeats looks for it once
+these characters are out: a key that a server repeated with one of them inside it is
+whole again where `study` shows it. A Passage's `text` is the Source's, and no words of
+the plugin's: what `study` does with it is said under [`passage`](#passage).
 
 **What goes wrong with a Source is not an error of `index`.** A file that is not there, a
 format the plugin cannot read, a page that cannot be fetched: `index` answers, and
@@ -613,11 +631,15 @@ found:
 - **A notice is no error.** `study` shows it to the learner before the Passages, gives it
   to the learner's agent with them, and does nothing else about it: the search succeeded.
 - **It is the plugin's text, and `study` treats it as it treats a `reason`.** An answer is
-  never refused for what its notice says, or for how long it is: `study` puts it on one
-  line, escapes what a terminal would interpret and the characters of Unicode's tag block,
-  so that the agent reads of it what the learner reads, and cuts it short after 2,000 bytes.
+  not refused for what the text of its notice says, or for a notice of more than 2,000
+  bytes: `study` puts it on one line, escapes what a terminal would interpret, leaves out
+  the characters that show nothing, so that the agent reads of it what the learner reads,
+  and cuts it short after 2,000 bytes.
   Keep a notice within them all the same: the learner reads no further, and the
-  conformance suite fails a plugin whose notice is longer.
+  conformance suite fails a plugin whose notice is longer. That is all it is spared: a
+  `notice` that is no text, or is `null`, breaks the contract as any field does that is
+  not what this page says, and an answer that is larger than a message may be is refused
+  like any other.
 - **It reaches the learner's agent, so it holds nothing the learner would not show one**:
   no key, and of an endpoint's address no more than its host, since a path or a query may
   be a key. Repeat a server's own words only without them.

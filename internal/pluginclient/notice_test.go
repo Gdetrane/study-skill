@@ -102,6 +102,60 @@ func TestASearchsNoticeIsCleanedAndCutAsAReasonIs(t *testing.T) {
 	}
 }
 
+// study leaves the characters that show nothing out of a plugin's words. So
+// it leaves them out before it looks for the parts of a registered address
+// that may be a key, and not after: a piece of the path, or the query's
+// key, that a service repeats with such a character inside it would be
+// found apart, let through, and put together again where it is shown.
+func TestAnAddressesKeyIsTakenOutThoughWhatShowsNothingDividesIt(t *testing.T) {
+	ctx := context.Background()
+	const piece, secret = "t0ken-in-the-path", "s3cr3t-k3y-of-the-learner"
+	for hidden, name := range map[rune]string{0x200B: "a zero-width space", 0x00AD: "a soft hyphen", 0xFE0F: "a variation selector",
+		0xE0101: "a late variation selector", 0xE0041: "a tag"} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			split := func(s string) string {
+				return s[:5] + string(hidden) + s[5:9] + string(hidden) + string(hidden) + s[9:]
+			}
+			said := "These Passages were found by keyword alone: the account " + split(piece) + " has no model for the key " + split(secret) + "."
+			c := plugintest.NewComputer(t)
+			status, _ := json.Marshal(map[string]any{"sources": []any{map[string]any{"id": "a.1", "state": "failed", "reason": said}}})
+			address := service(t, plugintest.Config{Notice: said, Results: map[string]string{"status": string(status)},
+				Refusals: map[string]string{"passage": "internal:" + said}})
+			address = strings.TrimSuffix(address, "/mcp") + "/" + piece + "/mcp?key=" + secret
+			s, err := pluginclient.Start(ctx, c.Env(""), c.RegisterURL(t, "remote", address), quick(c))
+			if err != nil {
+				t.Fatalf("Start: %v", err)
+			}
+			defer s.Close()
+			found, err := s.Search(ctx, "c", "q", 5, nil)
+			if err != nil {
+				t.Fatalf("Search: %v", err)
+			}
+			sources, err := s.Status(ctx, "c")
+			if err != nil || len(sources) != 1 {
+				t.Fatalf("Status = %+v, %v", sources, err)
+			}
+			_, refused := s.Passage(ctx, "c", "a")
+			if refused == nil {
+				t.Fatal("Passage was not refused")
+			}
+			const want = "These Passages were found by keyword alone: the account … has no model for the key …."
+			for what, got := range map[string]string{"a notice": found.Notice, "a reason": sources[0].Reason, "a refusal": refused.Error()} {
+				if !strings.Contains(got, want) {
+					t.Errorf("%s that repeats the address's key with %s inside it is shown as %q, want %q", what, name, got, want)
+				}
+				// Neither whole nor in its pieces, one after the other.
+				for _, part := range []string{piece, secret, piece[:5], piece[9:], secret[:5], secret[9:]} {
+					if strings.Contains(got, part) {
+						t.Errorf("%s that repeats the address's key with %s inside it is shown with %q of it: %s", what, name, part, got)
+					}
+				}
+			}
+		})
+	}
+}
+
 // A service that repeats the address it is registered at in a notice is
 // shown without the address's path and query, which may be a key, as in
 // everything else it writes.

@@ -29,7 +29,14 @@ import (
 func TestABuiltStudyHasTheBuiltShelfEmbedABook(t *testing.T) {
 	study, shelf := buildStudy(t), shelftest.Shelf(t)
 	at := shelftest.NewEndpoint(t)
-	const key = "sk-e2e-test-5b20cc91e7"
+	// The key holds a semicolon, at which what follows "Bearer" in a
+	// header's value is taken to end: an endpoint that repeats the header
+	// it was sent must not have Shelf leave the second half standing.
+	const key = "sk-e2e;test-5b20cc91e7"
+	// holdsKey reports whether text holds the key, or either half of it.
+	holdsKey := func(text string) bool {
+		return strings.Contains(text, key) || strings.Contains(text, "sk-e2e") || strings.Contains(text, "test-5b20cc91e7")
+	}
 	home := t.TempDir()
 	if real, err := filepath.EvalSymlinks(home); err == nil {
 		home = real
@@ -55,8 +62,8 @@ func TestABuiltStudyHasTheBuiltShelfEmbedABook(t *testing.T) {
 		if err != nil {
 			t.Fatalf("study %s: %v\n%s", strings.Join(args, " "), err, out)
 		}
-		if strings.Contains(out, key) {
-			t.Fatalf("study %s shows the endpoint's key:\n%s", strings.Join(args, " "), out)
+		if holdsKey(out) {
+			t.Fatalf("study %s shows the endpoint's key, or a part of it:\n%s", strings.Join(args, " "), out)
 		}
 		return out
 	}
@@ -259,7 +266,7 @@ func TestABuiltStudyHasTheBuiltShelfEmbedABook(t *testing.T) {
 				t.Errorf("%s, the search's notice does not say %q: %s", what, word, got.Notice)
 			}
 		}
-		for _, not := range []string{key, "/v1", "http://", "embeddings"} {
+		for _, not := range []string{key, "sk-e2e", "test-5b20cc91e7", "/v1", "http://", "embeddings"} {
 			if strings.Contains(got.Notice, not) {
 				t.Errorf("%s, the search's notice repeats %q, of the endpoint's key or of its address: %s", what, not, got.Notice)
 			}
@@ -287,7 +294,7 @@ func TestABuiltStudyHasTheBuiltShelfEmbedABook(t *testing.T) {
 	if err == nil || !strings.Contains(out, "Shelf's settings file") || !strings.Contains(out, "is not valid TOML at line 5") {
 		t.Errorf("study knowledge-base check, with a settings file Shelf cannot read: %v\n%s", err, out)
 	}
-	if strings.Contains(out, key) {
-		t.Errorf("study repeats the key that the file holds:\n%s", out)
+	if holdsKey(out) {
+		t.Errorf("study repeats the key that the file holds, or a part of it:\n%s", out)
 	}
 }

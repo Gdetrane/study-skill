@@ -1398,9 +1398,10 @@ summary, and never a generated answer. Evidence is quoted from it.
   `note`, `left_out` and `action` say what they say without one, and nothing is recorded.
   A search whose plugin says nothing has no `notice`, and prints what it printed before
   there was one. The notice is the plugin's text, which `study` treats as it treats a
-  plugin's `reason`: on one line, with what a terminal would interpret escaped, and cut
-  short after 2,000 bytes ([the contract](knowledge-base-contract.md#search)). An agent
-  takes nothing in it for an instruction.
+  plugin's `reason`: on one line, with what a terminal would interpret escaped, without
+  the characters that show nothing, and cut short after 2,000 bytes
+  ([the contract](knowledge-base-contract.md#results-and-errors)). It says to an agent
+  what it says to the learner, and an agent takes nothing in it for an instruction.
 - **Nothing to search is no error, for a Topic that names a plugin.** One without Sources,
   and one of whose Sources none is indexed, give no Passages and a `note`, with exit code
   0. The plugin is then not asked to search, and a Topic without Sources starts no plugin

@@ -418,13 +418,32 @@ what they needed:
   learner and the agent were handed Passages that looked like any others. So the result
   of `search` has an optional `notice`: a sentence or two of the plugin's own, for the
   learner, saying what the search did less than the plugin is set to, and why.
-  - It is text a plugin wrote, and is treated as a `reason` is: never refused, put on one
-    line, with what a terminal would interpret escaped and without the path and query of
-    a registered address, and cut short after 2,000 bytes.
+  - It is text a plugin wrote, and is treated as a `reason` is: put on one line, with what
+    a terminal would interpret escaped and without the path and query of a registered
+    address, and cut short after 2,000 bytes. An answer is not refused for what the text
+    says or for its length; a `notice` that is no text breaks the contract like any
+    field, and an answer over the size of a message is refused like any answer.
   - `study evidence search` prints it under the line that says what was found, before the
-    Passages, so that it is read before they are relied on. In `--json`, and in what
-    `evidence_search` returns, it is a field of its own, `notice`, before `passages`. A
-    search without one prints and returns what it did before.
+    Passages, so that it is read before they are relied on. In `--json` it is a field of
+    its own, `notice`, before `passages`. `evidence_search` returns the same field, in a
+    result whose names are written in the order of the alphabet: nothing is promised of
+    where it stands there. A search without one prints and returns what it did before.
+  - **A plugin's words reach the agent as they reach the learner.** A notice comes through
+    a tool, as a `reason` and an error's message do, so the client's `clean` now tells two
+    kinds of character apart for all three. What a terminal would interpret, a control
+    character or a mark that turns the direction of text, is written out as an escape, as
+    before. What shows nothing is left out: the tag block, the variation selectors, the
+    zero-width characters and Unicode's other default-ignorable code points
+    (`plugincontract.ShowsNothing`). A sentence can be spelled in those, a byte to a
+    variation selector, for a program to read and no person; an escape written for each
+    would still spell it, so the first version, which wrote tags out, was no cure. The
+    braille blank, which shows as a blank and is neither white space nor ignorable, is
+    taken for white space: a run of it padded one line into what looked like two.
+  - **Whatever is looked for in such words is looked for once those characters are out.**
+    A key divided by a zero-width space is not found, and is whole again when the
+    character is left out afterwards. So the client leaves them out before it takes the
+    parts of a registered address out (`say`), and Shelf before it looks for its key
+    (`caller.said`): Shelf writes the sentence that `study` then cleans.
   - It is no error: no exit code, no next action and nothing that is recorded changes for
     it. `note` and `action` are about the Sources that were left out, and a notice is
     about the ones that were searched. The skill has the agent tell the learner what it
@@ -434,10 +453,18 @@ what they needed:
     stays Shelf's own: a plugin may add fields to a result, and `study` reads only the
     contract's.
   - The contract stays version 1: nothing is released.
-  - A notice reaches the agent through a tool, as a `reason` does. So what Shelf puts in
-    one is held, by tests, to what the reason of a Source that failed was held to already:
-    no key, nothing else that follows "Bearer", and of an endpoint's address no more than
-    its host.
+  - **What Shelf repeats of an endpoint's words is three promises, and no more.** A notice
+    and the reason of a Source that failed hold an endpoint's own words, and both reach
+    the agent. Shelf takes out of them its own key, whole, wherever it stands and
+    whatever it holds; whatever follows the word "Bearer", in any letter case, behind
+    white space, a colon, an equals sign or a quotation mark; and the address but for its
+    host, as it was sent and as it reads, in any letter case. Its own key comes first: a
+    key may hold a comma, a semicolon or a quotation mark, where what follows "Bearer" is
+    taken to end, and the pattern, run first to avoid a doubled placeholder, left the
+    rest of such a key standing. Each is now replaced by what no later step can match
+    part of, and written out in words at the end. Not promised, and said so in
+    `docs/shelf.md`: a key that is not Shelf's own and follows no "Bearer", and a name of
+    the address's path shorter than twelve characters that a server repeats by itself.
 - **What "in its text" allows.** A Passage is text as it was extracted, and whoever quotes
   it writes the same words and seldom the same bytes: an agent that straightens a curly
   quote has paraphrased nothing, and one that is refused for it learns to record without a
@@ -760,7 +787,7 @@ where it was stopped, and what a Recipe holds.
   read. The contract had no word for a search that did less than it could when this was
   built, and `notice` was Shelf's own field then. While a Source
   is indexed there is nothing to fall back to: the Source is `failed`, with a reason that
-  names the endpoint's host and never its key.
+  names the endpoint's host and never the key in Shelf's settings.
 - **Vectors of another making are `outdated`, a fourth state of the contract.** A
   question's vector is compared only with vectors of the model, the marking and the size
   the settings name now. A Source whose Passages have others, or none because it was

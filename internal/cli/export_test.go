@@ -25,6 +25,15 @@ func RenderLessonDetail(d core.LessonDetail) string {
 	return b.String()
 }
 
+// RenderPassageSearch renders a search of a Topic's Sources as study
+// evidence search prints it for people, whatever the core would have made
+// of the text in it: as a terminal would be sent it.
+func RenderPassageSearch(r core.PassageSearch) string {
+	var b strings.Builder
+	_ = writePassageSearch(&b, r)
+	return b.String()
+}
+
 // RenderHistory renders a History view as study history does.
 func RenderHistory(v core.HistoryView) string {
 	var b strings.Builder

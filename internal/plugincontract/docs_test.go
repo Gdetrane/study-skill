@@ -272,7 +272,7 @@ func TestThePageGivesEveryLimitAndDeadline(t *testing.T) {
 		"the length of a Passage":           "| " + number(plugincontract.MaxPassageBytes) + " bytes of UTF-8 |",
 		"the length of a query":             "| " + number(plugincontract.MaxQueryBytes) + " bytes of UTF-8 |",
 		"the highest limit of a search":     "| `limit` of a search | " + number(plugincontract.MaxSearchLimit) + " |",
-		"the length of a notice":            "| A search's `notice`, as `study` shows it | " + number(plugincontract.MaxNoticeBytes) + " bytes |",
+		"the length of a notice":            "| A search's `notice`, as `study` shows it | " + number(plugincontract.MaxNoticeBytes) + " bytes at most, and `…` after them when it was cut |",
 		"the number of Sources":             "| " + number(plugincontract.MaxSources) + " |",
 		"the length of a collection's name": "| A collection's name | " + number(plugincontract.MaxNameBytes) + " characters |",
 		"the length of an id":               "| " + number(plugincontract.MaxIDBytes) + " characters |",

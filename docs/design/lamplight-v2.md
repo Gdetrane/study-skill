@@ -813,13 +813,21 @@ hours before any learning happens is exactly what v1 produced.
   - **A search that did less than the plugin is set to says so.** The contract's `search`
     result has an optional `notice`, a sentence or two of the plugin's own for the learner:
     found by keyword alone because an embedding endpoint did not answer, say. `study`
-    treats it as a plugin's `reason`: one line, cleaned, cut short after 2,000 bytes, and
-    never a reason to refuse an answer. `study evidence search` prints it before the
+    treats it as a plugin's `reason`: one line, cleaned, and cut short after 2,000 bytes.
+    An answer is not refused for what the text says or for its length; a `notice` that is
+    no text breaks the contract like any field, and an answer over the size of a message
+    is refused like any answer. `study evidence search` prints it before the
     Passages, and `--json` and the `evidence_search` tool give it as `notice`, a field of
     its own. It is no error, and changes no exit code, no next action and nothing that is
     recorded; the skill has the agent tell the learner what it says when it matters, and
     not take the Passages for the best the Sources hold. A plugin may say more of a search
     in fields of its own, which `study` does not read.
+  - **A plugin's words say nothing to the agent that they do not say to the learner.** Of
+    a `reason`, a `notice` and an error's message, `study` writes out what a terminal
+    would interpret and leaves out what shows nothing: the tag block, the variation
+    selectors, the zero-width characters and the other code points every display ignores.
+    It leaves them out before it looks for anything in those words, and so does Shelf
+    before it looks for its key in an endpoint's.
   - **It returns only what the Topic records.** The plugin is asked what it has indexed
     first, and then to search, by their ids, the Topic's Sources of which it says, by the
     hash, that a search finds the Source's own content, whatever their state. A removed Topic and a later one
@@ -946,8 +954,10 @@ hours before any learning happens is exactly what v1 produced.
     Passage, sixteen at a time, and writes them in the transaction that writes the
     Passages: a Source is indexed with all of its vectors or not at all, and an endpoint
     that fails leaves it `failed`, with a reason that names the endpoint's host and never
-    its key. A request holds the model, the texts and what the settings name, and nothing
-    else.
+    the key in Shelf's settings. Of an endpoint's own words Shelf repeats neither that
+    key, nor what follows "Bearer", nor the address but for its host (`docs/shelf.md` says
+    what that does not cover). A request holds the model, the texts and what the settings
+    name, and nothing else.
     - A Recipe says how a question and a Passage are marked for the model: by text Shelf
       writes around them, or by fields added to the request for a server that marks them
       itself, never both. EmbeddingGemma 2 has one of each, and both keep 512 of its 768

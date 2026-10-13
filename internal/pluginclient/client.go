@@ -987,8 +987,13 @@ func text(res *mcp.CallToolResult) string {
 // bytes, and without the parts of a registered address that may be a key,
 // which a service can send back as easily as anything else. Only the start
 // of a long text is looked at.
+//
+// What shows nothing is left out before the address is looked for, and not
+// only by clean afterwards: a part of the address that a service repeated
+// with such a character inside it would be whole again once clean had left
+// the character out.
 func (s *Connection) say(text string, max int) string {
-	return clean(without(plugincontract.Cut(text, 16*max+4096), s.address), max)
+	return clean(without(seen(plugincontract.Cut(text, 16*max+4096)), s.address), max)
 }
 
 // tidy cleans what a plugin wrote of a Source for people to read.
