@@ -34,9 +34,14 @@ var (
 // know about it.
 type studyLocation struct {
 	Path string
+	// Real is the running study itself, with every symbolic link followed.
+	// Path leads to it, or to a shim that starts it.
+	Real string
 	Note string
 	// Temporary is set when Path is in a temporary build folder, such as the
-	// one go run builds in: gone soon, so setup refuses it without --force.
+	// one go run builds in, or leads into one: gone soon, so setup refuses it
+	// without --force. It is so by whichever way Path was chosen: a PATH is
+	// whoever started study's to arrange, a folder in /tmp first on it too.
 	Temporary bool
 }
 
@@ -59,6 +64,15 @@ func (a *app) studyPath() (studyLocation, error) {
 		exe = real
 	}
 	exeInfo, exeErr := os.Stat(exe)
+	// at is the location for a path agents would run study by. Whichever way
+	// the path was chosen, one in a temporary folder is soon gone.
+	at := func(path, note string) studyLocation {
+		if a.temporary(path) {
+			return studyLocation{Path: path, Real: exe, Temporary: true,
+				Note: path + " is in a temporary build folder, which will soon be gone"}
+		}
+		return studyLocation{Path: path, Real: exe, Note: note}
+	}
 	first := true
 	for _, dir := range filepath.SplitList(a.opts.Getenv("PATH")) {
 		if !filepath.IsAbs(dir) {
@@ -71,23 +85,30 @@ func (a *app) studyPath() (studyLocation, error) {
 		}
 		if first {
 			if tool := shimTool(dir); tool != "" {
-				return studyLocation{Path: cand, Note: shimNote(tool, cand)}, nil
+				return at(cand, shimNote(tool, cand)), nil
 			}
 			first = false
 		}
 		if exeErr == nil && os.SameFile(info, exeInfo) {
 			if shim, tool := installShim(cand); shim != "" {
-				return studyLocation{Path: shim, Note: shimNote(tool, shim)}, nil
+				return at(shim, shimNote(tool, shim)), nil
 			}
-			return studyLocation{Path: cand}, nil
+			return at(cand, ""), nil
 		}
 	}
-	if a.temporaryPath(exe) {
-		return studyLocation{Path: exe, Temporary: true,
-			Note: exe + " is in a temporary build folder, which will soon be gone"}, nil
+	return at(exe, "this study is not on your PATH, so agents will run it from "+exe+
+		": install study with a package or go install so the path survives upgrades"), nil
+}
+
+// temporary reports whether p is in a temporary folder, or leads into one
+// through a symbolic link: what a path in a lasting folder links to is gone
+// as soon when it is in a temporary one.
+func (a *app) temporary(p string) bool {
+	if a.temporaryPath(p) {
+		return true
 	}
-	return studyLocation{Path: exe, Note: "this study is not on your PATH, so agents will run it from " + exe +
-		": install study with a package or go install so the path survives upgrades"}, nil
+	real, err := filepath.EvalSymlinks(p)
+	return err == nil && real != p && a.temporaryPath(real)
 }
 
 func shimNote(tool, shim string) string {

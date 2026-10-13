@@ -3,6 +3,7 @@ package cli_test
 import (
 	"encoding/json"
 	"maps"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
@@ -157,11 +158,66 @@ func TestDoctorChecksThePluginsAndSaysWhatIsIndexed(t *testing.T) {
 	s.nothingRunning(t)
 }
 
+// A Topic whose Sources are all indexed is as it should be. The doctor asks
+// its plugin, and has nothing to say of it.
+func TestDoctorSaysNothingOfSourcesThatAreAllIndexed(t *testing.T) {
+	s := newShelfComputer(t)
+	fakeGit(t, "Ada Lovelace", "ada@example.com")
+	s.book(t, "strang.txt", bookOf(3, "elimination"))
+	s.book(t, "axler.txt", bookOf(2, "eigenvalues"))
+	s.ok(t, "source", "index", "linear-algebra")
+
+	before := len(s.calls(t))
+	found := s.findings(t)
+	if f, has := found["indexing:linear-algebra"]; has {
+		t.Errorf("doctor says of a Topic whose Sources are all indexed: %+v", f)
+	}
+	if f := found["knowledge_base:kb"]; f.Status != core.FindingOK {
+		t.Errorf("doctor says of the plugin: %+v", f)
+	}
+	if got := plugintest.Tools(s.calls(t)[before:]); !slices.Contains(got, "status") {
+		t.Errorf("the plugin was asked %v: the doctor did not ask what it has indexed, so its silence says nothing", got)
+	}
+	if out := s.doctor(t).stdout; strings.Contains(out, "indexing:") || !strings.Contains(out, "\nEverything looks good.\n") {
+		t.Errorf("for people, doctor says:\n%s", out)
+	}
+	s.nothingRunning(t)
+}
+
+// Of a plugin reached at an address, the doctor shows the scheme and the
+// host, and no more: the rest of a registered address may be a key.
+func TestDoctorShowsNoMoreOfAnAddressThanItsHost(t *testing.T) {
+	s := newShelfComputer(t)
+	fakeGit(t, "Ada Lovelace", "ada@example.com")
+	var server *httptest.Server
+	t.Cleanup(func() { server.Close() })
+	server = httptest.NewServer(aPlugin(plugintest.Config{})(t))
+	s.ok(t, "knowledge-base", "add", "remote", "--url", server.URL+"/t0ken-in-the-path/mcp?key=s3cr3t")
+
+	if f := s.findings(t)["knowledge_base:remote"]; f.Status != core.FindingOK ||
+		f.Message != "reached at http://127.0.0.1:PORT, speaks version 1 of Lamplight's contract" {
+		t.Errorf("doctor says of a plugin reached at an address: %+v", f)
+	}
+	for _, args := range [][]string{nil, {"--json"}} {
+		out := s.doctor(t, args...).stdout
+		if strings.Contains(out, "s3cr3t") || strings.Contains(out, "t0ken") || !strings.Contains(out, "reached at http://127.0.0.1:PORT, speaks") {
+			t.Errorf("study doctor %v shows more of the plugin's address than its host, or not that:\n%s", args, out)
+		}
+	}
+}
+
 // A plugin that does not answer is not waited for, and one whose program is
 // gone is said to be: each with what to do, as a warning. The Topic that
-// names such a plugin has nothing to add, and the setup stays healthy.
+// names such a plugin has nothing to add, the plugin is not asked a second
+// time for the Topic's sake, and the setup stays healthy.
 func TestDoctorWaitsForNoPlugin(t *testing.T) {
-	s := newShelfComputer(t, "--hang", "start")
+	s := newShelfComputer(t)
+	// The plugin never finishes starting, and each start of it leaves a line.
+	starts := filepath.Join(t.TempDir(), "starts")
+	silent := filepath.Join(s.home, "bin", "silent-kb")
+	writeExec(t, silent, "#!/bin/sh\necho started >>'"+starts+"'\nexec '"+
+		strings.Join(plugintest.Command("--record", s.record, "--hang", "start"), "' '")+"'\n")
+	s.ok(t, "knowledge-base", "add", "kb", "--replace", "--", "silent-kb")
 	s.book(t, "book.txt", bookOf(2, "one"))
 	gone := filepath.Join(s.home, "bin", "old-kb")
 	s.program(t, gone)
@@ -178,6 +234,11 @@ func TestDoctorWaitsForNoPlugin(t *testing.T) {
 	found := s.findings(t)
 	if took := time.Since(began); took > 10*time.Second {
 		t.Errorf("study doctor took %s over a plugin that never answers, which has half a second", took)
+	}
+	// One glance is all a plugin that does not answer gets: the Topic that
+	// names it is no reason to wait for it again.
+	if n := strings.Count(readText(t, starts), "started\n"); n != 1 {
+		t.Errorf("study doctor started the plugin that never answers %d times; want once", n)
 	}
 	if f := found["knowledge_base:kb"]; f.Status != core.FindingWarn || f.Fix != "study knowledge-base check kb" ||
 		f.Message != "Knowledge base plugin kb did not say which contract it speaks within 500ms, and study did not wait for it" {

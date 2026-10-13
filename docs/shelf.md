@@ -24,11 +24,16 @@ study knowledge-base check shelf
 
 Setup takes the `study-shelf` beside `study`, and otherwise the first on your `PATH`. A
 plugin you registered as `shelf` yourself is left as it is, and so you can register Shelf
-by hand, from another place or with [`--allow-loopback`](#what-it-reads):
+by hand, from another place or with [`--allow-loopback`](#what-it-reads). Once setup has
+registered Shelf, the name is taken, so say that yours replaces it:
 
 ```bash
-study knowledge-base add shelf -- /opt/lamplight/bin/study-shelf
+study knowledge-base add shelf --replace -- /opt/lamplight/bin/study-shelf
 ```
+
+The registry records which registration setup made. Yours is not one of them, so setup
+leaves it as it is from then on, and `study setup --remove` does not remove it
+([docs/cli.md](cli.md#shelf)).
 
 `study doctor` says whether Shelf starts, and which Sources of your Topics it has not
 indexed ([docs/cli.md](cli.md#study-doctor)).

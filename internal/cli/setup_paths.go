@@ -416,6 +416,10 @@ var sha256Pattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 // invalidSetupRecord says why rec names something study setup would never
 // have created, or "". Setup removes what its record names, so a record that
 // names anything else is refused before anything is touched.
+//
+// The record is in the state folder, where an agent may write, and the
+// reason goes to the terminal: what the record names is shown through
+// printable, or quoted.
 func (a *app) invalidSetupRecord(rec setupRecord) string {
 	home, err := a.homeDir()
 	if err != nil {
@@ -432,7 +436,7 @@ func (a *app) invalidSetupRecord(rec setupRecord) string {
 	link := filepath.Join(claude, "skills", lamplight.Name)
 	if s := rec.Skill; s != nil {
 		if s.Dir != skill {
-			return fmt.Sprintf("it names the skill folder %s, but study setup installs it in %s", s.Dir, skill)
+			return fmt.Sprintf("it names the skill folder %s, but study setup installs it in %s", printable(s.Dir), printable(skill))
 		}
 		if !filepath.IsAbs(s.Real) {
 			return "the skill folder has no real path"
@@ -447,17 +451,18 @@ func (a *app) invalidSetupRecord(rec setupRecord) string {
 		}
 		for _, d := range s.Parents {
 			if d.Path == skill || !pathWithin(d.Path, skill) || d.Path == home || !pathWithin(home, d.Path) || !filepath.IsAbs(d.Real) {
-				return fmt.Sprintf("it names the folder %s, which study setup never creates for the skill", d.Path)
+				return fmt.Sprintf("it names the folder %s, which study setup never creates for the skill", printable(d.Path))
 			}
 		}
 	}
 	if l := rec.Link; l != nil {
 		if l.Path != link || l.Target != skill || !filepath.IsAbs(l.Parent) {
-			return fmt.Sprintf("it names the link %s to %s, but study setup links %s to %s", l.Path, l.Target, link, skill)
+			return fmt.Sprintf("it names the link %s to %s, but study setup links %s to %s",
+				printable(l.Path), printable(l.Target), printable(link), printable(skill))
 		}
 		for _, d := range l.Parents {
 			if (d.Path != claude && d.Path != filepath.Dir(link)) || !filepath.IsAbs(d.Real) {
-				return fmt.Sprintf("it names the folder %s, which study setup never creates for the link", d.Path)
+				return fmt.Sprintf("it names the folder %s, which study setup never creates for the link", printable(d.Path))
 			}
 		}
 	}
@@ -465,12 +470,10 @@ func (a *app) invalidSetupRecord(rec setupRecord) string {
 	for _, g := range rec.Registrations {
 		if !slices.Contains(setupAgents, g.Agent) || seen[g.Agent] || g.Name != mcpServerName ||
 			!filepath.IsAbs(g.Command) || !slices.Equal(g.Args, []string{"mcp"}) {
-			return fmt.Sprintf("it names a registration study setup never makes (%s %s %s %v)", g.Agent, g.Name, g.Command, g.Args)
+			return fmt.Sprintf("it names a registration study setup never makes (%s %s %s %s)",
+				printable(g.Agent), printable(g.Name), printable(g.Command), printable(fmt.Sprint(g.Args)))
 		}
 		seen[g.Agent] = true
-	}
-	if s := rec.Shelf; s != nil && (s.Name != shelfName || !filepath.IsAbs(s.Program) || filepath.Base(s.Program) != shelfProgram) {
-		return fmt.Sprintf("it names a Knowledge base plugin study setup never registers (%s %s)", s.Name, s.Program)
 	}
 	return ""
 }

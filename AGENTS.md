@@ -91,14 +91,20 @@ GOOS=darwin go vet ./...            # macOS is supported too
 - `study setup` registers Shelf through the registrar (`internal/cli/setup_shelf.go`), so
   by the checks of `study knowledge-base add`: it takes the `study-shelf` beside the
   `study` agents run, else the first on `PATH`, and decides nothing itself about where
-  that leads. A plugin the learner registered as `shelf` is never replaced and never
-  removed: setup looks for one before anything else, and then leaves Shelf as it is.
-  Setup replaces and removes only the registration its record says it made, while the
-  registry still holds exactly that one, which the registrar decides under the registry's
-  lock (`Spec.Replacing`, `RemoveExactly`): never have setup pass `Replace`, or call
-  `Remove`. Shelf is no agent's, so `--remove --agent` leaves it registered. `study` reads
-  nothing of Shelf's settings file and asks none of its endpoints: what is wrong with the
-  file is Shelf's to say when it does not start.
+  that leads, except that one in a temporary folder is refused without `--force`
+  (`temporary`), as the `study` agents run is, whichever way its path was chosen.
+- Which registration is setup's is said by the registry, and by nothing else: an entry
+  setup made carries the mark `by_setup` (`Plugin.BySetup`), which only the registrar
+  writes, under the registry's lock, for `Spec.BySetup`. Setup replaces and removes a
+  plugin named `shelf` only when it carries the mark (`registrar.Add` with `BySetup`,
+  `registrar.RemoveBySetup`): never have setup pass `Replace` or call `Remove`, and never
+  have `study knowledge-base add` write the mark. A plugin without it is the learner's,
+  whatever it runs. Never believe `setup.json` about a plugin: it is in the state folder,
+  where an agent may write. The registry's format stays 1 with the mark, since no release
+  has written a registry. Shelf is no agent's, so it is registered whatever becomes of
+  the skill, and `--remove --agent` leaves it registered. `study` reads nothing of
+  Shelf's settings file and asks none of its endpoints: what is wrong with the file is
+  Shelf's to say when it does not start.
 - Nothing the registry depends on may be in the Study home or be reached through it: not
   Lamplight's configuration folder, not a plugin's program. That is decided by file
   identity, one hop of the path at a time, on folders that are then used as they were
@@ -159,7 +165,9 @@ GOOS=darwin go vet ./...            # macOS is supported too
   `study doctor` waits for no plugin either, and has none index: `CheckPlugins` has the
   glance's time for every registered plugin together, and what the doctor says of a
   Topic's Sources is `Status`'s own `Indexing`, problem, Sources and action
-  (`diagnoseKnowledgeBase` in `internal/cli`). Nothing about a plugin is a failed Finding.
+  (`diagnoseKnowledgeBase` in `internal/cli`). It asks with `StatusWithout`, which leaves
+  out the plugins that just failed their check: a plugin that does not answer is waited
+  for once. Nothing about a plugin is a failed Finding.
 - A search of a Topic's Sources, and the reading of a Passage to check a quote, have
   `core.PluginEvidenceTimeout`, forty-five seconds, for the registry, the start and every
   answer together (`PluginOptions.EvidenceTimeout` in tests), and the plugin is asked

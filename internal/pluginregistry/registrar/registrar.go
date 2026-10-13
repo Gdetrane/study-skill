@@ -43,13 +43,17 @@ type Spec struct {
 	// Replace allows the name to be registered already as something else,
 	// which this registration then replaces.
 	Replace bool
-	// Replacing allows that only while the name stands for exactly this
-	// plugin, command or URL and all, by the time the registry is locked:
-	// anything else under the name is refused as without Replace. It is for
-	// whoever made that registration itself, as study setup does, so that it
-	// never replaces one the learner made since.
-	Replacing *pluginregistry.Plugin
-	DryRun    bool
+	// BySetup registers the plugin as study setup does. The registration
+	// carries setup's mark (Plugin.BySetup), and takes the place of one that
+	// carries the mark and of no other: a name the learner registered, which
+	// has no mark, is refused whatever it stands for, this very command
+	// included. It goes with a command, and never with Replace.
+	//
+	// Without it a registration carries no mark. So whatever the learner
+	// registers under a name that study setup registered is theirs from then
+	// on, the same command too.
+	BySetup bool
+	DryRun  bool
 }
 
 // Registration reports a Knowledge base plugin registered.
@@ -58,7 +62,10 @@ type Registration struct {
 	// absolute path it was resolved to.
 	Plugin   pluginregistry.Plugin `json:"plugin"`
 	Registry string                `json:"registry"`
-	// Replaced is what the name stood for before, when Replace changed it.
+	// Replaced is what the name stood for before, when this registration
+	// took its place: with Replace, as study setup's own when BySetup
+	// replaced it, or as the registration study setup made, which the
+	// learner's registration of the same command makes theirs.
 	Replaced *pluginregistry.Plugin `json:"replaced,omitempty"`
 	// Changed is false when the plugin was registered that way already, so
 	// nothing was written.
@@ -92,6 +99,13 @@ const pointLocked = "locked"
 // Registering a plugin the way it is registered already changes nothing. A
 // name that stands for something else is refused, unless the Spec says to
 // replace it. It records no Event.
+//
+// Whether a registration is study setup's own is said by the registry and
+// by nothing else: the mark is written here, under the registry's lock, and
+// what is decided about it is decided there too, against the registry as it
+// is by then. A registration made with Spec.BySetup replaces only one that
+// carries the mark; any other registration leaves the mark out, and so
+// takes a name over from study setup for good.
 func Add(ctx context.Context, env pluginregistry.Env, spec Spec) (Registration, error) {
 	return add(ctx, env, spec, nil)
 }
@@ -114,13 +128,21 @@ func add(ctx context.Context, env pluginregistry.Env, spec Spec, hook func(point
 		case i < 0:
 			out.Changed = true
 			return append(plugins, plugin), true, nil
-		case registeredAs(plugins[i], plugin):
+		case spec.BySetup && !plugins[i].BySetup:
+			// The learner's, whatever it runs.
+			return nil, false, regfile.Errorf(regfile.CodeAlreadyExists, "a Knowledge base plugin named %s is registered "+
+				"already, and not by study setup, so study setup leaves it as it is (study knowledge-base list shows it)",
+				plugin.Name)
+		case registeredAs(plugins[i], plugin) && plugins[i].BySetup == plugin.BySetup:
 			return nil, false, nil
-		case !spec.Replace && (spec.Replacing == nil || !registeredAs(plugins[i], *spec.Replacing)):
+		case !spec.BySetup && !spec.Replace && !registeredAs(plugins[i], plugin):
 			return nil, false, regfile.Errorf(regfile.CodeAlreadyExists, "a Knowledge base plugin named %s is registered "+
 				"already, as something else (study knowledge-base list shows it): pass --replace to register this one "+
 				"in its place, or give this one another name", plugin.Name)
 		}
+		// Study setup replaces its own. The learner replaces what they said
+		// to replace, and takes over what study setup registered by
+		// registering the same: the mark goes, and the registration is theirs.
 		replaced := plugins[i]
 		out.Replaced, out.Changed = &replaced, true
 		plugins[i] = plugin
@@ -142,27 +164,27 @@ func registeredAs(a, b pluginregistry.Plugin) bool {
 // Topic that names it is afterwards treated as one without a Knowledge
 // base. It records no Event.
 func Remove(ctx context.Context, env pluginregistry.Env, name string, dryRun bool) (Removal, error) {
-	return remove(ctx, env, name, nil, dryRun, nil)
+	return remove(ctx, env, name, false, dryRun, nil)
 }
 
-// RemoveExactly takes a Knowledge base plugin out of the registry only while
-// its name still stands for exactly the plugin given, command or URL and
-// all, by the time the registry is locked. It reports whether it did, or in
-// a dry run whether it would: a name that stands for something else by
-// then, or for nothing, is left as it is, and that is no error.
+// RemoveBySetup takes the plugin registered under name out of the registry
+// only when its registration carries study setup's mark, and reports whether
+// it did, or in a dry run whether it would. A registration without the mark
+// is the learner's, and a name that is not registered has nothing to remove:
+// both are left as they are, and neither is an error.
 //
-// It is for whoever registered the plugin itself and undoes that, as study
-// setup --remove does: what the learner registered under the name since is
-// theirs to keep. It records no Event.
-func RemoveExactly(ctx context.Context, env pluginregistry.Env, plugin pluginregistry.Plugin, dryRun bool) (bool, error) {
-	removed, err := remove(ctx, env, plugin.Name, &plugin, dryRun, nil)
-	return err == nil && removed.Plugin.Name != "", err
+// It is study setup --remove, undoing the registration setup made. Which
+// one that is, the registry says, as it is when the registry is locked. It
+// records no Event.
+func RemoveBySetup(ctx context.Context, env pluginregistry.Env, name string, dryRun bool) (Removal, bool, error) {
+	removed, err := remove(ctx, env, name, true, dryRun, nil)
+	return removed, err == nil && removed.Plugin.Name != "", err
 }
 
 // remove takes the plugin registered under name out of the registry. With
-// only, it takes it out only while it is registered as only says, and
+// bySetup, it takes it out only when it carries study setup's mark, and
 // otherwise changes nothing and returns a Removal that names no plugin.
-func remove(ctx context.Context, env pluginregistry.Env, name string, only *pluginregistry.Plugin, dryRun bool,
+func remove(ctx context.Context, env pluginregistry.Env, name string, bySetup bool, dryRun bool,
 	hook func(point string) error) (Removal, error) {
 	folder, err := regfile.Open(env)
 	if err != nil {
@@ -177,7 +199,7 @@ func remove(ctx context.Context, env pluginregistry.Env, name string, only *plug
 		out.Plugin = pluginregistry.Plugin{}
 		i := slices.IndexFunc(plugins, func(p pluginregistry.Plugin) bool { return p.Name == name })
 		switch {
-		case only != nil && (i < 0 || !registeredAs(plugins[i], *only)):
+		case bySetup && (i < 0 || !plugins[i].BySetup):
 			return nil, false, nil
 		case i < 0:
 			return nil, false, regfile.Errorf(regfile.CodeNotFound, "no Knowledge base plugin named %s is registered on "+
@@ -199,10 +221,14 @@ func newPlugin(env pluginregistry.Env, w *regfile.Walker, spec Spec) (pluginregi
 	if err := regfile.CheckName(spec.Name); err != nil {
 		return none, err
 	}
-	p := pluginregistry.Plugin{Name: spec.Name}
+	p := pluginregistry.Plugin{Name: spec.Name, BySetup: spec.BySetup}
 	switch {
 	case len(spec.Command) > 0 && spec.URL != "":
 		return none, regfile.Errorf(regfile.CodeInvalidArgument, "give Knowledge base plugin %s a command or a URL, not both", spec.Name)
+	case spec.BySetup && (spec.Replace || len(spec.Command) == 0):
+		// No command line asks for this: it is study's own mistake.
+		return none, regfile.Errorf(regfile.CodeInternal, "study setup registers Knowledge base plugin %s by a command, and "+
+			"replaces only a registration of its own: never with a URL, and never as --replace does", spec.Name)
 	case len(spec.Command) > 0:
 		program, err := w.ResolveProgram(env, spec.Command[0])
 		if err != nil {

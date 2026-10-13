@@ -17,8 +17,11 @@ import (
 // by name.
 //
 //	{"format": 1, "plugins": [
-//	  {"name": "shelf", "command": ["/usr/local/bin/study-shelf"]},
+//	  {"name": "shelf", "command": ["/usr/local/bin/study-shelf"], "by_setup": true},
 //	  {"name": "remote", "url": "http://localhost:8765/mcp"}]}
+//
+// by_setup marks the registration study setup made. It goes with a command,
+// which is all setup registers.
 //
 // Only study writes it, so the reader accepts exactly what the writer
 // writes and nothing more. encoding/json alone is more forgiving than that:
@@ -235,12 +238,20 @@ func decodeEntry(obj *object) (p Plugin, why string) {
 		return p, err.Error()
 	}
 	p.Name = name
-	if key := unknownKey(obj, "name", "command", "url", "allow_study_home_arguments"); key != "" {
+	if key := unknownKey(obj, "name", "command", "url", "allow_study_home_arguments", "by_setup"); key != "" {
 		return p, fmt.Sprintf("it has a key this version of study does not know, %q", key)
 	}
 	command, hasCommand := obj.values["command"]
 	url, hasURL := obj.values["url"]
 	allow, hasAllow := obj.values["allow_study_home_arguments"]
+	if mark, marked := obj.values["by_setup"]; marked {
+		if p.BySetup, ok = mark.(bool); !ok {
+			return p, "by_setup is neither true nor false"
+		}
+		if hasURL && !hasCommand {
+			return p, "by_setup goes with a command, and it has a URL"
+		}
+	}
 	switch {
 	case hasCommand && hasURL:
 		return p, "it has both a command and a URL"
@@ -305,6 +316,7 @@ type entry struct {
 	Command                 []string `json:"command,omitempty"`
 	URL                     string   `json:"url,omitempty"`
 	AllowStudyHomeArguments bool     `json:"allow_study_home_arguments,omitempty"`
+	BySetup                 bool     `json:"by_setup,omitempty"`
 }
 
 // Encode writes a registry holding plugins, ordered by name, and refuses
@@ -315,7 +327,7 @@ func Encode(path string, plugins []Plugin) ([]byte, error) {
 	out := file{Format: Format, Plugins: make([]entry, 0, len(plugins))}
 	for _, p := range plugins {
 		out.Plugins = append(out.Plugins, entry{Name: p.Name, Command: p.Command, URL: p.URL,
-			AllowStudyHomeArguments: p.AllowStudyHomeArguments})
+			AllowStudyHomeArguments: p.AllowStudyHomeArguments, BySetup: p.BySetup})
 	}
 	slices.SortFunc(out.Plugins, func(a, b entry) int { return strings.Compare(a.Name, b.Name) })
 	var buf bytes.Buffer

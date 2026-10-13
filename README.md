@@ -86,9 +86,11 @@ Your Study home is `~/study` unless `STUDY_HOME` or `study_home` in
 
 A Topic learns from Sources: your books, as PDFs, and web pages. A Knowledge base holds
 their text and searches it, so that your agent finds the Passage a Lesson rests on and
-quotes it word for word. That quote is Evidence, and Lamplight checks it against the
-Passage: what the book does not say is not recorded as its words. Without a Knowledge base
-the agent reads the Sources itself, and its quotes are not checked.
+quotes it word for word. That quote is Evidence. When the agent records it with the Passage
+it is from, Lamplight checks it against that Passage, and what the Passage does not say is
+not recorded as its words. A quote recorded without its Passage is kept as not checked,
+and `study evidence list` says which is which. Without a Knowledge base the agent reads
+the Sources itself, and none of its quotes are checked.
 
 A Knowledge base is a plugin: a program on your computer that `study` starts whenever it
 has something to ask it. Lamplight ships with one, Shelf, the `study-shelf` program

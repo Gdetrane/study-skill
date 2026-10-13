@@ -15,10 +15,11 @@ import (
 // A plugin is checked as study knowledge-base check checks it, and asked
 // what it has indexed as study status asks it, each time with the couple of
 // seconds of a glance (core.PluginGlanceTimeout): the doctor waits for no
-// plugin, and has none index. What is said of a Topic's Sources, and the one
-// command named for them, are status's own (core.Indexing): a Source whose
-// indexing failed is shown with its reason, and is nothing to run a command
-// for here either.
+// plugin, and has none index. A plugin that failed its check is not asked
+// what it has indexed: one that does not answer is waited for once. What is
+// said of a Topic's Sources, and the one command named for them, are
+// status's own (core.Indexing): a Source whose indexing failed is shown with
+// its reason, and is nothing to run a command for here either.
 //
 // None of it makes the setup unhealthy. A Topic whose plugin cannot be
 // asked works as one without a Knowledge base.
@@ -46,20 +47,21 @@ func (a *app) diagnoseKnowledgeBase(ctx context.Context) []core.Finding {
 		registry.Message = glances.Registry
 	}
 	out := []core.Finding{registry}
-	// broken are the plugins whose own Finding says what is wrong, and what
-	// to do: a Topic that names one has nothing to add.
-	broken := map[string]bool{}
+	// wanting are the plugins whose own Finding says what is wrong, and what
+	// to do. A Topic that names one has nothing to add, and the plugin is not
+	// asked a second time: one that did not answer would be waited for again.
+	var wanting []string
 	for _, g := range glances.Plugins {
 		f := core.Finding{Name: "knowledge_base:" + g.Plugin.Name, Status: core.FindingOK}
 		if g.Check != nil {
 			f.Message = describeCheck(*g.Check)
 		} else {
 			f.Status, f.Message, f.Fix = core.FindingWarn, g.Problem, g.Fix
-			broken[g.Plugin.Name] = true
+			wanting = append(wanting, g.Plugin.Name)
 		}
 		out = append(out, f)
 	}
-	status, err := c.Status(ctx)
+	status, err := c.StatusWithout(ctx, wanting)
 	if err != nil {
 		// What keeps the Topics from being read is the doctor's to say, and
 		// it has.
@@ -67,7 +69,7 @@ func (a *app) diagnoseKnowledgeBase(ctx context.Context) []core.Finding {
 	}
 	for _, t := range status.Topics {
 		x := t.Indexing
-		if x == nil || x.Problem != "" && broken[x.Plugin] {
+		if x == nil {
 			continue
 		}
 		f := core.Finding{Name: "indexing:" + t.ID, Status: core.FindingOK, Message: x.Problem, Fix: x.Action}

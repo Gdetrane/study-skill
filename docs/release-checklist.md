@@ -177,7 +177,7 @@ Nothing here needs an account, or a service that is not yours (ADR-0011).
       that step 2 installed beside `study`:
 
       ```sh
-      study knowledge-base list            # shelf, and $(go env GOPATH)/bin/study-shelf
+      study knowledge-base list            # shelf, $(go env GOPATH)/bin/study-shelf, registered by study setup
       study knowledge-base check shelf     # version 1; searches by keyword
       study doctor                         # knowledge_base:shelf is ok
       ```
