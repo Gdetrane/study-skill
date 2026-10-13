@@ -287,6 +287,14 @@ func describePlugin(p core.Plugin) string {
 // --allow-study-home-arguments.
 const allowedNote = "Its arguments inside the Study home are allowed: your agent can change what they name."
 
+// Of the registration study setup made, which carries setup's mark in the
+// registry: what a listing says of it, and what is said once a registration
+// of the learner's has taken its place.
+const (
+	bySetupNote    = "Registered by study setup, which keeps it up to date, and removes it with study setup --remove."
+	fromSetupsNote = "study setup had registered that one. This one is yours: study setup leaves it as it is."
+)
+
 func writePluginRegistration(w io.Writer, r registrar.Registration) error {
 	name := styleAccent.Render(printable(r.Plugin.Name))
 	if !r.Changed {
@@ -304,6 +312,9 @@ func writePluginRegistration(w io.Writer, r registrar.Registration) error {
 	}
 	if r.Replaced != nil {
 		fmt.Fprintf(&b, "%s: %s\n", replaces, describePlugin(*r.Replaced))
+		if r.Replaced.BySetup && !r.Plugin.BySetup {
+			fmt.Fprintf(&b, "%s\n", styleDim.Render(fromSetupsNote))
+		}
 	}
 	_, err := io.WriteString(w, b.String())
 	return err
@@ -391,6 +402,9 @@ func writePluginList(w io.Writer, l core.PluginList) error {
 	width := widest(names)
 	for i, p := range l.Plugins {
 		fmt.Fprintf(&b, "%s  %s\n", styleAccent.Render(pad(names[i], width)), describePlugin(p))
+		if p.BySetup {
+			fmt.Fprintf(&b, "  %s\n", styleDim.Render(bySetupNote))
+		}
 		if p.AllowStudyHomeArguments {
 			fmt.Fprintf(&b, "  %s %s\n", styleWarn.Render("!"), allowedNote)
 		}

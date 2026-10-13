@@ -40,6 +40,11 @@
         "message": "no index yet: study library build <folder> indexes your books"
       },
       {
+        "name": "knowledge_base",
+        "status": "ok",
+        "message": "no Knowledge base plugin is registered on this computer: study setup registers Shelf when study-shelf is installed"
+      },
+      {
         "name": "log",
         "status": "ok",
         "message": "$HOME/.local/state/lamplight/study.log (level info)"

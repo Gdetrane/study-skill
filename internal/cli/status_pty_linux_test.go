@@ -17,7 +17,7 @@ import (
 func TestStatusKeepsAFoldersNameOffTheTerminal(t *testing.T) {
 	bin := buildStudy(t)
 	home := t.TempDir()
-	env := append(os.Environ(), "STUDY_HOME="+home, "HOME="+home, "NO_COLOR=1")
+	env := append(ownFolders(t, home), "NO_COLOR=1")
 	create := exec.CommandContext(t.Context(), bin, "topic", "create", "--title", "C", "--id", "c")
 	create.Env = env
 	if out, err := create.CombinedOutput(); err != nil {

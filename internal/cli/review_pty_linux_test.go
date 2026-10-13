@@ -31,6 +31,19 @@ func buildStudy(t *testing.T) string {
 	return bin
 }
 
+// ownFolders is the environment of a study that a test builds and runs on
+// the Study home given: the caller's, with a home folder and XDG folders
+// that are the test's. A study left with the caller's would read their
+// configuration and their Knowledge base plugin registry, and write its Log
+// in their state folder.
+func ownFolders(t *testing.T, studyHome string) []string {
+	t.Helper()
+	home := t.TempDir()
+	return append(os.Environ(), "STUDY_HOME="+studyHome, "HOME="+home,
+		"XDG_CONFIG_HOME="+filepath.Join(home, ".config"), "XDG_DATA_HOME="+filepath.Join(home, ".local", "share"),
+		"XDG_STATE_HOME="+filepath.Join(home, ".local", "state"), "XDG_CACHE_HOME="+filepath.Join(home, ".cache"))
+}
+
 // terminal runs study on a pseudo-terminal and plays the learner: it waits
 // for what study prints, then types.
 type terminal struct {
@@ -55,7 +68,7 @@ func startOnTerminalAs(t *testing.T, bin, home string, env []string, args ...str
 	master, slave := openPTY(t)
 	term := &terminal{t: t, master: master, slave: slave}
 	term.cmd = exec.CommandContext(t.Context(), bin, args...)
-	term.cmd.Env = append(append(os.Environ(), "STUDY_HOME="+home, "HOME="+home), env...)
+	term.cmd.Env = append(ownFolders(t, home), env...)
 	term.cmd.Stdin, term.cmd.Stdout, term.cmd.Stderr = slave, slave, slave
 	if err := term.cmd.Start(); err != nil {
 		t.Fatal(err)

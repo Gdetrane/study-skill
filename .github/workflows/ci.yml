@@ -145,10 +145,15 @@ jobs:
             echo "the released study links what only study-shelf may"; exit 1
           fi
           go version -m "$home/.local/bin/study-shelf" | grep -q 'modernc.org/sqlite'
-          # The two that were installed work together: study starts study-shelf
-          # as it starts any plugin, and they speak the contract.
+          # The two that were installed work together. study setup registers
+          # the study-shelf beside study, as it does for a learner; then study
+          # starts it as it starts any plugin, and they speak the contract.
+          # --force, because this home is a temporary folder, from where
+          # setup registers nothing otherwise. And with nothing else on PATH,
+          # so that setup finds no agent of the runner's to set up.
           export STUDY_HOME="$home/study" PATH="$home/.local/bin:$PATH"
-          study knowledge-base add shelf -- study-shelf
+          PATH="$home/.local/bin" study setup --force
+          study knowledge-base list | grep -F "Registered by study setup"
           study knowledge-base check shelf
           echo "INSTALLED_SHELF=$home/.local/bin/study-shelf" >> "$GITHUB_ENV"
       - name: The released study-shelf keeps the contract, with PDFs
@@ -222,8 +227,10 @@ jobs:
               find "$notices/modules/$module" -maxdepth 1 -type f | grep -q . || { echo "the released $program holds $module, which has no notice"; exit 1; }
             done < "$home/deps"
           done
+          # As above: setup registers Shelf, and study checks it.
           export STUDY_HOME="$home/study" PATH="$home/.local/bin:$PATH"
-          study knowledge-base add shelf -- study-shelf
+          PATH="$home/.local/bin" study setup --force
+          study knowledge-base list | grep -F "Registered by study setup"
           study knowledge-base check shelf
           echo "INSTALLED_SHELF=$home/.local/bin/study-shelf" >> "$GITHUB_ENV"
       - name: The released study-shelf keeps the contract, with PDFs

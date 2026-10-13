@@ -20,6 +20,8 @@ func TestDecodeReadsWhatEncodeWrites(t *testing.T) {
 		{Name: "shelf", Command: []string{"/usr/local/bin/study-shelf", "--recipe", "embedding gemma", "", "a=<b>&c"}},
 		{Name: "remote", URL: "http://localhost:8765/mcp?key=a&b=<c>"},
 		{Name: "notes", Command: []string{"/opt/kb/bin/notes-kb", "/home/ada/study/notes"}, AllowStudyHomeArguments: true},
+		// The one study setup registered carries its mark, and no other does.
+		{Name: "by-setup", Command: []string{"/home/ada/.local/bin/study-shelf"}, BySetup: true},
 	}
 	data, err := Encode(regPath, plugins)
 	if err != nil {
@@ -28,6 +30,13 @@ func TestDecodeReadsWhatEncodeWrites(t *testing.T) {
 	want := `{
   "format": 1,
   "plugins": [
+    {
+      "name": "by-setup",
+      "command": [
+        "/home/ada/.local/bin/study-shelf"
+      ],
+      "by_setup": true
+    },
     {
       "name": "notes",
       "command": [
@@ -60,7 +69,7 @@ func TestDecodeReadsWhatEncodeWrites(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(got, []Plugin{plugins[2], plugins[1], plugins[0]}) {
+	if !reflect.DeepEqual(got, []Plugin{plugins[3], plugins[2], plugins[1], plugins[0]}) {
 		t.Errorf("Decode = %+v", got)
 	}
 
@@ -69,6 +78,7 @@ func TestDecodeReadsWhatEncodeWrites(t *testing.T) {
 		"{\"format\": 1,\n \"plugins\": []}\n\n",
 		`{"plugins": [], "format": 1}`,
 		registryFor(`{"name": "shelf", "command": ["/bin/sh", "-c", "exit 0"], "allow_study_home_arguments": false}`),
+		registryFor(`{"name": "shelf", "command": ["/bin/sh"], "by_setup": false}`),
 		registryFor(`{"url": "http://[::1]:8765/mcp", "name": "v6"}`),
 	} {
 		if _, err := Decode(regPath, []byte(content)); err != nil {
@@ -206,6 +216,14 @@ func TestDecodeCallsDamagedWhatItCannotVouchForWhole(t *testing.T) {
 		{"too many arguments", registryFor(sh + strings.Repeat(`, "x"`, 101) + `]}`), "more than 100 arguments"},
 		{"allowed arguments that are text", registryFor(sh + `], "allow_study_home_arguments": "yes"}`), "neither true nor false"},
 		{"allowed arguments with a URL", registryFor(`{"name": "a", "url": "http://h/", "allow_study_home_arguments": true}`), "goes with a command"},
+		// The mark of study setup is true or false, spelled as study spells
+		// it, and on a command: setup registers nothing else.
+		{"a mark that is text", registryFor(sh + `], "by_setup": "yes"}`), "by_setup is neither true nor false"},
+		{"a mark that is a number", registryFor(sh + `], "by_setup": 1}`), "by_setup is neither true nor false"},
+		{"a mark that is null", registryFor(sh + `], "by_setup": null}`), "holds a null"},
+		{"a mark with a URL", registryFor(`{"name": "a", "url": "http://h/", "by_setup": true}`), "by_setup goes with a command"},
+		{"a mark in another letter case", registryFor(sh + `], "By_Setup": true}`), `does not know, "By_Setup"`},
+		{"a mark twice", registryFor(sh + `], "by_setup": false, "by_setup": true}`), `has the key "by_setup" twice`},
 
 		{"a URL that is a number", registryFor(`{"name": "a", "url": 1}`), "its URL is not text"},
 		{"an empty URL", registryFor(`{"name": "a", "url": ""}`), "its URL is not text"},

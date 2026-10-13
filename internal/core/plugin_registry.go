@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 
+	"github.com/mordor-forge/lamplight/v2/internal/pluginclient"
 	"github.com/mordor-forge/lamplight/v2/internal/pluginregistry"
 )
 
@@ -31,6 +32,11 @@ type PluginList = pluginregistry.List
 func (c *Core) Plugins(ctx context.Context) (PluginList, error) {
 	return pluginregistry.Read(ctx, c.PluginRegistryEnv())
 }
+
+// PluginAddress is how study shows the address of a plugin reached by URL
+// anywhere but in the registry's own listing: by its scheme and host. The
+// rest of a registered address, a path or a query, may be a key.
+func PluginAddress(registered string) string { return pluginclient.Address(registered) }
 
 // PluginRegistryEnv is what the registry needs to know of this run of study:
 // the Study home, the folder study started in, and the environment.

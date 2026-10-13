@@ -430,9 +430,13 @@ func (a *app) rootCommand() *cobra.Command {
 
 	doctor := &cobra.Command{
 		Use:   "doctor",
-		Short: "Diagnose your setup: Study home, git, Topics, Library, Log and completions",
+		Short: "Diagnose your setup: Study home, git, Topics, Library, Knowledge base plugins, Log and completions",
 		Long: "Diagnose your setup. doctor works even when the rest of study cannot, and tells you how to\n" +
-			"fix what it finds. It exits with 1 when something must be fixed, and 0 otherwise.",
+			"fix what it finds. It exits with 1 when something must be fixed, and 0 otherwise.\n\n" +
+			"It starts each Knowledge base plugin registered on this computer, or reaches it, to see that\n" +
+			"it speaks Lamplight's contract, as study knowledge-base check does, and asks the plugin of\n" +
+			"each Topic which Sources it has indexed, as study status does. A plugin has a couple of\n" +
+			"seconds for it: doctor waits for none, and has none index anything.",
 		Args: noArgs,
 		RunE: a.runDoctor,
 	}
@@ -547,6 +551,9 @@ func (a *app) checkpointCommand() *cobra.Command {
 // code without returning an error: the report is the whole output.
 func (a *app) runDoctor(cmd *cobra.Command, _ []string) error {
 	d := core.Diagnose(cmd.Context(), a.opts)
+	for _, f := range a.diagnoseKnowledgeBase(cmd.Context()) {
+		d.Add(f)
+	}
 	d.Add(a.diagnoseLogs())
 	d.Add(a.diagnoseCompletion())
 	d.Add(a.diagnoseSetup(cmd.Context()))

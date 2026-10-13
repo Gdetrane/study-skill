@@ -17,6 +17,7 @@ import (
 
 	"github.com/mordor-forge/lamplight/v2/internal/cli"
 	"github.com/mordor-forge/lamplight/v2/internal/core"
+	"github.com/mordor-forge/lamplight/v2/internal/shelf/shelftest"
 )
 
 // The v2.0 acceptance walkthrough: from study setup to a finished Lesson, a
@@ -25,10 +26,21 @@ import (
 // finished Lesson and back after a break"; the manual runs in Claude Code and
 // Codex stay the maintainer's.
 //
+// The Topic has a Knowledge base: study setup registers Shelf, the
+// study-shelf built from this checkout and put beside study as a release
+// installs it, the learner's book is added as a Source and indexed, the
+// agent searches it, and the Lesson's Evidence is recorded with the Passage
+// it quotes, and so checked. Shelf's settings file names an embedding
+// endpoint, which is the test's own, on this computer, with no model behind
+// it (shelftest.Endpoint): the maintainer's run with a real book and a real
+// endpoint is in docs/release-checklist.md.
+//
 // Everything happens in one temporary HOME. study's own PATH holds only fake
 // claude and codex commands and links to the few tools the run needs; the
 // process's PATH holds failing stand-ins for claude and codex, so nothing can
-// reach the real agents.
+// reach the real agents. No plugin that is installed on the computer is
+// started. A -short run skips the walkthrough, as it skips every test that
+// builds study-shelf.
 
 // journeyClaude keeps user-scope MCP servers in $HOME/.claude.json, as Claude
 // Code does, and logs its calls. It never runs the real CLI.
@@ -105,6 +117,7 @@ type journey struct {
 	studyPATH string // study's own PATH: fake agents and the tools
 	forbidden string // log of calls to the stand-ins on the process's PATH
 	studyBin  string // study, built for the run
+	shelfBin  string // study-shelf, built for the run and put beside study
 	clock     *clock
 }
 
@@ -112,10 +125,20 @@ func newJourney(t *testing.T) *journey {
 	t.Helper()
 	startPATH := os.Getenv("PATH")
 	// Built before HOME changes, so the go command finds its build cache.
+	shelf, err := os.ReadFile(shelftest.Shelf(t))
+	if err != nil {
+		t.Fatal(err)
+	}
 	studyBin := buildStudy(t)
+	// The two side by side, as a release installs them: where study setup
+	// looks for study-shelf first.
+	shelfBin := filepath.Join(filepath.Dir(studyBin), "study-shelf")
+	if err := os.WriteFile(shelfBin, shelf, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	home := t.TempDir()
 	j := &journey{t: t, home: home, studyHome: filepath.Join(home, "study"), forbidden: filepath.Join(home, "forbidden-calls.log"),
-		studyBin: studyBin, clock: &clock{at: time.Date(2026, 10, 1, 18, 0, 0, 0, time.UTC)}}
+		studyBin: studyBin, shelfBin: shelfBin, clock: &clock{at: time.Date(2026, 10, 1, 18, 0, 0, 0, time.UTC)}}
 	bin, tools, absent := filepath.Join(home, "bin"), filepath.Join(home, "tools"), filepath.Join(home, "absent")
 	writeExecutable(t, filepath.Join(bin, "claude"), journeyClaude)
 	writeExecutable(t, filepath.Join(bin, "codex"), journeyCodex)
@@ -268,6 +291,26 @@ func (j *journey) decode(out any, args []string, ran bool, stdout []byte, stderr
 	}
 }
 
+// doctor runs study doctor with the built study, which must find the setup
+// healthy, and returns its Findings by name. A Knowledge base plugin has a
+// couple of seconds to answer the doctor, and a busy computer may leave
+// Shelf less than that once, not five times running.
+func (j *journey) doctor() map[string]core.Finding {
+	j.t.Helper()
+	for tries := 1; ; tries++ {
+		var d core.Diagnosis
+		j.study(&d, "doctor")
+		found := map[string]core.Finding{}
+		for _, f := range d.Findings {
+			found[f.Name] = f
+		}
+		_, indexing := found["indexing:c"]
+		if found["knowledge_base:shelf"].Status == core.FindingOK && !indexing || tries == 5 {
+			return found
+		}
+	}
+}
+
 // registration is how an agent starts an MCP server.
 type registration struct {
 	Type    string   `json:"type"`
@@ -412,8 +455,12 @@ func TestTheV2Journey(t *testing.T) {
 
 	// 1. study setup, run from the built binary, installs the skill and
 	// registers that binary's study mcp with both agents. The binary lives in
-	// a temporary folder, which setup refuses without --force.
-	j.study(nil, "setup", "--force")
+	// a temporary folder, which setup refuses without --force. It registers
+	// the study-shelf beside it as the Knowledge base plugin shelf, too.
+	var setUp struct {
+		Shelf struct{ Name, Status, Program string } `json:"shelf"`
+	}
+	j.study(&setUp, "setup", "--force")
 	skill := filepath.Join(j.home, ".agents", "skills", "lamplight")
 	if _, err := os.Stat(filepath.Join(skill, "SKILL.md")); err != nil {
 		t.Fatalf("the skill was not installed: %v", err)
@@ -433,6 +480,42 @@ func TestTheV2Journey(t *testing.T) {
 		if reg.Type != want.Type || reg.Command != want.Command || !slices.Equal(reg.Args, want.Args) {
 			t.Fatalf("%s's registration = %+v, want %+v", agent, reg, want)
 		}
+	}
+	// Shelf is registered by the path of the study-shelf beside study, and
+	// the registry is the computer's: in the learner's configuration folder.
+	shelf := filepath.Join(filepath.Dir(study), "study-shelf")
+	if setUp.Shelf.Name != "shelf" || setUp.Shelf.Status != "registered" || setUp.Shelf.Program != shelf {
+		t.Fatalf("study setup says of Shelf %+v; want it registered as shelf, running %s", setUp.Shelf, shelf)
+	}
+	var plugins core.PluginList
+	j.study(&plugins, "knowledge-base", "list")
+	// The temporary HOME is itself reached through a link on some systems.
+	registry, err := filepath.EvalSymlinks(filepath.Join(j.home, ".config", "lamplight", "knowledge-base-plugins.json"))
+	if err != nil {
+		t.Fatalf("study setup wrote no registry in the learner's configuration folder: %v", err)
+	}
+	if listed, _ := filepath.EvalSymlinks(plugins.Registry); len(plugins.Plugins) != 1 || plugins.Plugins[0].Name != "shelf" ||
+		!slices.Equal(plugins.Plugins[0].Command, []string{shelf}) || listed != registry {
+		t.Fatalf("study knowledge-base list = %+v; want Shelf alone, as setup registered it, in %s", plugins, registry)
+	}
+	// The learner serves an embedding model and names its address in
+	// Shelf's settings file. Here it is the test's own endpoint, to which
+	// "reply" means what "answer" means.
+	at := shelftest.NewEndpoint(t)
+	at.Same("reply", "answer")
+	// What the agent asks the book. It shares no word with the page that
+	// answers it, so a search by keyword finds nothing: only what the
+	// question means, which is the endpoint's to say, leads to the page.
+	const question = "which reply did Deep Thought give?"
+	settings := filepath.Join(j.home, ".config", "lamplight", "shelf.toml")
+	if err := os.WriteFile(settings, fmt.Appendf(nil, "format = 1\n\n[embedding]\nendpoint = %q\nrecipe = \"embeddinggemma-2\"\n", at.URL), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var checked core.PluginCheck
+	j.study(&checked, "knowledge-base", "check", "shelf")
+	if checked.Contract.Version != 1 || checked.Server.Name != "study-shelf" || !slices.Equal(checked.Command, []string{shelf}) ||
+		fmt.Sprint(checked.Contract.Search) != "[keyword embedding]" {
+		t.Fatalf("study knowledge-base check shelf = %+v; want the study-shelf beside study, which searches by embeddings too", checked)
 	}
 	j.study(nil, "setup", "--check")
 
@@ -474,6 +557,74 @@ func TestTheV2Journey(t *testing.T) {
 	a.write("lessons/answer.md", journeyLesson)
 	a.write("practice/answer/check.sh", checkScript)
 	a.call("phase_set", map[string]any{"topic": "c", "lesson": "answer", "phase": "practicing"}, nil)
+
+	// 5b. The Lesson's Evidence is from the learner's book. The Topic names
+	// Shelf, the agent adds the book as a Source, and has it indexed from
+	// its own shell: study source index is a command, and no MCP tool has a
+	// plugin index.
+	const answerPage = "The answer to the question of life, the universe and everything is forty-two."
+	book := filepath.Join(j.home, "Books", "the-answer.pdf")
+	if err := os.MkdirAll(filepath.Dir(book), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	shelftest.WritePDF(t, book, [][]string{{answerPage}, {"A shell script reads a file with cat, and compares what it holds."}})
+	a.call("topic_update", map[string]any{"topic": "c", "knowledge_base": map[string]any{"kind": "plugin", "plugin": "shelf"}}, nil)
+	var added core.SourceResult
+	a.call("source_add", map[string]any{"topic": "c", "file": book}, &added)
+	source := added.Source.ID
+	// Before anything is indexed, a search says so, and names the command.
+	var found core.PassageSearch
+	a.call("evidence_search", map[string]any{"topic": "c", "query": question}, &found)
+	if len(found.Passages) != 0 || len(found.LeftOut) != 1 || found.Action != "study source index c" {
+		t.Fatalf("a search before the book is indexed = %+v; want nothing found, and study source index c to run", found)
+	}
+	var indexed core.IndexResult
+	j.study(&indexed, "source", "index", "c")
+	if got := indexed.Sources; indexed.Plugin != "shelf" || len(got) != 1 || got[0].ID != source || !got[0].Asked || got[0].State != core.IndexIndexed {
+		t.Fatalf("study source index c = %+v; want the book indexed by Shelf", indexed)
+	}
+	// Shelf asked the endpoint for the vectors of the book's two Passages.
+	if asked := at.Asked(); len(asked) != 1 || asked[0].Path != "/v1/embeddings" || len(asked[0].Texts()) != 2 {
+		t.Fatalf("to index the book, the endpoint was asked %+v; want its two Passages, once", asked)
+	}
+	at.Forget()
+	// The agent searches the book through the server, with a question none
+	// of whose words is on the page, and is given the page's own text with
+	// where it is.
+	for _, word := range strings.Fields(strings.ToLower(strings.Trim(question, "?"))) {
+		if strings.Contains(strings.ToLower(answerPage), word) {
+			t.Fatalf("the question shares %q with the page, so a search by keyword would find the page too", word)
+		}
+	}
+	a.call("evidence_search", map[string]any{"topic": "c", "query": question}, &found)
+	if len(found.Passages) == 0 || found.Passages[0].Source != source || found.Passages[0].Location != "p. 1" ||
+		found.Passages[0].Text != answerPage || !slices.Equal(found.Searched, []string{source}) || found.Action != "" {
+		t.Fatalf("the search = %+v; want the book's first page first, as the book has it", found)
+	}
+	if asked := at.Asked(); len(asked) != 1 || fmt.Sprint(asked[0].Texts()) != "[task: search result | query: "+question+"]" {
+		t.Fatalf("for the search, the endpoint was asked %+v; want the question's vector, once", asked)
+	}
+	// The quote is recorded with the Passage it is from, and so checked
+	// against the book's text. What the book does not say is refused.
+	cite := func(quote string) map[string]any {
+		return map[string]any{"topic": "c", "lesson": "answer", "source": source, "quote": quote, "passages": []any{found.Passages[0].ID}}
+	}
+	var cited core.EvidenceResult
+	a.call("evidence_record", cite("the universe and everything is forty-two"), &cited)
+	if e := cited.Evidence; !cited.Changed || !e.Checked || e.Location != "p. 1" || e.LocationFrom != core.LocationFromKnowledgeBase || e.Plugin != "shelf" {
+		t.Fatalf("the Evidence = %+v; want it checked against its Passage, on p. 1", cited)
+	}
+	if said := a.refused("evidence_record", cite("The answer to everything is 42."), core.CodeInvalidArgument); !strings.Contains(said, "the quote is not in the text of Passage") {
+		t.Fatalf("a paraphrase was refused with %q", said)
+	}
+	// study doctor finds the plugin in order, and nothing left to index.
+	findings := j.doctor()
+	if f := findings["knowledge_base:shelf"]; f.Status != core.FindingOK || !strings.Contains(f.Message, "speaks version 1 of Lamplight's contract") {
+		t.Errorf("study doctor says of Shelf: %+v", f)
+	}
+	if f, has := findings["indexing:c"]; has {
+		t.Errorf("with the book indexed, study doctor says of the Topic's Sources: %+v", f)
+	}
 
 	// 6. The learner's first answer fails its Check.
 	a.write("practice/answer/answer.txt", "41\n")
@@ -569,7 +720,8 @@ func TestTheV2Journey(t *testing.T) {
 	// The History holds the story in order, and the replayed state agrees.
 	types := historyTypes(t, filepath.Join(j.studyHome, "c", "history.jsonl"))
 	for _, want := range [][]string{
-		{"topic.created", "session.opened", "session.focused", "revision.proposed", "revision.applied"},
+		{"topic.created", "session.opened", "session.focused", "revision.proposed", "revision.applied",
+			"knowledge_base_plugin.set", "source.added", "evidence_passages.recorded"},
 		{"attempt.recorded", "break_point.reached", "session.closed"},
 		{"session.opened", "attempt.recorded", "rubric.graded", "lesson.completed", "review.recorded",
 			"assessment.recorded", "session.closed"},

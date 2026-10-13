@@ -55,7 +55,13 @@ func TestSIGTERMStopsACheck(t *testing.T) {
 
 	var stdout bytes.Buffer
 	cmd := exec.Command(bin, "check", "answer", "--topic", "c", "--json")
-	cmd.Env = append(os.Environ(), "STUDY_HOME="+a.home, "PGID_FILE="+pgidFile)
+	// The home folder and the configuration folder are the test's since
+	// withGitIdentity. The other folders study uses are made the test's too:
+	// its Log goes to the state folder, and would go to the caller's.
+	own := os.Getenv("HOME")
+	cmd.Env = append(os.Environ(), "STUDY_HOME="+a.home, "PGID_FILE="+pgidFile,
+		"XDG_STATE_HOME="+filepath.Join(own, ".local", "state"), "XDG_DATA_HOME="+filepath.Join(own, ".local", "share"),
+		"XDG_CACHE_HOME="+filepath.Join(own, ".cache"))
 	cmd.Stdout = &stdout
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)

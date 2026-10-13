@@ -128,8 +128,9 @@ It needs `curl`, `tar` and `sha256sum` or `shasum`, and no sudo. It:
    leaves the earlier one as it was, and the script says so;
 4. runs `study completion install` for the learner's shell, and goes on when that fails;
 5. says when `~/.local/bin` is not on the `PATH`, or when another `study` comes first there,
-   and prints the next steps: `study setup`, and the two commands that register Shelf and
-   check it. It runs neither.
+   and prints the next steps: `study setup`, which registers the `study-shelf` beside
+   `study` as the Knowledge base plugin `shelf` among what it sets up, and
+   `study knowledge-base check shelf`. It runs neither.
 
 Running it again upgrades. Three variables change what it does, set for `sh`, as in
 `curl ... | STUDY_VERSION=v2.0.0 sh`:
@@ -140,8 +141,9 @@ Running it again upgrades. Three variables change what it does, set for `sh`, as
 | `STUDY_INSTALL_DIR` | The folder `study` and `study-shelf` go in. The man page and the notices are installed only when this is a `bin` folder, in `share/man/man1` and `share/doc/lamplight` beside it. For any other folder the script says that the notices were not installed, and that they are in the archive. |
 | `STUDY_DOWNLOAD_URL` | A folder of release files to download from instead of the GitHub release, as an `https://` or `file://` address, such as `file://$PWD/dist` after `make release-snapshot`. |
 
-To remove what it installed: `study setup --remove`, `study completion uninstall`,
-`study knowledge-base remove shelf` if Shelf was registered, then
+To remove what it installed: `study setup --remove`, which takes Shelf out of the registry
+when setup registered it, `study completion uninstall`,
+`study knowledge-base remove shelf` if you registered Shelf yourself, then
 delete `~/.local/bin/study`, `~/.local/bin/study-shelf`,
 `~/.local/share/man/man1/study.1.gz` and `~/.local/share/doc/lamplight`. The Study home
 is the learner's and stays, and so does Shelf's index, in
@@ -194,7 +196,9 @@ with `goreleaser check`, builds every artefact with
 platform holds both programs and that an archive, a deb and an rpm contain the
 completions, the man page and the licence, and installs the snapshot with `install.sh`
 into a temporary home. There it checks that the released `study` links nothing of Shelf's,
-registers the `study-shelf` that was installed and has `study knowledge-base check` start
+has `study setup` register the `study-shelf` that was installed, as it does for a learner
+(with `--force`, since that home is a temporary folder, and with nothing else on `PATH`,
+so that no agent of the runner's is set up), and has `study knowledge-base check` start
 it. It needs no secrets and is not a required check.
 
 The same job checks the notices in what was built: that each of the four archives holds

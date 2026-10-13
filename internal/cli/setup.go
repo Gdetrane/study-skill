@@ -21,11 +21,15 @@ import (
 )
 
 // study setup installs the lamplight skill and registers study's MCP server
-// with Claude Code and Codex (ADR-0008). It records each step in setup.json
-// before or as it takes it, under a lock, so --remove undoes exactly what was
-// done even when a run stopped part-way, and --check finds what went stale.
-// It never replaces or deletes a file or folder it did not create (see
-// setup_paths.go).
+// with Claude Code and Codex (ADR-0008). It records each of those steps in
+// setup.json before or as it takes it, under a lock, so --remove undoes
+// exactly what was done even when a run stopped part-way, and --check finds
+// what went stale. It never replaces or deletes a file or folder it did not
+// create (see setup_paths.go).
+//
+// It also registers Shelf as a Knowledge base plugin when study-shelf is
+// installed (see setup_shelf.go). Of that the record says nothing: which
+// registration is setup's is marked in the registry itself.
 
 const (
 	setupRecordFile   = "setup.json"
@@ -113,9 +117,12 @@ type setupResult struct {
 	StudyNote string        `json:"study_note,omitempty"`
 	Skill     skillResult   `json:"skill"`
 	Agents    []agentResult `json:"agents"`
-	DryRun    bool          `json:"dry_run"`
-	Remove    bool          `json:"remove"`
-	Note      string        `json:"note,omitempty"`
+	// Shelf says what happened to Shelf's registration as a Knowledge base
+	// plugin. It is absent when the run stopped before it got there.
+	Shelf  *shelfResult `json:"shelf,omitempty"`
+	DryRun bool         `json:"dry_run"`
+	Remove bool         `json:"remove"`
+	Note   string       `json:"note,omitempty"`
 	// Manual lists what is left for the learner to do by hand.
 	Manual []string `json:"manual"`
 }
@@ -152,6 +159,9 @@ type setupCheckResult struct {
 	Study    string         `json:"study"`
 	UpToDate bool           `json:"up_to_date"`
 	Findings []core.Finding `json:"findings"`
+	// shelfElsewhere says that study doctor reports on its own what the
+	// Finding about Shelf says (see checkShelf).
+	shelfElsewhere bool
 }
 
 // Statuses in setupResult.
@@ -176,10 +186,13 @@ func (a *app) setupCommand() *cobra.Command {
 	var dryRun, check, remove, force bool
 	cmd := &cobra.Command{
 		Use:   "setup",
-		Short: "Install the lamplight skill and register study with Claude Code and Codex",
+		Short: "Install the lamplight skill, register study with Claude Code and Codex, and register Shelf",
 		Long: "Install the lamplight skill in ~/.agents/skills/lamplight, link it from ~/.claude/skills/lamplight,\n" +
 			"and register study's MCP server at user scope with each agent's own command\n" +
 			"(claude mcp add --scope user, codex mcp add), by study's absolute path.\n\n" +
+			"When study-shelf is installed, beside study or on your PATH, setup also registers it as the\n" +
+			"Knowledge base plugin shelf, which indexes a Topic's Sources and searches them. A plugin you\n" +
+			"registered under that name yourself is left as it is.\n\n" +
 			"study setup never replaces or deletes a file or folder it did not create, and records each\n" +
 			"step: --remove undoes exactly what was done, and --check reports what went stale. When the\n" +
 			"Claude Code plugin is enabled, setup leaves Claude Code to the plugin.\n\n" +
@@ -235,6 +248,27 @@ func pickAgents(flag string) ([]string, error) {
 	return nil, usageError{fmt.Errorf("--agent must be claude, codex or all, not %q", flag)}
 }
 
+// setupError is what a study setup or --remove that did part of its work
+// could not do: for the skill and the agents, and for Shelf, which is no
+// agent's and is seen to whatever became of them.
+type setupError struct {
+	// agents is the first thing that went wrong with the skill or an agent,
+	// and shelf what went wrong with Shelf's registration.
+	agents, shelf error
+}
+
+func (e *setupError) Error() string { return errors.Join(e.agents, e.shelf).Error() }
+
+func (e *setupError) Unwrap() []error {
+	var errs []error
+	for _, err := range []error{e.agents, e.shelf} {
+		if err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errs
+}
+
 // failWith reports err after a setup that did part of its work: the JSON
 // envelope holds what was done as its data, and people see it before the
 // error. An error before setup looked at anything is reported alone.
@@ -244,7 +278,10 @@ func (a *app) failWith(res setupResult, err error) error {
 	}
 	if !a.json {
 		if res.didSomething() {
-			_ = writeSetupResult(a.out, res, true)
+			// Only what kept setup from the skill or an agent stopped it
+			// part-way: with Shelf alone left undone, the rest is done.
+			var partial *setupError
+			_ = writeSetupResult(a.out, res, !errors.As(err, &partial) || partial.agents != nil)
 		}
 		return err
 	}
@@ -254,8 +291,12 @@ func (a *app) failWith(res setupResult, err error) error {
 	return reported{err}
 }
 
+// didSomething reports whether the result has anything to show: a file
+// written or removed, an agent, or something about Shelf beyond its not
+// being installed.
 func (r setupResult) didSomething() bool {
-	return len(r.Skill.Written) > 0 || len(r.Skill.Removed) > 0 || len(r.Agents) > 0
+	shelf := r.Shelf != nil && !slices.Contains([]string{"", statusNotInstalled, statusSkipped}, r.Shelf.Status)
+	return len(r.Skill.Written) > 0 || len(r.Skill.Removed) > 0 || len(r.Agents) > 0 || shelf
 }
 
 // setupRun is one study setup or --remove. It works on the record and saves
@@ -314,8 +355,22 @@ func (a *app) setupInstall(ctx context.Context, agents []string, dryRun, force b
 	if err != nil {
 		return res, err
 	}
-	// A skill folder setup did not create stops it before it writes
-	// anything, its lock and state folder included.
+	// Shelf is no agent's: it is registered whatever became of the skill and
+	// the agents, and what went wrong with those is reported after it.
+	withShelf := func(agentsErr error) (setupResult, error) {
+		shelf, shelfErr := a.registerShelf(ctx, loc, dryRun, force)
+		res.Shelf = &shelf
+		if !dryRun && agentsErr == nil {
+			res.Note = "Start a new conversation in your agent to use Lamplight."
+		}
+		if agentsErr == nil && shelfErr == nil {
+			return res, nil
+		}
+		return res, &setupError{agents: agentsErr, shelf: shelfErr}
+	}
+	// A skill folder setup did not create stops it, for the skill and the
+	// agents, before it writes anything for them, its lock and state folder
+	// included.
 	if !dryRun {
 		dry, unlock, err := a.beginSetup(ctx, true)
 		if err != nil {
@@ -325,7 +380,7 @@ func (a *app) setupInstall(ctx context.Context, agents []string, dryRun, force b
 		if skill, err := dry.installSkill(files); err != nil {
 			res.Skill = skill
 			res.Skill.Written = []string{}
-			return res, err
+			return withShelf(err)
 		}
 	}
 	run, unlock, err := a.beginSetup(ctx, dryRun)
@@ -335,7 +390,7 @@ func (a *app) setupInstall(ctx context.Context, agents []string, dryRun, force b
 	defer unlock()
 	res.Skill, err = run.installSkill(files)
 	if err != nil {
-		return res, err
+		return withShelf(err)
 	}
 	plugin := a.claudePlugin()
 	var firstErr error
@@ -346,10 +401,7 @@ func (a *app) setupInstall(ctx context.Context, agents []string, dryRun, force b
 			firstErr = err
 		}
 	}
-	if !dryRun && firstErr == nil {
-		res.Note = "Start a new conversation in your agent to use Lamplight."
-	}
-	return res, firstErr
+	return withShelf(firstErr)
 }
 
 // installSkill installs or updates the skill folder setup owns, and refuses
@@ -747,10 +799,26 @@ func (a *app) setupRemove(ctx context.Context, agents []string, dryRun bool) (se
 		return res, err
 	}
 	defer unlock()
+	// Shelf is no agent's: its registration goes when all of setup is undone,
+	// and stays when one agent's is, so that a learner who hands Claude Code
+	// over to the plugin keeps the Knowledge base their Topics name. The
+	// record says nothing of it: the registry is asked, whatever the record
+	// holds.
+	withShelf := func(agentsErr error) (setupResult, error) {
+		shelf, shelfErr := a.unregisterShelf(ctx, dryRun, len(agents) == len(setupAgents))
+		res.Shelf = &shelf
+		if agentsErr == nil && shelfErr == nil {
+			return res, nil
+		}
+		return res, &setupError{agents: agentsErr, shelf: shelfErr}
+	}
 	if run.rec.empty() {
 		res.Skill.Status = statusNotInstalled
-		res.Note = "study setup has not installed anything"
-		return res, nil
+		res, err := withShelf(nil)
+		if res.Shelf.Status == statusNotInstalled {
+			res.Note = "study setup has not installed anything"
+		}
+		return res, err
 	}
 	var firstErr error
 	for _, agent := range agents {
@@ -794,7 +862,7 @@ func (a *app) setupRemove(ctx context.Context, agents []string, dryRun bool) (se
 			firstErr = firstOf(firstErr, err)
 		}
 	}
-	return res, firstErr
+	return withShelf(firstErr)
 }
 
 // firstOf keeps the first error.
@@ -965,6 +1033,8 @@ func (a *app) setupCheck(ctx context.Context, agents []string) (setupCheckResult
 	for _, agent := range agents {
 		res.Findings = append(res.Findings, a.checkAgent(ctx, agent, loc.Path, plugin, rec)...)
 	}
+	shelf, elsewhere := a.checkShelf(ctx, loc)
+	res.Findings, res.shelfElsewhere = append(res.Findings, shelf), elsewhere
 	res.UpToDate = true
 	for _, f := range res.Findings {
 		if f.Status != core.FindingOK {
@@ -1116,6 +1186,15 @@ func (a *app) diagnoseSetup(ctx context.Context) core.Finding {
 		}
 	}
 	if rec.empty() && !plugin.enabled && len(found) == 0 {
+		// Shelf is no agent's: a study-shelf that is installed and not
+		// registered is said so here too, as study setup --check says it,
+		// though there is no agent to set up.
+		if loc, err := a.studyPath(); err == nil {
+			if shelf, elsewhere := a.checkShelf(ctx, loc); shelf.Status != core.FindingOK && !elsewhere {
+				f.Status, f.Message, f.Fix = core.FindingWarn, shelf.Message, shelf.Fix
+				return f
+			}
+		}
 		f.Status, f.Message = core.FindingOK, "no Claude Code or Codex found; other agents need an MCP server that runs study mcp"
 		return f
 	}
@@ -1132,6 +1211,11 @@ func (a *app) diagnoseSetup(ctx context.Context) core.Finding {
 		// The Claude Code plugin carries its own copy of the skill: without
 		// Codex, nothing needs the one study setup would install.
 		if g.Name == "setup:skill" && plugin.enabled && rec.Skill == nil && !slices.Contains(found, agentCodex) {
+			continue
+		}
+		// What is wrong with the registry, or with the program of setup's
+		// registration, the doctor says where it reports the plugins: once.
+		if g.Name == "setup:shelf" && res.shelfElsewhere {
 			continue
 		}
 		if g.Status != core.FindingOK {
@@ -1238,7 +1322,8 @@ func statusText(status string, dryRun bool) string {
 // the run stopped part-way: the error follows on stderr.
 func writeSetupResult(w io.Writer, r setupResult, failed bool) error {
 	var b strings.Builder
-	nothing := r.Remove && r.Skill.Status == statusNotInstalled && len(r.Agents) == 0
+	nothing := r.Remove && r.Skill.Status == statusNotInstalled && len(r.Agents) == 0 &&
+		(r.Shelf == nil || r.Shelf.Status == statusNotInstalled)
 	switch {
 	case failed && r.Remove:
 		b.WriteString("study setup --remove stopped part-way, after this:\n")
@@ -1288,6 +1373,14 @@ func writeSetupResult(w io.Writer, r setupResult, failed bool) error {
 			fmt.Fprintf(&b, "  %s%s\n", pad("", 8), styleDim.Render(printable(g.Note)))
 		}
 	}
+	if g := r.Shelf; g != nil && g.Status != statusNotInstalled {
+		fmt.Fprintf(&b, "  %s%s\n", styleLabel.Render(pad(shelfName, 8)), shelfText(*g, r.DryRun, r.Remove))
+		// Why Shelf was not registered, or not removed, is the error that
+		// follows: it is said once.
+		if g.Note != "" && g.Status != statusFailed {
+			fmt.Fprintf(&b, "  %s%s\n", pad("", 8), styleDim.Render(printable(g.Note)))
+		}
+	}
 	for _, m := range r.Manual {
 		fmt.Fprintf(&b, "By hand: %s\n", m)
 	}
@@ -1296,6 +1389,27 @@ func writeSetupResult(w io.Writer, r setupResult, failed bool) error {
 	}
 	_, err := io.WriteString(w, b.String())
 	return err
+}
+
+// shelfText says what happened to Shelf's registration as a Knowledge base
+// plugin.
+func shelfText(g shelfResult, dryRun, remove bool) string {
+	text := statusText(g.Status, dryRun)
+	switch g.Status {
+	case statusFailed:
+		// A dry run that fails made nothing either.
+		if remove {
+			return "not removed"
+		}
+		return "not registered"
+	case statusRegistered, statusReregistered:
+		return text + " as Knowledge base plugin " + g.Name + ": " + printable(g.Program)
+	case statusCurrent:
+		return text + ": Knowledge base plugin " + g.Name + " runs " + printable(g.Program)
+	case statusRemoved:
+		return text + " Knowledge base plugin " + g.Name + " from this computer's registry"
+	}
+	return text
 }
 
 // linkText says what happened to Claude Code's link to the skill.

@@ -374,13 +374,15 @@ func humanSize(n int64) string {
 // under each warning or failure.
 func writeDiagnosis(w io.Writer, d core.Diagnosis) error {
 	var b strings.Builder
+	// A Finding can hold a folder's name, a Source's title or what a plugin
+	// wrote.
 	names := make([]string, len(d.Findings))
 	for i, f := range d.Findings {
-		names[i] = f.Name
+		names[i] = printable(f.Name)
 	}
 	width := widest(names) + 2
 	var warnings, failures int
-	for _, f := range d.Findings {
+	for i, f := range d.Findings {
 		mark := styleOK.Render("✓")
 		switch f.Status {
 		case core.FindingWarn:
@@ -388,9 +390,9 @@ func writeDiagnosis(w io.Writer, d core.Diagnosis) error {
 		case core.FindingFail:
 			mark, failures = styleFail.Render("✗"), failures+1
 		}
-		fmt.Fprintf(&b, "%s %s%s\n", mark, styleLabel.Render(pad(f.Name, width)), f.Message)
+		fmt.Fprintf(&b, "%s %s%s\n", mark, styleLabel.Render(pad(names[i], width)), printable(f.Message))
 		if f.Fix != "" {
-			fmt.Fprintf(&b, "  %s%s %s\n", strings.Repeat(" ", width), styleDim.Render("fix:"), f.Fix)
+			fmt.Fprintf(&b, "  %s%s %s\n", strings.Repeat(" ", width), styleDim.Render("fix:"), printable(f.Fix))
 		}
 	}
 	b.WriteString("\n")

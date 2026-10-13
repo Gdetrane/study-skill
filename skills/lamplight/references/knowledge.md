@@ -19,7 +19,9 @@ Evidence. It is one of two kinds:
   them ([Searching the Sources](#searching-the-sources)). Name one with
   `topic_update` when the learner asks for it, by the name `study knowledge-base list`
   shows. Registering, changing and removing a plugin are the learner's to do
-  (Instruction 14): when none is registered, say so and leave the Topic as it is.
+  (Instruction 14): when none is registered, say so and leave the Topic as it is. Shelf,
+  the plugin that comes with Lamplight, is registered as `shelf` by `study setup`, which
+  the learner runs, and `study doctor` tells them whether a plugin starts.
 
 ## Indexing
 

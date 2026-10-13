@@ -2,5 +2,6 @@
 ✓ setup:claude             study is registered with claude
 ✓ setup:claude_skill_link  $HOME/.claude/skills/lamplight leads to the skill
 ✓ setup:codex              study is registered with codex
+✓ setup:shelf              study-shelf is not installed, so study setup registers no Knowledge base plugin
 
 study setup is up to date.

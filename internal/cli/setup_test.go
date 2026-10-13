@@ -510,7 +510,8 @@ func TestSetupDryRunsAndChecksWriteNothing(t *testing.T) {
 		t.Errorf("dry run: %v", dry)
 	}
 	r := h.run(t, "setup", "--check", "--json")
-	if code, data := failure(t, r); code != "unhealthy" || data["up_to_date"] != false || len(data["findings"].([]any)) != 3 {
+	// The skill, the two agents, and Shelf.
+	if code, data := failure(t, r); code != "unhealthy" || data["up_to_date"] != false || len(data["findings"].([]any)) != 4 {
 		t.Errorf("--check before setup: %s", r.stdout)
 	}
 	for p, sum := range tree256(t, h.home) {
@@ -1156,6 +1157,40 @@ func TestSetupRefusesARecordNamingWhatItNeverCreates(t *testing.T) {
 	}
 	if h.calls(t) != nil {
 		t.Errorf("a refused record ran agent commands: %v", h.calls(t))
+	}
+}
+
+// setup.json is in the state folder, where an agent may write. What a
+// refused record names is shown in the refusal, and never as it is: a
+// character a terminal would obey, or would not show, is spelled out.
+func TestSetupSpellsOutWhatARefusedRecordNames(t *testing.T) {
+	h := newSetupHome(t, "codex")
+	link := h.path(".claude", "skills", "lamplight")
+	fill := strings.NewReplacer("@HOME@", h.home, "@SKILL@", h.skill(), "@LINK@", link).Replace
+	// \u202e turns the direction of what follows it, and \u0007 rings.
+	for name, rec := range map[string]string{
+		"another skill folder": `{"format":1,"skill":{"dir":"@HOME@/a\u202eb","real":"@SKILL@","files":{}},"registrations":[]}`,
+		"a folder it never creates for the skill": `{"format":1,"skill":{"dir":"@SKILL@","real":"@SKILL@","files":{},` +
+			`"parents":[{"path":"@HOME@/a\u202eb","real":"@HOME@"}]},"registrations":[]}`,
+		"a link from elsewhere": `{"format":1,"claude_skill_link":{"path":"@HOME@/a\u202eb","target":"@SKILL@","parent":"@HOME@"},` +
+			`"registrations":[]}`,
+		"a link to elsewhere": `{"format":1,"claude_skill_link":{"path":"@LINK@","target":"@HOME@/a\u202eb","parent":"@HOME@"},` +
+			`"registrations":[]}`,
+		"a folder it never creates for the link": `{"format":1,"claude_skill_link":{"path":"@LINK@","target":"@SKILL@","parent":"@HOME@",` +
+			`"parents":[{"path":"@HOME@/a\u202eb","real":"@HOME@"}]},"registrations":[]}`,
+		"an agent it does not know":  `{"format":1,"registrations":[{"agent":"a\u202eb","name":"lamplight","command":"/bin/study","args":["mcp"]}]}`,
+		"a registration's name":      `{"format":1,"registrations":[{"agent":"codex","name":"a\u202eb","command":"/bin/study","args":["mcp"]}]}`,
+		"a registration's command":   `{"format":1,"registrations":[{"agent":"codex","name":"lamplight","command":"a\u202eb","args":["mcp"]}]}`,
+		"a registration's arguments": `{"format":1,"registrations":[{"agent":"codex","name":"lamplight","command":"/bin/study","args":["a\u202eb\u0007"]}]}`,
+	} {
+		writeFile(t, h.recordPath(), fill(rec))
+		for _, args := range [][]string{{"setup"}, {"setup", "--remove"}, {"setup", "--check"}, {"doctor"}} {
+			r := h.run(t, args...)
+			said := r.stdout + r.stderr
+			if strings.ContainsAny(said, "\u202e\a") || !strings.Contains(said, `a\u202eb`) {
+				t.Errorf("%s, study %s: the refusal does not spell out what the record names:\n%q", name, strings.Join(args, " "), said)
+			}
+		}
 	}
 }
 

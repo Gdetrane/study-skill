@@ -1,0 +1,19 @@
+✓ config                   no $HOME/.config/lamplight/config.toml; using the defaults
+✓ study_home               $HOME/study
+✓ git                      git 2.47.1
+✓ git_identity             Checkpoints are saved as Ada Lovelace <ada@example.com>
+✓ local_state              $HOME/study/.lamplight/state.toml
+✓ topics                   3 Topics
+✓ library                  no index yet: study library build <folder> indexes your books
+✓ knowledge_base           $HOME/.config/lamplight/knowledge-base-plugins.json
+✓ knowledge_base:kb        started by $PLUGIN lamplight-test-plugin --record $RECORD, speaks version 1 of Lamplight's contract
+! indexing:c               no Knowledge base plugin named shelf is registered on this computer
+                           fix: study knowledge-base add shelf -- <command>
+✓ indexing:go              indexing failed: Paper (there is no text in it)
+! indexing:linear-algebra  not indexed: Lost (its file is not on this computer); indexing failed: Scan (there is no text in it)
+                           fix: study source list linear-algebra
+✓ log                      $HOME/.local/state/lamplight/study.log (level info)
+✓ completion               skipped: $SHELL is not bash, zsh or fish
+✓ setup                    no Claude Code or Codex found; other agents need an MCP server that runs study mcp
+
+Ready to study, with 2 warnings.

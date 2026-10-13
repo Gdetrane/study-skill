@@ -24,7 +24,10 @@ const (
 	LockName = "knowledge-base-plugins.lock"
 
 	// Format is the format number this version writes, and the newest it
-	// reads.
+	// reads. It is still 1 with the mark of study setup (Plugin.BySetup),
+	// which came after the first registry was written: no release has written
+	// a registry yet, so no study reads one that would call the mark a key it
+	// does not know.
 	Format = 1
 
 	// MaxBytes is how large a registry may be, MaxArgs how many arguments a
@@ -63,6 +66,12 @@ type Plugin struct {
 	// command although an argument names something inside the Study home,
 	// which the agent can change.
 	AllowStudyHomeArguments bool `json:"allow_study_home_arguments,omitempty"`
+	// BySetup marks a registration that study setup made, and no other:
+	// the one registration setup may replace or remove. Whatever the learner
+	// registers has no mark, and so is theirs whatever it runs. The mark is
+	// in the registry, which is where the agent cannot write, so nothing an
+	// agent can write says which registration is setup's.
+	BySetup bool `json:"by_setup,omitempty"`
 	// Problem says, in a listing, why study does not use the plugin as it
 	// is registered, and what to do. It is never stored.
 	Problem string `json:"problem,omitempty"`

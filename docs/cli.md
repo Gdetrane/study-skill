@@ -37,8 +37,8 @@ that scripts and agents can rely on. Terms follow [GLOSSARY.md](../GLOSSARY.md).
 | `study evidence record <topic> --lesson L --source S --quote Q [--passage P]... [--location LOC --location-from F] [--dry-run]` | Records an exact quote from a Source that a Lesson cites. `--quote -` reads the quote from stdin. With `--passage`, the id of the Passage the quote is from as `study evidence search` gave it, the quote is checked: it is refused (`invalid_argument`) when it is not in the Passage's text, and its location is the Passage's, so `--location` is then refused too. Repeat `--passage`, in order, for a quote that runs from one Passage into the next: each names one Passage, and one given without an id is a usage error. Without `--passage` nothing is checked. Recording the same Evidence twice changes nothing. A dry run asks the plugin and checks the quote, as the real run does. See [Evidence checked against its Passage](#evidence-checked-against-its-passage). |
 | `study evidence retract <topic> <evidence> [--dry-run]` | Takes back Evidence recorded by mistake. The retraction is recorded, never deleted; retracting twice changes nothing. |
 | `study evidence list <topic> [--lesson L] [--all]` | Lists the Evidence recorded in the Topic, or only what one Lesson cites, each with whether its quote was checked against the Passages it is from (`checked`, and then `passages` and `plugin`). Retracted Evidence is listed only with `--all`. |
-| `study knowledge-base add <name> [--allow-study-home-arguments] [--replace] [--dry-run] (--url URL \| -- <command> [args...])` | Registers a Knowledge base plugin on this computer under a name, by the command that starts it, given after `--`, or by the http or https URL it answers at. The command's program is found on `PATH`, or at the path given, and registered by its absolute path. A program inside the Study home, or reached through it, is `invalid_argument`; so is an argument that names something there, unless `--allow-study-home-arguments` is given, and one that names a file relative to the folder `study` is started in. A program, or an argument that is not allowed so, named by a path `study` cannot follow to its end is `failed_precondition`: it is never taken for one outside the Study home. Registering a plugin as it is registered already changes nothing (`changed: false`); a name registered as something else is `already_exists` unless `--replace` is given. It records no Event, and agents have no tool for it. See [Knowledge base plugins](#knowledge-base-plugins). |
-| `study knowledge-base list` | Lists the Knowledge base plugins registered on this computer, by name, and where the registry is. A plugin `study` does not use as it is registered carries a `problem`. |
+| `study knowledge-base add <name> [--allow-study-home-arguments] [--replace] [--dry-run] (--url URL \| -- <command> [args...])` | Registers a Knowledge base plugin on this computer under a name, by the command that starts it, given after `--`, or by the http or https URL it answers at. The command's program is found on `PATH`, or at the path given, and registered by its absolute path. A program inside the Study home, or reached through it, is `invalid_argument`; so is an argument that names something there, unless `--allow-study-home-arguments` is given, and one that names a file relative to the folder `study` is started in. A program, or an argument that is not allowed so, named by a path `study` cannot follow to its end is `failed_precondition`: it is never taken for one outside the Study home. Registering a plugin as it is registered already changes nothing (`changed: false`); a name registered as something else is `already_exists` unless `--replace` is given. What it registers is the learner's, and never carries the mark of a registration `study setup` made (`by_setup`). It records no Event, and agents have no tool for it. See [Knowledge base plugins](#knowledge-base-plugins). |
+| `study knowledge-base list` | Lists the Knowledge base plugins registered on this computer, by name, and where the registry is. A plugin `study` does not use as it is registered carries a `problem`, and the one `study setup` registered says so (`by_setup`). |
 | `study knowledge-base remove <name> [--dry-run]` | Removes a Knowledge base plugin from this computer's registry, leaving its program or service as it is; a name that is not registered is `not_found`. It records no Event, and agents have no tool for it. |
 | `study knowledge-base check <name>` | Starts the Knowledge base plugin registered under the name, or reaches it at its URL, asks which version of Lamplight's contract it speaks and what it can do, and stops it again. The result is `{"name", "command"?, "address"?, "contract": {"version", "sources", "search", "locations"}, "server": {"name", "version"?}, "data_folder"?}`. A name that is not registered is `not_found`; a plugin that cannot be started, does not start, does not answer in time, is no MCP server or does not speak the contract is `failed_precondition`, with what to do; one that speaks a newer contract is `newer_format`. Nothing is left running. It indexes and searches nothing, records no Event, and agents have no tool for it. See [Knowledge base plugins](#knowledge-base-plugins). |
 | `study syllabus [topic]` | Shows a Topic's Syllabus (the Active topic's when none is named): Milestones and Lessons with their display numbers and status, the Revisions waiting for the learner with their change, and a hand edit of `syllabus.toml` (see [The Syllabus](#the-syllabus)). |
@@ -60,14 +60,14 @@ that scripts and agents can rely on. Terms follow [GLOSSARY.md](../GLOSSARY.md).
 | `study card delete <topic> <card> [--dry-run]` | Deletes a Card for good; deleting it again changes nothing. |
 | `study card flag <topic> <card> [--note N] [--dry-run]` | Flags a Card as wrong or unclear, so it shows in `status` until fixed. |
 | `study card review <topic> <card> --rating R [--draft keep\|edit\|drop] [--prompt P --answer A] [--request ID] [--dry-run]` | Records one Review, for scripts; at a draft's first Review `--draft` is required. A retry with the same `--request`, or repeating a draft's first decision, returns the Review already recorded (`changed: false`). A dry run shows the Card after the Review. |
-| `study doctor` | Diagnoses the setup and says how to fix what it finds. It works even when nothing else does. Exits 1 when a Finding failed. |
+| `study doctor` | Diagnoses the setup and says how to fix what it finds: the Knowledge base plugins this computer has, and which Sources they have not indexed, among it. It works even when nothing else does. Exits 1 when a Finding failed. See [study doctor](#study-doctor). |
 | `study completion install [--shell S] [--dir D] [--yes] [--force] [--dry-run]` | Installs completions for bash, zsh or fish (default: from `$SHELL`) for your user. |
 | `study completion uninstall [--shell S] [--dry-run]` | Removes what `install` added, for every shell or only `--shell`. |
 | `study completion bash`, `study completion zsh`, `study completion fish`, `study completion powershell` `[--no-descriptions]` | Prints a completion script, for packagers. `--no-descriptions` leaves out the help text shown next to each completion. |
 | `study man` | Prints study's man page in roff, for packagers to install as `study.1` (hidden from help). The page's date is the one `SOURCE_DATE_EPOCH` names (seconds since 1970, UTC) when it is set, so a package built twice from one source holds the same page, and today's otherwise. It has no JSON form: with `--json` it is a usage error. |
-| `study setup [--agent claude\|codex\|all] [--dry-run] [--force]` | Installs the `lamplight` skill and registers `study mcp` with Claude Code and Codex. See [Setting up agents](#setting-up-agents). |
+| `study setup [--agent claude\|codex\|all] [--dry-run] [--force]` | Installs the `lamplight` skill and registers `study mcp` with Claude Code and Codex. When `study-shelf` is installed, it also registers it as the Knowledge base plugin `shelf`, with a mark in the registry that says the registration is setup's, and leaves a plugin the learner registered under that name as it is. A `study` or a `study-shelf` in a temporary folder is refused unless `--force` is given. See [Setting up agents](#setting-up-agents). |
 | `study setup --check [--agent A]` | Reports what is missing or stale, changing nothing; exits 1 (`unhealthy`) when setup has something to do. |
-| `study setup --remove [--agent A] [--dry-run]` | Undoes exactly what `study setup` did. |
+| `study setup --remove [--agent A] [--dry-run]` | Undoes exactly what `study setup` did. Of the Knowledge base plugins it removes the one that carries setup's mark, and only without `--agent`. |
 | `study claude-plugin-path` | Writes the Claude Code plugin and prints its folder; the plugin marketplace runs it. |
 | `study mcp` | Runs the MCP server over stdin and stdout. On start it refreshes a skill copy that `study setup` installed, when nobody changed it. |
 
@@ -1579,7 +1579,9 @@ speaks. A Topic names the plugin it uses (`study topic update --knowledge-base <
 `study evidence record --passage` checks a quote against a Passage of it (see
 [Sources and Evidence](#sources-and-evidence)). The plugin that ships with Lamplight is
 Shelf, the `study-shelf` program installed beside `study`: [docs/shelf.md](shelf.md) says
-what it reads and where it keeps its index.
+what it reads and where it keeps its index. `study setup` registers it as `shelf`
+([Shelf](#shelf)), and `study doctor` checks every plugin that is registered
+([study doctor](#study-doctor)).
 
 - **The registry** is `knowledge-base-plugins.json` in Lamplight's configuration folder,
   beside `config.toml`: `$XDG_CONFIG_HOME/lamplight`, or `~/.config/lamplight`. It is this
@@ -1593,7 +1595,7 @@ what it reads and where it keeps its index.
       {"name": "notes", "command": ["/opt/kb/bin/notes-kb", "--root=/home/ada/study/notes"],
        "allow_study_home_arguments": true},
       {"name": "remote", "url": "http://localhost:8765/mcp"},
-      {"name": "shelf", "command": ["/usr/local/bin/study-shelf", "--stdio"]}
+      {"name": "shelf", "command": ["/usr/local/bin/study-shelf"], "by_setup": true}
     ]
   }
   ```
@@ -1601,6 +1603,17 @@ what it reads and where it keeps its index.
   Change it with `study knowledge-base`, not by hand. The file is created readable by the
   learner alone, since a URL may carry a key, and the configuration folder likewise when
   it has to be created.
+- **Whose a registration is.** `by_setup` marks the registration `study setup` made
+  ([Shelf](#shelf)), and no other: it is how setup knows, at every run, which registration
+  is its own to bring up to date or to remove. The registry says it, and nothing else
+  does, because the registry is the one file about plugins that is read only where the
+  agent cannot write. `study knowledge-base add` never writes the mark, with or without
+  `--replace`: whatever the learner registers is theirs. Registering under a name setup
+  registered takes the registration over, the very command setup registered included
+  (`changed: true`, with setup's registration in `replaced`). The mark goes with a command
+  and never with a URL, and is written only when it is `true`. It was added to format 1,
+  which stays 1: no release has written a registry yet, so no `study` in use takes the
+  mark for a key it does not know.
 - **A name** is what a Topic calls the plugin: lowercase letters, digits and single
   hyphens, up to 64 characters, like a Topic's id. `none` and `plugin` are refused: they
   are the kinds of Knowledge base a Topic records, and a name is never one of them.
@@ -1674,7 +1687,8 @@ what it reads and where it keeps its index.
 - **A name that is registered**: registering it again the same way changes nothing and
   writes nothing (`changed: false`). As something else, it is `already_exists`, unless
   `--replace` is given: then the name stands for the new one, and the result carries what
-  it stood for in `replaced`.
+  it stood for in `replaced`. A registration `study setup` made is registered again as
+  the learner's own even the same way, without `--replace`: see above.
 - **Where the registry may be**: the registry decides which programs `study` starts, so it
   is read only where the agent cannot write it, or lead it elsewhere. Lamplight's
   configuration folder is found once, one name at a time like a program's path, and
@@ -1724,6 +1738,9 @@ what it reads and where it keeps its index.
 `{"plugin": {...}, "registry": path}` with the plugin as it was registered, and `list`
 returns `{"registry": path, "plugins": [...]}`, where `registry` is given whether or not
 the file exists yet. A dry run adds `"dry_run": true` and reports what the real run would.
+A plugin `study setup` registered carries `"by_setup": true` wherever it is shown, in
+`replaced` too; in text, `list` says "Registered by study setup" under it, and `add` says
+when the registration it replaced was setup's.
 
 In `list`, a plugin can carry a `problem`: its program, or an argument the learner did not
 allow, is inside the Study home this `study` uses or is reached through it, or is named by
@@ -1754,8 +1771,9 @@ nothing is indexed and nothing is searched.
 `name` is the name the plugin is registered under. `command` is the command that starts
 it, as it is registered; a plugin reached by URL has `address` instead, **the scheme and
 host of its registered address and no more**, such as `http://localhost:8765`: the rest of
-an address, a path or a query, may be a key, and `study knowledge-base list` is the one
-command that shows it. `contract` is what the plugin's `contract` tool said: the contract
+an address, a path or a query, may be a key. Only the commands that show a registration
+as it is in the registry show it: `study knowledge-base list`, and `add` and `remove` of
+the plugin itself. `contract` is what the plugin's `contract` tool said: the contract
 version, the kinds of Source it indexes (`file`, `url`), how it searches (`keyword`,
 `embedding`) and the kinds of location its Passages carry (`pages`); a kind this version
 does not know is given as the plugin wrote it. `server` is what the plugin calls itself,
@@ -1898,13 +1916,64 @@ and the fix is to set it to an absolute path or unset it), `config`,
 `study_home`, `git`, `git_identity` (only when git works), and, when the Study home
 resolves, `local_state`, `topics`, one `topic:<id>` per Topic with a problem, `staging` (a
 warning, only when an interrupted import or Topic creation left folders in `.lamplight/tmp`
-over an hour ago; the next `study import` removes them), and `library`; then `log`,
-`completion` and `setup`. A Topic folder study cannot read is a failed `topic:<id>`; a
-Topic whose `.git` is missing, or is a file or a symlink (which Checkpoints refuse), is a
-warning.
+over an hour ago; the next `study import` removes them), `library`, and what it finds of
+the Knowledge base plugins (below); then `log`, `completion` and `setup`. A Topic folder
+study cannot read is a failed `topic:<id>`; a Topic whose `.git` is missing, or is a file
+or a symlink (which Checkpoints refuse), is a warning.
 
-`study doctor` writes nothing: it checks permissions instead of writing test files, and the
-Log file is not created by checking it.
+When the Study home resolves, `study doctor` looks at the Knowledge base plugins this
+computer has ([Knowledge base plugins](#knowledge-base-plugins)):
+
+- `knowledge_base` is the registry. Its message is the registry's path, or says that no
+  plugin is registered. A registry `study` cannot read, or does not read because it is
+  where the agent could write it, is a warning in the registry's own words, which say
+  what to do. No plugin is started then, and nothing below is reported.
+- `knowledge_base:<name>`, one for each registered plugin, in order of name. The plugin
+  is started, or reached, asked which contract it speaks, and stopped again, as
+  `study knowledge-base check <name>` does it. One that speaks the contract is `ok`, with
+  the command that starts it, or the scheme and host it answers at. Any other is a
+  warning, with what `study knowledge-base check` says of it. Its `fix` is
+  `study knowledge-base check <name>` for a plugin that did not start, did not answer or
+  does not speak the contract, which gives it thirty seconds and says what is wrong; how
+  to register it where it is now, for one whose program is gone;
+  `study knowledge-base list` for one `study` does not use as it is registered; and
+  `upgrade study` for one that speaks a newer contract. Shelf's settings file is Shelf's to
+  read: a file Shelf cannot use keeps it from starting, and its reason is the message.
+- `indexing:<topic>`, for an active Topic that names a plugin, when there is something to
+  say of it. The message and the `fix` are what `status` gives as the Topic's `indexing`:
+  its `problem`, or its Sources by state, and its `action`
+  ([What is indexed](#what-is-indexed)). So a Topic that names a plugin this computer does
+  not have is a warning, and its fix registers one. Sources that are not indexed, or are
+  to be indexed again, are a warning that names them, and the fix is
+  `study source index <topic>` only when that would have one of them indexed, and
+  `study source list <topic>` when a file is missing, changed or unreadable. Sources
+  whose indexing failed are named with the plugin's reason in a Finding that is `ok` and
+  has no fix: a failure is no next action. A Topic whose Sources are all indexed has no
+  such Finding, and neither has a Topic whose plugin's own Finding says what is wrong.
+
+```json
+{ "name": "knowledge_base:shelf", "status": "ok",
+  "message": "started by /home/ada/.local/bin/study-shelf, speaks version 1 of Lamplight's contract" },
+{ "name": "indexing:linear-algebra", "status": "warn",
+  "message": "not indexed: Strang; indexing failed: Scan (the file has no text layer)",
+  "fix": "study source index linear-algebra" }
+```
+
+The doctor waits for no plugin, and has none index. Reading the registry, starting the
+plugins and their answers share the two seconds `status` gives a plugin, once to check
+them, side by side, and once to ask what they have indexed. A plugin that takes longer is
+stopped and is a warning, and is not asked a second time for the Topics that name it: one
+that does not answer is waited for once. A plugin is asked its `contract` and `status`
+tools and no other, and Shelf asks no endpoint for either. So the doctor does not say
+whether an endpoint in Shelf's settings file answers: indexing and searching do, with
+`study source index` and `study evidence search`. None of these Findings is a failure: a
+Topic whose plugin cannot be asked works as one without a Knowledge base.
+
+`study doctor` writes nothing in the Study home or in Lamplight's configuration folder: it
+checks permissions instead of writing test files, and the Log file is not created by
+checking it. Starting a plugin that is registered by a command gives it its folder in
+Lamplight's state folder, which is made when it is not there, as
+`study knowledge-base check` makes it.
 
 ## Completions
 
@@ -1975,7 +2044,11 @@ instead.
   may not survive an upgrade.
 - A `study` in a temporary build folder (a `go-build` folder, as `go run` uses, or under
   `$TMPDIR`, `/tmp` when unset) is refused with `failed_precondition`, because it will soon
-  be gone; `--force` registers it anyway.
+  be gone; `--force` registers it anyway. That holds whichever way `<study>` was chosen, a
+  `PATH` entry and a shim too, and for a path that leads into such a folder through a
+  symbolic link: a `PATH` is whoever started `study`'s to arrange.
+- When `study-shelf` is installed, it registers it as the Knowledge base plugin `shelf`
+  on this computer, so that a Topic can name it: see [Shelf](#shelf).
 
 What it will and won't touch:
 
@@ -1988,13 +2061,14 @@ What it will and won't touch:
   (`kept`), and `--remove` never removes it.
 - It records what it does in `$XDG_STATE_HOME/lamplight/setup.json`: each skill file with
   the SHA-256 of what it wrote, the folders and the link it created with where each led
-  (symlinks resolved), and each registration. It saves the record before each change (the
-  folders it is about to create, a registration it is about to make) or right after it (each
-  file written), and first proves it can write there, so a run that stops part-way, on a
-  full disk or a failing agent, can still be undone exactly by `--remove`, and setup run
-  again finishes the job. A lock (`setup.lock` next to the record) keeps setup, `--remove`
-  and `study mcp`'s refresh from running at once; a setup that waits more than 30 seconds
-  for it fails with `busy`.
+  (symlinks resolved), and each registration with an agent. Shelf's registration is not
+  in it: the registry says which one setup made ([Shelf](#shelf)). It saves the record
+  before each change (the folders it is about to create, a registration it is about to
+  make) or right after it (each file written), and first proves it can write there, so a
+  run that stops part-way, on a full disk or a failing agent, can still be undone exactly
+  by `--remove`, and setup run again finishes the job. A lock (`setup.lock` next to the
+  record) keeps setup, `--remove` and `study mcp`'s refresh from running at once; a setup
+  that waits more than 30 seconds for it fails with `busy`.
 - It acts only on what the record names, and only while it is still what setup made: a
   regular file with the content setup wrote, a real folder (not a symlink) that still leads
   where it led, a link with the target setup gave it, in the folder it made it in. Skill
@@ -2012,13 +2086,16 @@ What it will and won't touch:
 - `--remove` unregisters each server while it is still the one setup registered, removes
   the link while it is still setup's, deletes skill files that are unchanged, and removes
   the folders it created once they are empty. `--agent` limits it to one agent; the skill
-  folder stays while another agent still uses it.
+  folder stays while another agent still uses it, and Shelf's registration stays until
+  `--remove` is run without `--agent` ([Shelf](#shelf)).
 - `--check` and `--dry-run` write nothing and run no agent command that changes anything
   (they may run `codex mcp get lamplight --json`, which only reads; Claude Code's
   registration is read from `~/.claude.json`, because `claude mcp get` may start the
   server). A dry run takes every decision the real run would, on a copy of the record, so
   it reports exactly what the real run will do. `study doctor` adds a `setup` Finding with
-  the first problem `--check` finds.
+  the first problem `--check` finds. On a computer with neither Claude Code nor Codex
+  it still says so of a `study-shelf` that is installed and not registered: Shelf is no
+  agent's.
 - Agent commands run with stdin closed, in a process group of their own: a read
   (`codex mcp get`) is stopped after 10 seconds, a change (`mcp add`, `mcp remove`) after
   60, together with anything they started. Only Codex's stdout is parsed; output it cannot
@@ -2026,13 +2103,15 @@ What it will and won't touch:
 - A `setup.json` study cannot read is `corrupt`, and so is one that names anything setup
   never creates: a file outside the skill folder, another skill folder or link, a folder
   other than `~/.agents`, `~/.agents/skills` and Claude Code's folder and its `skills`, or
-  a registration other than `lamplight` running an absolute `study mcp`. Nothing is changed;
-  delete it, then run setup. One from a newer `study` is `newer_format` and is never
-  rewritten.
+  a registration other than `lamplight` running an absolute `study mcp`. Nothing is
+  changed; delete it, then run setup. The message shows what the record names with
+  anything a terminal would interpret escaped: the record is in the state folder, where an
+  agent may write. One from a newer `study` is `newer_format` and is never rewritten.
 
 `--json` data of setup and `--remove`: `study`, `study_note`, `skill` (`dir`, `status`,
 `note`, `written`, `removed`, `kept`), `agents` (`agent`, `status`, `note`, and for Claude
-Code `link` and `link_status`), `manual`, `dry_run`, `remove`, `note`. Statuses:
+Code `link` and `link_status`), `shelf` (`name`, `status`, `program`, `note`; absent when
+the run stopped before it came to Shelf), `manual`, `dry_run`, `remove`, `note`. Statuses:
 `installed`, `updated`, `current`, `registered`, `re_registered`, `kept`, `skipped`,
 `plugin`, `linked`, `removed`, `already_gone`, `not_installed`, `failed`. In a dry run the
 statuses say what the real run would do, and the text output says "would install", "would
@@ -2041,7 +2120,11 @@ link" and so on.
 When setup or `--remove` fails part-way, for example because an agent's command failed,
 the JSON envelope has `ok: false`, the error, and `data` with everything that was done
 before and after it (the failing agent has status `failed`, its `note` says why), and the
-text output prints the same before the error.
+text output prints the same before the error. When Shelf's registration alone could not
+be made, or removed, everything else is done: the text output says so as it does of a run
+that succeeded, "Start a new conversation" included, with `shelf   not registered` or
+`shelf   not removed`, and the error that follows says why, once. When both went wrong,
+the error holds both reasons, and its code is the first one's.
 
 `--check --json` data is `study`, `up_to_date` and `findings` (as in `study doctor`). When
 setup has something to do, `--check` exits 1 and, like `study doctor`, `ok` is `false`, the
@@ -2061,6 +2144,91 @@ error code is `unhealthy`, and `data` is still present:
   },
   "error": { "code": "unhealthy", "message": "study setup has something to do: setup:codex" }
 }
+```
+
+### Shelf
+
+`study setup` also registers Shelf, the Knowledge base plugin that is installed with
+`study` ([docs/shelf.md](shelf.md)), so that a Topic can name it with
+`study topic update <topic> --knowledge-base shelf`. Shelf is no agent's: it is registered
+whichever agent `--agent` names, and whatever becomes of the skill and the agents. A skill
+folder setup did not create stops setup for the skill and the agents, and Shelf is
+registered all the same: the result holds both, and the error is the skill's. Only what
+stops setup before it looks at anything keeps it from Shelf too: a `study` in a temporary
+folder, a `setup.json` it cannot read, or its lock.
+
+- It takes the `study-shelf` beside the `study` that agents run (`<study>` above), where
+  the install script and the packages put it: the two are one release, and one version.
+  When `<study>` is a link, or a shim, and nothing has that name beside it, it takes the
+  one beside the program that is running. With none there, it takes the first
+  `study-shelf` on `PATH`, as `study knowledge-base add shelf -- study-shelf` would. What
+  has the name and is no program, a folder or a file the learner may not run, is passed
+  over, as a shell passes it over. With none anywhere, Shelf is `skipped` with a note; run
+  `study setup` again once `study-shelf` is installed.
+- It registers the plugin under the name `shelf`, by the program's absolute path and
+  without arguments, through the part of `study` that `study knowledge-base add` uses, and
+  so by its rules ([Knowledge base plugins](#knowledge-base-plugins)). A `study-shelf`
+  that is inside the Study home, is reached through it, or is named by a path `study`
+  cannot follow to its end is not registered. Nor is one in a temporary folder, or one a
+  link leads to there, unless `--force` is given: like `<study>`, it would soon be gone,
+  and a folder first on `PATH` is whoever started `study`'s to arrange. Setup then does
+  the rest of its work, reports Shelf as `failed` with the reason in its `note`, and exits
+  with 1 and `failed_precondition`. A registry that cannot be read or written does the
+  same, with its own code.
+- **The registry says which registration is setup's**: setup registers Shelf with the
+  mark `by_setup` ([Knowledge base plugins](#knowledge-base-plugins)), and replaces or
+  removes a plugin named `shelf` only when it carries the mark. A `study-shelf` that has
+  moved is then registered where it is now (`re_registered`). Nothing in `setup.json` says
+  whose a registration is, and nothing there about Shelf is believed: the record is in
+  the state folder, where an agent may be able to write, and the registry is read only
+  where it cannot.
+- **A plugin the learner registered as `shelf` is left exactly as it is** (`kept`),
+  whatever it runs: another program, `study-shelf` with arguments, a URL, or the very
+  `study-shelf` setup would register. It has no mark, and that alone makes it the
+  learner's. The note says what it runs, and of a URL only the scheme and host, since the
+  rest may be a key. Setup looks for it before anything else, so it is `kept` whichever
+  `study-shelf` is installed, none and one setup would refuse included. The registry
+  decides it again under its own lock, so a plugin the learner registers while setup runs
+  is not replaced either, the same command included.
+- **Registering `shelf` yourself makes it yours.** `study knowledge-base add shelf`, with
+  the command setup registered or with `--replace` and another, takes the registration
+  over and drops the mark; setup and `--remove` then leave it alone. A learner who removes
+  `shelf` with `study knowledge-base remove` has it back at the next `study setup`, as an
+  agent's registration that was removed by hand comes back: a registered plugin does
+  nothing until a Topic names it, so there is nothing to opt out of, and setup has no
+  record of what the learner once removed.
+- `--remove` takes the registration with setup's mark out of the registry, and no other
+  (`removed`, or `not_installed` when there is none). It does so also when nothing else of
+  setup's is left to undo. Shelf is no agent's, so `--remove --agent A` leaves it
+  registered (`kept`, with a note), the last agent's too: a learner who hands Claude Code
+  over to the plugin keeps the Knowledge base their Topics name. Shelf's index stays where
+  it is ([docs/shelf.md](shelf.md#where-the-index-is)).
+- **When `study-shelf` is gone** from beside `study` and from `PATH`, the registration
+  setup made is still in the registry. While its program is where it was, as after
+  `study` alone moved, Shelf is `current`. When the program is gone, setup reports Shelf
+  as `skipped`, and the note says that the registration remains, what it runs, and the
+  two ways out: install `study-shelf` again and run `study setup`, or run
+  `study setup --remove`, which takes the registration away.
+- `--dry-run` says what would be registered and registers nothing. It is the registry's
+  own dry run, which looks at everything the registration needs, so it refuses what the
+  run would refuse. `--check` adds a `setup:shelf` Finding. It is a warning, with the fix
+  `study setup`, when `study-shelf` is installed and not registered, and when the
+  registration setup made runs it from where it no longer is; a warning when that
+  registration runs a program that is gone and no `study-shelf` is installed, as for an
+  agent that runs a `study` that is gone; and a warning with the reason when `study-shelf`
+  cannot be registered. It is `ok` when Shelf is registered, when the plugin named `shelf`
+  is the learner's own, and when `study-shelf` is not installed and the registry holds no
+  registration of setup's. `study doctor` does not repeat in its `setup` Finding what it
+  says of the registry or of the plugin itself: a registry it cannot read, and a
+  registration whose program is gone, are reported once, as `knowledge_base` and
+  `knowledge_base:shelf`.
+- Setup starts no plugin, and does not read Shelf's settings file.
+  `study knowledge-base check shelf` and `study doctor` start Shelf, and say why when it
+  does not start.
+
+```json
+"shelf": { "name": "shelf", "status": "registered", "program": "/home/ada/.local/bin/study-shelf",
+           "note": "a Topic uses it once it names it: study topic update <topic> --knowledge-base shelf" }
 ```
 
 ### The Claude Code plugin
@@ -2086,6 +2254,11 @@ Claude Code to an enabled plugin, and undoes what an earlier setup did for it;
 `study claude-plugin-path` refuses (`failed_precondition`) while `study setup` provides
 Lamplight to Claude Code, so installing the plugin then fails until you run
 `study setup --remove --agent claude`.
+
+The plugin registers no Knowledge base plugin. With the plugin alone, Shelf is registered
+by `study knowledge-base add shelf -- study-shelf`, or by `study setup`, which leaves
+Claude Code to the plugin and also installs the skill where other agents read it.
+`study setup --remove --agent claude` leaves Shelf registered.
 
 Setup counts the plugin as enabled when `enabledPlugins` has `lamplight@lamplight` set to
 `true` (a plugin of the same name from another marketplace does not count) in Claude Code's

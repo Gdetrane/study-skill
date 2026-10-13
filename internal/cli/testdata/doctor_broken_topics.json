@@ -61,6 +61,11 @@
         "fix": "upgrade study, or rebuild the index with study library build <folder>"
       },
       {
+        "name": "knowledge_base",
+        "status": "ok",
+        "message": "no Knowledge base plugin is registered on this computer: study setup registers Shelf when study-shelf is installed"
+      },
+      {
         "name": "log",
         "status": "warn",
         "message": "STUDY_LOG=\"verbose\" is not a level, so study uses info",

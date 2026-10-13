@@ -3,12 +3,15 @@
 The maintainer's steps to ship Lamplight v2.0 (issue #36). CI already proves the learner
 loop (`internal/e2e/loop_test.go`) and the acceptance walkthrough
 (`internal/e2e/journey_test.go`: `study setup` with fake agents and the MCP server started
-from what it registered, a Lesson with a failing then passing Check and a rubric item, a
-break and a resume, the Milestone's Assessment, and an imported and adopted v1 workspace).
-What is left needs real agents, real v1 workspaces and repository settings, so it is done
-by hand, in this order. `docs/release.md` (from #34) covers the release pipeline itself.
+from what it registered, Shelf registered by setup, a PDF indexed, searched and quoted as
+Evidence checked against its Passage, a Lesson with a failing then passing Check and a
+rubric item, a break and a resume, the Milestone's Assessment, and an imported and adopted
+v1 workspace). The walkthrough's PDF is written for the test, and its embedding endpoint
+has no model behind it. What is left needs real agents, real v1 workspaces, a real book, a
+real embedding model and repository settings, so it is done by hand, in this order.
+`docs/release.md` (from #34) covers the release pipeline itself.
 
-Until the rename in step 6 the repository is `mordor-forge/study-skill`; the commands use
+Until the rename in step 7 the repository is `mordor-forge/study-skill`; the commands use
 `$REPO` for it:
 
 ```sh
@@ -26,24 +29,10 @@ REPO=mordor-forge/study-skill        # bash, zsh; in fish: set REPO mordor-forge
       gh pr list -R $REPO --base v2
       ```
 
-- [ ] Lamplight has a Knowledge base that needs no account: v2.0 is not released until it
-      does (ADR-0011). The work is tracked in the v2.0 milestone, so its issues are in the
-      list above until they land.
-
-- [ ] Shelf's Recipes hold against a real EmbeddingGemma 2. No test in CI asks a model:
-      this one does, and runs only when it is given an endpoint's address. Run it once for
-      each Recipe, against a server of the kind the Recipe is for, on a computer of your
-      own ([docs/shelf.md](shelf.md#serving-embeddinggemma-2)):
-
-      ```sh
-      # A server that embeds a text as it is sent, such as llama.cpp's.
-      LAMPLIGHT_TEST_EMBEDDING_ENDPOINT=http://127.0.0.1:8080/v1 \
-          go test ./internal/shelf -run TestTheRecipeAgainstARealEndpoint -v
-      # A server that applies the model's prompts itself, by name.
-      LAMPLIGHT_TEST_EMBEDDING_ENDPOINT=<its address> \
-      LAMPLIGHT_TEST_EMBEDDING_RECIPE=embeddinggemma-2-prompts \
-          go test ./internal/shelf -run TestTheRecipeAgainstARealEndpoint -v
-      ```
+- [ ] Lamplight has a Knowledge base that needs no account, which v2.0 waits for
+      (ADR-0011): Shelf, the plugin that ships with it (ADR-0012). Its issues are in the
+      list above until they land, and step 5 holds it to a real book and a real embedding
+      model.
 
 - [ ] #34's prerequisites, from `docs/release.md`, are done:
   - the `LICENSE` file at the repository root (MIT), which the archives and packages
@@ -92,16 +81,17 @@ REPO=mordor-forge/study-skill        # bash, zsh; in fish: set REPO mordor-forge
 
 ## 2. Install the v2 build and a trial Study home
 
-Build `study` from `v2`, and point every `study` (the CLI and `study mcp` under any agent)
-at a trial Study home through the config file. Agents may not pass environment variables
-such as `STUDY_HOME` on to MCP servers, but every `study` reads the config file. Leave
-`STUDY_HOME` unset, since it overrides the file.
+Build `study` and `study-shelf` from `v2`, and point every `study` (the CLI and `study mcp`
+under any agent) at a trial Study home through the config file. Agents may not pass
+environment variables such as `STUDY_HOME` on to MCP servers, but every `study` reads the
+config file. Leave `STUDY_HOME` unset, since it overrides the file.
 
 ```sh
 git switch --detach upstream/v2
-go install ./cmd/study                 # the trial build, in $(go env GOPATH)/bin
+go install ./cmd/study ./cmd/study-shelf   # the trial build, in $(go env GOPATH)/bin
 command -v study                       # must print $(go env GOPATH)/bin/study
 study --version
+"$(go env GOPATH)/bin/study-shelf" --version   # Shelf, beside it, the same version
 # The config file is in $XDG_CONFIG_HOME when that is set, else in ~/.config. Run through sh,
 # so it reads the same in fish; set -C refuses to replace a config you already have.
 sh -c 'config="${XDG_CONFIG_HOME:-$HOME/.config}/lamplight/config.toml"
@@ -146,11 +136,15 @@ git -C ~/path/to/workspace status --short     # unchanged
 Register the agents for real with the trial build, then run the same journey once in each.
 
 ```sh
-study setup --dry-run      # what it will write: the lamplight skill and the MCP registrations
+study setup --dry-run      # what it will write: the skill, the MCP registrations, and Shelf as shelf
 study setup
 study setup --check
 "$(go env GOPATH)/bin/study" doctor    # the trial build, now registered with both agents
 ```
+
+If you registered a plugin named `shelf` yourself before, setup says it kept it and
+registers nothing: `study knowledge-base list` shows what it runs, and step 5 wants it to
+be the `study-shelf` of the trial build.
 
 In a new Claude Code conversation (`claude`), then again in Codex (`codex`):
 
@@ -172,14 +166,102 @@ In a new Claude Code conversation (`claude`), then again in Codex (`codex`):
 - [ ] Adopt one imported Topic (step 3) in a Session: the agent walks the adoption and you
       approve its Syllabus.
 
-## 5. The maintainer's test run
+## 5. The Knowledge base, with a real book and a real embedding model
+
+CI has Shelf index a PDF written for the test, and ask an endpoint with no model behind
+it. These steps take the same way with a book you study from and a model you serve
+yourself ([docs/shelf.md](shelf.md#serving-embeddinggemma-2)), on a computer of your own.
+Nothing here needs an account, or a service that is not yours (ADR-0011).
+
+- [ ] Shelf is registered, and starts. Step 4's `study setup` registered the `study-shelf`
+      that step 2 installed beside `study`:
+
+      ```sh
+      study knowledge-base list            # shelf, $(go env GOPATH)/bin/study-shelf, registered by study setup
+      study knowledge-base check shelf     # version 1; searches by keyword
+      study doctor                         # knowledge_base:shelf is ok
+      ```
+
+- [ ] Shelf's Recipes hold against a real EmbeddingGemma 2. No test in CI asks a model:
+      this one does, and runs only when it is given an endpoint's address. Run it once for
+      each Recipe, against a server of the kind the Recipe is for. It must say `PASS`:
+      without the first variable it is skipped.
+
+      ```sh
+      # A server that embeds a text as it is sent, such as llama.cpp's.
+      LAMPLIGHT_TEST_EMBEDDING_ENDPOINT=http://127.0.0.1:8080/v1 \
+          go test ./internal/shelf -run TestTheRecipeAgainstARealEndpoint -v
+      # A server that applies the model's prompts itself, by name.
+      LAMPLIGHT_TEST_EMBEDDING_ENDPOINT=<its address> \
+      LAMPLIGHT_TEST_EMBEDDING_RECIPE=embeddinggemma-2-prompts \
+          go test ./internal/shelf -run TestTheRecipeAgainstARealEndpoint -v
+      ```
+
+      `LAMPLIGHT_TEST_EMBEDDING_MODEL` names the model when your server has another name
+      for it, `LAMPLIGHT_TEST_EMBEDDING_KEY` a key, and `LAMPLIGHT_TEST_RERANKING_ENDPOINT`
+      with `LAMPLIGHT_TEST_RERANKING_MODEL` a reranker to try with it. The variables are
+      the test's: Shelf reads none of them, and takes its endpoint from its settings file
+      alone.
+
+- [ ] Shelf takes the endpoint from its settings file. Write the file with the address of
+      the server and the Recipe that passed for it; `set -C` refuses to replace a file you
+      already have, which you then edit by hand:
+
+      ```sh
+      sh -c 'file="${XDG_CONFIG_HOME:-$HOME/.config}/lamplight/shelf.toml"
+      set -C && printf "format = 1\n\n[embedding]\nendpoint = \"http://127.0.0.1:8080/v1\"\nrecipe = \"embeddinggemma-2\"\n" > "$file" &&
+      chmod 600 "$file" && echo "wrote $file"'
+      study knowledge-base check shelf     # now: searches by keyword, by embedding
+      ```
+
+- [ ] A real book is indexed with its vectors. Take a Topic of the trial Study home, and a
+      PDF with a text layer that you know well:
+
+      ```sh
+      study topic update <topic> --knowledge-base shelf
+      study source add <topic> --file ~/Books/<book>.pdf
+      study status                           # the book is not indexed; Run: study source index <topic>
+      study source index <topic> --dry-run   # the one file Shelf would read
+      study source index <topic>             # progress on stderr; the server's log shows the requests
+      study source list <topic>              # the book is indexed
+      study doctor                           # no indexing:<topic> Finding is left
+      ```
+
+- [ ] A search finds the book's own text by what a question means. Ask in words the page
+      does not use, and read the Passage against the page of the PDF it names:
+
+      ```sh
+      study evidence search <topic> "<a question, in your own words>"
+      ```
+
+      Stop the server and ask again, in the page's own words this time: the search still
+      answers, with what keyword search finds alone. Start the server again.
+
+- [ ] Evidence is checked against its Passage. With the id of a Source from
+      `study source list` and the id of a Passage from the search:
+
+      ```sh
+      study evidence record <topic> --lesson <lesson> --source <source> --passage <passage> \
+          --quote "<a sentence, copied from the Passage>"      # recorded, and checked
+      study evidence record <topic> --lesson <lesson> --source <source> --passage <passage> \
+          --quote "<the same, in your own words>"              # refused: the quote is not in the Passage
+      study evidence list <topic>
+      ```
+
+- [ ] In a Session with each agent, ask for a Lesson taught from the book. The agent
+      searches it with the `evidence_search` tool and records what it quotes with its
+      Passage. Add a second book in the conversation: the agent has it indexed with
+      `study source index` in its own shell, since no tool indexes.
+- [ ] Say on #36 which book, server and model these steps were run with.
+
+## 6. The maintainer's test run
 
 - [ ] Use v2 for your own studying from the `v2` build and the trial Study home for as long
       as you need. File what you find as v2.0 issues, fix them through PRs into `v2`, and
-      reinstall with `go install ./cmd/study` after each merge.
+      reinstall with `go install ./cmd/study ./cmd/study-shelf` after each merge.
 - [ ] When v2 is approved for release, say so on #36.
 
-## 6. Release
+## 7. Release
 
 In this order: the v1 branch, the checks `main` requires, the rename, the merge, the tag.
 
@@ -240,7 +322,7 @@ In this order: the v1 branch, the checks `main` requires, the rename, the merge,
       gh run list -R $REPO --limit 3
       ```
 
-## 7. After the release
+## 8. After the release
 
 - [ ] The release has every file: four archives (`lamplight_linux_amd64.tar.gz` and the
       like), `checksums.txt`, two deb and two rpm packages.
@@ -270,9 +352,10 @@ In this order: the v1 branch, the checks `main` requires, the rename, the merge,
       ~/.local/bin/study --version && ~/.local/bin/study doctor          # on Linux, and on a Mac
       ~/.local/bin/study-shelf --version                                 # Shelf, the same version
       head -5 ~/.local/share/doc/lamplight/NOTICES/README.md             # the notices, installed
-      ~/.local/bin/study knowledge-base add shelf -- ~/.local/bin/study-shelf
-      ~/.local/bin/study knowledge-base check shelf                      # version 1; on a Mac too
-      go install github.com/mordor-forge/lamplight/v2/cmd/study@v2.0.0   # replaces the trial build
+      ~/.local/bin/study setup                                           # the agents and Shelf now run from ~/.local/bin
+      ~/.local/bin/study knowledge-base check shelf                      # started by ~/.local/bin/study-shelf; on a Mac too
+      go install github.com/mordor-forge/lamplight/v2/cmd/study@v2.0.0 \
+          github.com/mordor-forge/lamplight/v2/cmd/study-shelf@v2.0.0    # replaces the trial build
       "$(go env GOPATH)/bin/study" --version && "$(go env GOPATH)/bin/study" doctor
       ```
 
@@ -285,8 +368,9 @@ In this order: the v1 branch, the checks `main` requires, the rename, the merge,
         'apt-get update -qq && apt-get install -y -qq /pkg/lamplight_*_amd64.deb >/dev/null && study --version'
       ```
 
-      Keep one `study` afterwards. Agents run the one `study setup` registered: if you
-      remove that one, run `study setup` again with the one you keep.
+      Keep one `study` afterwards. Agents run the one `study setup` registered, and Shelf
+      is the `study-shelf` beside it: if you remove that one, run `study setup` again with
+      the one you keep.
 
 - [ ] The Claude Code plugin installs, now that `main` holds `.claude-plugin/`. The plugin
       and `study setup` never both serve Claude Code, so hand Claude Code over first, and
