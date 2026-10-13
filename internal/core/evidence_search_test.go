@@ -882,6 +882,64 @@ func TestAPassageIsHandedOnWithoutTheCharactersThatShowNothing(t *testing.T) {
 	if core.CodeOf(err) != core.CodeInvalidArgument || !strings.Contains(err.Error(), "a character that is not shown (U+E0049)") {
 		t.Errorf("a quote with tag characters = %v (%s); want it refused", err, core.CodeOf(err))
 	}
+
+	// The places of the block that hold no character yet are of it all the
+	// same: taken out, not compared, and in no quote. They are no format
+	// characters to Unicode, which a quote was compared without.
+	const unassigned = "\U000E0002"
+	second := newShelf(t)
+	strang = second.book(t, "strang.txt", "Elimination produces"+unassigned+" an upper tri\U000E0000angular system.\n")
+	second.index(t, core.IndexSpec{})
+	res = second.search(t, core.PassageQuery{Query: "elimination"})
+	if len(res.Passages) != 1 || res.Passages[0].Text != "Elimination produces an upper triangular system." {
+		t.Fatalf("SearchEvidence = %+v; want the Passage without any place of the tag block", res.Passages)
+	}
+	got, err = second.k.RecordEvidence(context.Background(), core.EvidenceSpec{Topic: "c", Lesson: "elimination", Source: strang.ID,
+		Quote: res.Passages[0].Text, Passages: []string{res.Passages[0].ID}})
+	if err != nil || !got.Evidence.Checked {
+		t.Errorf("the Passage's text as the search gave it, quoted = %+v, %v; want it checked", got.Evidence, err)
+	}
+	_, err = second.k.RecordEvidence(context.Background(), core.EvidenceSpec{Topic: "c", Lesson: "elimination", Source: strang.ID,
+		Quote: "Elimination produces" + unassigned + " an upper", Passages: []string{res.Passages[0].ID}})
+	if core.CodeOf(err) != core.CodeInvalidArgument || !strings.Contains(err.Error(), "a character that is not shown (U+E0002)") {
+		t.Errorf("a quote with a place of the tag block that holds no character = %v (%s); want it refused", err, core.CodeOf(err))
+	}
+}
+
+// Nothing else that shows nothing is taken out of a Passage: it is the
+// Source's text, and some of it is part of what the Source says. A joiner
+// spells a Persian word, a variation selector picks the form of a sign, and
+// a soft hyphen says where a word may be divided. Taking these out too was
+// considered and left (ADR-0012). A quote is compared without the format
+// characters among them, so the sentence as it reads is a quote of the
+// Passage. A variation selector is a mark, and part of its character, as an
+// accent is: a quote has the sign as the Passage has it.
+func TestAPassageKeepsTheOtherCharactersThatShowNothing(t *testing.T) {
+	s := newShelf(t)
+	// A zero-width non-joiner in a word, a variation selector behind a
+	// sign, a soft hyphen and a zero-width space.
+	const text = "Elimination keeps mi\u200cravam joined, the sign \u2764\ufe0f in its form, and trian\u00adgular sys\u200btems whole."
+	const read = "Elimination keeps miravam joined, the sign \u2764\ufe0f in its form, and triangular systems whole."
+	strang := s.book(t, "strang.txt", text+"\n")
+	s.index(t, core.IndexSpec{})
+	res := s.search(t, core.PassageQuery{Query: "elimination"})
+	if len(res.Passages) != 1 || res.Passages[0].Text != text {
+		t.Fatalf("SearchEvidence = %+v; want the Passage as the Source has it", res.Passages)
+	}
+	for name, quote := range map[string]string{"as it reads": read, "with the joiner and the soft hyphen, which a quote may hold": "keeps mi\u200cravam joined, the sign \u2764\ufe0f in its form, and trian\u00adgular"} {
+		got, err := s.k.RecordEvidence(context.Background(), core.EvidenceSpec{Topic: "c", Lesson: "elimination", Source: strang.ID,
+			Quote: quote, Passages: []string{res.Passages[0].ID}})
+		if err != nil || !got.Evidence.Checked {
+			t.Errorf("the Passage quoted %s = %+v, %v; want it checked", name, got.Evidence, err)
+		}
+	}
+	// The sign without its selector is another character, as a letter
+	// without its accent is.
+	_, err := s.k.RecordEvidence(context.Background(), core.EvidenceSpec{Topic: "c", Lesson: "elimination", Source: strang.ID,
+		Quote: "the sign \u2764 in its form", Passages: []string{res.Passages[0].ID}})
+	if core.CodeOf(err) != core.CodeInvalidArgument || !strings.Contains(err.Error(), "the quote is not in the text of Passage") {
+		t.Errorf("a quote of the sign without its variation selector = %v (%s); want it refused", err, core.CodeOf(err))
+	}
 }
 
 // A plugin that missed its deadline was given its time already: it is

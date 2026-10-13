@@ -135,8 +135,10 @@ func foldText(text string) []compared {
 			} else if n > 0 {
 				add(compared{r: ' ', space: true, breaks: isLineBreak(r)})
 			}
-		case unicode.IsControl(r), unicode.Is(unicode.Cf, r):
-			// Not shown, and not compared.
+		case unicode.IsControl(r), unicode.Is(unicode.Cf, r), isTag(r):
+			// Not shown, and not compared. The tag block is named apart:
+			// some of it is no format character, being no character yet,
+			// and a Passage is handed on without any of it (withoutTags).
 		case r >= 'ﬀ' && r <= 'ﬆ':
 			for i, letter := range quoteLigatures[r-'ﬀ'] {
 				add(compared{r: letter, glued: i > 0})

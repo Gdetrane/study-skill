@@ -705,7 +705,8 @@ hours before any learning happens is exactly what v1 produced.
     at the first, since `study` offers it nothing to call; every answer is checked against
     the contract; and what a plugin wrote reaches a message only on one line, cut short,
     with control characters escaped, and, for a plugin reached by URL, without the path and
-    the query of its address, of which `study` shows the scheme and host alone. A plugin
+    the query of its address, as they read in any letter case and escaped or not, of which
+    `study` shows the scheme and host alone. A plugin
     that reports a newer contract version is `newer_format`.
   - `study knowledge-base check <name>` starts or reaches a plugin, reports the contract it
     speaks, and stops it. It is CLI-only.

@@ -34,6 +34,10 @@ func CleanEnd(s string, max int) string { return cleanEnd(s, max) }
 // a key.
 func Without(text, address string) string { return without(text, address) }
 
+// WithoutOfAStart is Without for a text that is the start of a longer one:
+// what it ends in is left out too, when that may be the start of a part.
+func WithoutOfAStart(text, address string) string { return partsOf(address).without(text, true) }
+
 // ChildEnviron is the environment a plugin is started with, of the one
 // study has.
 func ChildEnviron(environ []string, outside func(path string) bool, dataFolder string) []string {

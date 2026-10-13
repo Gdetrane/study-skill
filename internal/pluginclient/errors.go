@@ -101,8 +101,8 @@ func StudyCode(pluginCode string) string {
 // blank, which shows as one (brailleBlank).
 //
 // Whoever looks for something in a plugin's words, to take it out, looks
-// once what shows nothing is out of them (seen), and not in what clean was
-// handed: what was found apart would be whole again here.
+// in them as they read without what shows nothing (readAs), and not as
+// clean was handed them: what was found apart would be whole again here.
 //
 // It reads the text once and stops where the cleaned text is full, so what
 // it costs is what it keeps: a plugin's message can be as long as a message
@@ -157,25 +157,6 @@ func clean(s string, max int) string {
 // whatever the plugin chose to write there. clean takes it for white space.
 const brailleBlank = plugincontract.BrailleBlank
 
-// seen is text without the characters that show nothing
-// (plugincontract.ShowsNothing), and with every other byte as it was. clean
-// leaves the same characters out: this is for leaving them out earlier,
-// before anything is looked for in the text.
-func seen(text string) string {
-	if !strings.ContainsFunc(text, plugincontract.ShowsNothing) {
-		return text
-	}
-	var b strings.Builder
-	for len(text) > 0 {
-		r, size := utf8.DecodeRuneInString(text)
-		if !plugincontract.ShowsNothing(r) {
-			b.WriteString(text[:size])
-		}
-		text = text[size:]
-	}
-	return b.String()
-}
-
 // cleanEnd is clean for text whose end matters more than its start, such as
 // what a program wrote before it failed: the last max bytes of the cleaned
 // text are kept. The text is short already: study keeps only the end of a
@@ -208,23 +189,5 @@ func reason(err error, address string) string {
 	for errors.As(err, &withURL) {
 		err = withURL.Err
 	}
-	return clean(without(seen(libraryPrefix.ReplaceAllString(err.Error(), "")), address), 400)
-}
-
-// without takes the parts of a registered address that may be a key out of
-// a text. The address whole is left as study itself shows it: its scheme
-// and host.
-func without(text, address string) string {
-	if address == "" {
-		return text
-	}
-	// The address whole, as it reads in words that hold no character that
-	// shows nothing: the form secrets gives its parts in, too.
-	if whole := seen(address); whole != "" {
-		text = strings.ReplaceAll(text, whole, Address(address)+"…")
-	}
-	for _, secret := range secrets(address) {
-		text = strings.ReplaceAll(text, secret, "…")
-	}
-	return text
+	return clean(without(libraryPrefix.ReplaceAllString(err.Error(), ""), address), 400)
 }

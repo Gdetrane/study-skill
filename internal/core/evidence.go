@@ -543,7 +543,7 @@ func cleanQuote(s string) (string, error) {
 		case unicode.IsControl(r) && r != '\n' && r != '\t':
 			return "", invalidf("the quote contains a control character")
 		case r == '\u00AD' || r == '\u200C' || r == '\u200D':
-		case unicode.Is(unicode.Cf, r) || r == '\u2028' || r == '\u2029':
+		case unicode.Is(unicode.Cf, r) || isTag(r) || r == '\u2028' || r == '\u2029':
 			return "", invalidf("the quote contains a character that is not shown (U+%04X): quote the words as they are read, "+
 				"without it", r)
 		}

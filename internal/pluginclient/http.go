@@ -7,7 +7,6 @@ import (
 	"mime"
 	"net/http"
 	"net/url"
-	"sort"
 	"strings"
 	"sync"
 
@@ -64,8 +63,10 @@ type boundedTransport struct {
 	// protocol is the MCP revision the session speaks, once it is known.
 	protocol string
 	// refusal is what the service last answered a request it refused with:
-	// the status, and the start of what it wrote.
-	refusal string
+	// the status, and the start of what it wrote. refusalCut says that it
+	// wrote more than was kept.
+	refusal    string
+	refusalCut bool
 }
 
 // speaks records the MCP revision the session came to speak. Every request
@@ -79,11 +80,13 @@ func (t *boundedTransport) speaks(revision string) {
 	t.protocol = revision
 }
 
-// refused returns what the service last refused a request with, if it did.
-func (t *boundedTransport) refused() string {
+// refused returns what the service last refused a request with, if it did,
+// and whether that is only the start of what it wrote: a text that was cut
+// may end in the start of a key (parts.without).
+func (t *boundedTransport) refused() (said string, cut bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	return t.refusal
+	return t.refusal, t.refusalCut
 }
 
 func (t *boundedTransport) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -106,10 +109,13 @@ func (t *boundedTransport) RoundTrip(req *http.Request) (*http.Response, error) 
 	if resp.StatusCode >= 400 {
 		// What it says of why, for the learner: the start of it, kept
 		// aside, and the whole of it still there for whoever reads on.
-		start, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		// One byte more is read than is kept, to know whether there is more.
+		const kept = 512
+		start, _ := io.ReadAll(io.LimitReader(resp.Body, kept+1))
 		resp.Body = &joinedBody{Reader: io.MultiReader(bytes.NewReader(start), resp.Body), body: resp.Body}
 		t.mu.Lock()
-		t.refusal = strings.TrimSpace(http.StatusText(resp.StatusCode) + ": " + string(start))
+		t.refusal = strings.TrimSpace(http.StatusText(resp.StatusCode) + ": " + string(start[:min(kept, len(start))]))
+		t.refusalCut = len(start) > kept
 		t.mu.Unlock()
 	}
 	// A stream of events has no end to bound: the SDK bounds each event.
@@ -161,54 +167,4 @@ func Address(registered string) string {
 		return "its address"
 	}
 	return u.Scheme + "://" + u.Host
-}
-
-// secrets are the parts of a registered address that may be a key, longest
-// first: the address whole, what follows its host, its path, its query, and
-// each long piece of the two. Text a service wrote is shown without them: a
-// service that repeats the address it was asked at would otherwise have
-// study print what it never prints itself.
-//
-// Each part is as it reads where it is looked for: a service's words are
-// searched without the characters that show nothing (seen), and an address
-// may hold one, in its path or its key. Left as registered, such a part
-// would be found nowhere in them.
-func secrets(registered string) []string {
-	found := map[string]bool{}
-	add := func(part string, least int) {
-		if part = seen(part); part != "" && len(part) >= least {
-			found[part] = true
-		}
-	}
-	add(registered, 1)
-	if u, err := url.Parse(registered); err == nil {
-		add(u.RequestURI(), 2)
-		add(u.EscapedPath(), 2)
-		add(u.Path, 2)
-		add(u.RawQuery, 1)
-		for _, piece := range strings.Split(u.Path, "/") {
-			add(piece, 8)
-		}
-		for _, piece := range strings.Split(u.EscapedPath(), "/") {
-			add(piece, 8)
-		}
-		for _, pair := range strings.Split(u.RawQuery, "&") {
-			_, value, _ := strings.Cut(pair, "=")
-			add(value, 6)
-			if plain, err := url.QueryUnescape(value); err == nil {
-				add(plain, 6)
-			}
-		}
-	}
-	parts := make([]string, 0, len(found))
-	for part := range found {
-		parts = append(parts, part)
-	}
-	sort.Slice(parts, func(i, j int) bool {
-		if len(parts[i]) != len(parts[j]) {
-			return len(parts[i]) > len(parts[j])
-		}
-		return parts[i] < parts[j]
-	})
-	return parts
 }

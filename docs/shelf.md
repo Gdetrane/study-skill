@@ -483,7 +483,9 @@ agent's to write, and with it the address Shelf sends your books to, and its key
 outside the sandbox. A file with a second name elsewhere (a hard link) is refused for the
 same reason, wherever the other name is. **Do not link the file into your Study home
 either**, to have it sync with your notes: your agent writes there, and Shelf cannot know
-where your Study home is to refuse it.
+where your Study home is to refuse it. `study` does know, so `study doctor` warns when the
+file is in the Study home or is reached through it, as `shelf_settings`. A link to a file
+of your own elsewhere, where you keep your other settings, is fine.
 
 **Behind a proxy**, Shelf needs to be told, to fetch web pages and to reach an endpoint
 that is not on your computer. `study` starts a plugin with a small environment of its own

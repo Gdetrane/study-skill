@@ -442,9 +442,51 @@ what they needed:
     taken for white space: a run of it padded one line into what looked like two.
   - **Whatever is looked for in such words is looked for once those characters are out.**
     A key divided by a zero-width space is not found, and is whole again when the
-    character is left out afterwards. So the client leaves them out before it takes the
-    parts of a registered address out (`say`), and Shelf before it looks for its key
-    (`caller.said`): Shelf writes the sentence that `study` then cleans.
+    character is left out afterwards. So the client reads a text without them when it
+    takes the parts of a registered address out (`say`), and Shelf leaves them out before
+    it looks for its key (`caller.said`): Shelf writes the sentence that `study` then
+    cleans.
+  - **A part of a registered address is found as it reads, however a service spells
+    it.** A review listed what the first version let through: the part in another letter
+    case; escaped where the registry has it plain, or the other way round; the part as a
+    name or an id in an answer `study` refuses, whose reason was not cleaned; and all of
+    a key but its last byte, where it stood across the place a long text is cut at,
+    behind enough white space that cleaning brought it to the front. A list of spellings
+    to look for closed the first of these and no more: a key with every byte escaped, or
+    escaped twice, is none of the spellings a URL library writes. So the text and the
+    parts are both read first (`readAs`): every escape is the byte it stands for, and
+    again when that makes another; a plus sign is a space; a letter is the same in any
+    case, as Unicode folds case and with its accent written on or apart
+    (`golang.org/x/text`, which `study` links already); white space of any kind is one
+    space; and what shows nothing is not there. A text that was cut loses what its end
+    reads as that begins a part, and so does what is kept of a service's refusal, which
+    is the first 512 bytes of what it wrote. Behind the start of a part there may stand
+    what the cut left unfinished, an escape without its last digit: as much of it as one
+    likes, since an escape's digit may be escaped in turn, so all of it is looked
+    through, and not a few bytes of it.
+  - **What is wrong with an answer is said of the answer without the address.** The
+    contract's check repeats the value it refuses, cut to 80 bytes and with what is not
+    ASCII written as escapes: a key in it was cut in two, or spelled in escapes, before
+    the client could look for it. An answer that holds a part of the address anywhere is
+    now checked once more without it, and what is wrong is said of that.
+  - **The method of a request a service sends `study`** is in the message that says the
+    service was stopped for it, and is read like any other of its words. It was only
+    cleaned.
+  - **All the parts are looked for in one reading of the text** (`parts`), a state for
+    each beginning of a part. Looking for them one after the other read a service's
+    words once for each, and an address may hold hundreds of values, with sixteen
+    mebibytes of words to read for them after the call's deadline has passed. Parts that
+    overlap are taken out as one place: taking the longer out first had left the end of
+    one standing where two were the same in letters of another length.
+  - What is left is said on the pages and not closed. A piece of a path under eight
+    bytes, or a value of a query under six, that a service says on its own is a word like
+    any other, and taking it out wherever it stands would leave little of a service's
+    words. Case is folded as Unicode folds it for every language at once, so what one
+    language does otherwise is not read so: a Turkish capital `İ` is no `i`. And all of
+    this is for a service that repeats its address,
+    which an honest one does in an error: one that means to show the learner's agent its
+    own key has other ways, a kind it names after it for one, and gains nothing, since
+    the key is its own.
   - It is no error: no exit code, no next action and nothing that is recorded changes for
     it. `note` and `action` are about the Sources that were left out, and a notice is
     about the ones that were searched. The skill has the agent tell the learner what it
@@ -536,6 +578,30 @@ what they needed:
   ends with, above, a present matter: whatever a plugin was handed and indexed, a tool now
   hands to the agent. Asking the learner before files outside the Study home are handed
   to a plugin for the first time is still not built.
+  - **Nothing but the tag block is taken out of a Passage** (decided on 13 October 2026).
+    A plugin's own words lose every character that shows nothing, and a Passage does
+    not, though a sentence can be spelled in variation selectors or in zero-width
+    characters there as well. A plugin's words are a sentence for the learner, which
+    needs none of them. A Passage is the Source's text, and some of them are part of what
+    a Source says: the joiner a Persian word is written with, the selector that picks the
+    form of a sign or of a Han character, the soft hyphen that says where a word
+    divides. A quote is compared with that text, and a variation selector is a mark in
+    it, as an accent is. Tags are another matter: nothing is written with them but the
+    flags of three countries, and a model reads them as letters. The whole block goes,
+    the places in it that hold no character yet included, and a quote is compared
+    without any of it: the first build compared without the format characters, which
+    those places are not, so a Passage quoted as it was handed on was refused. Considered
+    and rejected:
+    - **Taking every such character out.** It misspells the scripts that need a joiner,
+      and changes what a quote is compared with.
+    - **Taking out runs of them only**, on the ground that writing uses one at a time. A
+      sentence hidden one selector to a visible letter has no run, so it would close
+      little, and no list says which single ones a writing uses.
+    - What settles it is that these characters are not the way hidden text reaches a
+      Passage. Text in white on white, in a size too small to read or in a part of a
+      page no browser shows is extracted as plain words, which nothing can tell from the
+      Source's own. So the rule for all of a Passage stays the one above: it is material,
+      and never an instruction.
 
 ### Shelf, the plugin that ships with Lamplight
 
@@ -725,6 +791,15 @@ where it was stopped, and what a Recipe holds.
     folder only when that is outside it, and the learner's page says not to link the file
     there. A review found the first version guarding Shelf's folder alone, and taking one
     it could not look at for one that is not there.
+  - **`study doctor` says when the settings file leads into the Study home**, which Shelf
+    cannot: a `shelf.toml` that is a link to a file there is the agent's to write, and
+    Shelf's own findings would go on saying that its endpoints are all right. The doctor
+    follows the file as the registry follows a plugin's program, by what each hop is
+    (`pluginregistry.Guard`), and warns under `shelf_settings`. A path it could not
+    follow is a warning as well, and never taken for one outside. It is a warning and
+    not a refusal: `study` reads nothing of the file, and Shelf starts all the same. A
+    link to a file elsewhere is what a learner who keeps their settings in one folder
+    has, and says nothing.
   - **What an endpoint answers is bounded by what was asked.** An answer is read up to
     the size the vectors asked for can have, no more results are decoded than were asked
     for, and no vector of more than 16,384 numbers: a few megabytes of empty results took

@@ -236,8 +236,12 @@ with `application/json` or with a stream of server-sent events.
   speaks only a later revision of MCP says which there.
 - **Only the scheme and host of the address are shown** by `study`, outside
   `study knowledge-base list`: the rest of an address, a path or a query, may be a key.
-  Whatever a service writes, in a refusal, a `reason`, a `notice` or its own name, is shown
-  without the path and the query of the address it is registered at.
+  Whatever a service writes, in a refusal, a `reason`, a `notice`, a finding or its own
+  name, is shown without the path and the query of the address it is registered at, as
+  they read: in capitals or small letters, and with any of their bytes as percent-escapes
+  or none. A piece of the path counts from eight bytes and a value of the query from six:
+  a shorter one said on its own is shown. Give a service a key longer than that, of plain
+  letters and digits, or better, keep the key out of what it writes.
 - A service gets no folder from `study`, and keeps its index where it was told to.
 - **A service reads files and fetches addresses from where it runs, outside any sandbox
   the agent is in.** It is handed a file's path and must see the same file there. It must
@@ -706,7 +710,10 @@ from the Passage, to check the quote against its text.
     is what gets quoted.
   - `study` hands a Passage on without the characters of Unicode's tag block (U+E0000 to
     U+E007F), which show nothing, and compares a quote without them and without any other
-    character that is not shown.
+    format character. Nothing else is taken out of a Passage, though it shows nothing: a
+    joiner, a soft hyphen or a variation selector may be part of what the Source says. A
+    variation selector is compared as the mark it is, like an accent: a quote has it
+    where the Passage does.
 - **Cut Passages where the Source has white space.** `study` reads the end of one Passage
   and the beginning of the next as separated by white space, since it cannot know
   otherwise: a quote that runs through both must have white space there, unless a word

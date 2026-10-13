@@ -257,9 +257,13 @@ GOOS=darwin go vet ./...            # macOS is supported too
   characters, the other code points every display ignores) is left out: never write an
   escape for one, which a program reads back as easily. The braille blank is taken for
   white space, being the one common blank that is neither. And look for nothing in a
-  plugin's words, a registered address's key say, before they are left out (`seen`): what
-  was found apart would be whole again afterwards. A Passage's text is not a plugin's
-  words: it is the Source's, and goes through `withoutTags` and `printable()` as before.
+  plugin's words, a registered address's key say, as they are spelled: look in them as
+  they read (`readAs` in `internal/pluginclient/address.go`: without what shows nothing,
+  with every percent-escape read, in any letter case), or what was found apart would be
+  whole again afterwards. The parts of an address are looked for in one reading of a
+  text, whatever their number (`parts`): never once for each. A Passage's text is not a
+  plugin's words: it is the Source's, and goes through `withoutTags` and `printable()` as
+  before.
 - `study` links nothing of Shelf's (ADR-0012): not `internal/shelf`, not SQLite, not the
   PDF reader, not what reads web pages. `TestStudyLinksNothingOfShelf` fails when
   `go list -deps` of `cmd/study`, the core, the command line, the MCP server or the plugin
