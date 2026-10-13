@@ -330,7 +330,7 @@ the settings expect.
 | `recipe` | A [Recipe](#recipes)'s name: the settings below, for one model. A setting you give beside it takes the place of the Recipe's. |
 | `key` | The endpoint's key, when it takes one: one word, and spaces around it are not part of it. It is sent as the request's bearer token, and to that endpoint alone: Shelf follows no redirect. |
 | `model` | The model's name, as the endpoint knows it. Required without a `recipe`. |
-| `dimensions` | How many numbers Shelf keeps of each vector. A longer vector is cut to its first numbers and made of length 1 again, which only a model trained for it allows. A shorter one fails the Source. Left out, a vector is kept as the endpoint gives it. |
+| `dimensions` | How many numbers Shelf keeps of each vector. A longer vector is cut to its first numbers and made of length 1 again, which only a model trained for it allows. A shorter one fails the Source. Always said, by you or by the Recipe: the size the model gives, which its own page says (768 for many), or fewer where the model was trained for that. Shelf then knows what it keeps, and sees it in the settings when the size changes. |
 | `send_dimensions` | `true` has the request ask the endpoint for vectors of that size, as the OpenAI API's `dimensions` does. Shelf checks the size either way. |
 | `query`, `document` | Text for Shelf to write around a question and around a Passage, for a model that wants them marked: `query = "search_query: {text}"`. `{text}` is where the text goes, and `{title}`, in `document`, the Source's title. |
 | `query_request`, `document_request` | Fields for Shelf to add to the request instead, for a server that marks the texts itself: `query_request = { prompt = "query" }`. Text, numbers and `true` or `false`. |
@@ -404,7 +404,14 @@ EmbeddingGemma 2, Google's open model (Apache 2.0), which differ in who marks th
   all; 256 lost a little, and 128 a lot.
 - **Passages of about 1,500 characters**, the size the measurements were made with, which
   is Shelf's own without a Recipe too. The longest Passage Shelf then cuts is 2,001
-  characters, which the model reads whole.
+  characters, which the model reads whole when they are prose. A page of symbols or of
+  code is more tokens for as many characters: when your server refuses a Passage for its
+  length, the Source fails with what the server said, and a smaller `passage_size` or a
+  server started to take more is what helps.
+- **`embeddinggemma-2-prompts` sends no title.** The server writes the model's prompt for
+  a document itself, which has no title to put in it; `embeddinggemma-2` writes the
+  Source's title before each Passage, as the measurements were made. What the title is
+  worth was not measured.
 - **Eight Passages in a request, with `embeddinggemma-2-prompts`.** A server of that kind
   is often the model's own library behind a small program, and takes few texts at once:
   the one this Recipe was held to refuses more than eight. Set `batch` when yours takes
@@ -414,8 +421,8 @@ EmbeddingGemma 2, Google's open model (Apache 2.0), which differ in who marks th
   be indexed again.
 
 **Any other model** works through settings of its own, without a `recipe`: its `model`,
-and what it needs of the rest. One that wants no mark and gives vectors of one size needs
-the model's name alone. One that wants a question and a document marked says how:
+its `dimensions`, and what it needs of the rest. One that wants no mark needs those two
+alone. One that wants a question and a document marked says how:
 
 ```toml
 format = 1
@@ -423,6 +430,7 @@ format = 1
 [embedding]
 endpoint = "http://127.0.0.1:11434/v1"
 model = "nomic-embed-text"
+dimensions = 768
 query = "search_query: {text}"
 document = "search_document: {text}"
 ```
@@ -478,7 +486,9 @@ llama-server -m qwen3-reranker-0.6b.gguf --reranking --host 127.0.0.1 --port 808
 To hold your endpoint to a Recipe, Lamplight's own test asks it for vectors and checks what
 comes back: that it takes the Recipe's requests, a whole batch of the longest Passages at
 once among them, that the vectors have the Recipe's size, and that eight questions each
-find the Passage that answers them. Both Recipes were held to a real server this way:
+find the Passage that answers them. It does not tell you that you chose the wrong one of
+the two Recipes: a server that marks the texts itself also takes texts Shelf has marked,
+and still finds the eight. Both Recipes were held to a real server this way:
 `embeddinggemma-2` to llama.cpp with the 4-bit file, and `embeddinggemma-2-prompts` to
 the model's own library on a graphics card. From a checkout of the repository:
 
@@ -548,9 +558,20 @@ embeddings alone at every length of list, a little more further down, and has th
 ranking's best in a fixed place near the top. With a smaller constant the fusion found as
 much, without that promise.
 
-The reranker was measured over the best 30 of reciprocal rank fusion, which hold the right
-Passage for 96.7% of the questions. Shelf hands it the best 30 of its own order, which hold
-it for 97.0%. What the reranker makes of those was not measured again.
+The reranker was first measured over the best 30 of reciprocal rank fusion, and on
+13 October 2026 again over the best 30 of Shelf's own order, both with vectors of 512
+numbers:
+
+| The reranker over the best 30 of | First | First 5 | First 10 | First 20 |
+|---|---|---|---|---|
+| Reciprocal rank fusion, constant 60 | 64.3% | 94.0% | 96.0% | 96.7% |
+| **Two of the embeddings', then one of keyword's** | 64.7% | 93.7% | 96.0% | 97.0% |
+
+The reranker makes the same of either: what differs is what a search gives without one.
+
+The books are the maintainer's, so neither they, nor the questions, nor the vectors are in
+the repository: these numbers can be made again with other books, and not checked against
+these.
 
 ## What is inside
 

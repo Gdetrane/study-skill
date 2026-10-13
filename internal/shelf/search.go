@@ -188,14 +188,17 @@ func (s *Shelf) nearest(ctx context.Context, c *index.Collection, in plugincontr
 // ranking's first ten.
 //
 // Reciprocal rank fusion, the usual way of merging two rankings, was
-// measured against this on the vectors of four books and 300 questions, and
-// does neither thing: with its usual constant every Passage that is in both
-// lists, about twenty of fifty, comes before one that is first in one list
-// alone, so a name only keyword search found stood at place 20, and the
-// right Passage was among the first ten for 88 questions in a hundred where
-// the embeddings alone had it there for 92. Taken two to one, it is there
-// for 92, and among the first thirty for 97 where the embeddings alone have
-// 96 (docs/shelf.md has the table).
+// measured against this on the vectors of four books and 300 questions.
+// With its usual constant of 60 it does neither thing: every Passage that
+// is in both lists, about twenty of fifty, comes before one that is first
+// in one list alone, so a name only keyword search found stood at place 20,
+// and the right Passage was among the first ten for 88 questions in a
+// hundred where the embeddings alone had it there for 92. Taken two to one,
+// it is there for 92, and among the first thirty for 97 where the
+// embeddings alone have 96. With a small constant the fusion finds as much,
+// a point more at the top, and promises the keyword ranking's best no
+// place: two for one is the one whose order can be said in a sentence. A
+// reranker makes the same of either (docs/shelf.md has the tables).
 //
 // A Passage's score is one over its place: a score says how the Passages of
 // one search stand to each other, and nothing else.

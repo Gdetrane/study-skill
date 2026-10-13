@@ -617,3 +617,85 @@ func TestAFileBroughtToANewerFormatIsNotWrittenTo(t *testing.T) {
 		t.Errorf("after the refused writes the Source is %+v, %v", got, err)
 	}
 }
+
+// A vector's numbers are all compared with the question's, whatever their
+// count: the product is summed four numbers at a time, and the ones left
+// over, of a size that is no multiple of four, count like the rest.
+func TestEveryNumberOfAVectorCounts(t *testing.T) {
+	for _, dimensions := range []int{1, 2, 3, 5, 6, 7, 9} {
+		t.Run(fmt.Sprintf("%d numbers", dimensions), func(t *testing.T) {
+			c := collection(t, reopen(t, t.TempDir()), "sizes")
+			texts := make([]string, dimensions)
+			for i := range texts {
+				texts[i] = fmt.Sprintf("Passage %d speaks of axis %d.", i, i)
+			}
+			source, passages := book("book.a1", "a", texts...)
+			source.Made = index.Made{Model: "a-model", Document: "{text}", Dimensions: dimensions}
+			// One Passage along each axis: the last ones are found only by
+			// the numbers that are left over.
+			if err := c.Replace(ctx, source, passages, axes(dimensions, dimensions, 0)); err != nil {
+				t.Fatal(err)
+			}
+			for axis := range dimensions {
+				found := nearest(t, c, source.Made, along(dimensions, float64(axis), 1), dimensions)
+				if len(found) != dimensions || found[0].Text != texts[axis] || math.Abs(found[0].Score-1) > 1e-6 {
+					t.Fatalf("nearest the vector along axis %d: %+v; want the Passage along it, at 1", axis, found)
+				}
+				for _, other := range found[1:] {
+					if math.Abs(other.Score) > 1e-6 {
+						t.Errorf("along axis %d, %q scores %v; want 0: it is along another axis", axis, other.Text, other.Score)
+					}
+				}
+			}
+			// And a question between two axes is as near the one as the
+			// other, by every number of both.
+			if dimensions > 1 {
+				found := nearest(t, c, source.Made, along(dimensions, 0, 1, float64(dimensions-1), 1), 2)
+				if len(found) != 2 || math.Abs(found[0].Score-found[1].Score) > 1e-6 || math.Abs(found[0].Score-math.Sqrt2/2) > 1e-6 {
+					t.Errorf("between the first axis and the last: %+v; want both at 0.707", found)
+				}
+			}
+		})
+	}
+}
+
+// Passages that are as near a question as each other come in the order of
+// the text, Source by Source: the same search gives the same answer.
+func TestPassagesAsNearAsEachOtherComeInTheOrderOfTheText(t *testing.T) {
+	c := collection(t, reopen(t, t.TempDir()), "ties")
+	same := func(n int) [][]float32 {
+		out := make([][]float32, n)
+		for i := range out {
+			out[i] = along(8, 3, 1)
+		}
+		return out
+	}
+	var want []string
+	// Written in another order than their ids have, and each with Passages
+	// that all point one way.
+	for _, id := range []string{"book.c3", "book.a1", "book.b2"} {
+		texts := []string{id + " one", id + " two", id + " three", id + " four"}
+		source, passages := book(id, id[len(id)-2:len(id)-1], texts...)
+		source.Made = made
+		if err := c.Replace(ctx, source, passages, same(len(passages))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, id := range []string{"book.a1", "book.b2", "book.c3"} {
+		want = append(want, id+" one", id+" two", id+" three", id+" four")
+	}
+	for range 3 {
+		found := nearest(t, c, made, along(8, 3, 1), 50)
+		var got []string
+		for _, f := range found {
+			got = append(got, f.Text)
+		}
+		if fmt.Sprint(got) != fmt.Sprint(want) {
+			t.Fatalf("twelve Passages that are all as near came as\n%v\nwant\n%v", got, want)
+		}
+	}
+	// Cut short, it is the first of them.
+	if found := nearest(t, c, made, along(8, 3, 1), 5); len(found) != 5 || found[4].Text != "book.b2 one" {
+		t.Errorf("the first five of them: %+v", found)
+	}
+}
