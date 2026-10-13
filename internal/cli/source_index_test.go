@@ -49,6 +49,12 @@ type shelfComputer struct {
 func newShelfComputer(t *testing.T, args ...string) *shelfComputer {
 	t.Helper()
 	s := &shelfComputer{kbComputer: newKBComputer(t), record: filepath.Join(t.TempDir(), "record.json")}
+	// This computer's plugin is the test plugin, and it has no Shelf
+	// installed: nothing here is about a study-shelf that study setup would
+	// register, which study doctor would otherwise speak of.
+	if err := os.Remove(filepath.Join(s.home, "bin", "study-shelf")); err != nil {
+		t.Fatal(err)
+	}
 	s.plugins = core.PluginOptions{
 		Environ:      func() []string { return []string{"HOME=" + s.home, "STUDY_HOME=" + s.env["STUDY_HOME"]} },
 		StartTimeout: 20 * time.Second, StopGrace: 300 * time.Millisecond, GlanceTimeout: 20 * time.Second,

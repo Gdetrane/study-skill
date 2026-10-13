@@ -1186,6 +1186,15 @@ func (a *app) diagnoseSetup(ctx context.Context) core.Finding {
 		}
 	}
 	if rec.empty() && !plugin.enabled && len(found) == 0 {
+		// Shelf is no agent's: a study-shelf that is installed and not
+		// registered is said so here too, as study setup --check says it,
+		// though there is no agent to set up.
+		if loc, err := a.studyPath(); err == nil {
+			if shelf, elsewhere := a.checkShelf(ctx, loc); shelf.Status != core.FindingOK && !elsewhere {
+				f.Status, f.Message, f.Fix = core.FindingWarn, shelf.Message, shelf.Fix
+				return f
+			}
+		}
 		f.Status, f.Message = core.FindingOK, "no Claude Code or Codex found; other agents need an MCP server that runs study mcp"
 		return f
 	}

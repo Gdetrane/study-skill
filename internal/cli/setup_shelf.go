@@ -59,8 +59,8 @@ type shelfResult struct {
 // study-shelf does.
 //
 // Beside study, a study-shelf is a file the learner could run: a folder of
-// that name, or a file that is no program, is passed over, as a shell passes
-// it over. Nothing is decided here about where one leads. What has the name
+// that name, a file that is no program, or one that only another user may
+// run (mayRun), is passed over, as a shell passes it over. Nothing is decided here about where one leads. What has the name
 // and cannot be looked at, as a link through a folder study may not pass
 // through, is handed to the registry, which says what stops it.
 func (a *app) shelfCommand(loc studyLocation) []string {
@@ -70,7 +70,7 @@ func (a *app) shelfCommand(loc studyLocation) []string {
 		}
 		beside := filepath.Join(filepath.Dir(study), shelfProgram)
 		switch info, err := os.Stat(beside); {
-		case err == nil && info.Mode().IsRegular() && info.Mode()&0o111 != 0:
+		case err == nil && info.Mode().IsRegular() && info.Mode()&0o111 != 0 && mayRun(beside):
 			return []string{beside}
 		case err != nil && !errors.Is(err, fs.ErrNotExist):
 			return []string{beside}

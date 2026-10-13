@@ -317,6 +317,17 @@ func TestSetupPassesOverAStudyShelfThatIsNoProgram(t *testing.T) {
 	for name, put := range map[string]func(t *testing.T, path string){
 		"a file that is not executable": func(t *testing.T, path string) { writeFile(t, path, "notes about Shelf\n") },
 		"a folder":                      func(t *testing.T, path string) { writeFile(t, filepath.Join(path, "README"), "notes about Shelf\n") },
+		// Its mode says that someone may run it, and the one who owns it,
+		// who runs study here, may not.
+		"a program only others may run": func(t *testing.T, path string) {
+			if os.Getuid() == 0 {
+				t.Skip("root may run what anyone may")
+			}
+			shelfAt(t, path)
+			if err := os.Chmod(path, 0o601); err != nil {
+				t.Fatal(err)
+			}
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			h := newSetupHome(t, "codex")
@@ -1009,5 +1020,37 @@ func TestWhatTheDoctorAndSetupPrintIsShownNotObeyed(t *testing.T) {
 				t.Errorf("study setup prints what it says of Shelf, %s, as it is: %q", status, setup)
 			}
 		}
+	}
+}
+
+// Shelf is no agent's. On a computer with neither Claude Code nor Codex,
+// study doctor still says that a study-shelf is installed and not
+// registered, as study setup --check says it, and is content once setup
+// has registered it.
+func TestDoctorSaysOfShelfWhatSetupCheckSaysWithNoAgentInstalled(t *testing.T) {
+	h := newSetupHome(t)
+	const noAgent = "no Claude Code or Codex found; other agents need an MCP server that runs study mcp"
+	if got := finding(t, decodeData(t, h.run(t, "doctor", "--json")), "setup"); got["status"] != "ok" || got["message"] != noAgent {
+		t.Errorf("with no agent and no study-shelf, doctor's setup Finding = %v", got)
+	}
+	shelfAt(t, filepath.Join(h.bin, "study-shelf"))
+	got := finding(t, decodeData(t, h.run(t, "doctor", "--json")), "setup")
+	if got["status"] != "warn" || got["fix"] != "study setup" ||
+		!strings.Contains(got["message"].(string), "is installed, and Shelf is not registered as a Knowledge base plugin") {
+		t.Errorf("with no agent and a study-shelf that is not registered, doctor's setup Finding = %v", got)
+	}
+	// study setup --check has something to do, and says the same of Shelf.
+	var check struct {
+		Data map[string]any `json:"data"`
+	}
+	if r := h.run(t, "setup", "--check", "--json"); json.Unmarshal([]byte(r.stdout), &check) != nil || r.code == cli.ExitOK {
+		t.Fatalf("study setup --check, with a study-shelf that is not registered: exit %d\n%s", r.code, r.stdout)
+	}
+	if says := finding(t, check.Data, "setup:shelf"); says["message"] != got["message"] || says["fix"] != got["fix"] {
+		t.Errorf("study setup --check says %v of Shelf, and doctor %v", says, got)
+	}
+	decodeData(t, h.run(t, "setup", "--json"))
+	if got := finding(t, decodeData(t, h.run(t, "doctor", "--json")), "setup"); got["status"] != "ok" {
+		t.Errorf("once setup registered Shelf, doctor's setup Finding = %v", got)
 	}
 }

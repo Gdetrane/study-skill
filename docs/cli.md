@@ -2093,7 +2093,9 @@ What it will and won't touch:
   registration is read from `~/.claude.json`, because `claude mcp get` may start the
   server). A dry run takes every decision the real run would, on a copy of the record, so
   it reports exactly what the real run will do. `study doctor` adds a `setup` Finding with
-  the first problem `--check` finds.
+  the first problem `--check` finds. On a computer with neither Claude Code nor Codex
+  it still says so of a `study-shelf` that is installed and not registered: Shelf is no
+  agent's.
 - Agent commands run with stdin closed, in a process group of their own: a read
   (`codex mcp get`) is stopped after 10 seconds, a change (`mcp add`, `mcp remove`) after
   60, together with anything they started. Only Codex's stdout is parsed; output it cannot
