@@ -37,8 +37,11 @@ import (
 //   - A word cut at a line's end may be quoted whole: where small letters,
 //     at least two of them, are followed by a hyphen, a line break and a
 //     small letter, the hyphen and the break may be left out, or the break
-//     alone. The end of a Passage is a line break too, when the quote goes on
-//     in the next. Any other hyphen stays: "pre- and post-" keeps its two.
+//     alone. Any other hyphen stays: "pre- and post-" keeps its two.
+//   - The end of a Passage is white space with a line break in it, when the
+//     quote goes on in the next: a quote has white space there, as between
+//     any two words, unless a word was cut there or the script is written
+//     without spaces. "an upper" and "triangular" are not "uppertriangular".
 //   - Where a script is written without spaces between its words, a line
 //     break between two of its characters may be left out.
 //
@@ -162,8 +165,9 @@ func foldQuote(quote string) []rune {
 type passageText struct {
 	runes []rune
 	// optional says of each character that a quote may leave it out: the
-	// hyphen and the line break of a word cut at a line's end, the end of a
-	// Passage, and a line break inside a script written without spaces.
+	// hyphen and the line break of a word cut at a line's end, and a line
+	// break inside a script written without spaces. The end of a Passage is
+	// a line break, and no more optional than another.
 	optional []bool
 	// starts is where each Passage's text begins in runes.
 	starts []int
@@ -184,19 +188,11 @@ func foldPassages(texts []string) passageText {
 		all = append(all, folded...)
 	}
 	t.runes, t.optional = make([]rune, len(all)), make([]bool, len(all))
-	boundary := map[int]bool{}
-	for _, start := range t.starts[min(1, len(t.starts)):] {
-		if start > 0 {
-			boundary[start-1] = true
-		}
-	}
 	small := func(i int) bool { return i >= 0 && i < len(all) && unicode.IsLower(all[i].r) }
 	letter := func(i int) bool { return i >= 0 && i < len(all) && unicode.IsLetter(all[i].r) }
 	for i, c := range all {
 		t.runes[i] = c.r
 		switch {
-		case c.space && boundary[i]:
-			t.optional[i] = true
 		case c.space && c.breaks && i > 0 && i+1 < len(all) && unspaced(all[i-1].r) && unspaced(all[i+1].r):
 			t.optional[i] = true
 		case c.hyphen && small(i-1) && letter(i-2) && i+1 < len(all) && all[i+1].space && all[i+1].breaks && small(i+2):

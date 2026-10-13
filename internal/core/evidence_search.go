@@ -539,8 +539,27 @@ func (p *topicPlugin) indexed(ctx context.Context, sources []Source, fileState f
 	ask := newIndexAsk(p.topic, &KnowledgeBase{Kind: KnowledgeBasePlugin, Plugin: p.name}, sources)
 	ask.fileState = fileState
 	ask.answered(asking, p.name, p.conn.Contract(), said)
+	// Looking for the files of what is not indexed is study's own work, and
+	// can be stopped, or take the time that was left: what it then said of
+	// a file says nothing, and neither does a result made of it. A search
+	// that asks the plugin no more would otherwise answer as if all were
+	// well.
+	switch {
+	case ctx.Err() != nil:
+		return nil, nil, "", ctx.Err()
+	case asking.Err() != nil:
+		p.late = true
+		return nil, nil, "", &Error{Code: CodeFailedPrecondition, Err: asking.Err(), Message: "looking on this computer for the " +
+			"files of the Sources that Knowledge base plugin " + p.name + " has not indexed took what was left of the " +
+			p.limit.String() + " study has to " + p.doing + ". study source list " + p.topic + " looks for them without that " +
+			"limit. " + p.otherwise}
+	}
+	byID := make(map[string]*plugincontract.SourceStatus, len(said))
+	for i := range said {
+		byID[said[i].ID] = &said[i]
+	}
 	for i, src := range sources {
-		if !found(src, statusOf(said, src.ID)) {
+		if !found(src, byID[src.ID]) {
 			leftOut = append(leftOut, ask.indexing.Sources[i])
 			continue
 		}

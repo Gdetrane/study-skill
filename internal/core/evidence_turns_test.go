@@ -224,3 +224,62 @@ func TestACommandStoppedAsItsTurnComesGivesItBack(t *testing.T) {
 		t.Errorf("the next SearchEvidence = %+v, %v", res, err)
 	}
 }
+
+// Looking for the files of the Sources a plugin has not indexed is study's
+// own work, inside the time a search has. Stopped there, or out of time
+// there, a search says so: it does not answer as if nothing were indexed.
+func TestASearchStoppedWhileItLooksForFilesSaysSo(t *testing.T) {
+	_, k := studyWithAPlugin(t, t0)
+	bg := context.Background()
+	if _, err := k.CreateTopic(bg, TopicSpec{Title: "C", ID: "c"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := k.UpdateTopic(bg, "c", TopicChanges{KnowledgeBase: plugin("kb")}); err != nil {
+		t.Fatal(err)
+	}
+	// A Source the plugin has not indexed: its file is looked for.
+	sources := []Source{{ID: "book.id001", Title: "Book", Kind: SourceFile, Hash: "sha256:" + strings.Repeat("0", 64)}}
+
+	t.Run("stopped", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(bg)
+		defer cancel()
+		p, err := k.startTopicPlugin(ctx, "c", "kb", "answer a search of the Topic's Sources", "Read them yourself.")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer p.stop()
+		asked := 0
+		held, leftOut, _, err := p.indexed(ctx, sources, func(context.Context, Source) string {
+			asked++
+			cancel()
+			return ""
+		})
+		if asked != 1 || CodeOf(err) != CodeCanceled || held != nil || leftOut != nil {
+			t.Errorf("indexed, stopped while the file was looked for (asked %d times) = %v, %v, %v (%s); want canceled", asked, held,
+				leftOut, err, CodeOf(err))
+		}
+	})
+	t.Run("out of time", func(t *testing.T) {
+		k.plugins.EvidenceTimeout = 2 * time.Second
+		defer func() { k.plugins.EvidenceTimeout = 20 * time.Second }()
+		p, err := k.startTopicPlugin(bg, "c", "kb", "answer a search of the Topic's Sources", "Read them yourself.")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer p.stop()
+		_, _, _, err = p.indexed(bg, sources, func(ctx context.Context, _ Source) string {
+			// As a file that is hashed until the time is over.
+			<-ctx.Done()
+			return ""
+		})
+		if CodeOf(err) != CodeFailedPrecondition || !strings.Contains(err.Error(), "looking on this computer for the files of the Sources") ||
+			!strings.Contains(err.Error(), "took what was left of the 2s study has to answer a search of the Topic's Sources") ||
+			!strings.Contains(err.Error(), "study source list c") || !strings.Contains(err.Error(), "Read them yourself.") ||
+			strings.Contains(err.Error(), "did not answer") {
+			t.Errorf("indexed, out of time while the file was looked for = %v (%s); want it to say what took the time, and not that the plugin was late", err, CodeOf(err))
+		}
+	})
+	if got := turnsTaken(k, "kb"); got != 0 {
+		t.Errorf("%d turns are still taken", got)
+	}
+}

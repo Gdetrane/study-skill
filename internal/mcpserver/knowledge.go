@@ -101,7 +101,7 @@ func addKnowledgeTools(server *mcp.Server, c *core.Core) {
 			"from a Passage as it is given, and record it with evidence_record and the Passage's id. Only the Sources " +
 			"the plugin holds indexed on this computer are searched: searched lists them, left_out the others with why, " +
 			"note says so in a sentence, and action is the one command to run next for them, as status gives it " +
-			"(Instruction 14). A Topic without Sources, or with none indexed, gives no Passages and a note, which is no " +
+			"(Instruction 14). A Topic that names a plugin and has no Sources, or none indexed, gives no Passages and a note, which is no " +
 			"error. An answer holds at most 256 KiB of Passages' text, and its note says when Passages were left out " +
 			"for that. It fails with failed_precondition when the Topic names no plugin, or the plugin cannot be had or " +
 			"did not answer within 45 seconds: read the Sources yourself then, and do not search again in this " +

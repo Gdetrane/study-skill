@@ -129,6 +129,14 @@ func TestAQuoteRunsThroughPassages(t *testing.T) {
 		{"a word cut at the end of a Passage", []string{"Elimi-", "nation produces"}, "Elimination produces", true, -1},
 		{"a word cut at the end of a Passage, with its hyphen", []string{"Elimi-\n", "\nnation produces"}, "Elimi-nation produces", true, -1},
 		{"a compound cut at the end of a Passage", []string{"a well-", "known result"}, "a well-known result", true, -1},
+		// The end of a Passage is white space: the last word of one and the
+		// first of the next are two words.
+		{"two words at the ends of two Passages made one", []string{one, two}, "an uppertriangular system.", false, -1},
+		{"an article and a word made one across Passages", []string{"Let A be a", "symmetric matrix."}, "be asymmetric matrix.", false, -1},
+		{"two numbers made one across Passages", []string{"in rows 1", "2 and 3"}, "rows 12 and", false, -1},
+		{"the same with the space there", []string{"Let A be a", "symmetric matrix."}, "be a symmetric matrix.", true, -1},
+		{"a script without spaces across Passages", []string{"\U00006F22\U00005B57", "\U0000306E\U00006587\U00007AE0"}, "\U00005B57\U0000306E", true, -1},
+		{"a hyphen at the end of a Passage before a capital stays", []string{"the Gauss-", "Jordan method"}, "the GaussJordan method", false, -1},
 		{"all in the first", []string{one, two}, "The pivots are on the diagonal.", false, 0},
 		{"all in the second", []string{one, two}, "Back substitution", false, 1},
 		{"through two of three, and not the third", []string{one, two, three}, "an upper triangular system.", false, -1},

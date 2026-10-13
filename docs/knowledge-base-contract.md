@@ -615,6 +615,11 @@ from the Passage, to check the quote against its text.
   - `study` hands a Passage on without the characters of Unicode's tag block (U+E0000 to
     U+E007F), which show nothing, and compares a quote without them and without any other
     character that is not shown.
+- **Cut Passages where the Source has white space.** `study` reads the end of one Passage
+  and the beginning of the next as separated by white space, since it cannot know
+  otherwise: a quote that runs through both must have white space there, unless a word
+  was cut with a hyphen or the script is written without spaces. A Passage that ends
+  inside a word has that word quoted from neither.
 - **A quote can run from one Passage into the next.** `study` then asks for each, up to
   five, and looks for the quote in their texts read one after the other, in the order the
   learner's agent gave. Nothing in this version says which Passage follows which in a

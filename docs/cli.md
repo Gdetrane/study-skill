@@ -33,7 +33,7 @@ that scripts and agents can rely on. Terms follow [GLOSSARY.md](../GLOSSARY.md).
 | `study source update <topic> <source> [--title T] [--path P] [--dry-run]` | Changes a Source's title, which the History records, or says where its file is on this computer (`--path`, remembered locally only); the file at `--path` must hold the same content. |
 | `study source list <topic>` | Lists the Topic's Knowledge base and Sources, and finds each file on this computer. When the Topic names a Knowledge base plugin, each Source has an `index` (`indexed`, `indexing`, `failed`, `not_indexed` or `unknown`) and the list an `indexing` with the one command to run next; the plugin has two seconds to say, and is never waited for. See [What is indexed](#what-is-indexed). |
 | `study source index <topic> [<source>...] [--again] [--dry-run]` | Asks the Topic's Knowledge base plugin to index the Topic's Sources that are not indexed, or the ones named, one after the other, and follows each to its end; progress goes to stderr. A file is handed over by its path and content hash, a web page by its address. `--again` asks for Sources that are indexed already too, and has a web page fetched again. `--dry-run` starts the plugin, asks what it has indexed and lists what would be asked of it, without asking. The result is `{"topic", "plugin", "collection", "sources": [{"id", "title", "path"? \| "url"?, "state", "progress"?, "reason"?, "asked"?, "skipped"?}]}`. A Source that fails is not an error of the command: its `state` is `failed`, with the plugin's `reason`, and the exit code is 0. Stopped, it tells the plugin to stop and reports `canceled`; run again, it carries on. It records no Event. It is the one thing that indexes, and agents have no tool for it: they run it in their own shell. See [study source index](#study-source-index). |
-| `study evidence search <topic> <query> [--limit N] [--source S]...` | Asks the Topic's Knowledge base plugin for the Passages of the Topic's Sources that answer the query, best first: each with its `id`, its `source` and `title`, its `text` (the Source's own, as the plugin extracted it), its `location` when the plugin knows it, and its `score` for this query. Only the Sources the plugin holds indexed on this computer, as the Topic records them, are searched: the result lists the others in `left_out`, says so in `note`, and gives the one command to run next for them in `action`. `--limit` defaults to 5 and is capped at 50; `--source` searches only that Source, and can be repeated. An answer holds at most 256 KiB of Passages' text. A Topic without Sources, and one with none indexed, is a success with no Passages. It is `failed_precondition` when the Topic names no plugin, and when the plugin cannot be had or does not answer within 45 seconds. It reads the plugin's index and never a Source, and records nothing. The MCP tool is `evidence_search`. See [Searching a Topic's Sources](#searching-a-topics-sources). |
+| `study evidence search <topic> <query> [--limit N] [--source S]...` | Asks the Topic's Knowledge base plugin for the Passages of the Topic's Sources that answer the query, best first: each with its `id`, its `source` and `title`, its `text` (the Source's own, as the plugin extracted it), its `location` when the plugin knows it, and its `score` for this query. Only the Sources the plugin holds indexed on this computer, as the Topic records them, are searched: the result lists the others in `left_out`, says so in `note`, and gives the one command to run next for them in `action`. `--limit` defaults to 5 and is capped at 50; `--source` searches only that Source, and can be repeated. An answer holds at most 256 KiB of Passages' text. It is `failed_precondition` when the Topic names no plugin, whatever Sources it has, and when the plugin cannot be had or does not answer within 45 seconds. A Topic that names a plugin and has no Sources, or none indexed, is a success with no Passages. It reads the plugin's index and never a Source, and records nothing. The MCP tool is `evidence_search`. See [Searching a Topic's Sources](#searching-a-topics-sources). |
 | `study evidence record <topic> --lesson L --source S --quote Q [--passage P]... [--location LOC --location-from F] [--dry-run]` | Records an exact quote from a Source that a Lesson cites. `--quote -` reads the quote from stdin. With `--passage`, the id of the Passage the quote is from as `study evidence search` gave it, the quote is checked: it is refused (`invalid_argument`) when it is not in the Passage's text, and its location is the Passage's, so `--location` is then refused too. Repeat `--passage`, in order, for a quote that runs from one Passage into the next: each names one Passage, and one given without an id is a usage error. Without `--passage` nothing is checked. Recording the same Evidence twice changes nothing. A dry run asks the plugin and checks the quote, as the real run does. See [Evidence checked against its Passage](#evidence-checked-against-its-passage). |
 | `study evidence retract <topic> <evidence> [--dry-run]` | Takes back Evidence recorded by mistake. The retraction is recorded, never deleted; retracting twice changes nothing. |
 | `study evidence list <topic> [--lesson L] [--all]` | Lists the Evidence recorded in the Topic, or only what one Lesson cites, each with whether its quote was checked against the Passages it is from (`checked`, and then `passages` and `plugin`). Retracted Evidence is listed only with `--all`. |
@@ -1371,10 +1371,12 @@ summary, and never a generated answer. Evidence is quoted from it.
   list <topic>` when a Source's file is missing, changed or unreadable, which that listing
   explains; and nothing when all that is left out failed, since indexing it again as it
   is would fail again. A Source that is being indexed is found once that is done.
-- **Nothing to search is no error.** A Topic without Sources, and one of whose Sources none
-  is indexed, give no Passages and a `note`, with exit code 0. The plugin is then not asked
-  to search, and a Topic without Sources starts no plugin at all. Nor is it an error that
-  nothing answers the query: `passages` is empty, and `searched` says what was looked in.
+- **Nothing to search is no error, for a Topic that names a plugin.** One without Sources,
+  and one of whose Sources none is indexed, give no Passages and a `note`, with exit code
+  0. The plugin is then not asked to search, and a Topic without Sources starts no plugin
+  at all. Nor is it an error that nothing answers the query: `passages` is empty, and
+  `searched` says what was looked in. A Topic that names no plugin is
+  `failed_precondition` whatever Sources it has: that is looked at first.
 - **`--limit`** is the most Passages to return: 5 unless given, or given as 0, and 50 at
   most, which a larger number is cut to. **`--source`** limits the search to that Source,
   and can be repeated; one the Topic does not have is `not_found`.
@@ -1427,7 +1429,7 @@ summary, and never a generated answer. Evidence is quoted from it.
 
 | It ends with | When |
 |---|---|
-| exit 0 | The plugin was asked, whatever it found: Passages, none, or nothing to search because no Source is indexed. Also for a Topic without Sources. |
+| exit 0 | The plugin was asked, whatever it found: Passages, none, or nothing to search because no Source is indexed. Also for a Topic that names a plugin and has no Sources, which starts none. |
 | `failed_precondition`, exit 1 | The Topic names no plugin; the plugin is not registered on this computer; it cannot be started, is no MCP server, does not speak the contract or answered with what is not the contract's; it did not answer within the 45 seconds; or it was busy with other searches for all of them. The message says which, and that the Topic works meanwhile as one without a Knowledge base: the agent reads the Sources itself. |
 | `newer_format`, exit 1 | The plugin speaks a newer version of the contract: upgrade `study`. |
 | `not_found`, exit 1 | There is no such Topic, or the Topic has no such Source. |
@@ -1502,7 +1504,9 @@ from it.
   then looked for in their texts read one after the other, and must begin in the first and
   end in the last, so each Passage named is one the quote is in; one that is all in one of
   them is refused, and the message says in which. A word cut at the end of a Passage may be
-  quoted whole, as at a line's end. `study` cannot tell that two Passages follow one
+  quoted whole, as at a line's end. Between two Passages a quote has white space, as
+  between any two words: the last word of one and the first of the next do not run
+  together. `study` cannot tell that two Passages follow one
   another in the Source, which the contract does not say: the end of one Passage and the
   beginning of another, of the same Source, pass as a quote. Where a plugin's Passages
   overlap, quote from one of them.
