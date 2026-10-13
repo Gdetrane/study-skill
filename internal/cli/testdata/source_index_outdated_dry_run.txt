@@ -1,0 +1,4 @@
+Knowledge base plugin kb would be asked to index 1 Source of linear-algebra:
+  book.<id>  Book
+    $HOME/Books/book.txt
+    indexed, and to be indexed again: its Passages were indexed before an embedding model was set; it would be asked for again

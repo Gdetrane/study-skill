@@ -22,6 +22,7 @@ import (
 	"github.com/mordor-forge/lamplight/v2/internal/plugincontract"
 	"github.com/mordor-forge/lamplight/v2/internal/plugintest"
 	"github.com/mordor-forge/lamplight/v2/internal/shelf"
+	"github.com/mordor-forge/lamplight/v2/internal/shelf/endpoint"
 	pdfreader "github.com/mordor-forge/lamplight/v2/internal/shelf/pdf"
 	"github.com/mordor-forge/lamplight/v2/internal/shelf/shelftest"
 )
@@ -180,6 +181,9 @@ func (s *session) status(collection string) map[string]plugincontract.SourceStat
 	by := map[string]plugincontract.SourceStatus{}
 	for _, source := range out.Sources {
 		by[source.ID] = source
+		if strings.Contains(source.Reason, testKey) {
+			s.t.Errorf("the reason status gives for %s holds the key: %s", source.ID, source.Reason)
+		}
 	}
 	return by
 }
@@ -299,6 +303,81 @@ func long(pages int, word string) []byte {
 		book.Pages = append(book.Pages, []string{fmt.Sprintf("Page %d of a long book says %s%d and a little more, to give Shelf work.", n+1, word, n+1)})
 	}
 	return book.Bytes()
+}
+
+// testKey is the key the tests give Shelf for its endpoints. Nothing Shelf
+// says, to study or on its standard error, may hold it.
+const testKey = "sk-shelf-test-7d1e09bb3c"
+
+// embedderAt returns what asks a test endpoint for vectors, set as the
+// Recipe for EmbeddingGemma 2 sets a server that embeds a text as it is
+// sent: Shelf writes the model's marks around each text, and keeps 512
+// numbers of a vector.
+func embedderAt(t *testing.T, at *shelftest.Endpoint, change ...func(*endpoint.Embedding)) *endpoint.Embedder {
+	t.Helper()
+	cfg := endpoint.Embedding{
+		Address: at.URL, Key: testKey, Model: "test-embedder", Dimensions: 512,
+		Query:    endpoint.Marking{Text: "task: search result | query: {text}"},
+		Document: endpoint.Marking{Text: "title: {title} | text: {text}"},
+		Agent:    "study-shelf/test",
+	}
+	for _, c := range change {
+		c(&cfg)
+	}
+	e, err := endpoint.NewEmbedder(cfg)
+	if err != nil {
+		t.Fatalf("NewEmbedder: %v", err)
+	}
+	t.Cleanup(e.Close)
+	return e
+}
+
+// rerankerAt returns what asks a test endpoint to order Passages.
+func rerankerAt(t *testing.T, at *shelftest.Endpoint, change ...func(*endpoint.Reranking)) *endpoint.Reranker {
+	t.Helper()
+	cfg := endpoint.Reranking{Address: at.URL, Key: testKey, Model: "test-reranker", Agent: "study-shelf/test"}
+	for _, c := range change {
+		c(&cfg)
+	}
+	r, err := endpoint.NewReranker(cfg)
+	if err != nil {
+		t.Fatalf("NewReranker: %v", err)
+	}
+	t.Cleanup(r.Close)
+	return r
+}
+
+// found is what Shelf's search gives back: the contract's Passages, and
+// what Shelf says beside them of how it searched.
+type found struct {
+	plugincontract.SearchResult
+	Search   []string `json:"search"`
+	Reranked bool     `json:"reranked"`
+	Notice   string   `json:"notice,omitempty"`
+}
+
+// find searches, and returns all of Shelf's answer.
+func (s *session) find(collection, query string, limit int, sources ...string) found {
+	s.t.Helper()
+	in := plugincontract.SearchInput{Collection: collection, Query: query, Limit: limit, Sources: sources}
+	var out found
+	s.ok(plugincontract.ToolSearch, in, &out)
+	if err := out.SearchResult.Validate(in); err != nil {
+		s.t.Fatalf("what search gave back breaks the contract: %v", err)
+	}
+	if strings.Contains(out.Notice, testKey) {
+		s.t.Errorf("the search's notice holds the key: %s", out.Notice)
+	}
+	return out
+}
+
+// texts are the texts of Passages, each on one line.
+func texts(passages []plugincontract.ScoredPassage) []string {
+	out := make([]string, len(passages))
+	for i, p := range passages {
+		out[i] = strings.Join(strings.Fields(p.Text), " ")
+	}
+	return out
 }
 
 // holding returns the Passages among found whose text holds the word.

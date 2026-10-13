@@ -1,0 +1,30 @@
+{
+  "ok": true,
+  "data": {
+    "topic": "linear-algebra",
+    "knowledge_base": {
+      "kind": "plugin",
+      "plugin": "kb"
+    },
+    "indexing": {
+      "plugin": "kb",
+      "action": "study source index linear-algebra"
+    },
+    "sources": [
+      {
+        "id": "book.<id>",
+        "kind": "file",
+        "title": "Book",
+        "file_name": "book.txt",
+        "hash": "sha256:41f85beb63e5b3ad7d008f32b45089b76a09c8fe7c29236323fc783bf88154e7",
+        "size_bytes": 45,
+        "path": "$HOME/Books/book.txt",
+        "state": "ok",
+        "index": {
+          "state": "outdated",
+          "reason": "its Passages were indexed before an embedding model was set"
+        }
+      }
+    ]
+  }
+}

@@ -758,7 +758,7 @@ hours before any learning happens is exactly what v1 produced.
     cannot be told is reported as possibly still indexing. What was indexed stays, and the
     next run carries on.
   - **`sources` and `status` say what is indexed**, in the CLI and over MCP: each Source is
-    `indexed`, `indexing`, `failed`, `not_indexed` or `unknown`, with `study source index`
+    `indexed`, `outdated`, `indexing`, `failed`, `not_indexed` or `unknown`, with `study source index`
     as the one action when a Source is not indexed and the command would hand it over. A
     Source that failed is shown with the plugin's reason and is no action: it is tried
     again when someone runs the command for it. Nor is the command the action for a file
@@ -847,8 +847,9 @@ hours before any learning happens is exactly what v1 produced.
     Evidence that was not checked, as before, and `evidence` shows which is which
     (`checked`). A Passage's id is the recording machine's plugin's: it says what was
     checked, and is not checked again elsewhere.
-- **Built** (ADR-0012): Shelf with keyword search, the `study-shelf` program
-  (`cmd/study-shelf`, `internal/shelf`). [docs/shelf.md](../shelf.md) is the learner's page.
+- **Built** (ADR-0012): Shelf, the `study-shelf` program (`cmd/study-shelf`,
+  `internal/shelf`), with keyword search and, when the learner names an endpoint, embedding
+  search and reranking. [docs/shelf.md](../shelf.md) is the learner's page.
   - It is a second program in this repository and release, and `study` links none of it:
     not Shelf's packages, not SQLite, not the PDF reader. A test lists what `study`, the
     core and the MCP server are built from and fails when any of it is there. The release
@@ -882,9 +883,13 @@ hours before any learning happens is exactly what v1 produced.
     Shelf, in WAL mode: `sources` (id, kind, title, the hash of the content that is
     indexed, a web page's address, why the last indexing failed and what it was asked
     with), `passages` (id, Source, place, pages), a full-text table of their text (FTS5,
-    ranked by BM25, words without case and accents and by their English stem) and `work`
-    (the Sources being indexed now, below). The file's header carries the format, 1, and
-    a file in a newer format is refused and left as it is.
+    ranked by BM25, words without case and accents and by their English stem), `work`
+    (the Sources being indexed now, below), and the Passages' vectors: `embeddings` (for
+    each Source that has them, the model, how a Passage was marked for it and the size)
+    and `vectors` (the vectors themselves, in runs of up to 1,024 Passages). The file's
+    header carries the format, 2, and a file in a newer format is refused and left as it
+    is. A file in format 1, from before vectors, is read as it is and brought to format 2
+    by the next write of content.
   - **A Source is in the index whole or not at all.** `index` answers at once and the work
     goes on: the Source is read and cut in memory, and then replaces what was indexed in
     one transaction. A search finds the earlier content until that commits. `cancel`, a
@@ -920,18 +925,41 @@ hours before any learning happens is exactly what v1 produced.
     exchanged for a link between two of SQLite's own system calls: closing it takes an
     SQLite whose file access is ours to write, which the pure-Go translation does not
     offer.
-  - It takes no settings yet. Whatever it comes to need, an endpoint, a Recipe, a key, is
-    read from a settings file of its own and never from its command line.
-- **Still to build for v2.0** (ADR-0012): Shelf's embedding search, so that a search finds
-  what is said in other words.
-  - Keyword search is built, above. Still to come: vectors beside the full-text index in
-    the same SQLite file, embeddings from any endpoint that speaks the OpenAI embeddings
-    API, keyword and embedding results put together, and keyword alone when there is no
-    endpoint. When a reranking endpoint is given, it reorders the best Passages before
-    they are returned. A Recipe names Shelf's settings for one embedding model; the first
-    is for EmbeddingGemma 2.
+  - **Its settings are a file of the learner's**, `shelf.toml` in Lamplight's configuration
+    folder, with a `format` number: never its command line, and never its environment,
+    which says only where that folder is. A file Shelf cannot use stops it, with a reason
+    that repeats no value of the file, and one inside Shelf's own folder, or reached
+    through it, is refused.
+  - **Embedding search.** The file names an endpoint that speaks the OpenAI embeddings
+    API, and a Recipe, or a model's own settings. Indexing then asks for a vector for each
+    Passage, sixteen at a time, and writes them in the transaction that writes the
+    Passages: a Source is indexed with all of its vectors or not at all, and an endpoint
+    that fails leaves it `failed`, with a reason that names the endpoint's host and never
+    its key. A request holds the model, the texts and what the settings name, and nothing
+    else.
+    - A Recipe says how a question and a Passage are marked for the model: by text Shelf
+      writes around them, or by fields added to the request for a server that marks them
+      itself, never both. EmbeddingGemma 2 has one of each, and both keep 512 of its 768
+      numbers.
+    - A search asks for the question's vector, one request, reads every vector of the
+      collection that was made the same way, and takes two Passages of that ranking for
+      each one of the keyword ranking's. With a reranking endpoint, one more request
+      orders the best thirty.
+    - An endpoint that does not answer a search leaves it to what remains, keyword search
+      or the order it had, and the answer says so in fields of Shelf's own (`search`,
+      `reranked`, `notice`).
+    - A Source whose vectors are of another model, marking or size, or that has none, is
+      `outdated`: found as it is, by keyword, with the hash of what is found and the
+      reason. `study` names `study source index` as what to do next, and asked for again,
+      its Passages are given vectors and are not read again.
+    - Starting, `contract` and `status` ask no endpoint anything.
+- **Still to build for v2.0** (ADR-0012): what sets Shelf up and checks it for the learner
+  (`study setup`, `study doctor`, the walkthrough), and the notices of what the two
+  programs are built from.
   - A plugin reached by URL is a service outside any sandbox, so it must itself be told
     what it may read and fetch.
+  - Nothing shows the learner a search's `notice` yet: the contract has no word for a
+    search that did less than its settings ask for.
 - **Later**: a context written by a language model for each Passage, used for indexing
   only; layout-aware conversion for formulas, tables and scans; recordings, video and
   images as Sources.
@@ -1239,9 +1267,9 @@ recording Level signals); sync for one machine at a time; the Library in Go; the
 terminal Reviews; the MCP server; the `lamplight` skill; the Claude Code plugin and
 `study setup` for Claude Code and Codex; Linux and macOS releases with an install script;
 `study import`; and Knowledge base plugins (ADR-0012): the registry, the contract, `study`
-as its client, Topics that name a plugin, `study source index` and `evidence_search` with
-the quote check, which are built, and, still to build, Shelf with keyword and embedding
-search and optional reranking.
+as its client, Topics that name a plugin, `study source index`, `evidence_search` with the
+quote check, and Shelf with keyword and embedding search and optional reranking, all of
+which are built.
 
 **Order of work**: the tracer bullet, then the History engine (its file formats are settled
 before any real data is written), then a thin learner loop through every layer, then each

@@ -189,6 +189,16 @@ func integrity(t *testing.T, folder, collection string) {
 	if err := db.QueryRow("SELECT (SELECT count(*) FROM passages), (SELECT count(*) FROM passages_text)").Scan(&passages, &texts); err != nil || passages != texts {
 		t.Errorf("%s holds %d Passages and %d texts (%v)", collection, passages, texts, err)
 	}
+	// A Source that is said to have vectors has one for each of its
+	// Passages, and no vector is of a Source that is said to have none.
+	var short, stray int
+	if err := db.QueryRow(`SELECT
+		(SELECT count(*) FROM embeddings e WHERE 4 * e.dimensions * (SELECT count(*) FROM passages p WHERE p.source = e.source)
+			!= (SELECT coalesce(sum(length(v.vectors)), 0) FROM vectors v WHERE v.source = e.source)),
+		(SELECT count(*) FROM vectors WHERE source NOT IN (SELECT source FROM embeddings))`).Scan(&short, &stray); err != nil || short != 0 || stray != 0 {
+		t.Errorf("%s holds %d Sources whose vectors are not one for each Passage, and %d rows of vectors that are no Source's (%v)",
+			collection, short, stray, err)
+	}
 }
 
 // study-shelf is killed while it indexes a book, as a kill -9 or a power cut
@@ -196,20 +206,61 @@ func integrity(t *testing.T, folder, collection string) {
 // reads it, and while it writes it into the index. What was indexed before
 // is there for the next study-shelf, the book is there whole or not at all,
 // and indexed again it is whole.
+//
+// With an embedding endpoint, most of the work is asking for the Passages'
+// vectors, and the kill comes there too: the book is in the index with a
+// vector for each of its Passages, or not at all.
 func TestAStudyShelfThatIsKilledLeavesItsIndexWhole(t *testing.T) {
+	// Beside the conformance suite: each of the two below has a computer of
+	// its own, and nothing here is measured by the clock.
+	t.Parallel()
+	for name, tc := range map[string]struct {
+		embedding bool
+		// How far the indexing is when the kill comes: at once, in the
+		// reading, among the requests for vectors when there are any, and
+		// at its end, which is where the writing begins.
+		until []float64
+	}{
+		"by keyword alone":           {false, []float64{-1, 0.4, 0.95, 0.95}},
+		"with an embedding endpoint": {true, []float64{-1, 0.05, 0.5, 0.98, 0.98}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			killedAtSeveralMoments(t, tc.embedding, tc.until)
+		})
+	}
+}
+
+func killedAtSeveralMoments(t *testing.T, embedding bool, moments []float64) {
 	const pages = 1500
 	computer := plugintest.NewComputer(t)
 	folder := computer.DataFolder("conformance")
+	var at *shelftest.Endpoint
+	if embedding {
+		at = shelftest.NewEndpoint(t)
+		writeSettings(t, computer, at, "embeddinggemma-2", false)
+	}
 	kept := file(t, "kept.a1", pdf([]string{"A book that was indexed before speaks of determinants."}))
 	book := file(t, "long.b2", long(pages, "page"))
+	// vectors checks that a Source has a vector for each of its Passages,
+	// or none: the long book's Passages are its pages.
+	vectors := func(source plugincontract.Source, indexed bool, passages int) {
+		t.Helper()
+		got, want := vectorsOf(t, folder, "crash", source.ID).count, 0
+		if embedding && indexed {
+			want = passages
+		}
+		if got != want {
+			t.Fatalf("the index holds %d vectors for %s (indexed: %v), want %d: a Source has a vector for each Passage, or none", got, source.ID, indexed, want)
+		}
+	}
 
 	s, _ := run(t, computer)
 	s.indexed("crash", kept)
+	vectors(kept, true, 1)
 
 	indexedOnce := false
-	// How far the indexing is when the kill comes: at once, in the reading,
-	// and at its end, which is where the writing begins.
-	for round, until := range []float64{-1, 0.4, 0.95, 0.95} {
+	for round, until := range moments {
 		s, command := run(t, computer)
 		if whole(t, s, "crash", book, pages, "page") {
 			// A kill came after the book was in the index. From nothing
@@ -238,7 +289,8 @@ func TestAStudyShelfThatIsKilledLeavesItsIndexWhole(t *testing.T) {
 		if found := next.search("crash", "determinants", 5, kept.ID); len(found) != 1 {
 			t.Fatalf("round %d: after study-shelf was killed, what was indexed before is no longer found", round)
 		}
-		whole(t, next, "crash", book, pages, "page")
+		vectors(kept, true, 1)
+		vectors(book, whole(t, next, "crash", book, pages, "page"), pages)
 	}
 	// Asked again, the book is indexed, all of it.
 	s, _ = run(t, computer)
@@ -246,9 +298,186 @@ func TestAStudyShelfThatIsKilledLeavesItsIndexWhole(t *testing.T) {
 	if !whole(t, s, "crash", book, pages, "page") {
 		t.Error("indexed again after the kills, the book is not in the index")
 	}
+	vectors(book, true, pages)
 	integrity(t, folder, "crash")
 	if indexedOnce {
 		t.Log("one kill came after the book was written: the index held it whole")
+	}
+	if embedding {
+		// The kills came while this endpoint was being asked, or about to
+		// be: it is the one the settings name, asked as they say.
+		heldToSettings(t, at, "google/embeddinggemma-2", "[input model]")
+	}
+}
+
+// study-shelf takes what a learner wrote in its settings file: the endpoint,
+// the Recipe's model and marks, the key. With another Recipe in the file,
+// the next study-shelf says what that makes of what is indexed, and
+// indexing again puts it right. Without the file it searches by keyword.
+func TestTheBuiltStudyShelfDoesWhatItsSettingsFileSays(t *testing.T) {
+	computer := plugintest.NewComputer(t)
+	folder := computer.DataFolder("conformance")
+	at := shelftest.NewEndpoint(t)
+	at.Same("automobile", "car")
+	settings := writeSettings(t, computer, at, "embeddinggemma-2", false)
+
+	s, command := run(t, computer)
+	var contract plugincontract.Contract
+	s.ok(plugincontract.ToolContract, struct{}{}, &contract)
+	if fmt.Sprint(contract.Search) != "[keyword embedding]" {
+		t.Errorf("with an endpoint in its settings file, study-shelf says it searches by %v", contract.Search)
+	}
+	book := file(t, "book.a1", pdf([]string{"A garden needs water and sunlight."}, []string{"The car needs fuel and a road."}))
+	s.indexed("settings", book)
+	if got := s.find("settings", "automobile", 1); len(got.Passages) != 1 || !strings.Contains(got.Passages[0].Text, "The car needs fuel") ||
+		fmt.Sprint(got.Search) != "[keyword embedding]" || got.Notice != "" {
+		t.Errorf("a search by what a word means finds %q by %v, with the notice %q", texts(got.Passages), got.Search, got.Notice)
+	}
+	asked := at.Asked()
+	if len(asked) != 2 || fmt.Sprint(asked[0].Texts()) != "[title: The book.a1 book | text: A garden needs water and sunlight. title: The book.a1 book | text: The car needs fuel and a road.]" ||
+		fmt.Sprint(asked[1].Texts()) != "[task: search result | query: automobile]" {
+		t.Fatalf("the endpoint was asked %+v; want the two Passages, and then the question, each marked as the Recipe marks it", asked)
+	}
+	for n, a := range asked {
+		if a.Path != "/v1/embeddings" || a.Key != testKey || a.Agent != "study-shelf/dev" || a.Body["model"] != "google/embeddinggemma-2" || fmt.Sprint(a.Keys()) != "[input model]" {
+			t.Errorf("request %d went to %s as %q, with the key %q: %v", n, a.Path, a.Agent, a.Key, a.Body)
+		}
+	}
+	if got, want := vectorsOf(t, folder, "settings", book.ID), (kept{"google/embeddinggemma-2", "title: {title} | text: {text}", 512, 2}); got != want {
+		t.Errorf("the collection keeps %+v for the book, want %+v", got, want)
+	}
+	command.Stop()
+	if said := command.Wrote(); said != "" {
+		t.Errorf("study-shelf wrote on its standard error: %q", said)
+	}
+
+	// The learner's server now applies the model's prompts itself, and they
+	// name the Recipe for that. The vectors that are there were made of
+	// text Shelf marked: the next study-shelf says so, and indexing again
+	// has the server mark the Passages.
+	at.Prompts("query", "task: search result | query: ", "document", "title: none | text: ")
+	writeSettings(t, computer, at, "embeddinggemma-2-prompts", false)
+	at.Forget()
+	s, _ = run(t, computer)
+	if now := s.status("settings")[book.ID]; now.State != plugincontract.StateOutdated || now.Hash != book.Hash ||
+		!strings.Contains(now.Reason, "marked for the model google/embeddinggemma-2 in another way") {
+		t.Errorf("after the Recipe was changed, study-shelf says %+v of the book", now)
+	}
+	s.indexed("settings", book)
+	if got := s.find("settings", "automobile", 1); len(got.Passages) != 1 || !strings.Contains(got.Passages[0].Text, "The car needs fuel") || got.Notice != "" {
+		t.Errorf("with the server marking the texts, a search finds %q, with the notice %q", texts(got.Passages), got.Notice)
+	}
+	asked = at.Asked()
+	if len(asked) != 2 {
+		t.Fatalf("the endpoint was asked %d times, want once for the Passages and once for the question", len(asked))
+	}
+	for n, want := range []struct{ prompt, texts string }{
+		{"document", "[A garden needs water and sunlight. The car needs fuel and a road.]"},
+		{"query", "[automobile]"},
+	} {
+		if a := asked[n]; fmt.Sprint(a.Keys()) != "[dimensions input model prompt]" || a.Body["prompt"] != want.prompt ||
+			a.Body["dimensions"] != float64(512) || fmt.Sprint(a.Texts()) != want.texts || a.Key != testKey {
+			t.Errorf("request %d is %v, with the key %q; want the prompt %s, 512 numbers, and the texts as they are", n, a.Body, a.Key, want.prompt)
+		}
+	}
+
+	// Without the file, study-shelf is the one that searches by keyword,
+	// and has nothing to say of vectors.
+	if err := os.Remove(settings); err != nil {
+		t.Fatal(err)
+	}
+	at.Forget()
+	s, _ = run(t, computer)
+	s.ok(plugincontract.ToolContract, struct{}{}, &contract)
+	if fmt.Sprint(contract.Search) != "[keyword]" {
+		t.Errorf("without a settings file, study-shelf says it searches by %v", contract.Search)
+	}
+	if now := s.status("settings")[book.ID]; now.State != plugincontract.StateIndexed {
+		t.Errorf("without a settings file, study-shelf says %+v of the book", now)
+	}
+	if got := s.find("settings", "fuel", 1); len(got.Passages) != 1 || fmt.Sprint(got.Search) != "[keyword]" {
+		t.Errorf("without a settings file, a search finds %q by %v", texts(got.Passages), got.Search)
+	}
+	if asked := at.Asked(); len(asked) != 0 {
+		t.Errorf("without a settings file, study-shelf asked the endpoint %+v", asked)
+	}
+}
+
+// A settings file study-shelf cannot use ends it at once, with the reason
+// last on its standard error, where study reads it, and never on its
+// standard output, which is study's. It does not search by keyword instead:
+// the learner who wrote an endpoint into the file would think it in use.
+// Nothing of the file is repeated, since a line of it may be the key.
+func TestStudyShelfDoesNotStartOnSettingsItCannotUse(t *testing.T) {
+	const good = "format = 1\n[embedding]\nendpoint = \"http://127.0.0.1:1/v1\"\nrecipe = \"embeddinggemma-2\"\nkey = \"" + testKey + "\"\n"
+	for name, tc := range map[string]struct {
+		text string
+		// inFolder writes the file in the folder study-shelf keeps its
+		// index in, and links to it from where the settings are.
+		inFolder bool
+		want     []string
+	}{
+		"a key that is not closed":   {"format = 1\n[embedding]\nendpoint = \"http://127.0.0.1:1/v1\"\nrecipe = \"embeddinggemma-2\"\nkey = \"" + testKey + "\n", false, []string{"is not valid TOML at line 5"}},
+		"a Recipe it does not have":  {strings.Replace(good, "embeddinggemma-2", "embeddinggemma-9", 1), false, []string{"names a Recipe this Shelf does not have", "embeddinggemma-2 and embeddinggemma-2-prompts"}},
+		"a newer format":             {strings.Replace(good, "format = 1", "format = 2", 1), false, []string{"is in format 2", "this one reads format 1", "update Lamplight"}},
+		"no format":                  {strings.TrimPrefix(good, "format = 1\n"), false, []string{"does not say which format"}},
+		"a file in the index folder": {good, true, []string{"is inside the folder Shelf keeps its index in, or the folder of the plugins' folders above it"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			computer := plugintest.NewComputer(t)
+			folder := computer.DataFolder("conformance")
+			if err := os.MkdirAll(folder, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(computer.ConfigDir, "shelf.toml")
+			if tc.inFolder {
+				planted := filepath.Join(folder, "planted.toml")
+				if err := os.WriteFile(planted, []byte(tc.text), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(planted, path); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := os.WriteFile(path, []byte(tc.text), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			cmd := exec.Command(shelftest.Shelf(t))
+			cmd.Env = []string{"HOME=" + computer.Home, plugincontract.DataFolderEnv + "=" + folder}
+			cmd.Dir = computer.ConfigDir
+			var stdout, stderr bytes.Buffer
+			cmd.Stdout, cmd.Stderr = &stdout, &stderr
+			err := cmd.Run()
+			if exit, ok := err.(*exec.ExitError); !ok || exit.ExitCode() != 1 {
+				t.Fatalf("study-shelf ended with %v, want it to exit with 1\nstderr: %s", err, stderr.String())
+			}
+			if stdout.Len() != 0 {
+				t.Errorf("study-shelf wrote on its standard output, which is study's: %q", stdout.String())
+			}
+			said := stderr.String()
+			for _, word := range append(tc.want, "study-shelf: Shelf's settings file, "+path) {
+				if !strings.Contains(said, word) {
+					t.Errorf("it does not say %q: %s", word, said)
+				}
+			}
+			if strings.Contains(said, testKey) {
+				t.Errorf("it repeats the key: %s", said)
+			}
+			// study shows the last 600 bytes of what a plugin wrote: the
+			// reason fits.
+			if len(said) > 600 {
+				t.Errorf("it wrote %d bytes, more than study repeats: %s", len(said), said)
+			}
+			if left, _ := os.ReadDir(folder); len(left) != map[bool]int{false: 0, true: 1}[tc.inFolder] {
+				t.Errorf("a study-shelf that did not start left %v in its folder", left)
+			}
+			// Asked what version it is, it still says: that reads no
+			// settings.
+			version := exec.Command(shelftest.Shelf(t), "--version")
+			version.Env = cmd.Env
+			if out, err := version.Output(); err != nil || string(out) != "study-shelf version dev\n" {
+				t.Errorf("study-shelf --version: %q, %v", out, err)
+			}
+		})
 	}
 }
 

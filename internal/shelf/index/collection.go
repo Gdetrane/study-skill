@@ -4,12 +4,15 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
+	"math"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -33,13 +36,30 @@ const (
 	// CrashHalfWritten: half of a Source's new Passages are written, inside
 	// that transaction.
 	CrashHalfWritten = "half of the new Passages are written"
+	// CrashVectorsHalfWritten: the new Passages are written, the Source is
+	// said to have vectors, and half of them are there. It is met only by
+	// content that comes with vectors, in either transaction that writes
+	// them.
+	CrashVectorsHalfWritten = "half of the new vectors are written"
 	// CrashBeforeCommit: all of them are, and the transaction is still open.
 	CrashBeforeCommit = "the new Passages are written, and not committed"
 	// CrashCommitted: the transaction has committed.
 	CrashCommitted = "the new Passages are committed"
+	// CrashEmbeddedBeforeCommit: new vectors of content that is indexed
+	// already are written in the place of its earlier ones, and the
+	// transaction is still open.
+	CrashEmbeddedBeforeCommit = "the vectors of indexed content are replaced, and not committed"
+	// CrashEmbeddedCommitted: that transaction has committed.
+	CrashEmbeddedCommitted = "the vectors of indexed content are committed"
 )
 
-// schema is what a collection's file holds, in Format 1.
+// PointVectorsRead is where Options.Crash is called by a search by vectors:
+// the vectors are read and compared, and the Passages they are of are not
+// read yet. It is where a test has another Shelf put other content in a
+// Source's place, to see that no Passage is ranked by another's vector.
+const PointVectorsRead = "the vectors of a search are read, and its Passages are not"
+
+// schema is what a collection's file held in Format 1, and still holds.
 //
 // A Source's row says which content of it is indexed: hash is that
 // content's, and is NULL while nothing of the Source is. failed is why its
@@ -86,6 +106,47 @@ var schema = []string{
 	`CREATE VIRTUAL TABLE passages_text USING fts5(text, tokenize = 'porter unicode61 remove_diacritics 2')`,
 }
 
+// vectorSchema is what Format 2 added: the vectors of a Source's Passages,
+// for a search by what a question means.
+//
+// A Source has a row in embeddings when every one of its Passages has a
+// vector, and never otherwise: the row and the vectors are written in the
+// transaction that writes the Passages, or in one that gives vectors to
+// Passages that are there. The row says what the vectors were made with,
+// since a question's vector is compared only with vectors made the same
+// way.
+//
+// The vectors are kept in runs: a row of vectors holds those of up to
+// runLength Passages that follow each other, from the Passage at the place
+// first, each vector as its numbers in 32 bits, the low byte first. A search
+// reads every vector of a collection, and Shelf is started anew for every
+// search: a few large rows are read several times faster than one row for
+// each Passage.
+//
+// The format was raised for them, and not only added to: a Shelf that knows
+// nothing of vectors would replace a Source's Passages and leave its vectors
+// standing, and the next search would hand out Passages by the vectors of
+// others. It refuses a file in Format 2 instead.
+var vectorSchema = []string{
+	`CREATE TABLE embeddings (
+		source     TEXT PRIMARY KEY REFERENCES sources(id),
+		model      TEXT NOT NULL,
+		document   TEXT NOT NULL,
+		dimensions INTEGER NOT NULL
+	) STRICT, WITHOUT ROWID`,
+	`CREATE TABLE vectors (
+		id      INTEGER PRIMARY KEY,
+		source  TEXT NOT NULL REFERENCES embeddings(source),
+		first   INTEGER NOT NULL,
+		vectors BLOB NOT NULL,
+		UNIQUE (source, first)
+	) STRICT`,
+}
+
+// runLength is how many Passages' vectors one row of vectors holds, at
+// most: two megabytes of them, for vectors of 512 numbers.
+var runLength = 1024
+
 // Collection is the index of one collection.
 type Collection struct {
 	name string
@@ -120,7 +181,22 @@ type Source struct {
 	// it did not. Asked is then what that indexing was asked with: the hash
 	// it was handed for a file, or a web page's address.
 	Failed, Asked string
+	// Made is what the vectors of the Source's Passages were made with, and
+	// the zero Made while they have none.
+	Made Made
 }
+
+// Made says what vectors were made with: the model, by the name the
+// endpoint knows it under, how a stretch of a document was marked for it,
+// and how many numbers a vector has. A question's vector is compared only
+// with vectors made the same way.
+type Made struct {
+	Model, Document string
+	Dimensions      int
+}
+
+// Any reports whether there are vectors at all.
+func (m Made) Any() bool { return m.Dimensions > 0 }
 
 // Passage is a stretch of a Source's text in the index. First and Last are
 // the pages it is on, and 0 for a Source without pages.
@@ -173,7 +249,7 @@ func (c *Collection) initialise(ctx context.Context) error {
 	if format != 0 {
 		return nil
 	}
-	for i, statement := range schema {
+	for i, statement := range append(append([]string{}, schema...), vectorSchema...) {
 		if _, err := tx.ExecContext(ctx, statement); err != nil {
 			return c.wrap(err)
 		}
@@ -224,8 +300,11 @@ func (c *Collection) Count(ctx context.Context) (int, error) {
 // Sources returns what the index says of the collection's Sources, by id,
 // and no more of them than a status may list.
 func (c *Collection) Sources(ctx context.Context) ([]Source, error) {
-	rows, err := c.db.QueryContext(ctx, `SELECT id, kind, title, coalesce(hash, ''), coalesce(address, ''), coalesce(failed, ''), coalesce(asked, '')
-		FROM sources ORDER BY id LIMIT ?`, plugincontract.MaxSources)
+	query, err := c.sourcesQuery(ctx)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := c.db.QueryContext(ctx, query+` ORDER BY s.id LIMIT ?`, plugincontract.MaxSources)
 	if err != nil {
 		return nil, c.wrap(err)
 	}
@@ -233,7 +312,7 @@ func (c *Collection) Sources(ctx context.Context) ([]Source, error) {
 	var out []Source
 	for rows.Next() {
 		var s Source
-		if err := rows.Scan(&s.ID, &s.Kind, &s.Title, &s.Hash, &s.Address, &s.Failed, &s.Asked); err != nil {
+		if err := rows.Scan(&s.ID, &s.Kind, &s.Title, &s.Hash, &s.Address, &s.Failed, &s.Asked, &s.Made.Model, &s.Made.Document, &s.Made.Dimensions); err != nil {
 			return nil, c.wrap(err)
 		}
 		out = append(out, s)
@@ -241,12 +320,69 @@ func (c *Collection) Sources(ctx context.Context) ([]Source, error) {
 	return out, c.wrap(rows.Err())
 }
 
+// sourcesQuery is the query that reads what the index says of Sources, s,
+// with what their vectors were made with: which a file in Format 1 says
+// nothing of.
+func (c *Collection) sourcesQuery(ctx context.Context) (string, error) {
+	const columns = `SELECT s.id, s.kind, s.title, coalesce(s.hash, ''), coalesce(s.address, ''), coalesce(s.failed, ''), coalesce(s.asked, '')`
+	vectors, err := c.hasVectors(ctx)
+	switch {
+	case err != nil:
+		return "", err
+	case !vectors:
+		return columns + `, '', '', 0 FROM sources s`, nil
+	}
+	return columns + `, coalesce(e.model, ''), coalesce(e.document, ''), coalesce(e.dimensions, 0)
+		FROM sources s LEFT JOIN embeddings e ON e.source = s.id`, nil
+}
+
+// hasVectors reports whether the collection's file is in a format that
+// holds vectors. A file in Format 1 is read as it is, where Shelf may not
+// write among them, and becomes one in Format 2 with the next content that
+// is written into it (upgrade).
+func (c *Collection) hasVectors(ctx context.Context) (bool, error) {
+	var format int
+	if err := c.db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&format); err != nil {
+		return false, c.wrap(err)
+	}
+	return format >= 2, nil
+}
+
+// upgrade gives a file in Format 1 what Format 2 added, inside the
+// transaction that is about to write content: the file is in the one format
+// or in the other, whatever stops Shelf on the way.
+func (c *Collection) upgrade(ctx context.Context, tx *sql.Tx) error {
+	var format int
+	if err := tx.QueryRowContext(ctx, "PRAGMA user_version").Scan(&format); err != nil {
+		return c.wrap(err)
+	}
+	switch {
+	case format > Format:
+		// A newer Shelf brought the file to a format of its own since this
+		// one opened it: what this one would write is not what that format
+		// holds.
+		return &NewerError{Collection: c.name, Format: int64(format)}
+	case format == Format:
+		return nil
+	}
+	for _, statement := range append(append([]string{}, vectorSchema...), fmt.Sprintf("PRAGMA user_version = %d", Format)) {
+		if _, err := tx.ExecContext(ctx, statement); err != nil {
+			return c.wrap(err)
+		}
+	}
+	return nil
+}
+
 // Source returns what the index says of one Source, and nil when it says
 // nothing.
 func (c *Collection) Source(ctx context.Context, id string) (*Source, error) {
-	s := Source{ID: id}
-	err := c.db.QueryRowContext(ctx, `SELECT kind, title, coalesce(hash, ''), coalesce(address, ''), coalesce(failed, ''), coalesce(asked, '')
-		FROM sources WHERE id = ?`, id).Scan(&s.Kind, &s.Title, &s.Hash, &s.Address, &s.Failed, &s.Asked)
+	query, err := c.sourcesQuery(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var s Source
+	err = c.db.QueryRowContext(ctx, query+` WHERE s.id = ?`, id).Scan(&s.ID, &s.Kind, &s.Title, &s.Hash, &s.Address, &s.Failed, &s.Asked,
+		&s.Made.Model, &s.Made.Document, &s.Made.Dimensions)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -258,24 +394,55 @@ func (c *Collection) Source(ctx context.Context, id string) (*Source, error) {
 
 // Replace puts new content of a Source in the place of what the index held
 // for it: source.Hash is the content's hash, and passages its text, in
-// order, which Replace gives their ids. It is one transaction. A search
-// finds the earlier content until it commits and the new content from then
-// on, and never part of either, whatever stops Shelf on the way.
-func (c *Collection) Replace(ctx context.Context, source Source, passages []Passage) error {
-	return c.replace(ctx, source, passages, nil)
+// order, which Replace gives their ids. vectors are the Passages' vectors,
+// one for each and in their order, made as source.Made says, or nil for
+// content without vectors. It is one transaction. A search finds the
+// earlier content until it commits and the new content from then on, with
+// its vectors, and never part of either, whatever stops Shelf on the way.
+func (c *Collection) Replace(ctx context.Context, source Source, passages []Passage, vectors [][]float32) error {
+	return c.replace(ctx, source, passages, vectors, nil)
+}
+
+// checkVectors checks that vectors are one for each of count Passages, made
+// as made says.
+func checkVectors(made Made, vectors [][]float32, count int) error {
+	if !made.Any() {
+		if made != (Made{}) || vectors != nil {
+			return errors.New("vectors come with what they were made with, and a vector has at least one number")
+		}
+		return nil
+	}
+	if made.Model == "" || len(vectors) != count {
+		return fmt.Errorf("a Source's vectors name their model and are one for each Passage: %d vectors for %d Passages", len(vectors), count)
+	}
+	for _, vector := range vectors {
+		if len(vector) != made.Dimensions {
+			return fmt.Errorf("a vector has %d numbers, and the Source's are said to have %d", len(vector), made.Dimensions)
+		}
+	}
+	return nil
 }
 
 // replace is Replace, for the work that read the content when there is
 // one: the work is over in the transaction that puts its content there.
-func (c *Collection) replace(ctx context.Context, source Source, passages []Passage, work *Work) error {
+func (c *Collection) replace(ctx context.Context, source Source, passages []Passage, vectors [][]float32, work *Work) error {
 	if source.Hash == "" || len(passages) == 0 {
 		return errors.New("a Source is indexed with a hash and at least one Passage")
+	}
+	if err := checkVectors(source.Made, vectors, len(passages)); err != nil {
+		return err
 	}
 	tx, err := c.db.BeginTx(ctx, nil)
 	if err != nil {
 		return c.wrap(err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	if err := c.upgrade(ctx, tx); err != nil {
+		return err
+	}
+	if err := c.dropVectors(ctx, tx, source.ID); err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM passages_text WHERE rowid IN (SELECT key FROM passages WHERE source = ?)`, source.ID); err != nil {
 		return c.wrap(err)
 	}
@@ -320,11 +487,166 @@ func (c *Collection) replace(ctx context.Context, source Source, passages []Pass
 			c.crash(CrashHalfWritten)
 		}
 	}
+	if err := c.writeVectors(ctx, tx, source.ID, source.Made, vectors); err != nil {
+		return err
+	}
 	c.crash(CrashBeforeCommit)
 	if err := tx.Commit(); err != nil {
 		return c.wrap(err)
 	}
 	c.crash(CrashCommitted)
+	return nil
+}
+
+// dropVectors takes a Source's vectors out, with what says that it has any.
+func (c *Collection) dropVectors(ctx context.Context, tx *sql.Tx, source string) error {
+	for _, statement := range []string{`DELETE FROM vectors WHERE source = ?`, `DELETE FROM embeddings WHERE source = ?`} {
+		if _, err := tx.ExecContext(ctx, statement, source); err != nil {
+			return c.wrap(err)
+		}
+	}
+	return nil
+}
+
+// writeVectors writes the vectors of a Source's Passages, in runs, and what
+// they were made with. It writes nothing for content without vectors.
+func (c *Collection) writeVectors(ctx context.Context, tx *sql.Tx, source string, made Made, vectors [][]float32) error {
+	if !made.Any() {
+		return nil
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO embeddings (source, model, document, dimensions) VALUES (?, ?, ?, ?)`,
+		source, made.Model, made.Document, made.Dimensions); err != nil {
+		return c.wrap(err)
+	}
+	runs := (len(vectors) + runLength - 1) / runLength
+	for run := range runs {
+		if run == runs/2 {
+			c.crash(CrashVectorsHalfWritten)
+		}
+		first := run * runLength
+		of := vectors[first:min(first+runLength, len(vectors))]
+		packed := make([]byte, 0, 4*made.Dimensions*len(of))
+		for _, vector := range of {
+			for _, x := range vector {
+				packed = binary.LittleEndian.AppendUint32(packed, math.Float32bits(x))
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO vectors (source, first, vectors) VALUES (?, ?, ?)`, source, first, packed); err != nil {
+			return c.wrap(err)
+		}
+	}
+	return nil
+}
+
+// ErrChanged says that a Source's content is no longer the content whose
+// Passages were given vectors.
+var ErrChanged = errors.New("the Source's content changed while its Passages were given vectors")
+
+// Texts returns the text of the Passages that are indexed for a Source, in
+// their order, and the hash of the content they are of: what there is to
+// give vectors to. It returns no hash for a Source nothing is indexed of.
+func (c *Collection) Texts(ctx context.Context, source string) (hash string, texts []string, err error) {
+	rows, err := c.db.QueryContext(ctx, `SELECT coalesce(s.hash, ''), passages_text.text
+		FROM passages p JOIN sources s ON s.id = p.source JOIN passages_text ON passages_text.rowid = p.key
+		WHERE p.source = ? ORDER BY p.place`, source)
+	if err != nil {
+		return "", nil, c.wrap(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var text string
+		if err := rows.Scan(&hash, &text); err != nil {
+			return "", nil, c.wrap(err)
+		}
+		texts = append(texts, text)
+	}
+	return hash, texts, c.wrap(rows.Err())
+}
+
+// Embed gives vectors to the Passages that are indexed for a Source, in the
+// place of the vectors they had: one for each Passage, in their order, made
+// as made says. The Passages and their ids stay as they are. hash is the
+// hash of the content the vectors are of, and texts the Passages' texts they
+// were made of, as Texts gave them: when the Source's content is another by
+// now, or its Passages are, though of the same content and as many, nothing
+// is written and the error is ErrChanged. A vector is so never kept for a
+// text it was not made of. It is one transaction, so a Source's vectors are
+// all of one making, whatever stops Shelf on the way.
+func (c *Collection) Embed(ctx context.Context, source, hash string, texts []string, made Made, vectors [][]float32) error {
+	return c.embed(ctx, source, hash, texts, made, vectors, nil)
+}
+
+func (c *Collection) embed(ctx context.Context, source, hash string, texts []string, made Made, vectors [][]float32, work *Work) error {
+	if len(texts) != len(vectors) {
+		return fmt.Errorf("%d vectors for %d Passages", len(vectors), len(texts))
+	}
+	if !made.Any() {
+		return errors.New("vectors come with what they were made with")
+	}
+	if err := checkVectors(made, vectors, len(vectors)); err != nil {
+		return err
+	}
+	tx, err := c.db.BeginTx(ctx, nil)
+	if err != nil {
+		return c.wrap(err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := c.upgrade(ctx, tx); err != nil {
+		return err
+	}
+	var has string
+	err = tx.QueryRowContext(ctx, `SELECT coalesce(hash, '') FROM sources WHERE id = ?`, source).Scan(&has)
+	switch {
+	case errors.Is(err, sql.ErrNoRows) || (err == nil && has != hash):
+		return ErrChanged
+	case err != nil:
+		return c.wrap(err)
+	}
+	// The Passages are the ones the vectors were made of, each in its
+	// place: the same content cut otherwise since is other Passages.
+	rows, err := tx.QueryContext(ctx, `SELECT passages_text.text FROM passages p JOIN passages_text ON passages_text.rowid = p.key
+		WHERE p.source = ? ORDER BY p.place`, source)
+	if err != nil {
+		return c.wrap(err)
+	}
+	at, same := 0, true
+	for rows.Next() {
+		var text string
+		if err := rows.Scan(&text); err != nil {
+			rows.Close()
+			return c.wrap(err)
+		}
+		same = same && at < len(texts) && texts[at] == text
+		at++
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return c.wrap(err)
+	}
+	rows.Close()
+	if !same || at != len(texts) {
+		return ErrChanged
+	}
+	if err := c.dropVectors(ctx, tx, source); err != nil {
+		return err
+	}
+	if err := c.writeVectors(ctx, tx, source, made, vectors); err != nil {
+		return err
+	}
+	// A failure that was recorded was of an earlier try to do this.
+	if _, err := tx.ExecContext(ctx, `UPDATE sources SET failed = NULL, asked = NULL WHERE id = ? AND failed IS NOT NULL`, source); err != nil {
+		return c.wrap(err)
+	}
+	if work != nil {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM work WHERE id = ?`, work.id); err != nil {
+			return c.wrap(err)
+		}
+	}
+	c.crash(CrashEmbeddedBeforeCommit)
+	if err := tx.Commit(); err != nil {
+		return c.wrap(err)
+	}
+	c.crash(CrashEmbeddedCommitted)
 	return nil
 }
 
@@ -395,10 +717,51 @@ func terms(query string) string {
 	return strings.Join(quoted, " OR ")
 }
 
+// Reading is one reading of a collection: whatever it is asked, it answers
+// of the collection as it was when it first looked. A search by words and
+// one by vectors made through the same Reading find the same content of
+// every Source, though another copy of Shelf replaces one meanwhile, and a
+// Passage is never paired with the vector of the one that stood in its
+// place before.
+//
+// It is a transaction that only reads. A transaction of this collection
+// otherwise takes the lock that writes it from its beginning, and a search
+// must never keep another copy of Shelf from indexing: one that only reads
+// blocks nobody. Close it when the reading is over.
+type Reading struct {
+	c  *Collection
+	tx *sql.Tx
+}
+
+// Read begins a reading of the collection.
+func (c *Collection) Read(ctx context.Context) (*Reading, error) {
+	tx, err := c.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return nil, c.wrap(err)
+	}
+	return &Reading{c: c, tx: tx}, nil
+}
+
+// Close ends the reading. It may be called more than once.
+func (r *Reading) Close() { _ = r.tx.Rollback() }
+
+// Search returns the Passages that answer a query, the best first, and no
+// more than limit. sources, when not nil, are the ids of the Sources to
+// search. It is a reading of its own: see Reading.Search.
+func (c *Collection) Search(ctx context.Context, query string, limit int, sources []string) ([]Found, error) {
+	r, err := c.Read(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer r.Close()
+	return r.Search(ctx, query, limit, sources)
+}
+
 // Search returns the Passages that answer a query, the best first, and no
 // more than limit. sources, when not nil, are the ids of the Sources to
 // search.
-func (c *Collection) Search(ctx context.Context, query string, limit int, sources []string) ([]Found, error) {
+func (r *Reading) Search(ctx context.Context, query string, limit int, sources []string) ([]Found, error) {
+	c := r.c
 	match := terms(query)
 	if match == "" {
 		return nil, nil // a query of punctuation alone names nothing to find
@@ -418,7 +781,7 @@ func (c *Collection) Search(ctx context.Context, query string, limit int, source
 	// Passages that score the same come in the order of the text, so that
 	// the same search gives the same answer.
 	statement += ` ORDER BY bm25(passages_text), p.source, p.place LIMIT ?`
-	rows, err := c.db.QueryContext(ctx, statement, append(args, limit)...)
+	rows, err := r.tx.QueryContext(ctx, statement, append(args, limit)...)
 	if err != nil {
 		return nil, c.wrap(err)
 	}
@@ -432,6 +795,142 @@ func (c *Collection) Search(ctx context.Context, query string, limit int, source
 		out = append(out, f)
 	}
 	return out, c.wrap(rows.Err())
+}
+
+// Nearest returns the Passages whose vectors are nearest a question's, the
+// nearest first, and no more than limit. Only vectors made as made says are
+// compared, with as many numbers as the question's has: vectors made
+// otherwise say nothing about it. sources, when not nil, are the ids of the
+// Sources to search. A Passage's score is the cosine of the angle between
+// the two vectors, from -1 to 1.
+//
+// Every vector that counts is read and compared: no index of them is kept.
+// A collection is a Topic's books, a few thousand Passages, and the
+// comparing is a fraction of the reading (docs/shelf.md has the numbers).
+// It is a reading of its own: see Reading.Nearest.
+func (c *Collection) Nearest(ctx context.Context, made Made, question []float32, limit int, sources []string) ([]Found, error) {
+	r, err := c.Read(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer r.Close()
+	return r.Nearest(ctx, made, question, limit, sources)
+}
+
+// Nearest returns the Passages whose vectors are nearest a question's, as
+// Collection.Nearest does, of the collection as this reading has it.
+func (r *Reading) Nearest(ctx context.Context, made Made, question []float32, limit int, sources []string) ([]Found, error) {
+	c, tx := r.c, r.tx
+	if vectors, err := c.hasVectors(ctx); err != nil || !vectors || len(question) == 0 || limit < 1 {
+		return nil, err
+	}
+	statement := `SELECT v.source, v.first, v.vectors FROM vectors v JOIN embeddings e ON e.source = v.source
+		WHERE e.model = ? AND e.document = ? AND e.dimensions = ?`
+	args := []any{made.Model, made.Document, len(question)}
+	if sources != nil {
+		list, err := json.Marshal(sources)
+		if err != nil {
+			return nil, err
+		}
+		statement += ` AND v.source IN (SELECT value FROM json_each(?))`
+		args = append(args, string(list))
+	}
+	// The vectors, and then the Passages they are of, in the one reading:
+	// a Passage is known to its vector by its place in the Source, and
+	// another copy of Shelf may put other content in the Source's place
+	// between the two. Read apart, the new Passage at a place would be
+	// ranked by the vector of the one that stood there before.
+	rows, err := tx.QueryContext(ctx, statement+` ORDER BY v.source, v.first`, args...)
+	if err != nil {
+		return nil, c.wrap(err)
+	}
+	defer rows.Close()
+	type scored struct {
+		source int
+		place  int
+		score  float32
+	}
+	var (
+		names []string
+		all   []scored
+		width = 4 * len(question)
+	)
+	for rows.Next() {
+		var source string
+		var first int
+		var packed sql.RawBytes
+		if err := rows.Scan(&source, &first, &packed); err != nil {
+			return nil, c.wrap(err)
+		}
+		if len(packed)%width != 0 {
+			return nil, fmt.Errorf("the index of collection %s holds vectors of Source %s that are cut short. Index the Source again", c.name, source)
+		}
+		if len(names) == 0 || names[len(names)-1] != source {
+			names = append(names, source)
+		}
+		for i := 0; i < len(packed)/width; i++ {
+			all = append(all, scored{source: len(names) - 1, place: first + i, score: dot(packed[i*width:(i+1)*width], question)})
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, c.wrap(err)
+	}
+	_ = rows.Close()
+	// Passages that score the same come in the order of the text, so that
+	// the same search gives the same answer.
+	sort.Slice(all, func(i, j int) bool {
+		a, b := all[i], all[j]
+		if a.score != b.score {
+			return a.score > b.score
+		}
+		if a.source != b.source {
+			return a.source < b.source
+		}
+		return a.place < b.place
+	})
+	c.crash(PointVectorsRead)
+	passage, err := tx.PrepareContext(ctx, `SELECT p.id, passages_text.text, coalesce(p.first_page, 0), coalesce(p.last_page, 0)
+		FROM passages p JOIN passages_text ON passages_text.rowid = p.key WHERE p.source = ? AND p.place = ?`)
+	if err != nil {
+		return nil, c.wrap(err)
+	}
+	defer passage.Close()
+	var out []Found
+	for _, s := range all {
+		if len(out) == limit {
+			break
+		}
+		f := Found{Passage: Passage{Source: names[s.source]}, Score: float64(s.score)}
+		err := passage.QueryRowContext(ctx, f.Source, s.place).Scan(&f.ID, &f.Text, &f.First, &f.Last)
+		if errors.Is(err, sql.ErrNoRows) {
+			// A vector without its Passage: nothing to hand out for it.
+			continue
+		}
+		if err != nil {
+			return nil, c.wrap(err)
+		}
+		out = append(out, f)
+	}
+	return out, nil
+}
+
+// dot is the sum of the products of a packed vector's numbers and a
+// question's: for two vectors of length 1, the cosine of the angle between
+// them. It is summed in four parts, which a processor does at once.
+func dot(packed []byte, question []float32) float32 {
+	var a, b, c, d float32
+	i := 0
+	for ; i+4 <= len(question); i += 4 {
+		four := packed[4*i : 4*i+16 : 4*i+16]
+		a += math.Float32frombits(binary.LittleEndian.Uint32(four[0:4])) * question[i]
+		b += math.Float32frombits(binary.LittleEndian.Uint32(four[4:8])) * question[i+1]
+		c += math.Float32frombits(binary.LittleEndian.Uint32(four[8:12])) * question[i+2]
+		d += math.Float32frombits(binary.LittleEndian.Uint32(four[12:16])) * question[i+3]
+	}
+	for ; i < len(question); i++ {
+		a += math.Float32frombits(binary.LittleEndian.Uint32(packed[4*i:4*i+4])) * question[i]
+	}
+	return a + b + c + d
 }
 
 // Passage returns the Passage with that id, and nil when the collection has

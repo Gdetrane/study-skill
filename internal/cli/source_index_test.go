@@ -472,6 +472,57 @@ func TestAFailedSourceIsOfferedARetryOnlyWhereItCanHelp(t *testing.T) {
 	}
 }
 
+// A Source the plugin calls outdated is one it holds and would index
+// otherwise now, its settings having changed: it is shown as indexed and to
+// be indexed again, with the plugin's reason, study source index is named
+// as what to do next, and that command asks for it without --again.
+func TestAnOutdatedSourceIsShownAndIndexedAgain(t *testing.T) {
+	s := newShelfComputer(t)
+	s.book(t, "book.txt", bookOf(2, "one"))
+	s.ok(t, "source", "index", "linear-algebra")
+	var list struct {
+		Data core.SourceList `json:"data"`
+	}
+	s.asItIs(t, &list, "source", "list", "linear-algebra", "--json")
+	if len(list.Data.Sources) != 1 || list.Data.Sources[0].Hash == "" {
+		t.Fatalf("the Topic's Sources are %+v", list.Data.Sources)
+	}
+	answer, err := json.Marshal(map[string]any{"sources": []any{map[string]any{"id": list.Data.Sources[0].ID, "state": "outdated",
+		"hash": list.Data.Sources[0].Hash, "reason": "its Passages were indexed before an embedding model was set"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.registerWith(t, "--result", "status="+string(answer))
+	for _, shown := range []struct {
+		name string
+		args []string
+	}{
+		{"source_list_outdated.txt", []string{"source", "list", "linear-algebra"}},
+		{"source_list_outdated.json", []string{"source", "list", "linear-algebra", "--json"}},
+		{"status_outdated.txt", []string{"status"}},
+		{"status_outdated.json", []string{"status", "--json"}},
+		{"source_index_outdated_dry_run.txt", []string{"source", "index", "linear-algebra", "--dry-run"}},
+	} {
+		r := s.run(t, shown.args...)
+		if r.code != cli.ExitOK || strings.HasSuffix(shown.name, ".json") && r.stderr != "" {
+			t.Errorf("%s: exit %d, stderr %q", shown.name, r.code, r.stderr)
+		}
+		golden(t, shown.name, r.stdout)
+	}
+	// The command asks the plugin for it, as it is: nobody said --again.
+	before := len(s.calls(t))
+	s.ok(t, "source", "index", "linear-algebra")
+	var indexed []string
+	for _, call := range s.calls(t)[before:] {
+		if call.Tool == "index" {
+			indexed = append(indexed, call.Source())
+		}
+	}
+	if !slices.Equal(indexed, []string{list.Data.Sources[0].ID}) {
+		t.Errorf("study source index asked the plugin to index %v; want the Source that is outdated, once", indexed)
+	}
+}
+
 // With a plugin that never answers, a Topic's Sources and status are there
 // all the same, soon, and say which command shows what is wrong.
 func TestTheCommandLineNeverWaitsForAPlugin(t *testing.T) {

@@ -402,6 +402,8 @@ func describeIndex(x core.SourceIndex) (text string, attention bool) {
 		return "being indexed", false
 	case core.IndexFailed:
 		return "indexing failed" + reason, true
+	case core.IndexOutdated:
+		return "indexed, and to be indexed again" + reason, true
 	case core.IndexNotIndexed:
 		return "not indexed" + reason, true
 	}
@@ -513,7 +515,7 @@ func writeSourceList(w io.Writer, l core.SourceList) error {
 		}
 	}
 	if l.Indexing != nil && !problem && l.Indexing.Action != "" {
-		fmt.Fprintf(&b, "\nTo have Knowledge base plugin %s index what is not indexed, run:\n  %s\n", printable(l.Indexing.Plugin),
+		fmt.Fprintf(&b, "\nTo have Knowledge base plugin %s index what is not indexed, or is to be indexed again, run:\n  %s\n", printable(l.Indexing.Plugin),
 			styleAccent.Render(printable(l.Indexing.Action)))
 	}
 	_, err := io.WriteString(w, b.String())
@@ -556,6 +558,8 @@ func writeIndexResult(w io.Writer, r core.IndexResult) error {
 		switch {
 		case s.Asked && r.DryRun && s.State == core.IndexIndexed:
 			text, attention = "indexed, and would be asked for again", false
+		case s.Asked && r.DryRun && s.State == core.IndexOutdated:
+			text, attention = text+"; it would be asked for again", false
 		case s.Asked && r.DryRun:
 			text, attention = text+", and would be indexed", false
 		case s.Skipped != "":

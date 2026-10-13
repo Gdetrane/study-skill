@@ -415,7 +415,8 @@ goes on afterwards**: `status` is asked again until the Source is no longer `ind
 {"source": {"id": "strang-linear-algebra.k3f9a2", "state": "indexing", "progress": 0}}
 ```
 
-The result is `source`: what the plugin says of the Source now, shaped as in `status`. Its
+The result is `source`: what the plugin says of the Source now, shaped as in `status`,
+and never `outdated`. Its
 state is `indexed` when there was nothing to do, `indexing` when the work has begun, and
 `failed`, with the `reason`, when the plugin can tell at once that it cannot index the
 Source: `status` then says `failed` too. A plugin that finds out only later answers
@@ -423,6 +424,10 @@ Source: `status` then says `failed` too. A plugin that finds out only later answ
 
 - **A file whose `hash` is the hash of what is indexed for that Source does nothing.** The
   answer is `indexed`, at once, and the Passages and their ids stay as they are.
+- **Unless the plugin says the Source is `outdated`**: then being asked again is what
+  brings it up to date, and the answer is `indexing`, or `indexed` when it took no time.
+  The plugin may do that from what it holds, without reading the file again, and then the
+  Passages and their ids stay too. `index` never answers `outdated`.
 - Otherwise the plugin reads the file at `path`. Its content replaces what the index held
   for the Source: the old Passages are no longer found.
 - **A file is indexed only when its bytes are the `hash` it was handed.** The plugin
@@ -466,7 +471,10 @@ Says what is indexed in a collection.
   {"id": "strang-linear-algebra.k3f9a2", "state": "indexed",
    "hash": "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"},
   {"id": "axler-linear-algebra-done-right.p2x7q1", "state": "indexing", "progress": 0.4},
-  {"id": "scanned-notes.t8w3n5", "state": "failed", "reason": "the file has no text layer"}
+  {"id": "scanned-notes.t8w3n5", "state": "failed", "reason": "the file has no text layer"},
+  {"id": "hefferon-linear-algebra.m4c8d2", "state": "outdated",
+   "hash": "sha256:2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+   "reason": "its Passages were indexed before an embedding model was set"}
 ]}
 ```
 
@@ -475,10 +483,10 @@ Says what is indexed in a collection.
 | `collection` | The collection to report on. |
 | `sources` | One entry for each Source the plugin has something to say about. **A Source it does not list is not indexed.** A collection nobody indexed has an empty list. |
 | `id` | The Source's id. |
-| `state` | `indexed`, `indexing` or `failed`. |
+| `state` | `indexed`, `indexing`, `failed` or `outdated`. |
 | `progress` | With `indexing`: how much of the work is done, from `0` to `1`. Left out when the plugin cannot tell. |
-| `reason` | With `failed`: why, in words for the learner. Required then. |
-| `hash` | The content hash of what `search` finds for this Source now. Required with `indexed`. With `indexing` or `failed` it is there when earlier content is still indexed, and left out otherwise: `hash` and `search` always agree. |
+| `reason` | With `failed`: why, in words for the learner. With `outdated`: what indexing the Source again would add. Required with both. |
+| `hash` | The content hash of what `search` finds for this Source now. Required with `indexed` and with `outdated`. With `indexing` or `failed` it is there when earlier content is still indexed, and left out otherwise: `hash` and `search` always agree. |
 
 - `indexed`: the Source's Passages can be found, and `hash` says of which content.
 - `indexing`: the plugin is working on the Source **now**. A plugin that was stopped
@@ -489,6 +497,15 @@ Says what is indexed in a collection.
   asked to be indexed again. `study` starts a command anew for each of its own commands, so
   the one that shows the learner what failed is never the one that saw it fail: keep a
   failure where the index is kept.
+- `outdated`: the Source's Passages can be found, as with `indexed`, and `hash` says of
+  which content. But the plugin would index the Source otherwise now, because its own
+  settings changed since: a model for embeddings was set, or another one. `reason` says
+  what indexing it again would add, in words for the learner. It is for that and for
+  nothing else: a Source whose indexing failed is `failed`, and one the plugin holds
+  nothing of is not listed. `study` shows the reason, names `study source index` as what
+  to do next, and has that command ask for the Source again as it would for one that is
+  not indexed; a search still covers it meanwhile. A plugin that has nothing of the kind
+  never says it.
 - `status` answers from what the plugin knows, and never waits for indexing: asked while a
   Source is being indexed, it says `indexing`, at once.
 

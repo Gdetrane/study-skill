@@ -2,8 +2,10 @@
 
 Shelf is the Knowledge base plugin that ships with Lamplight: the `study-shelf` program,
 installed beside `study`. It indexes a Topic's Sources on your own computer, PDFs and web
-pages, and searches them by keyword, so that the agent can find the Passage a Lesson's
-Evidence quotes from. It needs no account and sends your books nowhere.
+pages, and searches them, so that the agent can find the Passage a Lesson's Evidence quotes
+from. It searches by keyword as it is installed, and by what a question means once you give
+it an embedding model to ask, which you run yourself. It needs no account, and sends your
+books nowhere but to the model you name.
 
 `study` links none of it ([ADR-0012](adr/0012-knowledge-base-plugins-speak-one-contract.md)):
 it starts `study-shelf` each time it has something to ask it, and speaks the
@@ -21,9 +23,10 @@ study knowledge-base check shelf
 ```
 
 `check` starts Shelf as `study` starts it for a Topic, and reports the contract it speaks:
-version 1, Sources that are files and web pages, keyword search, and pages as locations.
-`study-shelf --version` prints its version, which is the version of the `study` it was
-released with.
+version 1, Sources that are files and web pages, pages as locations, and how it searches:
+`keyword`, and `embedding` too once [its settings file](#settings) names an embedding
+endpoint. `study-shelf --version` prints its version, which is the version of the `study`
+it was released with.
 
 You never start `study-shelf` yourself. Started by hand it has no folder to keep its index
 in, says so, and exits.
@@ -113,18 +116,6 @@ Three more things to know about what comes out:
 
 ## Searching
 
-Shelf finds Passages by their words (SQLite's full-text index, ranked by BM25). A query is
-words to look for, and any of them is enough: the Passages that hold more of them, and
-rarer ones, come first. Words match without their case and their accents, and by their
-English stem, so `eliminating` finds `elimination`. Nothing in a query is an operator.
-A word is letters and numbers together, the small ones too, so `H₂O` and `m²` are words
-and are found as they are written. **Text written without spaces between words, as
-Chinese and Japanese are, cannot be searched by word**: a whole run of such text is one
-word to the index.
-
-Searching reads the index and never a Source: a book that was moved away is still found,
-and a search is answered while another book is being indexed.
-
 Your agent searches with its `evidence_search` tool, and you can with
 `study evidence search <topic> <query>`. What comes back are Passages: the book's own
 text, each with its page. A quote the agent records as Evidence with the Passage it is
@@ -133,8 +124,91 @@ there. Quote a Passage as Shelf gives it, a joined word included: the check comp
 the Passage, not with the page. [docs/cli.md](cli.md#searching-a-topics-sources) has the
 details.
 
-Search by meaning, through an embedding model you run, and reranking are the next change
-(issue #84).
+Shelf searches in two ways, and puts what they find in one order.
+
+**By keyword, always.** Shelf finds Passages by their words (SQLite's full-text index,
+ranked by BM25). A query is words to look for, and any of them is enough: the Passages that
+hold more of them, and rarer ones, come first. Words match without their case and their
+accents, and by their English stem, so `eliminating` finds `elimination`. Nothing in a query
+is an operator. A word is letters and numbers together, the small ones too, so `H₂O` and
+`m²` are words and are found as they are written. **Text written without spaces between
+words, as Chinese and Japanese are, cannot be searched by word**: a whole run of such text
+is one word to the index.
+
+**By what the question means, once [the settings file](#settings) names an embedding
+endpoint.** When a Source is indexed, each of its Passages is sent to the endpoint, which
+gives back a vector for it: a list of numbers that places the Passage among the others by
+what it says. A search sends the question the same way, and finds the Passages whose
+vectors are nearest the question's. So a question finds a Passage that answers it in other
+words than its own, which no keyword search does.
+
+**The two are put in one order**: two Passages of the embedding ranking, then one of the
+keyword ranking, and so on, each Passage once. The Passage that means most like the
+question comes first, and the one that best matches its words is among the first three,
+whatever the model made of it. A search for a function's name, or a theorem's, so finds
+the Passage that holds the name, where a model sees little in a name it never read.
+[The measurements](#the-measurements) say why it is done this way and not the usual one.
+
+**With a reranking endpoint**, the best thirty of that order, or as many as were asked for
+when that is more, are handed to a second model with the question, and come back in the
+order it gives them. That model reads the question beside each Passage, where an embedding
+model reads each by itself: in the measurements it was the largest gain after the embeddings
+themselves.
+
+Searching reads the index and never a Source: a book that was moved away is still found,
+and a search is answered while another book is being indexed. A search asks the embedding
+endpoint once, for the question's vector, and the reranking endpoint once. Nothing else
+Shelf does asks either of them, short of indexing: not starting, and not saying what is
+indexed.
+
+### When an endpoint does not answer
+
+A search is answered all the same, by what is left. An embedding endpoint that is down,
+takes longer than 10 seconds, or answers with what is no vector leaves a search by keyword.
+A reranking endpoint that fails, or takes longer than 20 seconds, leaves the order the
+search had. Together that is 30 of the 45 seconds `study` gives a search, starting Shelf
+included, so that Shelf is still there to answer and to say what it did without. Shelf says so in its answer, in three fields of its own beside the Passages,
+which the contract lets a plugin add:
+
+| Field | Says |
+|---|---|
+| `search` | How these Passages were found: `["keyword"]`, or `["keyword", "embedding"]`. |
+| `reranked` | Whether the reranking endpoint put them in their order. |
+| `notice` | In words for you, what the search did less than its settings ask for, and why: `These Passages were found by keyword alone: the embedding endpoint 127.0.0.1:8080 could not be reached: …`. It is left out when there is nothing to say. |
+
+Shelf names an endpoint by its host. It never repeats the endpoint's key, nor the rest of
+its address, and keeps neither in its index: where an endpoint's own words repeat them,
+or anything after "Bearer", Shelf takes them out before it repeats the words.
+
+`study` does not show you a `notice` yet: `study evidence search`, and the agent's
+`evidence_search` tool, give the Passages and what was left out of the search, and the
+contract has no word for a search that did less than its settings ask for.
+
+### Vectors of another model
+
+A question's vector is compared only with vectors that were made the same way: by the model
+the settings name now, of text marked as they say, with as many numbers. So when you give
+Shelf an endpoint after a Topic was indexed, or name another model or another size in the
+settings, what is indexed has no vectors a question can be compared with. It is still found
+by keyword, and `study status` and `study source list` say of each such Source that it is
+`outdated`, indexed and to be indexed again, with the reason:
+
+```
+its vectors are of the model nomic-embed-text, and Shelf's settings now name the model
+google/embeddinggemma-2
+```
+
+`study source index <topic>` brings it up to date, and is what `study status` names as the
+thing to do next. Shelf then gives the Passages that are there their new vectors, in one
+step. It reads no file again and fetches no page for that, so the Passages and their ids
+stay as they are. `study` hands Shelf a file only when it is on your computer and is the
+one you added, so a book you have moved away since stays `outdated`, and found by keyword,
+until it is back. Until every Source is done, a search is by vectors in the Sources that
+have them and by keyword in the others, and its `notice` says how many those are.
+
+Shelf tells the model by the name in its settings. A server that comes to serve another
+model under a name it served before is one Shelf cannot tell from the first: remove the
+Topic's file from Shelf's folder then (see below), and index again.
 
 ## Where the index is
 
@@ -153,30 +227,39 @@ SQLite's, ending in `-wal` and `-shm`.
 - It is that computer's state. It is not synced with the Topic, and it is rebuilt by
   indexing the Topic's Sources again. To have a Topic indexed from nothing, remove its
   files.
-- Indexing a Source whose content is indexed already does nothing. Content that changed
-  replaces what was indexed, in one step: a search finds the old text until the new text is
-  all there, and never half of either. Stopping an indexing, or losing power in the middle
-  of one, leaves what was indexed before, and the Source is indexed when you ask again.
+- Indexing a Source whose content is indexed already does nothing, unless its Passages
+  lack the vectors Shelf's settings now ask for (above). Content that changed replaces what
+  was indexed, in one step: a search finds the old text until the new text is all there,
+  and never half of either. Stopping an indexing, or losing power in the middle of one,
+  leaves what was indexed before, and the Source is indexed when you ask again.
+- With an embedding endpoint, a Source's vectors are in the same file, written in the same
+  step as its Passages: a Source is indexed with a vector for each of its Passages, or not
+  at all. An endpoint that fails while a Source is indexed leaves the Source `failed`, with
+  the reason, and what was indexed of it before. An indexing that was stopped starts over,
+  and asks for every vector again.
 - `study` starts Shelf for each thing it asks and stops it again, so several run at once:
   a `study status` in one terminal while `study source index` works in another. Each
   finds what another indexed, and says of a Source another is indexing that it is being
   indexed, and how far. Why a Source failed is kept in the collection, so it is still
   said the next day.
 - Each file carries a format number. A file written by a newer Shelf is refused, with the
-  reason, and left as it is.
+  reason, and left as it is. The format is 2 since Shelf keeps vectors. A file in format 1,
+  which a Shelf from before embedding search wrote, is read as it is, and becomes one in
+  format 2 the next time a Source is indexed into it: nothing is to do for it.
 - **A sandbox that `study source index` runs in must allow that folder**, since Shelf is
   then started inside the sandbox
   ([the contract](knowledge-base-contract.md#the-plugins-folder)). Or index from a shell of
   your own. Where Shelf may read the folder and not write in it, what is indexed is still
-  said and still found, and indexing fails with that as its reason.
+  said and still found, and indexing fails with that as its reason. With an embedding
+  endpoint, the sandbox must let Shelf reach that too, or every Source fails for it.
 
 Shelf opens that folder once and follows no link out of it. It writes nowhere else: not in
 the folder it is started in, and not in a temporary folder.
 
 ## What it costs
 
-Asking what is indexed and searching are quick and small: Shelf starts, answers and is gone
-in a few hundredths of a second. Indexing a PDF is the work:
+Asking what is indexed is quick and small: Shelf starts, answers and is gone in a few
+hundredths of a second, whatever its settings. Indexing a PDF is the work:
 
 - The PDF reader is compiled for your computer each time `study source index` has a PDF to
   index, which takes about three seconds.
@@ -188,21 +271,320 @@ in a few hundredths of a second. Indexing a PDF is the work:
 - A Topic's collection holds 10,000 Sources, as many as `study` can be told the state of. A
   further one is refused with that as the reason.
 
+With an embedding endpoint, most of the time of indexing is the model's:
+
+- A Source's Passages are sent sixteen at a time, one request after the other, and each
+  request has two minutes. The four books of [the measurements](#the-measurements), 5,062
+  Passages, were embedded in 69 seconds by a graphics card, 74 Passages a second. On a
+  processor alone, with 8 threads, the same model made 8.6 Passages a second: ten minutes
+  for the four, two and a half for a book of 1,300 Passages.
+- A vector of 512 numbers is 2 KB in the Topic's file: 10 MB for those four books.
+- A search asks the endpoint for one vector, which took 90 ms on that processor, and then
+  reads every vector of the Topic and compares it with the question's. `study` starts
+  Shelf anew for every search, so nothing is kept between two of them. That reading and
+  comparing, from a Shelf that was just started, took:
+
+  | Passages in the Topic | 512 numbers | 768 numbers |
+  |---|---|---|
+  | 5,000, about four books | 10 ms | 12 ms |
+  | 50,000, about forty | 122 ms | 158 ms |
+
+  on one core of a desktop processor (a Ryzen 9 3900X) with the file in memory. So Shelf
+  keeps no index of the vectors and needs no vector database: at the size a Topic has, a
+  few thousand Passages, a plain reading costs a fraction of the question's own vector.
+- Reranking thirty Passages took about a second a question on a graphics card.
+
 ## Settings
 
-This version has none. Shelf takes no key and no address of a model yet: those arrive with
-embedding search, in a settings file of Shelf's own and never on its command line, which
-shows in the process list.
+Shelf's settings are a file of your own:
 
-**Behind a proxy**, Shelf needs to be told, to fetch web pages. `study` starts a plugin
-with a small environment of its own making, in which no proxy variable arrives. Register a
-script of your own, kept outside the Study home, that sets it:
+```
+~/.config/lamplight/shelf.toml
+```
+
+(`$XDG_CONFIG_HOME/lamplight/shelf.toml` when that variable is an absolute path.) It is
+beside Lamplight's `config.toml`, outside the Study home, so nothing your agent writes
+decides where Shelf sends a book's text. Without the file Shelf searches by keyword, as it
+is installed.
+
+```toml
+format = 1
+
+[embedding]
+endpoint = "http://127.0.0.1:8080/v1"
+recipe = "embeddinggemma-2"
+
+[reranking]
+endpoint = "http://127.0.0.1:8081/v1"
+model = "qwen3-reranker-0.6b"
+```
+
+**Nothing is a setting on Shelf's command line or in its environment**, but
+`--allow-loopback` above. A command line shows in the process list and in
+`study knowledge-base list`, and `study` starts a plugin with a few variables of its own
+making: an `OPENAI_API_KEY` or `OPENAI_BASE_URL` in your shell never reaches Shelf. Its
+environment tells Shelf where your configuration folder is, and nothing else.
+
+After a change, `study knowledge-base check shelf` says whether Shelf can use the file,
+and how it searches now. It does not ask the endpoints anything: the first
+`study source index` does, and a Source fails with the reason when one does not answer as
+the settings expect.
+
+| Setting | Is |
+|---|---|
+| `format` | `1`. The file says which format it is in, and one in a newer format is refused. |
+| `[embedding]` | The endpoint that gives Shelf its vectors. Leave the table out to search by keyword alone. |
+| `endpoint` | The address the endpoint serves the OpenAI API at, as an OpenAI client's base address has it: `http://127.0.0.1:8080/v1` for llama.cpp, `http://127.0.0.1:11434/v1` for Ollama. Shelf posts to `/embeddings` below it. An address without a path stands for `/v1`. `http` or `https`, with no user name, password or query in it. |
+| `recipe` | A [Recipe](#recipes)'s name: the settings below, for one model. A setting you give beside it takes the place of the Recipe's. |
+| `key` | The endpoint's key, when it takes one: one word, and spaces around it are not part of it. It is sent as the request's bearer token, and to that endpoint alone: Shelf follows no redirect. |
+| `model` | The model's name, as the endpoint knows it. Required without a `recipe`. |
+| `dimensions` | How many numbers Shelf keeps of each vector. A longer vector is cut to its first numbers and made of length 1 again, which only a model trained for it allows. A shorter one fails the Source. Always said, by you or by the Recipe: the size the model gives, which its own page says (768 for many), or fewer where the model was trained for that. Shelf then knows what it keeps, and sees it in the settings when the size changes. |
+| `send_dimensions` | `true` has the request ask the endpoint for vectors of that size, as the OpenAI API's `dimensions` does. Shelf checks the size either way. |
+| `query`, `document` | Text for Shelf to write around a question and around a Passage, for a model that wants them marked: `query = "search_query: {text}"`. `{text}` is where the text goes, and `{title}`, in `document`, the Source's title. |
+| `query_request`, `document_request` | Fields for Shelf to add to the request instead, for a server that marks the texts itself: `query_request = { prompt = "query" }`. Text, numbers and `true` or `false`. |
+| `passage_size` | About how long a Passage is, in characters, from 200 to 5000: no longer than the model reads at once. It decides how Sources are cut from then on, and changes nothing that is indexed. |
+| `batch` | How many Passages one request holds while a Source is indexed, from 1 to 256. 16 unless you or the Recipe say. A server that takes fewer refuses the request, and the Source fails with what the server said. |
+| `[reranking]` | The endpoint that orders a search's Passages. Leave the table out for none. It works without `[embedding]` too, on what keyword search found. |
+| `endpoint` | As above. Shelf posts to `/rerank` below it, as llama.cpp's server takes it: the `model`, a `query`, the `documents` and `top_n`, answered with an `index` and a `relevance_score` for each document. |
+| `key`, `model` | As above. `model` is required. |
+| `candidates` | How many of a search's best Passages are handed over, from 2 to 100. 30 unless you say, and never fewer than a search asks for. |
+
+**A request holds what the settings name, and nothing else**: the model, the texts, the
+size when `send_dimensions` says so, and the fields of `query_request` or
+`document_request`. Some servers refuse a request for one key they do not know.
+
+**A question and a Passage are marked in one way, never both**: by `query` and `document`,
+which Shelf writes, or by `query_request` and `document_request`, which have the server
+write. A server that marks a text Shelf had marked would mark it twice, so a file that
+gives both is refused.
+
+**A file Shelf cannot use stops it.** Shelf then does not start, and
+`study knowledge-base check shelf` shows why: a line that is no TOML, a setting or a Recipe
+it does not know, a newer format, an address that is none. It does not search by keyword
+instead: you would think the endpoint you wrote in use. Shelf says which line or setting
+is wrong and never what it holds, since it may hold the key. Keep the file yours alone to
+read (`chmod 600`) when it has a key in it.
+
+**The file is not read from where an index is kept.** A settings file inside the folder
+Shelf keeps its index in, or inside the folder above it that holds every plugin's folder
+(`knowledge-base-plugins` in your state folder), or reached through either by a link, is
+refused. Those folders hold data, and you may have let your agent's sandbox write there so
+that `study source index` can run inside it: a settings file found there would be the
+agent's to write, and with it the address Shelf sends your books to, and its key, from
+outside the sandbox. A file with a second name elsewhere (a hard link) is refused for the
+same reason, wherever the other name is. **Do not link the file into your Study home
+either**, to have it sync with your notes: your agent writes there, and Shelf cannot know
+where your Study home is to refuse it.
+
+**Behind a proxy**, Shelf needs to be told, to fetch web pages and to reach an endpoint
+that is not on your computer. `study` starts a plugin with a small environment of its own
+making, in which no proxy variable arrives. Register a script of your own, kept outside
+the Study home, that sets it:
 
 ```sh
 #!/bin/sh
 export HTTPS_PROXY=http://proxy.example:3128
 exec study-shelf "$@"
 ```
+
+An endpoint on your own computer is never reached through the proxy, and neither is one
+whose address is `http`, wherever it is: a proxy that passes an `http` request on reads
+all of it, the key and every Passage. Through a proxy, give the endpoint an `https`
+address. And the rule that Shelf fetches no web page from your own computer is for
+Sources, which your agent names: an endpoint is yours to name, and is usually there.
+
+### Recipes
+
+A Recipe is a named set of these settings for one embedding model. Shelf has two, both for
+EmbeddingGemma 2, Google's open model (Apache 2.0), which differ in who marks the texts:
+
+| Recipe | For | It sets |
+|---|---|---|
+| `embeddinggemma-2` | A server that embeds a text as it is sent, such as llama.cpp, Ollama and vLLM. Shelf writes the model's marks itself, and cuts the vectors. | `model = "google/embeddinggemma-2"`, `dimensions = 512`, `query = "task: search result \| query: {text}"`, `document = "title: {title} \| text: {text}"`, `passage_size = 1500` |
+| `embeddinggemma-2-prompts` | A server that applies the model's prompts itself, by name, and refuses a key it does not know. Shelf sends the texts as they are. | `model = "google/embeddinggemma-2"`, `dimensions = 512`, `send_dimensions = true`, `query_request = { prompt = "query" }`, `document_request = { prompt = "document" }`, `passage_size = 1500`, `batch = 8` |
+
+- **Set `model` beside the Recipe when your server knows the model by another name.** Ollama
+  wants the name you pulled it under.
+- **512 numbers of the model's 768.** The model is trained so that the first numbers of a
+  vector do nearly the work of all of them. On the four books of the measurements the right
+  Passage was found as often with 512 as with 768, to within a question in a hundred, and a
+  third less is kept, read and compared for every search. `dimensions = 768` keeps them
+  all; 256 lost a little, and 128 a lot.
+- **Passages of about 1,500 characters**, the size the measurements were made with, which
+  is Shelf's own without a Recipe too. The longest Passage Shelf then cuts is 2,001
+  characters, which the model reads whole when they are prose. A page of symbols or of
+  code is more tokens for as many characters: when your server refuses a Passage for its
+  length, the Source fails with what the server said, and a smaller `passage_size` or a
+  server started to take more is what helps.
+- **`embeddinggemma-2-prompts` sends no title.** The server writes the model's prompt for
+  a document itself, which has no title to put in it; `embeddinggemma-2` writes the
+  Source's title before each Passage, as the measurements were made. What the title is
+  worth was not measured.
+- **A new title embeds nothing again.** With `embeddinggemma-2` the title a Source had when
+  it was indexed is in what the model read of each Passage. Give the Source another title
+  later, and its vectors stay the ones made with the first: a title is no content, and a
+  Source is not indexed again for one. To have the new title in them, remove the Topic's
+  file from Shelf's folder (see below) and index again.
+- **Eight Passages in a request, with `embeddinggemma-2-prompts`.** A server of that kind
+  is often the model's own library behind a small program, and takes few texts at once:
+  the one this Recipe was held to refuses more than eight. Set `batch` when yours takes
+  more.
+- Changing from one Recipe to the other is a change of how Passages were marked: Shelf
+  cannot know that the two servers mark alike, so it says of what is indexed that it is to
+  be indexed again.
+
+**Any other model** works through settings of its own, without a `recipe`: its `model`,
+its `dimensions`, and what it needs of the rest. One that wants no mark needs those two
+alone. One that wants a question and a document marked says how:
+
+```toml
+format = 1
+
+[embedding]
+endpoint = "http://127.0.0.1:11434/v1"
+model = "nomic-embed-text"
+dimensions = 768
+query = "search_query: {text}"
+document = "search_document: {text}"
+```
+
+## Serving EmbeddingGemma 2
+
+Shelf downloads no model and starts no server: you run one, and name its address. The
+`llama-server` lines below were run as they are written, on a graphics card, with a build
+of llama.cpp of 8 October 2026 (commit `de7fa0a`). Flags change between versions, so ask
+your server's own `--help` when one is refused. The Ollama address is from Ollama's
+documentation and was not tried.
+
+**llama.cpp** serves the model's text side through `llama-server`, from a GGUF file of the
+model. The measurements were made with it, and a 4-bit file, of 176 MB, gave the same
+results as an 8-bit one. In October 2026 the model needed a recent build of llama.cpp.
+
+```sh
+# On a processor alone, with 8 threads.
+llama-server -m embeddinggemma-2.gguf --embedding --host 127.0.0.1 --port 8080 \
+    -c 8192 -b 2048 -ub 2048 -t 8
+
+# With a graphics card: every layer on it.
+llama-server -m embeddinggemma-2.gguf --embedding --host 127.0.0.1 --port 8080 \
+    -c 8192 -b 2048 -ub 2048 -ngl 99
+```
+
+The sizes are what matter: a server refuses a text that is longer, in tokens, than what it
+was started to take at once (`-ub`, and the context `-c`), with "input is too large to
+process. increase the physical batch size". A Passage of 2,000 characters is several
+hundred tokens, and sixteen of them go in one request as these lines start the server.
+The model's file says how its vectors are pooled, so `--pooling` is not needed. The
+settings for it are `endpoint = "http://127.0.0.1:8080/v1"` and
+`recipe = "embeddinggemma-2"`.
+
+**Ollama** serves the OpenAI API at `http://127.0.0.1:11434/v1`, and uses a graphics card
+when it finds one. Use the Recipe `embeddinggemma-2`, and set `model` to the name
+`ollama list` shows for the model.
+
+**A server that applies the model's prompts itself** is one whose requests name a prompt
+of the model's, `"prompt": "query"` or `"prompt": "document"`, and which writes that
+prompt's text before the input. Use the Recipe `embeddinggemma-2-prompts` for it: with the
+other, every text would be marked twice. Such a server may also refuse a request for a key
+it does not know, which is why Shelf sends none but what its settings name.
+
+**A reranker**, with llama.cpp, is a second `llama-server` on another port, started with
+`--reranking` and a reranking model's GGUF file. The measurements used
+Qwen3-Reranker-0.6B.
+
+```sh
+llama-server -m qwen3-reranker-0.6b.gguf --reranking --host 127.0.0.1 --port 8081 -ngl 99
+```
+
+To hold your endpoint to a Recipe, Lamplight's own test asks it for vectors and checks what
+comes back: that it takes the Recipe's requests, a whole batch of the longest Passages at
+once among them, that the vectors have the Recipe's size, and that eight questions each
+find the Passage that answers them. It does not tell you that you chose the wrong one of
+the two Recipes: a server that marks the texts itself also takes texts Shelf has marked,
+and still finds the eight. Both Recipes were held to a real server this way:
+`embeddinggemma-2` to llama.cpp with the 4-bit file, and `embeddinggemma-2-prompts` to
+the model's own library on a graphics card. From a checkout of the repository:
+
+```sh
+LAMPLIGHT_TEST_EMBEDDING_ENDPOINT=http://127.0.0.1:8080/v1 \
+    go test ./internal/shelf -run TestTheRecipeAgainstARealEndpoint -v
+```
+
+`LAMPLIGHT_TEST_EMBEDDING_RECIPE` names the Recipe when it is not `embeddinggemma-2`,
+`LAMPLIGHT_TEST_EMBEDDING_MODEL` the model when your server has another name for it,
+`LAMPLIGHT_TEST_EMBEDDING_KEY` a key, and `LAMPLIGHT_TEST_RERANKING_ENDPOINT` with
+`LAMPLIGHT_TEST_RERANKING_MODEL` a reranker to try with it. These variables are the
+test's: Shelf itself reads none.
+
+## The measurements
+
+Made on 9 October 2026 on four of the maintainer's books, a programming classic, a book on
+data systems, an algorithms textbook and a linear algebra textbook: 5,062 Passages of about
+1,500 characters, and 300 questions that a language model wrote, each from one Passage and
+in other words than the Passage's. A search is right when it finds that Passage.
+EmbeddingGemma 2 was served by llama.cpp, with the marks of the Recipe `embeddinggemma-2`
+and vectors of 768 numbers, and the reranker was Qwen3-Reranker-0.6B.
+
+| Search | The right Passage first | In the first 5 | In the first 20 |
+|---|---|---|---|
+| Keyword | 32% | 64% | 87% |
+| Embeddings | 51% | 84% | 95% |
+| Keyword and embeddings, then the reranker over the best 30 | 64% | 94% | 97% |
+
+A point is three questions, so a difference of a point or two is what chance gives. The
+linear algebra textbook was the hardest for every way of searching. A context written by a
+language model for each Passage, which Shelf does not do, gained a point or two for a
+hundred times the time of indexing.
+
+The rest was worked out from the vectors of that experiment while embedding search was
+built, without asking a model again.
+
+**How many numbers of a vector to keep:**
+
+| Numbers | First | In the first 5 | In the first 10 | In the first 20 |
+|---|---|---|---|---|
+| 768 | 51.0% | 84.0% | 91.3% | 95.0% |
+| 512, the Recipe's | 50.3% | 83.3% | 91.7% | 94.0% |
+| 256 | 47.0% | 81.7% | 89.3% | 93.3% |
+| 128 | 40.3% | 72.0% | 80.7% | 90.0% |
+
+**How to put the two rankings in one order**, with vectors of 512 numbers and the best 50
+of each ranking. The last column is where a Passage would stand that keyword search puts
+first and the embeddings do not find at all, as one that holds a name the question spells
+may be: for the middle one of the 300 questions, and for the worst. None of the questions
+asks for a name, so that is worked out and not measured.
+
+| Order | First | First 5 | First 10 | First 20 | First 30 | A name only keyword finds |
+|---|---|---|---|---|---|---|
+| Embeddings alone | 50.3% | 83.3% | 91.7% | 94.0% | 95.7% | Not found |
+| Reciprocal rank fusion, with its usual constant of 60 | 50.3% | 81.7% | 87.7% | 94.3% | 96.7% | Place 20, at worst 40 |
+| Reciprocal rank fusion, with a constant of 5 | 51.3% | 85.3% | 92.3% | 96.3% | 96.7% | Place 5, at worst 9 |
+| One of the embeddings', then one of keyword's | 50.3% | 81.3% | 91.3% | 96.0% | 97.0% | Place 2 |
+| **Two of the embeddings', then one of keyword's** | 50.3% | 84.0% | 92.3% | 95.3% | 97.0% | Place 3 |
+| Three, then one | 50.3% | 84.3% | 91.7% | 95.3% | 97.0% | Place 4 |
+
+Reciprocal rank fusion scores a Passage by its place in each ranking and adds the scores
+up. With its usual constant, every Passage that is in both rankings, about twenty of fifty,
+comes before one that is first in one of them alone: the name is lost, and so are four
+questions in a hundred among the first ten. Taking two for one finds as much as the
+embeddings alone at every length of list, a little more further down, and has the keyword
+ranking's best in a fixed place near the top. With a smaller constant the fusion found as
+much, without that promise.
+
+The reranker was first measured over the best 30 of reciprocal rank fusion, and on
+13 October 2026 again over the best 30 of Shelf's own order, both with vectors of 512
+numbers:
+
+| The reranker over the best 30 of | First | First 5 | First 10 | First 20 |
+|---|---|---|---|---|
+| Reciprocal rank fusion, constant 60 | 64.3% | 94.0% | 96.0% | 96.7% |
+| **Two of the embeddings', then one of keyword's** | 64.7% | 93.7% | 96.0% | 97.0% |
+
+The reranker makes the same of either: what differs is what a search gives without one.
+
+The books are the maintainer's, so neither they, nor the questions, nor the vectors are in
+the repository: these numbers can be made again with other books, and not checked against
+these.
 
 ## What is inside
 
@@ -214,6 +596,10 @@ Shelf is one program without dependencies to install. It is built from:
 | The PDF reader | PDFium, the reader Chrome uses, compiled to WebAssembly and packaged by `github.com/klippa-app/go-pdfium` | BSD-3-Clause and Apache-2.0; MIT |
 | What runs the PDF reader | `github.com/tetratelabs/wazero`, a WebAssembly runtime | Apache-2.0 |
 | The text of a web page | `codeberg.org/readeck/go-readability`, after the reader view of Firefox | MIT |
+| The settings file | `github.com/BurntSushi/toml`, which `study` reads its own files with | MIT |
+
+No model is inside, and nothing that runs one: the vectors are compared by Shelf's own few
+lines, and the models are served by what you run.
 
 The PDF reader runs inside Shelf, shut in: it is given the one file to read, and can open
 no other file, reach no network, and take no more memory than it is allowed. Why PDFium was

@@ -1,0 +1,9 @@
+Knowledge base: plugin kb
+
+Sources:
+book.<id>  Book
+  $HOME/Books/book.txt
+  ! indexed, and to be indexed again: its Passages were indexed before an embedding model was set
+
+To have Knowledge base plugin kb index what is not indexed, or is to be indexed again, run:
+  study source index linear-algebra

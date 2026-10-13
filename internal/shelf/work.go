@@ -17,6 +17,7 @@ import (
 
 	"github.com/mordor-forge/lamplight/v2/internal/plugincontract"
 	"github.com/mordor-forge/lamplight/v2/internal/shelf/cut"
+	"github.com/mordor-forge/lamplight/v2/internal/shelf/endpoint"
 	"github.com/mordor-forge/lamplight/v2/internal/shelf/index"
 	"github.com/mordor-forge/lamplight/v2/internal/shelf/pdf"
 	"github.com/mordor-forge/lamplight/v2/internal/shelf/web"
@@ -26,6 +27,10 @@ import (
 type job struct {
 	// source is the Source as index was given it.
 	source plugincontract.Source
+	// vectorsOnly says that the Source's content is indexed already, and
+	// that the work is to give its Passages vectors: the Source is not
+	// read.
+	vectorsOnly bool
 	// ctx is done once the work is told to stop, which stop does.
 	ctx  context.Context
 	stop context.CancelFunc
@@ -47,7 +52,9 @@ func (j *job) indexes(asked plugincontract.Source) bool {
 		return false
 	}
 	if asked.Kind == plugincontract.SourceURL {
-		return j.source.URL == asked.URL
+		// Work that fetches nothing is not the work of fetching a page
+		// again.
+		return j.source.URL == asked.URL && !(j.vectorsOnly && asked.Refetch)
 	}
 	return j.source.Hash == asked.Hash
 }
@@ -96,7 +103,11 @@ func (s *Shelf) work(k key, in plugincontract.IndexInput, j *job) {
 			// From here on the other copies of Shelf see the Source being
 			// indexed, and no longer as the one whose last indexing failed.
 			if shown, err = c.Begin(ctx, k.source); err == nil {
-				err = s.run(ctx, in, source, j, shown)
+				if j.vectorsOnly {
+					err = s.embedIndexed(ctx, c, in, j, shown)
+				} else {
+					err = s.run(ctx, in, source, j, shown)
+				}
 			}
 		}
 	case <-ctx.Done():
@@ -150,23 +161,42 @@ func (s *Shelf) run(ctx context.Context, in plugincontract.IndexInput, source in
 		j.advance(to)
 		shown.Progress(ctx, to)
 	}
+	// Reading is all of the work but the writing, without an embedding
+	// endpoint. With one it is the lesser part: a book is read in seconds,
+	// and its Passages are embedded in a minute or in several.
+	reading := 0.95
+	if s.settings.Embedder != nil {
+		reading = 0.1
+	}
 	var pages []cut.Page
 	var err error
 	switch in.Source.Kind {
 	case plugincontract.SourceFile:
-		pages, source.Hash, err = s.readFile(ctx, in.Source, advance)
+		pages, source.Hash, err = s.readFile(ctx, in.Source, func(share float64) { advance(reading * share) })
 	case plugincontract.SourceURL:
+		reading = 0
 		pages, source.Hash, err = s.fetchPage(ctx, in.Source.URL)
 	}
 	if err != nil {
 		return err
 	}
 	var passages []index.Passage
+	var texts []string
 	for _, p := range cut.Passages(pages, s.settings.PassageSize) {
 		passages = append(passages, index.Passage{Text: p.Text, First: p.First, Last: p.Last})
+		texts = append(texts, p.Text)
 	}
 	if len(passages) == 0 {
 		return wrong("there is no text in it")
+	}
+	// The vectors before anything is written: a Source is in the index
+	// whole, with a vector for each of its Passages, or not at all. An
+	// endpoint that fails leaves what was indexed before, and the reason.
+	var vectors [][]float32
+	if s.settings.Embedder != nil {
+		if vectors, source.Made, err = s.embed(ctx, in.Source.Title, texts, func(share float64) { advance(reading + (0.98-reading)*share) }); err != nil {
+			return err
+		}
 	}
 	if ctx.Err() != nil {
 		return errStopped
@@ -174,12 +204,68 @@ func (s *Shelf) run(ctx context.Context, in plugincontract.IndexInput, source in
 	// From here on nothing stops it: the write is one short transaction,
 	// and a cancel that arrives now is told, truthfully, that it stopped
 	// nothing.
-	return shown.Replace(context.WithoutCancel(ctx), source, passages)
+	return shown.Replace(context.WithoutCancel(ctx), source, passages, vectors)
+}
+
+// embed asks the embedding endpoint for a vector for each text of a Source
+// with that title, a batch at a time, and says how far it is: share goes
+// from 0 to 1. It returns the vectors and what they were made with.
+func (s *Shelf) embed(ctx context.Context, title string, texts []string, advance func(share float64)) ([][]float32, index.Made, error) {
+	e := s.settings.Embedder
+	vectors, err := e.Documents(ctx, title, texts, func(done int) { advance(float64(done) / float64(len(texts))) })
+	var failed *endpoint.Problem
+	switch {
+	case errors.As(err, &failed):
+		// What went wrong, and no more: study shows a reason up to three
+		// hundred bytes, and gives the command that has it tried again.
+		return nil, index.Made{}, wrong("%s", failed.Reason)
+	case err != nil:
+		return nil, index.Made{}, err
+	}
+	return vectors, index.Made{Model: e.Model(), Document: e.Document(), Dimensions: len(vectors[0])}, nil
+}
+
+// embedIndexed gives vectors to the Passages that are indexed for a Source,
+// in the place of the ones they had, and reads no Source: the content is
+// the one that was asked for, and it is there. It is what indexing a Source
+// again comes to when the learner gave Shelf an endpoint, or another model,
+// after the Source was indexed. The Passages and their ids stay.
+func (s *Shelf) embedIndexed(ctx context.Context, c *index.Collection, in plugincontract.IndexInput, j *job, shown *index.Work) error {
+	s.at(PointGivingVectors)
+	hash, texts, err := c.Texts(ctx, in.Source.ID)
+	if err != nil {
+		return err
+	}
+	const anew = "its content was indexed anew while its Passages were being embedded. Index it again"
+	switch {
+	case hash == "" || len(texts) == 0:
+		return wrong("what was indexed of it is no longer there. Index it again")
+	case in.Source.Kind == plugincontract.SourceFile && hash != in.Source.Hash:
+		// Another copy of Shelf put other content in its place since index
+		// answered: that is not the content that was asked for.
+		return wrong(anew)
+	}
+	vectors, made, err := s.embed(ctx, in.Source.Title, texts, func(share float64) {
+		j.advance(0.98 * share)
+		shown.Progress(ctx, 0.98*share)
+	})
+	if err != nil {
+		return err
+	}
+	if ctx.Err() != nil {
+		return errStopped
+	}
+	err = shown.Embed(context.WithoutCancel(ctx), hash, texts, made, vectors)
+	if errors.Is(err, index.ErrChanged) {
+		return wrong(anew)
+	}
+	return err
 }
 
 // readFile reads the PDF a file Source names and returns the text of its
 // pages, cleaned, and the content hash of the bytes that were read: the
-// hash it was handed with, or the file is not indexed.
+// hash it was handed with, or the file is not indexed. It says how much of
+// the file is read, from 0 to 1, as it goes.
 func (s *Shelf) readFile(ctx context.Context, asked plugincontract.Source, advance func(float64)) ([]cut.Page, string, error) {
 	// Opened without waiting: a path that names a pipe would otherwise hold
 	// the work until someone wrote to it.
@@ -239,8 +325,7 @@ func (s *Shelf) readFile(ctx context.Context, asked plugincontract.Source, advan
 	var pages []cut.Page
 	err = pdf.Read(ctx, file, size, func(number, of int, raw string) error {
 		pages = append(pages, cut.Page{Number: number, Text: raw})
-		// The last of the work is the writing of the index.
-		advance(0.95 * float64(number) / float64(of))
+		advance(float64(number) / float64(of))
 		return nil
 	})
 	switch {

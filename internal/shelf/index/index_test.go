@@ -100,7 +100,7 @@ func book(id, char string, texts ...string) (index.Source, []index.Passage) {
 
 func replace(t *testing.T, c *index.Collection, source index.Source, passages []index.Passage) {
 	t.Helper()
-	if err := c.Replace(ctx, source, passages); err != nil {
+	if err := c.Replace(ctx, source, passages, nil); err != nil {
 		t.Fatalf("Replace(%s): %v", source.ID, err)
 	}
 }
@@ -504,7 +504,7 @@ func TestANewerFormatIsRefused(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A table this Shelf does not know, as a newer format would have.
-	if _, err := db.Exec("CREATE TABLE vectors (passage INTEGER PRIMARY KEY, vector BLOB)"); err != nil {
+	if _, err := db.Exec("CREATE TABLE contexts (passage INTEGER PRIMARY KEY, context TEXT)"); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Close(); err != nil {
@@ -522,7 +522,7 @@ func TestANewerFormatIsRefused(t *testing.T) {
 		if c != nil || !errors.As(err, &newer) || newer.Format != index.Format+1 {
 			t.Fatalf("Collection(create: %v) of a file in a newer format = %v, %v; want it refused as newer", create, c, err)
 		}
-		for _, want := range []string{"format 2", "newer Shelf", "reads format 1", "Update Lamplight", "future.sqlite"} {
+		for _, want := range []string{fmt.Sprintf("format %d", index.Format+1), "newer Shelf", fmt.Sprintf("reads format %d", index.Format), "Update Lamplight", "future.sqlite"} {
 			if !strings.Contains(err.Error(), want) {
 				t.Errorf("the refusal does not say %q: %v", want, err)
 			}
@@ -701,7 +701,7 @@ func TestTwoCopiesShareOneIndex(t *testing.T) {
 				source, passages := book(fmt.Sprintf("writer%d.n%d", w, n), "c", fmt.Sprintf("Writer %d wrote book %d about gamma.", w, n),
 					"And a second page for it.")
 				source.Hash = "sha256:" + fmt.Sprintf("%064x", w*1000+n)
-				if err := c.Replace(ctx, source, passages); err != nil {
+				if err := c.Replace(ctx, source, passages, nil); err != nil {
 					t.Errorf("writer %d, book %d: %v", w, n, err)
 				}
 			}

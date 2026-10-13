@@ -529,7 +529,8 @@ func writeIndexing(w io.Writer, topics []core.Topic) {
 func describeIndexing(sources []core.IndexedSource) string {
 	var parts []string
 	for _, group := range []struct{ state, label string }{
-		{core.IndexNotIndexed, "not indexed"}, {core.IndexFailed, "indexing failed"}, {core.IndexIndexing, "being indexed"},
+		{core.IndexNotIndexed, "not indexed"}, {core.IndexOutdated, "to be indexed again"}, {core.IndexFailed, "indexing failed"},
+		{core.IndexIndexing, "being indexed"},
 	} {
 		var titles []string
 		others := false

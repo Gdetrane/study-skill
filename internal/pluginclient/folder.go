@@ -8,13 +8,14 @@ import (
 	"path/filepath"
 	"sync/atomic"
 
+	"github.com/mordor-forge/lamplight/v2/internal/plugincontract"
 	"github.com/mordor-forge/lamplight/v2/internal/pluginregistry"
 	"github.com/mordor-forge/lamplight/v2/internal/xdg"
 )
 
 // FoldersName is the folder, in Lamplight's state folder, that holds the
 // folder of each plugin started by a command.
-const FoldersName = "knowledge-base-plugins"
+const FoldersName = plugincontract.DataFoldersName
 
 // DataFolder is the path of the folder study gives the plugin called name
 // to keep its index in, whether or not it is there yet:

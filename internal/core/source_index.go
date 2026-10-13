@@ -47,6 +47,11 @@ const (
 	IndexIndexing = "indexing"
 	// IndexFailed: the plugin's last indexing of it failed.
 	IndexFailed = "failed"
+	// IndexOutdated: the plugin holds the Source's content, and a search
+	// finds it, but the plugin would index it otherwise now, since its
+	// settings changed: the reason says what indexing it again would add,
+	// and study source index asks for it again.
+	IndexOutdated = "outdated"
 	// IndexNotIndexed: the plugin does not hold the Source's content.
 	IndexNotIndexed = "not_indexed"
 	// IndexUnknown: the plugin could not be asked, or did not say in time.
@@ -224,6 +229,10 @@ func indexOf(src Source, said *plugincontract.SourceStatus, contract plugincontr
 		// file's, or this one's after it changed.
 		return SourceIndex{State: IndexNotIndexed, Reason: "Knowledge base plugin " + plugin + " holds other content for it " +
 			"than the Source's: the file was another when the plugin read it"}, can
+	case said.State == plugincontract.StateOutdated:
+		// Found as it is, and to be indexed again: what the plugin is
+		// asked for like a Source it has not indexed.
+		return SourceIndex{State: IndexOutdated, Reason: said.Reason}, can
 	}
 	return SourceIndex{State: IndexIndexed}, false
 }
@@ -339,10 +348,13 @@ func (a *indexAsk) answered(ctx context.Context, plugin string, contract pluginc
 			why := map[string]string{SourceMissing: reasonFileMissing, SourceChanged: reasonFileChanged,
 				sourceUnreadable: reasonFileUnreadable}[a.fileState(ctx, src)]
 			if why != "" {
-				// A Source that failed keeps the plugin's reason: the file
-				// says the rest in a listing.
+				// A Source that failed keeps the plugin's reason, and so does
+				// one that is outdated, which is still found: the file says
+				// the rest in a listing.
 				if a.held, handed = true, false; wanted {
-					index.Reason, wanted = why, false
+					if wanted = false; index.State != IndexOutdated {
+						index.Reason = why
+					}
 				}
 			}
 		}

@@ -37,6 +37,13 @@ var Tools = []string{ToolContract, ToolIndex, ToolStatus, ToolCancel, ToolSearch
 // where it was told to.
 const DataFolderEnv = "LAMPLIGHT_PLUGIN_DATA"
 
+// DataFoldersName is the name of the folder, in Lamplight's folder of the
+// learner's state folder, that holds the folder of each plugin started by a
+// command, under the plugin's name. It is the folder a learner lets an
+// agent's sandbox write in so that indexing can run there, so a plugin
+// takes nothing from it, or from its own folder in it, for a setting.
+const DataFoldersName = "knowledge-base-plugins"
+
 // Kinds of Source a plugin can index.
 const (
 	SourceFile = "file"
@@ -63,6 +70,11 @@ const (
 	StateIndexing = "indexing"
 	// StateFailed: the last indexing failed, and Reason says why.
 	StateFailed = "failed"
+	// StateOutdated: its Passages can be found, and Hash says of which
+	// content, as with StateIndexed; but the plugin would index it otherwise
+	// now, since its settings changed, and Reason says what indexing it
+	// again would add.
+	StateOutdated = "outdated"
 )
 
 // Codes of a tool error. Any other code, and none, is read as CodeInternal.
@@ -176,12 +188,13 @@ type Source struct {
 type SourceStatus struct {
 	// ID is the Source's id.
 	ID string `json:"id"`
-	// State is "indexed", "indexing" or "failed".
+	// State is "indexed", "indexing", "failed" or "outdated".
 	State string `json:"state"`
 	// Progress is how much of the indexing is done, from 0 to 1, when the
 	// plugin can tell.
 	Progress *float64 `json:"progress,omitempty"`
-	// Reason says why the indexing failed.
+	// Reason says why the indexing failed, or what indexing a Source that
+	// is outdated again would add.
 	Reason string `json:"reason,omitempty"`
 	// Hash is the hash of the content whose Passages can be found now:
 	// "sha256:" and 64 hexadecimal digits of the bytes the plugin read.
