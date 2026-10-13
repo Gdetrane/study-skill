@@ -72,8 +72,9 @@ revision = "a5a7089234f121990b336b3841008009dca143bf"
 # Those that PDFium's DEPS file fetches, each at the revision DEPS names.
 
 # FreeType is offered under the FreeType License or the GPL, and is taken
-# under the first. fthash.c is under a licence of its own, which is written
-# nowhere but at the head of the file: so the file is here, whole.
+# under the first. fthash.c is under a licence of its own, whose text
+# FreeType keeps at the head of the file and in no licence file: so the file
+# is here, whole.
 [[part]]
 name = "FreeType"
 version = "2.14.3"
