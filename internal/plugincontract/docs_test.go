@@ -80,6 +80,7 @@ var described = []struct {
 	{plugincontract.ToolSearch, []reflect.Type{reflect.TypeFor[plugincontract.SearchInput](), reflect.TypeFor[plugincontract.SearchResult](),
 		reflect.TypeFor[plugincontract.ScoredPassage](), reflect.TypeFor[plugincontract.Location]()}},
 	{plugincontract.ToolPassage, []reflect.Type{reflect.TypeFor[plugincontract.PassageInput](), reflect.TypeFor[plugincontract.PassageResult]()}},
+	{plugincontract.ToolDiagnose, []reflect.Type{reflect.TypeFor[plugincontract.DiagnoseResult](), reflect.TypeFor[plugincontract.Finding]()}},
 	{"Results and errors", []reflect.Type{reflect.TypeFor[plugincontract.ErrorResult](), reflect.TypeFor[plugincontract.ErrorBody]()}},
 }
 
@@ -159,6 +160,7 @@ func TestThePageDescribesEveryToolAndField(t *testing.T) {
 		reflect.TypeFor[plugincontract.StatusResult](), reflect.TypeFor[plugincontract.CancelInput](), reflect.TypeFor[plugincontract.CancelResult](),
 		reflect.TypeFor[plugincontract.SearchInput](), reflect.TypeFor[plugincontract.SearchResult](), reflect.TypeFor[plugincontract.PassageInput](),
 		reflect.TypeFor[plugincontract.PassageResult](), reflect.TypeFor[plugincontract.ErrorResult](), reflect.TypeFor[plugincontract.ErrorBody](),
+		reflect.TypeFor[plugincontract.DiagnoseResult](), reflect.TypeFor[plugincontract.Finding](),
 	} {
 		if !covered[typ] {
 			t.Errorf("%s is described in no section: add it to described", typ.Name())
@@ -267,6 +269,15 @@ func TestThePageGivesEveryLimitAndDeadline(t *testing.T) {
 		// for the Passages of a quote.
 		"the time to answer a search, starting included": "every `passage`, together, when it checks a quote | " +
 			seconds(core.PluginEvidenceTimeout),
+		// What a plugin has to test what it depends on, which is the client's
+		// time for the call and the core's for study doctor, and how much it
+		// may say of what it found.
+		"the time to say what it found":     "| `diagnose`: the whole answer | " + seconds(plugincontract.DiagnoseTime) + " |",
+		"the client's time for it":          "| `diagnose`: the whole answer | " + seconds(pluginclient.DefaultDiagnoseTimeout) + " |",
+		"the core's time for it":            "| `diagnose`: the whole answer | " + seconds(core.PluginDiagnoseTimeout) + " |",
+		"the number of findings":            "| Findings in a `diagnose` answer | " + number(plugincontract.MaxFindings) + " |",
+		"the length of a finding's name":    "| A finding's `name` | " + number(plugincontract.MaxKindBytes) + " characters |",
+		"the length of a finding's words":   "| A finding's `message`, as `study` shows it | " + number(plugincontract.MaxFindingBytes) + " bytes |",
 		"the size of a message":             "| " + number(plugincontract.MaxMessageBytes) + " bytes |",
 		"the values of a message":           "| Values in one MCP message from the plugin | " + number(plugincontract.MaxMessageValues) + " |",
 		"the length of a Passage":           "| " + number(plugincontract.MaxPassageBytes) + " bytes of UTF-8 |",
@@ -383,12 +394,24 @@ func TestThePagesExamplesAreTheContracts(t *testing.T) {
 			var out plugincontract.PassageResult
 			strict(t, what, m[3], &out)
 			check(what, out.Validate(asked))
+		case "diagnose result":
+			var out plugincontract.DiagnoseResult
+			strict(t, what, m[3], &out)
+			check(what, out.Validate())
+			if problems := plugincontract.Shape([]byte(m[3]), reflect.TypeFor[plugincontract.DiagnoseResult]()); len(problems) > 0 {
+				t.Errorf("the example of %s is not shaped as the contract says: %v", what, problems)
+			}
+			// One finding that is all right and one that is not.
+			if len(out.Findings) != 2 || out.Findings[0].OK == out.Findings[1].OK {
+				t.Errorf("the example of %s shows %+v: show a finding that is all right and one that is not", what, out.Findings)
+			}
 		default:
 			t.Errorf("the page has an example of %q, which this test does not know", what)
 		}
 	}
 	// Every tool is shown being asked and answering, and a refusal is shown.
-	want := map[string]int{"error": 1, "contract result": 1, "index input": 2, "index result": 1}
+	// contract and diagnose take no arguments, so only their answers are.
+	want := map[string]int{"error": 1, "contract result": 1, "index input": 2, "index result": 1, "diagnose result": 1}
 	for _, tool := range []string{plugincontract.ToolStatus, plugincontract.ToolCancel, plugincontract.ToolSearch, plugincontract.ToolPassage} {
 		want[tool+" input"], want[tool+" result"] = 1, 1
 	}

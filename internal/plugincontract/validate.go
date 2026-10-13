@@ -518,3 +518,29 @@ func (r PassageResult) Validate(in PassageInput) error {
 	}
 	return nil
 }
+
+// Validate checks the diagnose tool's answer: no more findings than an
+// answer may hold, each under a name of its own that is a lowercase word,
+// and each with a message. How long a message is, is not checked: study
+// keeps the first MaxFindingBytes of it.
+func (r DiagnoseResult) Validate() error {
+	if len(r.Findings) > MaxFindings {
+		return fmt.Errorf("it holds %d findings, more than the %d an answer may hold", len(r.Findings), MaxFindings)
+	}
+	seen := make(map[string]bool, len(r.Findings))
+	for i, f := range r.Findings {
+		switch {
+		case f.Name == "":
+			return fmt.Errorf("findings[%d] has no name", i)
+		case len(f.Name) > MaxKindBytes || !kindPattern.MatchString(f.Name):
+			return fmt.Errorf("findings[%d] is named %s, which is no name: a lowercase word of letters, digits and underscores, "+
+				"up to %d characters", i, quote(f.Name), MaxKindBytes)
+		case seen[f.Name]:
+			return fmt.Errorf("it holds the finding %s twice", f.Name)
+		case strings.TrimSpace(f.Message) == "":
+			return fmt.Errorf("the finding %s has no message", f.Name)
+		}
+		seen[f.Name] = true
+	}
+	return nil
+}

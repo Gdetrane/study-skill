@@ -22,9 +22,12 @@ import (
 // Four things start a plugin, each through startPlugin:
 //
 //   - CheckPlugin, for study knowledge-base check, which asks which contract
-//     the plugin speaks, and CheckPlugins, for study doctor, which asks
-//     every registered plugin the same with the short deadline of a glance.
-//     Both are for the learner and CLI-only.
+//     the plugin speaks and then has it test what it depends on, and
+//     CheckPlugins, for study doctor, which asks every registered plugin the
+//     same, the first with the short deadline of a glance. Both are for the
+//     learner and CLI-only, and they are the one thing that asks a plugin's
+//     diagnose tool (checkPlugin): it has a plugin send requests to
+//     whatever its settings name.
 //   - IndexSources, for study source index, which asks the Topic's plugin to
 //     index. It is CLI-only too, and the one thing that asks a plugin to
 //     index (source_index.go).
@@ -37,14 +40,15 @@ import (
 //     tool reaches it too.
 //
 // So an MCP tool can have a plugin started, to ask its status, search and
-// passage tools, and can never have one index: the MCP server runs outside
-// the agent's sandbox, and a plugin that indexed for it would read any file
-// the agent named as a Source there. A search reads the plugin's index and
-// never a Source. Tests in internal/mcpserver keep it so: one calls every
-// tool with plugins registered that record what they are asked, and one
-// reads this package for whatever could ask a plugin to index from anywhere
-// but IndexSources, or to search from anywhere but the two functions that
-// do.
+// passage tools, and can never have one index, or test what it depends on:
+// the MCP server runs outside the agent's sandbox, and a plugin that indexed
+// for it would read any file the agent named as a Source there, and one that
+// tested its endpoints for it would send requests from there. A search reads
+// the plugin's index and never a Source. Tests in internal/mcpserver keep it
+// so: one calls every tool with plugins registered that record what they are
+// asked, and one reads this package for whatever could ask a plugin to index
+// from anywhere but IndexSources, to search from anywhere but the two
+// functions that do, or to diagnose from anywhere but checkPlugin.
 //
 // Nothing is kept between two of them: each starts the plugin and stops it
 // again before it returns.
@@ -80,7 +84,19 @@ type PluginOptions struct {
 	// plugin: finding it, starting it and its answers, all of it. Defaults
 	// to PluginEvidenceTimeout.
 	EvidenceTimeout time.Duration
+	// DiagnoseTimeout is how long study knowledge-base check and study
+	// doctor give a plugin to test what it depends on and say what it
+	// found, once it has said which contract it speaks. Defaults to
+	// PluginDiagnoseTimeout.
+	DiagnoseTimeout time.Duration
 }
+
+// PluginDiagnoseTimeout is how long a plugin has to answer its diagnose
+// tool: the contract's own time for it. study doctor asks every registered
+// plugin at once, each as soon as it has said which contract it speaks,
+// which it has the two seconds of a glance for: so the doctor waits for
+// plugins that long and this long, however many are registered.
+const PluginDiagnoseTimeout = plugincontract.DiagnoseTime
 
 // PluginContract is what a Knowledge base plugin says of itself: the
 // version of Lamplight's contract it speaks, and what it can do.
@@ -88,6 +104,13 @@ type PluginContract = plugincontract.Contract
 
 // PluginServer is what a Knowledge base plugin calls itself.
 type PluginServer = pluginclient.Server
+
+// PluginFinding is one thing a Knowledge base plugin depends on, as the
+// plugin itself found it when it tested it: the plugin's name for it,
+// whether it is all right, and a sentence of the plugin's. The sentence is
+// the plugin's text, on one line and with what a terminal would interpret
+// escaped: print it as text from a file all the same.
+type PluginFinding = plugincontract.Finding
 
 // PluginCheck reports a Knowledge base plugin that started, or was reached,
 // and speaks the contract.
@@ -110,17 +133,30 @@ type PluginCheck struct {
 	// keep its index in: in Lamplight's state folder on this computer,
 	// outside the Study home.
 	DataFolder string `json:"data_folder,omitempty"`
+	// Findings are what the plugin found when it tested what it depends on,
+	// an endpoint its settings name say: none for a plugin that depends on
+	// nothing of the kind. One that is not all right is no failure of the
+	// check: the plugin starts and speaks the contract, and says what it
+	// lacks.
+	Findings []PluginFinding `json:"findings"`
 }
 
 // CheckPlugin starts the Knowledge base plugin registered under name, or
-// reaches it at its URL, asks which contract it speaks, and stops it again.
+// reaches it at its URL, asks which contract it speaks, has it test what it
+// depends on, and stops it again.
 //
 // A name that is not registered is not_found. A plugin that cannot be
 // started, does not start, does not answer in time, is no MCP server or
 // does not speak the contract is failed_precondition, with what to do; one
 // that speaks a newer contract than this study knows is newer_format; and
-// canceled means the command was stopped first. In every case nothing is
-// left running.
+// canceled means the command was stopped first. A plugin that does not say
+// in time what it found of what it depends on, or not as the contract has
+// it, does not speak the contract either. In every case nothing is left
+// running.
+//
+// The plugin tests what it depends on by its own settings: an endpoint
+// they name is sent a request. That is why this is for the learner at a
+// command line, and no MCP tool reaches it.
 //
 // A command plugin gets its folder in Lamplight's state folder, outside the
 // Study home, which is made when it is not there. Nothing else is written,
@@ -139,24 +175,45 @@ func (c *Core) CheckPlugin(ctx context.Context, name string) (PluginCheck, error
 	if err != nil {
 		return PluginCheck{}, err
 	}
-	return c.checkPlugin(ctx, plugin, began, pluginUse{})
+	check, undiagnosed, err := c.checkPlugin(ctx, plugin, began, pluginUse{})
+	switch {
+	case err != nil:
+		return PluginCheck{}, err
+	case undiagnosed != nil:
+		return PluginCheck{}, undiagnosed
+	}
+	return check, nil
 }
 
 // checkPlugin starts a registered plugin, or reaches it, takes what it says
-// of itself, and stops it again. It asks the plugin's contract tool, as
-// starting it does, and nothing else.
-func (c *Core) checkPlugin(ctx context.Context, plugin Plugin, began time.Time, use pluginUse) (PluginCheck, error) {
+// of itself, has it test what it depends on, and stops it again. It asks
+// the plugin's contract tool, as starting it does, and then its diagnose
+// tool, and nothing else.
+//
+// err is why the plugin did not start, or does not speak the contract: no
+// check is returned then. undiagnosed is why a plugin that started and
+// speaks the contract did not say what it found of what it depends on: the
+// check is whole then, but for its findings.
+//
+// This is the one place a plugin's diagnose tool is asked, and only
+// CheckPlugin and CheckPlugins lead here, which no MCP tool can name.
+func (c *Core) checkPlugin(ctx context.Context, plugin Plugin, began time.Time, use pluginUse) (check PluginCheck, undiagnosed, err error) {
 	session, err := c.startPlugin(ctx, plugin, began, use)
 	if err != nil {
-		return PluginCheck{}, err
+		return PluginCheck{}, nil, err
 	}
 	defer session.Close()
-	check := PluginCheck{Name: plugin.Name, Command: plugin.Command, Contract: session.Contract(), Server: session.Server(),
-		DataFolder: session.DataFolder()}
+	check = PluginCheck{Name: plugin.Name, Command: plugin.Command, Contract: session.Contract(), Server: session.Server(),
+		DataFolder: session.DataFolder(), Findings: []PluginFinding{}}
 	if plugin.URL != "" {
 		check.Address = pluginclient.Address(plugin.URL)
 	}
-	return check, nil
+	findings, undiagnosed := session.Diagnose(ctx)
+	if undiagnosed != nil {
+		return check, undiagnosed, nil
+	}
+	check.Findings = findings
+	return check, nil, nil
 }
 
 // PluginGlance is what a quick check of one registered Knowledge base
@@ -165,12 +222,18 @@ type PluginGlance struct {
 	// Plugin is the plugin as it is registered.
 	Plugin Plugin
 	// Check is what the plugin said of itself, when it started, or was
-	// reached, and speaks the contract.
+	// reached, and speaks the contract, with what it found of what it
+	// depends on.
 	Check *PluginCheck
 	// Problem says why it did not, and Fix what to do about it: the command
 	// that puts it right, or the one that says what is wrong with the
 	// plugin, having more time for it.
 	Problem, Fix string
+	// Undiagnosed says why a plugin that started and speaks the contract did
+	// not say what it found of what it depends on: it did not answer in the
+	// time it has for that, or not as the contract has it. Check is set all
+	// the same, without findings.
+	Undiagnosed string
 }
 
 // PluginGlances is what CheckPlugins found on this computer.
@@ -187,15 +250,26 @@ type PluginGlances struct {
 // CheckPlugins does for every Knowledge base plugin registered on this
 // computer what CheckPlugin does for one, and waits for none: it is for
 // study doctor. Reading the registry, starting each plugin or reaching it,
-// and its answer share one deadline (PluginOptions.GlanceTimeout). The
-// plugins are checked side by side, and one that misses the deadline is
-// stopped and reported with the command that gives it more time. A plugin
-// study does not use as it is registered is not started.
+// and its saying which contract it speaks share one deadline
+// (PluginOptions.GlanceTimeout). The plugins are checked side by side, and
+// one that misses the deadline is stopped and reported with the command
+// that gives it more time. A plugin study does not use as it is registered
+// is not started.
 //
-// A plugin is asked which contract it speaks and nothing else: nothing is
-// indexed and nothing searched. Nothing is written but a command plugin's
-// own folder, which is made when it is not there, and no Event is recorded.
-// It fails only when the command was stopped.
+// A plugin that has said which contract it speaks is then asked, at once
+// and on the same connection, to test what it depends on, and has the time
+// the contract gives it for that (PluginOptions.DiagnoseTimeout). Every
+// plugin is asked no later than the glance's deadline, so all of them have
+// answered, or been stopped, by one moment: that deadline and the time of
+// one diagnose after it, however many plugins there are. One that does not
+// say in time is reported as that (PluginGlance.Undiagnosed), and what it
+// said of itself stands.
+//
+// A plugin is asked which contract it speaks and what it found of what it
+// depends on, and nothing else: nothing is indexed and nothing searched.
+// Nothing is written but a command plugin's own folder, which is made when
+// it is not there, and no Event is recorded. It fails only when the command
+// was stopped.
 func (c *Core) CheckPlugins(ctx context.Context) (PluginGlances, error) {
 	limit := c.plugins.GlanceTimeout
 	if limit <= 0 {
@@ -206,7 +280,7 @@ func (c *Core) CheckPlugins(ctx context.Context) (PluginGlances, error) {
 			return ctx.Err()
 		}
 		return &Error{Code: CodeCanceled, Err: ctx.Err(), Message: "the command was stopped before every Knowledge base plugin " +
-			"had said which contract it speaks"}
+			"had said which contract it speaks, and what it found of what it depends on"}
 	}
 	list, began, err := c.registryInTime(ctx, limit)
 	switch {
@@ -240,10 +314,15 @@ func (c *Core) glancePlugin(ctx context.Context, list PluginList, plugin Plugin,
 		glance.Problem, glance.Fix = problem, action
 		return glance
 	}
-	check, err := c.checkPlugin(ctx, plugin, began, pluginUse{within: limit, grace: PluginGlanceGrace})
+	check, undiagnosed, err := c.checkPlugin(ctx, plugin, began, pluginUse{within: limit, grace: PluginGlanceGrace})
 	switch {
 	case err == nil:
 		glance.Check = &check
+		if undiagnosed != nil {
+			// The client's own words: which tool was not answered, in how
+			// long, or what of its answer is not the contract's.
+			glance.Undiagnosed = undiagnosed.Error()
+		}
 	case ctx.Err() == nil && !time.Now().Before(began.Add(limit)):
 		glance.Problem = "Knowledge base plugin " + plugin.Name + " did not say which contract it speaks within " + limit.String() +
 			", and study did not wait for it"
@@ -342,7 +421,8 @@ type pluginUse struct {
 	// within, when it is not zero, is how long the plugin has to start and
 	// then to answer any one call, a search among them, in place of what
 	// PluginOptions say: for whoever keeps one deadline for all of it, and
-	// passes it with each call.
+	// passes it with each call. The time to test what it depends on is not
+	// among them: that is the contract's own, whatever else is short.
 	within time.Duration
 	// grace, when it is not zero, is the most a command has to exit when it
 	// is asked, and again when it is signalled, in place of a longer
@@ -367,15 +447,16 @@ func (c *Core) startPlugin(ctx context.Context, plugin pluginregistry.Plugin, be
 		environ = given
 	}
 	opts := pluginclient.Options{
-		Version:       c.version,
-		Environ:       environ,
-		Logger:        c.log,
-		Began:         began,
-		Indexes:       use.indexes,
-		StartTimeout:  c.plugins.StartTimeout,
-		CallTimeout:   c.plugins.CallTimeout,
-		SearchTimeout: c.plugins.SearchTimeout,
-		StopGrace:     c.plugins.StopGrace,
+		Version:         c.version,
+		Environ:         environ,
+		Logger:          c.log,
+		Began:           began,
+		Indexes:         use.indexes,
+		StartTimeout:    c.plugins.StartTimeout,
+		CallTimeout:     c.plugins.CallTimeout,
+		SearchTimeout:   c.plugins.SearchTimeout,
+		DiagnoseTimeout: c.plugins.DiagnoseTimeout,
+		StopGrace:       c.plugins.StopGrace,
 	}
 	if use.within > 0 {
 		opts.StartTimeout, opts.CallTimeout, opts.SearchTimeout = use.within, use.within, use.within

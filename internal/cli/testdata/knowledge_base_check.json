@@ -27,6 +27,7 @@
       "name": "test-plugin",
       "version": "1.2.3"
     },
-    "data_folder": "$HOME/.local/state/lamplight/knowledge-base-plugins/kb"
+    "data_folder": "$HOME/.local/state/lamplight/knowledge-base-plugins/kb",
+    "findings": []
   }
 }

@@ -97,9 +97,18 @@ func TestABuiltStudyHasTheBuiltShelfEmbedABook(t *testing.T) {
 	if got := fmt.Sprint(check.Data.Contract.Search); got != "[keyword embedding]" {
 		t.Errorf("study knowledge-base check says Shelf searches by %s; want by embeddings too, with an endpoint in its settings file", got)
 	}
-	if asked := at.Asked(); len(asked) != 0 {
-		t.Fatalf("to say what it can do, Shelf asked the endpoint %+v", asked)
+	// To say what it can do Shelf asks the endpoint nothing. The check also
+	// has Shelf test the endpoint, which asks it once: a question of Shelf's
+	// own, marked as a search marks one, with the key from the file.
+	if f := check.Data.Findings; len(f) != 1 || f[0].Name != "embedding" || !f[0].OK ||
+		!strings.Contains(f[0].Message, "the embedding endpoint "+at.Host+" gave a question's vector, of 512 numbers") {
+		t.Errorf("study knowledge-base check found %+v; want the embedding endpoint, which answers", f)
 	}
+	if asked := at.Asked(); len(asked) != 1 || asked[0].Path != "/v1/embeddings" || asked[0].Key != key ||
+		fmt.Sprint(asked[0].Keys()) != "[input model]" || fmt.Sprint(asked[0].Texts()) != "[task: search result | query: What does a shelf hold?]" {
+		t.Fatalf("to test the endpoint, Shelf asked it %+v; want one question of its own, once", asked)
+	}
+	at.Forget()
 
 	// index runs study source index, and returns what came of the book.
 	index := func(args ...string) core.IndexOutcome {

@@ -166,7 +166,7 @@ func TestAnAddressThatIsNoPluginIsRefused(t *testing.T) {
 		{"a newer contract", service(t, plugintest.Config{Results: map[string]string{"contract": `{"version": 7}`}}), false, pluginclient.CodeNewerFormat,
 			[]string{"Knowledge base plugin remote speaks version 7 of Lamplight's contract, and this version of study knows version 1: upgrade study"}},
 		{"another MCP server", service(t, plugintest.Config{Tools: []string{"status"}}), false, pluginclient.CodeFailedPrecondition,
-			[]string{"it is an MCP server without the contract, index, cancel, search and passage tools"}},
+			[]string{"it is an MCP server without the contract, index, cancel, search, passage and diagnose tools"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c := plugintest.NewComputer(t)

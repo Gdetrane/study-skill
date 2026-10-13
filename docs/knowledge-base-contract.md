@@ -7,9 +7,9 @@ names, and the plugin does the reading
 contract between the two. It is enough to write a plugin from, in any language, without
 reading Lamplight's source. Terms follow [GLOSSARY.md](../GLOSSARY.md).
 
-A plugin is **an MCP server with six tools**: `contract`, `index`, `status`, `cancel`,
-`search` and `passage`. Their names and what they take and give back are Lamplight's. What
-is behind them, how text is extracted, cut and found, is the plugin's.
+A plugin is **an MCP server with seven tools**: `contract`, `index`, `status`, `cancel`,
+`search`, `passage` and `diagnose`. Their names and what they take and give back are
+Lamplight's. What is behind them, how text is extracted, cut and found, is the plugin's.
 
 Three words are used throughout:
 
@@ -22,7 +22,8 @@ Three words are used throughout:
 
 The Go types in `internal/plugincontract` say the same as this page, and a test keeps the
 two in step. `study knowledge-base check <name>` starts or reaches a registered plugin and
-reports which contract it speaks ([docs/cli.md](cli.md#knowledge-base-plugins)).
+reports which contract it speaks, and what the plugin found when it tested what it depends
+on ([docs/cli.md](cli.md#knowledge-base-plugins)).
 
 ## How study reaches a plugin
 
@@ -33,7 +34,7 @@ command that starts it or by the URL it answers at.
 
 `study` opens an MCP session with `initialize`, asking for protocol revision `2025-11-25`.
 A plugin may answer with an earlier revision it speaks. `study` then lists the plugin's tools
-(`tools/list`, following pages up to 1,000 tools), checks that the six are among them, and
+(`tools/list`, following pages up to 1,000 tools), checks that the seven are among them, and
 calls `contract`. All of that must be done within 30 seconds of `study` setting out to start
 the plugin.
 
@@ -256,6 +257,7 @@ with `application/json` or with a stream of server-sent events.
 | Starting, `contract`, `status` and `search`, together, when `study` searches a Topic's Sources; and starting, `contract`, `status` and every `passage`, together, when it checks a quote | 45 seconds |
 | Exiting then, once standard input is closed, and again after `SIGTERM` | 250 milliseconds |
 | Answering `cancel`, when `study source index` was stopped | 10 seconds |
+| `diagnose`: the whole answer | 10 seconds |
 | One MCP message from the plugin | 16,777,216 bytes |
 | Values in one MCP message from the plugin | 250,000 |
 | A Passage's `text` | 32,768 bytes of UTF-8 |
@@ -267,6 +269,9 @@ with `application/json` or with a stream of server-sent events.
 | A Source's `title` | 200 characters |
 | A `path` or a `url` | 4,096 bytes |
 | Kinds in each list of a `contract` answer, and a kind's name | 16, and 32 characters |
+| Findings in a `diagnose` answer | 16 |
+| A finding's `name` | 32 characters |
+| A finding's `message`, as `study` shows it | 600 bytes |
 | A `reason` or an error's `message`, as `study` shows it | 2,000 bytes |
 
 The values of a message are counted generously: each list, each object, and each member
@@ -282,6 +287,10 @@ that session. `study` never sends more than these limits allow, and refuses an a
 goes over them, except that a `reason` or a `message` is cut short instead. The 30 seconds
 of starting cover what `study` does first as well: finding the program and making the
 folder.
+
+The 10 seconds of `diagnose` are longer than the 2 seconds of a glance, because what a
+plugin tests there is asked over a network, and may have a model to wake. They are no
+longer, because `study doctor` asks every registered plugin, and a learner waits for it.
 
 ## Results and errors
 
@@ -355,7 +364,7 @@ A Passage's id keeps naming the same text for as long as its Source's indexed co
 not change, whether or not the plugin was stopped and started in between. Once the content
 changed, the id names nothing (`not_found`), or still the old text: never another text.
 
-## The six tools
+## The seven tools
 
 ### `contract`
 
@@ -377,6 +386,10 @@ arguments, and gives the same answer every time in a session.
 A kind is a lowercase word of letters, digits and underscores. Kinds are added to these
 lists without a new contract version, a time range in a recording for instance, so `study`
 keeps a kind it does not know and a plugin may list one.
+
+Version 1 has seven tools. `diagnose` was added to it after the other six and before any
+`study` that speaks the contract was released, so the version did not change: there is no
+version 1 without it, and `study` refuses a plugin that lacks any of the seven.
 
 ### `index`
 
@@ -642,11 +655,63 @@ from the Passage, to check the quote against its text.
   learner's agent gave. Nothing in this version says which Passage follows which in a
   Source, so `study` cannot tell that the Passages it is given are adjacent.
 
+### `diagnose`
+
+Has the plugin test what it depends on, and say what it found: an embedding endpoint that
+answers, with vectors of the size the plugin's settings name; a program it runs, where it
+should be. It takes no arguments. A plugin starts and speaks the contract whether or not
+what it depends on works, and without this tool the learner finds out by using it: when a
+book was read and its Passages could not be embedded, or when a search fell back to
+keyword.
+
+<!-- example: diagnose result -->
+```json
+{"findings": [
+  {"name": "embedding", "ok": true,
+   "message": "the embedding endpoint 127.0.0.1:8080 gave a question's vector, of 512 numbers"},
+  {"name": "reranking", "ok": false,
+   "message": "the reranking endpoint 127.0.0.1:8081 could not be reached: connection refused"}]}
+```
+
+| Field | Is |
+|---|---|
+| `findings` | A finding for each thing the plugin depends on and tested, 16 at most. **An empty list for a plugin that depends on nothing of the kind**: that is an answer like any other, and the plugin still has the tool. |
+| `name` | What was tested, in a word: a lowercase word of letters, digits and underscores, up to 32 characters, such as `embedding`. Each name once in an answer, and the same name every time: `study` shows it, and a learner tells one finding from the next by it. |
+| `ok` | `true` when it works as the plugin needs it to, `false` when it does not. |
+| `message` | What was found, in a sentence for the learner: what answered, or what is wrong and what the plugin does without it. Required, for a finding that is all right too. `study` puts it on one line, escapes what a terminal would interpret, and shows the first 600 bytes. |
+
+- **Test it as you use it.** Send what indexing or a search sends: the same request, with
+  the key, to the same address, and hold the answer to what you hold it to there. A test
+  that only opens a connection finds an endpoint up when its model is missing.
+- **Test with text of your own.** Nothing of a Source, a collection or a learner's
+  question goes into a test. `diagnose` is given no collection, and is asked when the
+  learner looks at their setup, not when they study.
+- **Answer within 10 seconds, whatever you depend on does.** That is for all of it: every
+  test, and the answer. Give each thing you test less than that, and test them side by
+  side, so that an endpoint that never answers costs its own finding and not the whole
+  answer. A plugin that does not answer in time is stopped, and `study` reports that it
+  did not say what it found.
+- **A finding that is not all right is no error.** The tool answers, and the finding says
+  so. An error is for a plugin that could not test at all, and `study` then reports that
+  the plugin failed.
+- **Put nothing in a message that is not for the learner's screen**: no key, and of an
+  address no more than its host. `study` cannot take out what it does not know. It takes
+  out the address the plugin itself is registered at, and nothing else.
+- **Give no command to run.** `study` shows a finding as the plugin's words, and adds no
+  command to it. A field of your own, a `fix` say, is passed over like any other this page
+  does not name.
+- **Who asks.** `study knowledge-base check <name>` and `study doctor`, which the learner
+  runs, or their agent in its own shell. There a finding that is not all right is a
+  warning, and never keeps the learner from studying. **No tool of `study`'s MCP server
+  asks `diagnose`**: that server runs outside the agent's sandbox, and the tool has a
+  plugin send requests to wherever its settings point.
+
 ## Checking a plugin
 
 `study knowledge-base check <name>` starts or reaches a registered plugin as `study` does
-for a Topic, and reports the contract version it speaks and what it can do, or what is
-wrong and what to do about it.
+for a Topic, and reports the contract version it speaks, what it can do, and what its
+`diagnose` found, or what is wrong and what to do about it. `study doctor` does the same
+for every registered plugin.
 
 The conformance suite holds a plugin to everything on this page that can be seen from
 outside it. It is a Go test helper, `plugintest.Conformance` in `internal/plugintest`,
@@ -684,6 +749,10 @@ func TestMyPluginConforms(t *testing.T) {
   `127.0.0.1`: a `<title>`, an `<h1>` and one `<p>` for each paragraph.
 - **A plugin that stops answering fails the check that met it, and the suite ends there.**
   A call has 30 seconds (`Patience`).
+- **`diagnose` is asked as it is**, with whatever the plugin was started with: the suite
+  holds its answer to the 10 seconds, to the limits and to the shape of a finding, and
+  takes no view on whether a finding is all right. A plugin that depends on an endpoint
+  is so checked with the endpoint the test gave it, or with none.
 
 The same package holds a small plugin that passes the suite, to read beside this page.
 

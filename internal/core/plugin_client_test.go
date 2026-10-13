@@ -59,6 +59,8 @@ func TestCheckPluginStartsAsksAndStops(t *testing.T) {
 		Contract:   core.PluginContract{Version: 1, Sources: []string{"file"}, Search: []string{"keyword"}, Locations: []string{"pages"}},
 		Server:     core.PluginServer{Name: "a-plugin", Version: "2.0.0"},
 		DataFolder: c.DataFolder("kb"),
+		// It depends on nothing, and says so: a list, with nothing in it.
+		Findings: []core.PluginFinding{},
 	}
 	if err != nil || !reflect.DeepEqual(got, want) {
 		t.Fatalf("CheckPlugin = %+v, %v; want %+v", got, err, want)

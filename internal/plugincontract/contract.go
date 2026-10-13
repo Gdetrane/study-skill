@@ -1,5 +1,5 @@
 // Package plugincontract is the contract a Knowledge base plugin speaks,
-// version 1 (ADR-0012): the six tools of the MCP server a plugin is, what
+// version 1 (ADR-0012): the seven tools of the MCP server a plugin is, what
 // each takes and gives back as JSON, the limits, and how a refusal is
 // reported. docs/knowledge-base-contract.md says the same to someone writing
 // a plugin in any language, and a test keeps the two in step.
@@ -15,9 +15,13 @@ import "time"
 // Version is the contract version this package describes: the newest study
 // knows. A plugin that reports a newer one is refused, like every newer
 // format.
+//
+// It is still 1 with the diagnose tool, which came after the other six: no
+// study that speaks the contract was released without it, so no plugin was
+// written to a version 1 that lacks it.
 const Version = 1
 
-// The six tools. A plugin is an MCP server that has all of them.
+// The seven tools. A plugin is an MCP server that has all of them.
 const (
 	ToolContract = "contract"
 	ToolIndex    = "index"
@@ -25,10 +29,16 @@ const (
 	ToolCancel   = "cancel"
 	ToolSearch   = "search"
 	ToolPassage  = "passage"
+	// ToolDiagnose has the plugin test what it depends on, a model it asks
+	// over a network say, and report what it found. It is the one tool that
+	// has a plugin reach for anything but its index and the Source it is
+	// handed, so study asks it only for the learner, from the command line.
+	ToolDiagnose = "diagnose"
 )
 
-// Tools lists the six tools, in the order the documentation describes them.
-var Tools = []string{ToolContract, ToolIndex, ToolStatus, ToolCancel, ToolSearch, ToolPassage}
+// Tools lists the seven tools, in the order the documentation describes
+// them.
+var Tools = []string{ToolContract, ToolIndex, ToolStatus, ToolCancel, ToolSearch, ToolPassage, ToolDiagnose}
 
 // DataFolderEnv is the environment variable in which study tells a plugin
 // started by a command where its folder is: an absolute path, of a folder
@@ -113,6 +123,14 @@ const (
 // tool call up, and more than the half minute a plugin has to start.
 const EvidenceTime = 45 * time.Second
 
+// DiagnoseTime is how long a plugin has to answer diagnose, for all of it:
+// every test it makes, of everything it depends on, and its answer. It is
+// longer than a glance, since what is tested is asked over a network and may
+// have a model to wake, and short enough for study doctor, which a learner
+// waits for. A plugin gives each thing it tests less than this, so that it
+// answers in time whatever that thing does.
+const DiagnoseTime = 10 * time.Second
+
 // Limits. study refuses what goes over them, on the way out and on the way
 // in, so a plugin never has to hold more and a broken one cannot make study
 // hold more.
@@ -145,6 +163,12 @@ const (
 	// hold, and MaxKindBytes how long a kind's name may be.
 	MaxKinds     = 16
 	MaxKindBytes = 32
+	// MaxFindings is how many findings a diagnose answer may hold, and
+	// MaxFindingBytes how much of a finding's message study keeps: it is a
+	// sentence, and one line of study doctor. More is cut off, never
+	// refused. A finding's name is as long as a kind's (MaxKindBytes).
+	MaxFindings     = 16
+	MaxFindingBytes = 600
 	// MaxTextBytes is how much of a failure's reason and of an error's
 	// message study keeps. More is cut off, never refused.
 	MaxTextBytes = 2000
@@ -300,6 +324,27 @@ type PassageInput struct {
 // PassageResult is what the passage tool gives back.
 type PassageResult struct {
 	Passage Passage `json:"passage"`
+}
+
+// Finding is one thing a plugin depends on, as the plugin found it when it
+// tested it for diagnose: an endpoint it asks, a program it runs.
+type Finding struct {
+	// Name names what was tested, in a word: "embedding". It is the same
+	// each time, so that a learner, and a script, can tell one finding from
+	// the next.
+	Name string `json:"name"`
+	// OK says that it works as the plugin needs it to.
+	OK bool `json:"ok"`
+	// Message says what was found, in a sentence for the learner: what
+	// answered, or what is wrong and what the plugin does without it.
+	Message string `json:"message"`
+}
+
+// DiagnoseResult is what the diagnose tool gives back: a finding for each
+// thing the plugin depends on and tested, and none for a plugin that depends
+// on nothing of the kind.
+type DiagnoseResult struct {
+	Findings []Finding `json:"findings"`
 }
 
 // ErrorResult is the result of a tool call the plugin refused or failed:

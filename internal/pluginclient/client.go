@@ -1,8 +1,8 @@
 // Package pluginclient is study as the MCP client of a Knowledge base plugin
 // (ADR-0012): it starts a registered command, or reaches a registered URL,
 // checks that what answers speaks Lamplight's contract, and asks it to
-// index, to say what is indexed, to stop, to search and to give a Passage
-// again.
+// index, to say what is indexed, to stop, to search, to give a Passage
+// again and to test what it depends on.
 //
 // A command is started as the registry's rules need it to be (StartCommand).
 // The program is the one pluginregistry.OpenCommand checked, with nothing on
@@ -66,6 +66,9 @@ const (
 	// DefaultSearchTimeout is how long a search may take: a plugin may have
 	// a model embed the query and another reorder what it found.
 	DefaultSearchTimeout = 60 * time.Second
+	// DefaultDiagnoseTimeout is how long it has to test what it depends on
+	// and say what it found: the contract's own time for it.
+	DefaultDiagnoseTimeout = plugincontract.DiagnoseTime
 	// DefaultStopGrace is how long a command has to exit once its input is
 	// closed, and again after SIGTERM, before it is killed.
 	DefaultStopGrace = 2 * time.Second
@@ -77,7 +80,7 @@ const (
 const MCPVersion = "2025-11-25"
 
 // MaxTools is how many tools of a plugin study lists before it stops
-// looking for the contract's six, and maxToolPages in how many pages.
+// looking for the contract's seven, and maxToolPages in how many pages.
 const (
 	MaxTools     = 1000
 	maxToolPages = 100
@@ -125,12 +128,13 @@ type Options struct {
 	// that is only asked what it has indexed, or to search, needs no such
 	// folder, and is not held to one.
 	Indexes bool
-	// StartTimeout, CallTimeout, SearchTimeout and StopGrace replace the
-	// defaults above when they are not zero.
-	StartTimeout  time.Duration
-	CallTimeout   time.Duration
-	SearchTimeout time.Duration
-	StopGrace     time.Duration
+	// StartTimeout, CallTimeout, SearchTimeout, DiagnoseTimeout and StopGrace
+	// replace the defaults above when they are not zero.
+	StartTimeout    time.Duration
+	CallTimeout     time.Duration
+	SearchTimeout   time.Duration
+	DiagnoseTimeout time.Duration
+	StopGrace       time.Duration
 }
 
 func (o Options) withDefaults() Options {
@@ -145,7 +149,8 @@ func (o Options) withDefaults() Options {
 		usual time.Duration
 	}{
 		{&o.StartTimeout, DefaultStartTimeout}, {&o.CallTimeout, DefaultCallTimeout},
-		{&o.SearchTimeout, DefaultSearchTimeout}, {&o.StopGrace, DefaultStopGrace},
+		{&o.SearchTimeout, DefaultSearchTimeout}, {&o.DiagnoseTimeout, DefaultDiagnoseTimeout},
+		{&o.StopGrace, DefaultStopGrace},
 	} {
 		if *d.value <= 0 {
 			*d.value = d.usual
@@ -529,7 +534,7 @@ func (s *Connection) askedWhy() string {
 }
 
 // handshake opens the MCP session and checks that a Knowledge base plugin
-// is at the other end: it has the six tools, and its contract tool gives a
+// is at the other end: it has the seven tools, and its contract tool gives a
 // version this study knows. parent is the caller's context and limited the
 // same with the deadline of limit, which the whole start has.
 func (s *Connection) handshake(parent, limited context.Context, limit time.Duration, transport mcp.Transport) error {
@@ -761,6 +766,33 @@ func (s *Connection) Passage(ctx context.Context, collection, id string) (plugin
 		return plugincontract.Passage{}, err
 	}
 	return out.Passage, nil
+}
+
+// Diagnose asks the plugin to test what it depends on, an endpoint it asks
+// over a network say, and returns what it found: a finding for each, and
+// none for a plugin that depends on nothing of the kind. A finding that is
+// not all right is no error: the plugin answered, and said so.
+//
+// It is the one call that has a plugin reach for more than its index and
+// the Source it is handed. Whoever calls it does so for the learner, at a
+// command line: no MCP tool leads here.
+//
+// A finding's message is the plugin's text. It is returned cleaned, as a
+// reason is: one line, with nothing a terminal would interpret, cut to
+// plugincontract.MaxFindingBytes, and without the parts of a registered
+// address that may be a key.
+func (s *Connection) Diagnose(ctx context.Context) ([]plugincontract.Finding, error) {
+	var out plugincontract.DiagnoseResult
+	err := s.ask(ctx, plugincontract.ToolDiagnose, s.opts.DiagnoseTimeout, struct{}{}, &out, func() error { return out.Validate() })
+	if err != nil {
+		return nil, err
+	}
+	findings := make([]plugincontract.Finding, 0, len(out.Findings))
+	for _, finding := range out.Findings {
+		finding.Message = s.say(finding.Message, plugincontract.MaxFindingBytes)
+		findings = append(findings, finding)
+	}
+	return findings, nil
 }
 
 // located checks that a Passage's location is of a kind the plugin said it

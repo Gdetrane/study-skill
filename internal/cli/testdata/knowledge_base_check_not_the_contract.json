@@ -2,6 +2,6 @@
   "ok": false,
   "error": {
     "code": "failed_precondition",
-    "message": "Knowledge base plugin kb does not speak Lamplight's contract: it is an MCP server without the contract, index, cancel and passage tools. docs/knowledge-base-contract.md describes the contract"
+    "message": "Knowledge base plugin kb does not speak Lamplight's contract: it is an MCP server without the contract, index, cancel, passage and diagnose tools. docs/knowledge-base-contract.md describes the contract"
   }
 }

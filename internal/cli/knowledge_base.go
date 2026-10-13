@@ -382,8 +382,32 @@ func writePluginCheck(w io.Writer, r core.PluginCheck) error {
 	for i, row := range rows {
 		fmt.Fprintf(&b, "  %s  %s\n", styleDim.Render(pad(labels[i], width)), row[1])
 	}
+	writePluginFindings(&b, r.Findings)
 	_, err := io.WriteString(w, b.String())
 	return err
+}
+
+// writePluginFindings writes what a plugin found when it tested what it
+// depends on: a line for each finding, with the plugin's name for it and the
+// plugin's sentence, and nothing for a plugin that depends on nothing. The
+// words are the plugin's, so they are printed as text from a file is.
+func writePluginFindings(b *strings.Builder, findings []core.PluginFinding) {
+	if len(findings) == 0 {
+		return
+	}
+	b.WriteString("  It tested what it depends on:\n")
+	names := make([]string, len(findings))
+	for i, f := range findings {
+		names[i] = printable(f.Name)
+	}
+	width := widest(names)
+	for i, f := range findings {
+		mark := styleOK.Render("✓")
+		if !f.OK {
+			mark = styleWarn.Render("!")
+		}
+		fmt.Fprintf(b, "    %s %s  %s\n", mark, styleLabel.Render(pad(names[i], width)), printable(f.Message))
+	}
 }
 
 func writePluginList(w io.Writer, l core.PluginList) error {

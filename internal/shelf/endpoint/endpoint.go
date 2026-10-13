@@ -55,6 +55,12 @@ const (
 	// say so, where study would otherwise stop it and say nothing of why.
 	DefaultQueryTimeout  = 10 * time.Second
 	DefaultRerankTimeout = 20 * time.Second
+	// DefaultTestTimeout is how long an endpoint has for the one request by
+	// which Shelf tests it when study asks what Shelf depends on: less than
+	// the ten seconds the contract gives Shelf for all of that answer, so
+	// that Shelf says in time that an endpoint did not answer, where study
+	// would otherwise stop it and say nothing of which one.
+	DefaultTestTimeout = 8 * time.Second
 	// DefaultMaxBytes is how large one answer with vectors may be, and
 	// DefaultRerankMaxBytes one answer of the reranking endpoint.
 	DefaultMaxBytes       = 64 << 20
@@ -666,6 +672,10 @@ func (e *Embedder) Model() string    { return e.cfg.Model }
 func (e *Embedder) Dimensions() int  { return e.cfg.Dimensions }
 func (e *Embedder) Document() string { return e.cfg.Document.String() }
 
+// Name is how the endpoint is spoken of to the learner: "the embedding
+// endpoint 127.0.0.1:8080". Its host, and nothing else of its address.
+func (e *Embedder) Name() string { return e.call.what }
+
 // Documents returns a vector for each of texts, stretches of a document
 // with that title, in their order, each of length 1 and all of one size.
 // It asks in batches, one after the other, and calls done, when it is not
@@ -692,7 +702,17 @@ func (e *Embedder) Documents(ctx context.Context, title string, texts []string, 
 
 // Query returns the vector of a question, of length 1.
 func (e *Embedder) Query(ctx context.Context, question string) ([]float32, error) {
-	vectors, err := e.embed(ctx, e.cfg.QueryTimeout, e.cfg.Query, []string{e.cfg.Query.mark("", question)})
+	return e.Test(ctx, e.cfg.QueryTimeout, question)
+}
+
+// Test asks the endpoint for the vector of a question exactly as a search
+// asks it (Query is this): the same request, to the same address, with the
+// same marking and key, and the answer held to the same checks. Only the
+// time is the caller's: within, in place of the time a search gives the
+// endpoint. It is for Shelf to test the endpoint with, so that what it
+// finds is what a search will find.
+func (e *Embedder) Test(ctx context.Context, within time.Duration, question string) ([]float32, error) {
+	vectors, err := e.embed(ctx, within, e.cfg.Query, []string{e.cfg.Query.mark("", question)})
 	if err != nil {
 		return nil, err
 	}
@@ -854,6 +874,11 @@ func (r *Reranker) Close() { r.call.close() }
 // Candidates is how many of the best Passages are handed over.
 func (r *Reranker) Candidates() int { return r.cfg.Candidates }
 
+// Model is the reranking model's name, and Name how the endpoint is spoken
+// of to the learner: "the reranking endpoint 127.0.0.1:8081".
+func (r *Reranker) Model() string { return r.cfg.Model }
+func (r *Reranker) Name() string  { return r.call.what }
+
 // Ranked is one text as the endpoint ranks it: its place in what was handed
 // over, and its score, higher for a better answer.
 type Ranked struct {
@@ -864,6 +889,13 @@ type Ranked struct {
 // Order returns the texts in the order the endpoint gives them for a
 // question, the best first: each of them once.
 func (r *Reranker) Order(ctx context.Context, question string, texts []string) ([]Ranked, error) {
+	return r.Test(ctx, r.cfg.Timeout, question, texts)
+}
+
+// Test asks the endpoint to order texts for a question exactly as a search
+// asks it (Order is this), within a time of the caller's choosing: for
+// Shelf to test the endpoint with.
+func (r *Reranker) Test(ctx context.Context, within time.Duration, question string, texts []string) ([]Ranked, error) {
 	documents := make([]string, len(texts))
 	for i, text := range texts {
 		documents[i] = squeeze(text)
@@ -879,7 +911,7 @@ func (r *Reranker) Order(ctx context.Context, question string, texts []string) (
 		Results counted[ranked] `json:"results"`
 	}
 	answer.Results.most = len(texts)
-	if err := r.call.post(ctx, r.cfg.Timeout, 0, request, &answer); err != nil {
+	if err := r.call.post(ctx, within, 0, request, &answer); err != nil {
 		return nil, err
 	}
 	what := r.call.what

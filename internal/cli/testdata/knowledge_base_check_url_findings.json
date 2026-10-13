@@ -1,0 +1,31 @@
+{
+  "ok": true,
+  "data": {
+    "name": "remote",
+    "address": "http://127.0.0.1:PORT",
+    "contract": {
+      "version": 1,
+      "sources": [
+        "file",
+        "url"
+      ],
+      "search": [
+        "keyword"
+      ],
+      "locations": [
+        "pages"
+      ]
+    },
+    "server": {
+      "name": "test-plugin",
+      "version": "1.0.0"
+    },
+    "findings": [
+      {
+        "name": "upstream",
+        "ok": false,
+        "message": "the index behind this service has not answered since Tuesday"
+      }
+    ]
+  }
+}

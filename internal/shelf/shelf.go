@@ -1,5 +1,5 @@
 // Package shelf is Shelf, the Knowledge base plugin that ships with
-// Lamplight (ADR-0012): an MCP server with the contract's six tools
+// Lamplight (ADR-0012): an MCP server with the contract's seven tools
 // (docs/knowledge-base-contract.md), which indexes a Topic's PDFs and web
 // pages and searches them: by keyword always, and by what a question means
 // when the learner gave it an embedding endpoint.
@@ -11,7 +11,9 @@
 //
 // What is where:
 //
-//   - shelf.go: the six tools, and what each says;
+//   - shelf.go: the tools, and what each says;
+//   - diagnose.go: the test of the endpoints the settings name, which is
+//     what the seventh tool says;
 //   - work.go: the indexing of one Source, which goes on after index has
 //     answered;
 //   - search.go: one search, by keyword, by vectors and with a reranker;
@@ -100,6 +102,10 @@ type Settings struct {
 	// Reranker asks the reranking endpoint, which orders the best Passages
 	// of a search before they are returned. nil is none.
 	Reranker *endpoint.Reranker
+	// TestTime is how long each endpoint has to answer when Shelf tests it
+	// for study (diagnose): less than the time study gives Shelf for all of
+	// that answer.
+	TestTime time.Duration
 }
 
 // DefaultSettings are the settings Shelf runs with.
@@ -134,6 +140,9 @@ func (s Settings) orDefault() Settings {
 	}
 	if s.MostSources < 1 || s.MostSources > d.MostSources {
 		s.MostSources = d.MostSources
+	}
+	if s.TestTime <= 0 {
+		s.TestTime = endpoint.DefaultTestTimeout
 	}
 	return s
 }
@@ -271,6 +280,7 @@ func (s *Shelf) Server() *mcp.Server {
 		{plugincontract.ToolCancel, "Stop indexing a Source. What was indexed before stays.", s.cancel},
 		{plugincontract.ToolSearch, "The Passages of a collection that answer a query, best first: by keyword, and by what the query means when Shelf has an embedding endpoint.", s.search},
 		{plugincontract.ToolPassage, "One Passage of a collection, by its id.", s.passage},
+		{plugincontract.ToolDiagnose, "Test the endpoints Shelf's settings name, as a search asks them, and say what was found.", s.diagnose},
 	} {
 		// The arguments are read by the contract's own rules (read), which
 		// say what is wrong in the contract's words: the schema only says
