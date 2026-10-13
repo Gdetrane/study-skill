@@ -39,8 +39,9 @@ const testQuestion = "What does a shelf hold?"
 var testTexts = []string{"A shelf holds books.", "A lamp gives light."}
 
 // diagnose tests each endpoint the settings name and says what it found: a
-// finding for each, and none when the settings name no endpoint, since
-// Shelf then depends on nothing it could test.
+// finding for each, the embedding endpoint's first, and none when the
+// settings name no endpoint, since Shelf then depends on nothing it could
+// test.
 //
 // The endpoints are asked side by side, each with less time than study
 // gives Shelf for the whole answer (Settings.TestTime): an endpoint that
@@ -48,23 +49,24 @@ var testTexts = []string{"A shelf holds books.", "A lamp gives light."}
 //
 // A finding's message names an endpoint by its host. It holds no key and
 // nothing else of an address: what an endpoint did wrong is an
-// endpoint.Problem, whose reason is made so.
+// endpoint.Problem, whose reason is made so, and ends with what to look at
+// when Shelf can say.
 func (s *Shelf) diagnose(ctx context.Context, _ json.RawMessage) (any, *plugincontract.ErrorBody) {
 	var tests []func() plugincontract.Finding
 	if e := s.settings.Embedder; e != nil {
 		tests = append(tests, func() plugincontract.Finding {
-			vector, err := e.Test(ctx, s.settings.TestTime, testQuestion)
+			vector, answered, err := e.Test(ctx, s.settings.TestTime, testQuestion)
 			return found(findingEmbedding, err,
-				fmt.Sprintf("%s gave a question's vector, of %d numbers, with the model %s", e.Name(), len(vector), short(e.Model())),
-				"Without it no Source is indexed, and a search is by keyword alone.")
+				fmt.Sprintf("%s gave a question's vector, of %d numbers, %s", e.Name(), len(vector), asked(e.Model(), answered)),
+				"Without the embedding endpoint no Source is indexed, and a search is by keyword alone.")
 		})
 	}
 	if r := s.settings.Reranker; r != nil {
 		tests = append(tests, func() plugincontract.Finding {
-			_, err := r.Test(ctx, s.settings.TestTime, testQuestion, testTexts)
+			_, answered, err := r.Test(ctx, s.settings.TestTime, testQuestion, testTexts)
 			return found(findingReranking, err,
-				fmt.Sprintf("%s ordered two texts for a question, with the model %s", r.Name(), short(r.Model())),
-				"Without it a search gives its Passages in the order it found them.")
+				fmt.Sprintf("%s ordered two texts for a question, %s", r.Name(), asked(r.Model(), answered)),
+				"Without the reranking endpoint a search gives its Passages in the order it found them.")
 		})
 	}
 	findings := make([]plugincontract.Finding, len(tests))
@@ -82,6 +84,19 @@ func (s *Shelf) diagnose(ctx context.Context, _ json.RawMessage) (any, *pluginco
 		return nil, refuse(plugincontract.CodeInternal, "Shelf was stopped before it had tested its endpoints")
 	}
 	return plugincontract.DiagnoseResult{Findings: findings}, nil
+}
+
+// asked says which model an endpoint was asked for, and which it says it
+// answered with when that is another name. It is not said to be wrong: a
+// server names one model in several ways, by its file or with a tag, and
+// one that serves a single model answers with it whatever it is asked for.
+// Shelf cannot tell these apart, so it says both names and no more.
+func asked(model, answered string) string {
+	said := "asked for the model " + short(model)
+	if answered != "" && answered != model {
+		said += ". It names the model it answered with " + short(answered)
+	}
+	return said
 }
 
 // found is the finding for one endpoint's test: all right, with what the

@@ -254,17 +254,27 @@ down before a book is read for nothing, or a search has quietly fallen back to k
   says nothing of Shelf's endpoints.
 - **A finding names an endpoint by its host**, like everything Shelf says of one: never
   its key, nor the rest of its address, whatever the endpoint itself answered.
+- **A finding that is all right says which model Shelf asked for.** When the endpoint
+  names the model it answered with otherwise, the finding says that name too, and is all
+  right all the same: a server names one model by its file, with a tag or in another
+  case, and one that serves a single model answers with it whatever it is asked for.
+  Shelf cannot tell these apart. If the name is of a model you did not mean to serve,
+  the server is the one to look at.
 
 `study doctor` shows a Finding for each endpoint, `knowledge_base:shelf:embedding` and
-`knowledge_base:shelf:reranking`. One that is not all right is a warning, and never keeps
-you from studying. It ends with what Shelf does meanwhile: without the embedding endpoint
-no Source is indexed, and a search is by keyword alone; without the reranking endpoint a
-search gives its Passages in the order it found them.
+then `knowledge_base:shelf:reranking`. One that is not all right is a warning, and never
+keeps you from studying. It says what to look at, where Shelf can tell, and ends with
+what Shelf does meanwhile: without the embedding endpoint no Source is indexed, and a
+search is by keyword alone; without the reranking endpoint a search gives its Passages in
+the order it found them. While the embedding endpoint is not all right, the doctor's
+Finding of each Topic that names Shelf says so beside `study source index`: that command
+may fail until the endpoint answers.
 
 | The warning says | What to do |
 |---|---|
 | `could not be reached` | The server is not running, or `endpoint` is not where it listens. Start it, or correct the address: for a server that speaks the OpenAI API it ends in `/v1`. |
 | `did not answer within 8s` | The server is busy, or loading its model. Ask again once it is up. |
+| `answered` a number from 500 to 599 | The server failed on its own side: its own log says why. |
 | `answered 401 Unauthorized`, `answered 403 Forbidden` | The `key` in the settings file is not one the server takes. |
 | `answered 404 Not Found` | The address is not the API's, or the server does not know the `model`. Check `endpoint` and `model`, or the Recipe. |
 | `answered` a number from 300 to 399 | Shelf follows no redirect. Give the address that answers. |

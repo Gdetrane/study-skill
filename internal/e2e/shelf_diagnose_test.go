@@ -114,11 +114,11 @@ func TestABuiltStudyHasTheBuiltShelfTestItsEndpoints(t *testing.T) {
 		t.Errorf("study doctor says of Shelf: %+v", f)
 	}
 	if f := up["knowledge_base:shelf:embedding"]; f.Status != core.FindingOK ||
-		f.Message != "the embedding endpoint "+embedder.Host+" gave a question's vector, of 512 numbers, with the model google/embeddinggemma-2" {
+		f.Message != "the embedding endpoint "+embedder.Host+" gave a question's vector, of 512 numbers, asked for the model google/embeddinggemma-2" {
 		t.Errorf("with the embedding endpoint up, study doctor says: %+v", f)
 	}
 	if f := up["knowledge_base:shelf:reranking"]; f.Status != core.FindingOK ||
-		f.Message != "the reranking endpoint "+reranker.Host+" ordered two texts for a question, with the model a-reranker" {
+		f.Message != "the reranking endpoint "+reranker.Host+" ordered two texts for a question, asked for the model a-reranker" {
 		t.Errorf("with the reranking endpoint up, study doctor says: %+v", f)
 	}
 	for _, at := range []*shelftest.Endpoint{embedder, reranker} {
@@ -140,7 +140,7 @@ func TestABuiltStudyHasTheBuiltShelfTestItsEndpoints(t *testing.T) {
 	refused := doctor()
 	if f := refused["knowledge_base:shelf:reranking"]; f.Status != core.FindingWarn || f.Fix != "" ||
 		!strings.HasPrefix(f.Message, "the reranking endpoint "+reranker.Host+" answered 403 Forbidden: the key Bearer [the key] is not allowed at [the address]") ||
-		!strings.HasSuffix(f.Message, "Without it a search gives its Passages in the order it found them.") {
+		!strings.HasSuffix(f.Message, "Without the reranking endpoint a search gives its Passages in the order it found them.") {
 		t.Errorf("with the reranking endpoint refusing, study doctor says: %+v", f)
 	}
 	if f := refused["knowledge_base:shelf:embedding"]; f.Status != core.FindingOK {
@@ -154,7 +154,7 @@ func TestABuiltStudyHasTheBuiltShelfTestItsEndpoints(t *testing.T) {
 	down := doctor()
 	if f := down["knowledge_base:shelf:embedding"]; f.Status != core.FindingWarn || f.Fix != "" ||
 		!strings.HasPrefix(f.Message, "the embedding endpoint "+embedder.Host+" could not be reached: ") ||
-		!strings.HasSuffix(f.Message, "Without it no Source is indexed, and a search is by keyword alone.") {
+		!strings.HasSuffix(f.Message, "Without the embedding endpoint no Source is indexed, and a search is by keyword alone.") {
 		t.Errorf("with the embedding endpoint down, study doctor says: %+v; want a warning that names its host", f)
 	}
 	// Shelf itself is in order, and so is the other endpoint.
@@ -173,5 +173,39 @@ func TestABuiltStudyHasTheBuiltShelfTestItsEndpoints(t *testing.T) {
 		!strings.Contains(said, "! embedding  the embedding endpoint "+embedder.Host+" could not be reached") ||
 		!strings.Contains(said, "✓ reranking  the reranking endpoint "+reranker.Host) {
 		t.Errorf("for people, study knowledge-base check shelf says:\n%s", said)
+	}
+
+	// A Topic that names Shelf, with a book Shelf has not indexed, while the
+	// embedding endpoint is still down. The doctor gives the command that
+	// indexes it, as status does, and beside it the Finding that may keep
+	// it from working: it would otherwise say on one line that no Source is
+	// indexed without the endpoint, and on the next to run study source
+	// index.
+	must("topic", "create", "--title", "Linear algebra")
+	must("topic", "update", "linear-algebra", "--knowledge-base", "shelf")
+	book := filepath.Join(home, "Books", "strang.txt")
+	if err := os.MkdirAll(filepath.Dir(book), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(book, []byte("Elimination turns a matrix into an upper triangular one.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	must("source", "add", "linear-algebra", "--file", book)
+	var d struct {
+		Data core.Diagnosis `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(must("doctor", "--json")), &d); err != nil {
+		t.Fatal(err)
+	}
+	var indexing core.Finding
+	for _, f := range d.Data.Findings {
+		if f.Name == "indexing:linear-algebra" {
+			indexing = f
+		}
+	}
+	if indexing.Status != core.FindingWarn || indexing.Fix != "study source index linear-algebra" ||
+		indexing.Message != "not indexed: Strang. Knowledge base plugin shelf found knowledge_base:shelf:embedding not all right: "+
+			"indexing may fail until it is put right" {
+		t.Errorf("of a Topic whose book is not indexed, with Shelf's embedding endpoint down, study doctor says: %+v", indexing)
 	}
 }

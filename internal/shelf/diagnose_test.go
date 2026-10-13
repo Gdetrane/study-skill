@@ -5,6 +5,7 @@ package shelf_test
 import (
 	"fmt"
 	"net/http"
+	"os"
 	"slices"
 	"strings"
 	"sync"
@@ -38,6 +39,15 @@ func (s *session) diagnose() map[string]plugincontract.Finding {
 	}
 	if err := out.Validate(); err != nil {
 		s.t.Fatalf("what diagnose gave back breaks the contract: %v", err)
+	}
+	// The embedding endpoint's first, whichever answered first: what study
+	// doctor shows is in this order, and the same every time.
+	var order []string
+	for _, f := range out.Findings {
+		order = append(order, f.Name)
+	}
+	if got := strings.Join(order, " "); got != "" && got != "embedding" && got != "reranking" && got != "embedding reranking" {
+		s.t.Errorf("Shelf's findings are %q, want the embedding endpoint's and then the reranking endpoint's", got)
 	}
 	found := map[string]plugincontract.Finding{}
 	for _, f := range out.Findings {
@@ -109,10 +119,10 @@ func TestShelfTestsItsEndpointsAsASearchAsksThem(t *testing.T) {
 		t.Fatalf("Shelf's findings are %v, want one for each endpoint", got)
 	}
 	if f := found["embedding"]; !f.OK ||
-		f.Message != "the embedding endpoint "+at.Host+" gave a question's vector, of 512 numbers, with the model test-embedder" {
+		f.Message != "the embedding endpoint "+at.Host+" gave a question's vector, of 512 numbers, asked for the model test-embedder" {
 		t.Errorf("of the embedding endpoint Shelf says %+v", f)
 	}
-	if f := found["reranking"]; !f.OK || f.Message != "the reranking endpoint "+at.Host+" ordered two texts for a question, with the model test-reranker" {
+	if f := found["reranking"]; !f.OK || f.Message != "the reranking endpoint "+at.Host+" ordered two texts for a question, asked for the model test-reranker" {
 		t.Errorf("of the reranking endpoint Shelf says %+v", f)
 	}
 
@@ -203,16 +213,35 @@ func TestShelfSaysWhatIsWrongWithAnEndpoint(t *testing.T) {
 		case <-r.Context().Done():
 		}
 	}
+	const at300 = "did not answer within 300ms"
+	// Each names its endpoint: after "Check the key in Shelf's settings
+	// file", "without it" would be read of the key.
 	const (
-		noVectors = "Without it no Source is indexed, and a search is by keyword alone."
-		noOrder   = "Without it a search gives its Passages in the order it found them."
+		noVectors = "Without the embedding endpoint no Source is indexed, and a search is by keyword alone."
+		noOrder   = "Without the reranking endpoint a search gives its Passages in the order it found them."
 	)
 	for _, tc := range []struct {
 		name, finding, path string
 		answer              func(w http.ResponseWriter, r *http.Request, body map[string]any)
 		want                []string
 	}{
-		{"the embedding endpoint is too slow", "embedding", "/v1/embeddings", hangs, []string{"did not answer within 300ms"}},
+		// What to look at, where Shelf can say: for an endpoint that is
+		// slow, down, or failing on its own side.
+		{"the embedding endpoint is too slow", "embedding", "/v1/embeddings", hangs,
+			[]string{at300 + ". Check that its server is not busy, or still loading the model. " + noVectors}},
+		{"it fails on its own side", "embedding", "/v1/embeddings", func(w http.ResponseWriter, _ *http.Request, _ map[string]any) {
+			w.WriteHeader(http.StatusInternalServerError)
+			fmt.Fprint(w, `{"error": {"message": "CUDA out of memory"}}`)
+		}, []string{"answered 500 Internal Server Error: CUDA out of memory. The fault is on the server's side: its own log says more. " + noVectors}},
+		// A request the server would not take is no fault of the server's:
+		// its own words say what it wants, and Shelf adds none.
+		{"it does not take the request", "embedding", "/v1/embeddings", func(w http.ResponseWriter, _ *http.Request, _ map[string]any) {
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			fmt.Fprint(w, `{"error": {"message": "prompt is not a field"}}`)
+		}, []string{"answered 422 Unprocessable Entity: prompt is not a field. " + noVectors}},
+		{"it is behind a gateway that gives up", "embedding", "/v1/embeddings", func(w http.ResponseWriter, _ *http.Request, _ map[string]any) {
+			w.WriteHeader(http.StatusBadGateway)
+		}, []string{"answered 502 Bad Gateway. The fault is on the server's side: its own log says more. " + noVectors}},
 		{"it gives vectors of another length", "embedding", "/v1/embeddings", func(w http.ResponseWriter, _ *http.Request, _ map[string]any) {
 			vector(w, make([]float32, 384)...)
 		}, []string{"gave vectors of 384 numbers, and Shelf's settings ask for 512"}},
@@ -232,7 +261,7 @@ func TestShelfSaysWhatIsWrongWithAnEndpoint(t *testing.T) {
 			w.WriteHeader(http.StatusNotFound)
 			fmt.Fprintf(w, `{"error": {"message": "%s"}}`, strings.Repeat("no such model here, ", 40))
 		}, []string{"answered 404 Not Found: no such model here, no such model here,",
-			"…. Check the endpoint's address and the model's name in Shelf's settings file. Without it no Source is indexed"}},
+			"…. Check the endpoint's address and the model's name in Shelf's settings file. " + noVectors}},
 		{"it refuses the key, and repeats it", "embedding", "/v1/embeddings", func(w http.ResponseWriter, r *http.Request, _ map[string]any) {
 			w.WriteHeader(http.StatusUnauthorized)
 			key := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
@@ -248,8 +277,10 @@ func TestShelfSaysWhatIsWrongWithAnEndpoint(t *testing.T) {
 		{"it says a great deal", "embedding", "/v1/embeddings", func(w http.ResponseWriter, r *http.Request, _ map[string]any) {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			fmt.Fprintf(w, `{"error": {"message": "%s"}}`, strings.Repeat("the model is loading for "+r.Header.Get("Authorization")+", ", 400))
-		}, []string{"answered 503 Service Unavailable: the model is loading for Bearer [the key]", "…"}},
-		{"the reranking endpoint is too slow", "reranking", "/v1/rerank", hangs, []string{"did not answer within 300ms"}},
+		}, []string{"answered 503 Service Unavailable: the model is loading for Bearer [the key]",
+			"…. The fault is on the server's side: its own log says more. " + noVectors}},
+		{"the reranking endpoint is too slow", "reranking", "/v1/rerank", hangs,
+			[]string{at300 + ". Check that its server is not busy, or still loading the model. " + noOrder}},
 		{"it scores nothing", "reranking", "/v1/rerank", func(w http.ResponseWriter, _ *http.Request, _ map[string]any) {
 			_ = jsonTo(w, map[string]any{"results": []map[string]any{{"index": 0}, {"index": 1}}})
 		}, []string{"did not answer as its API does: a result without its index or its relevance_score"}},
@@ -309,15 +340,28 @@ func TestShelfSaysThatAnEndpointIsDown(t *testing.T) {
 	_, s := startWith(t, t.TempDir(), shelf.Settings{Embedder: embedderAt(t, at), Reranker: rerankerAt(t, ranker)})
 	at.Stop()
 	found := s.diagnose()
+	// With what to look at: the server, and the address Shelf has for it.
+	const look = "connection refused. Check that its server is running, and its address in Shelf's settings file. "
 	if f := found["embedding"]; f.OK || !strings.HasPrefix(f.Message, "the embedding endpoint "+at.Host+" could not be reached: ") ||
-		!strings.HasSuffix(f.Message, ". Without it no Source is indexed, and a search is by keyword alone.") {
+		!strings.HasSuffix(f.Message, look+"Without the embedding endpoint no Source is indexed, and a search is by keyword alone.") {
 		t.Errorf("with the embedding endpoint down, Shelf says %+v", f)
 	}
 	if f := found["reranking"]; !f.OK || !strings.Contains(f.Message, ranker.Host) {
 		t.Errorf("of the reranking endpoint, which is up, Shelf says %+v", f)
 	}
+	// docs/cli.md shows this finding, of an endpoint at 127.0.0.1:8080, as
+	// what study knowledge-base check and study doctor print: it is the
+	// sentence Shelf says, word for word.
+	page, err := os.ReadFile("../../docs/cli.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if said := strings.ReplaceAll(found["embedding"].Message, at.Host, "127.0.0.1:8080"); strings.Count(string(page), `"message": "`+said+`"`) != 2 {
+		t.Errorf("docs/cli.md does not show, in its two examples, what Shelf says of an embedding endpoint that is down:\n%s", said)
+	}
 	ranker.Stop()
-	if f := s.diagnose()["reranking"]; f.OK || !strings.HasPrefix(f.Message, "the reranking endpoint "+ranker.Host+" could not be reached: ") {
+	if f := s.diagnose()["reranking"]; f.OK || !strings.HasPrefix(f.Message, "the reranking endpoint "+ranker.Host+" could not be reached: ") ||
+		!strings.HasSuffix(f.Message, look+"Without the reranking endpoint a search gives its Passages in the order it found them.") {
 		t.Errorf("with the reranking endpoint down, Shelf says %+v", f)
 	}
 	// It still says which contract it speaks, and what is indexed.
@@ -333,9 +377,29 @@ func TestShelfSaysThatAnEndpointIsDown(t *testing.T) {
 // whatever an endpoint does, and one that never answers costs its own
 // finding and no more.
 func TestShelfTestsItsEndpointsSideBySideAndAnswersInTime(t *testing.T) {
-	if endpoint.DefaultTestTimeout >= plugincontract.DiagnoseTime {
-		t.Fatalf("an endpoint has %s to answer Shelf's test, and Shelf %s to answer study: Shelf could not say in time that an endpoint "+
-			"did not answer", endpoint.DefaultTestTimeout, plugincontract.DiagnoseTime)
+	// What writing the answer, and study reading it, may take on a slow
+	// computer once the endpoints' time is over. The two are asked side by
+	// side, so the time of one is the time of both.
+	const rest = time.Second
+	if endpoint.DefaultTestTimeout+rest > plugincontract.DiagnoseTime {
+		t.Fatalf("an endpoint has %s to answer Shelf's test, which with %s for the rest is more than the %s study gives Shelf to "+
+			"answer: Shelf could not say in time that an endpoint did not answer, and study would stop it without hearing which",
+			endpoint.DefaultTestTimeout, rest, plugincontract.DiagnoseTime)
+	}
+	// docs/shelf.md gives both times, and the warning as Shelf words it.
+	page, err := os.ReadFile("../../docs/shelf.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	each, all := int(endpoint.DefaultTestTimeout/time.Second), int(plugincontract.DiagnoseTime/time.Second)
+	for _, want := range []string{
+		fmt.Sprintf("**Each endpoint has %d seconds, and the two are asked side by side.**", each),
+		fmt.Sprintf("plugin %d seconds to say what it found", all),
+		fmt.Sprintf("| `did not answer within %ds` |", each),
+	} {
+		if !strings.Contains(strings.Join(strings.Fields(string(page)), " "), want) {
+			t.Errorf("docs/shelf.md does not say %q", want)
+		}
 	}
 	// Each request is held until the other has arrived: asked one after the
 	// other, the first would never be answered.
@@ -385,5 +449,69 @@ func TestShelfTestsItsEndpointsSideBySideAndAnswersInTime(t *testing.T) {
 	}
 	if took < 400*time.Millisecond || took > plugincontract.DiagnoseTime/2 {
 		t.Errorf("Shelf took %s to say that neither endpoint answers within 400ms", took)
+	}
+}
+
+// Shelf says which model it asked an endpoint for. An endpoint that names
+// the model it answered with otherwise is said to do so, and not to be
+// wrong: a server names one model by its file, with a tag or in another
+// case, and one that serves a single model answers with it whatever it is
+// asked for. Shelf cannot tell these apart, and "with the model X" would be
+// said of a server that answered as Y.
+func TestShelfSaysWhichModelAnEndpointAnsweredAs(t *testing.T) {
+	vector := make([]float32, 768)
+	vector[0] = 1
+	for name, tc := range map[string]struct {
+		embedder, reranker any
+		embedding, order   string
+	}{
+		"the name it was asked for": {"test-embedder", "test-reranker",
+			"asked for the model test-embedder", "asked for the model test-reranker"},
+		"no name at all": {nil, nil,
+			"asked for the model test-embedder", "asked for the model test-reranker"},
+		"another name": {"embeddinggemma-2-Q8_0.gguf", "Qwen3-Reranker-0.6B",
+			"asked for the model test-embedder. It names the model it answered with embeddinggemma-2-Q8_0.gguf",
+			"asked for the model test-reranker. It names the model it answered with Qwen3-Reranker-0.6B"},
+		"a name that is no text": {map[string]any{"id": "embeddinggemma"}, []any{7},
+			"asked for the model test-embedder", "asked for the model test-reranker"},
+		// What a server says is its own text: on one line, without what a
+		// terminal obeys or the key, and no longer than a name is shown.
+		"a name that is not one": {"gemma\x1b[2J\nsent with Bearer " + testKey, strings.Repeat("a-long-name-", 40),
+			"asked for the model test-embedder. It names the model it answered with gemma[2J sent with Bearer [the key]",
+			"asked for the model test-reranker. It names the model it answered with a-long-name-a-long-name-a-long-name-a-long-name-a-long-name-…"},
+		"the other way round": {strings.Repeat("a-long-name-", 40), "ranker\x1b]0;owned\x07\nsent with Bearer " + testKey,
+			"asked for the model test-embedder. It names the model it answered with a-long-name-a-long-name-a-long-name-a-long-name-a-long-name-…",
+			"asked for the model test-reranker. It names the model it answered with ranker]0;owned sent with Bearer [the key]"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			at := shelftest.NewEndpoint(t)
+			at.Answer(func(w http.ResponseWriter, r *http.Request, _ map[string]any) bool {
+				answer := map[string]any{"data": []map[string]any{{"index": 0, "embedding": vector}}, "model": tc.embedder}
+				if r.URL.Path == "/v1/rerank" {
+					answer = map[string]any{"model": tc.reranker, "results": []map[string]any{
+						{"index": 0, "relevance_score": 0.9}, {"index": 1, "relevance_score": 0.1}}}
+				}
+				if answer["model"] == nil {
+					delete(answer, "model")
+				}
+				_ = jsonTo(w, answer)
+				return true
+			})
+			_, s := startWith(t, t.TempDir(), shelf.Settings{Embedder: embedderAt(t, at), Reranker: rerankerAt(t, at)})
+			found := s.diagnose()
+			if f := found["embedding"]; !f.OK || f.Message != "the embedding endpoint "+at.Host+" gave a question's vector, of 512 numbers, "+tc.embedding {
+				t.Errorf("of the embedding endpoint Shelf says %+v;\nwant it all right, %s", f, tc.embedding)
+			}
+			if f := found["reranking"]; !f.OK || f.Message != "the reranking endpoint "+at.Host+" ordered two texts for a question, "+tc.order {
+				t.Errorf("of the reranking endpoint Shelf says %+v;\nwant it all right, %s", f, tc.order)
+			}
+			for _, f := range found {
+				for _, blame := range []string{"wrong", "another model", " but ", "not the model"} {
+					if strings.Contains(f.Message, blame) {
+						t.Errorf("Shelf calls an endpoint's own name for its model %q: %s", blame, f.Message)
+					}
+				}
+			}
+		})
 	}
 }
