@@ -103,13 +103,16 @@ func TestEvidenceSearchReturnsThePluginsNotice(t *testing.T) {
 	}
 
 	// A notice is the plugin's text. What a terminal would interpret in it
-	// reaches the agent as an escape, in one JSON document.
-	c.Register(t, "kb", plugintest.Command("--record", record, "--escaped", "--notice", `found\x1b[2J by keyword\nalone`)...)
+	// reaches the agent as an escape, in one JSON document. So does a
+	// character of the tag block, which shows nothing and spells out text:
+	// the agent reads of a notice what the learner reads of it.
+	c.Register(t, "kb", plugintest.Command("--record", record, "--escaped", "--notice", `found\x1b[2J by keyword\nalone\U000E0049\U000E0067`)...)
 	res = call(t, session, "evidence_search", search)
 	decode(t, res, &found)
-	if sent := text(res); !json.Valid([]byte(sent)) || strings.ContainsAny(sent, "\x1b") || found.Notice != `found\u001b[2J by keyword alone` {
-		t.Errorf("evidence_search sent %q, with the notice %q; want the plugin's words on one line, with its escape sequence written out",
-			sent, found.Notice)
+	if sent := text(res); !json.Valid([]byte(sent)) || strings.ContainsAny(sent, "\x1b\U000E0049\U000E0067") ||
+		found.Notice != `found\u001b[2J by keyword alone\ue0049\ue0067` {
+		t.Errorf("evidence_search sent %q, with the notice %q; want the plugin's words on one line, with its escape sequence "+
+			"and its tag characters written out", sent, found.Notice)
 	}
 	if started := plugintest.ReadRecord(t, record); !plugintest.Gone(started.PID, 5*time.Second) {
 		plugintest.Kill(started.PID)

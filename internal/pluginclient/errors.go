@@ -72,6 +72,13 @@ func StudyCode(pluginCode string) string {
 // terminal: one line, cut to max bytes, with nothing a terminal would
 // interpret. A plugin is not trusted with the learner's terminal.
 //
+// Nor is it trusted to say to an agent what the learner cannot see. The
+// characters of Unicode's tag block show nothing, anywhere, and spell out
+// text that a program reads and a person does not; a reason and a notice
+// reach an agent through the tools as they reach a terminal. A tag is
+// written out as an escape, like a control character: both then read the
+// same.
+//
 // It reads the text once and stops where the cleaned text is full, so what
 // it costs is what it keeps: a plugin's message can be as long as a message
 // may be, and none of that is copied.
@@ -93,7 +100,7 @@ func clean(s string, max int) string {
 			continue
 		}
 		piece := string(r)
-		if !invalid && (unicode.IsControl(r) || unicode.Is(unicode.Bidi_Control, r)) {
+		if !invalid && (unicode.IsControl(r) || unicode.Is(unicode.Bidi_Control, r) || isTag(r)) {
 			piece = fmt.Sprintf("\\u%04x", r)
 		}
 		need := len(piece)
@@ -112,6 +119,9 @@ func clean(s string, max int) string {
 	}
 	return b.String()
 }
+
+// isTag reports whether r is in Unicode's tag block.
+func isTag(r rune) bool { return r >= 0xE0000 && r <= 0xE007F }
 
 // cleanEnd is clean for text whose end matters more than its start, such as
 // what a program wrote before it failed: the last max bytes of the cleaned

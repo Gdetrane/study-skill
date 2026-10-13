@@ -26,6 +26,9 @@ func TestWhatAPluginWroteIsCleaned(t *testing.T) {
 		{"title\x1b]0;gotcha\x07", 100, `title\u001b]0;gotcha\u0007`},
 		{"a\x00b\x7fc", 100, `a\u0000b\u007fc`},
 		{"left" + string(rune(0x202e)) + "right" + string(rune(0x2066)) + "x" + string(rune(0x200f)), 100, "left" + `\u202e` + "right" + `\u2066` + "x" + `\u200f`},
+		// The tag block: characters that show nothing and spell out text.
+		{"found" + string(rune(0xE0049)) + string(rune(0xE0067)) + string(rune(0xE007F)) + " by keyword", 100, `found\ue0049\ue0067\ue007f by keyword`},
+		{string(rune(0xE0001)) + "x" + string(rune(0xE0000)), 100, `\ue0001x\ue0000`},
 		{"not \xff\xfe text", 100, "not " + string(utf8.RuneError) + " text"},
 		{"abcdef", 3, "abc…"},
 		{"aéé", 2, "a…"},
@@ -37,8 +40,10 @@ func TestWhatAPluginWroteIsCleaned(t *testing.T) {
 		if got != tc.want {
 			t.Errorf("Clean(%q, %d) = %q, want %q", tc.in, tc.max, got, tc.want)
 		}
-		if !utf8.ValidString(got) || strings.ContainsFunc(got, func(r rune) bool { return r < 0x20 || r == 0x7f || (r >= 0x202a && r <= 0x202e) }) {
-			t.Errorf("Clean(%q, %d) = %q, which a terminal would act on", tc.in, tc.max, got)
+		if !utf8.ValidString(got) || strings.ContainsFunc(got, func(r rune) bool {
+			return r < 0x20 || r == 0x7f || (r >= 0x202a && r <= 0x202e) || (r >= 0xE0000 && r <= 0xE007F)
+		}) {
+			t.Errorf("Clean(%q, %d) = %q, which a terminal would act on, or which shows nothing of what it holds", tc.in, tc.max, got)
 		}
 	}
 }

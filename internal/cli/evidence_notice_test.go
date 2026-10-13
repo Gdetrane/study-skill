@@ -86,12 +86,13 @@ func TestEvidenceSearchShowsThePluginsNotice(t *testing.T) {
 	// A notice is the plugin's text, and not a terminal's to interpret. The
 	// plugin's escape sequence, its line break and its mark that turns the
 	// direction of what follows reach nobody as they are, and a character
-	// that shows nothing is written as an escape.
+	// that shows nothing is written as an escape. study's client wrote
+	// them out, so the text is printed as it came from there.
 	const tag = "\U000E0041"
 	s.registerWith(t, "--escaped", "--notice", `found\x1b[2J by keyword\nalone\U0000202e, as\U000E0041 said`)
 	hostile := s.ok(t, append(slices.Clone(search), "elimination")...)
 	if strings.ContainsAny(hostile.stdout, "\x1b\U0000202e"+tag) || strings.Contains(hostile.stdout, "keyword\nalone") ||
-		!strings.Contains(hostile.stdout, `found\\u001b[2J by keyword alone\\u202e, as\U000e0041 said`) {
+		!strings.Contains(hostile.stdout, `found\u001b[2J by keyword alone\u202e, as\ue0041 said`) {
 		t.Errorf("a notice reached the terminal as the plugin wrote it: %q", hostile.stdout)
 	}
 	hostile = s.ok(t, append(slices.Clone(search), "elimination", "--json")...)

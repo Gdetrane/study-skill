@@ -322,7 +322,7 @@ Every tool takes one JSON object as its arguments and gives back one JSON object
 |---|---|
 | `error` | An object with `code` and `message`. |
 | `code` | One of the codes below. Any other, and none, is read as `internal`. |
-| `message` | What went wrong, in words for the learner. `study` puts it on one line, escapes what a terminal would interpret, and shows the first 2,000 bytes. |
+| `message` | What went wrong, in words for the learner. `study` puts it on one line, escapes what a terminal would interpret and the characters of Unicode's tag block, which show nothing and spell out text, and shows the first 2,000 bytes. |
 
 | `code` | When | `study` reports it as |
 |---|---|---|
@@ -614,7 +614,8 @@ found:
   to the learner's agent with them, and does nothing else about it: the search succeeded.
 - **It is the plugin's text, and `study` treats it as it treats a `reason`.** An answer is
   never refused for what its notice says, or for how long it is: `study` puts it on one
-  line, escapes what a terminal would interpret, and cuts it short after 2,000 bytes.
+  line, escapes what a terminal would interpret and the characters of Unicode's tag block,
+  so that the agent reads of it what the learner reads, and cuts it short after 2,000 bytes.
   Keep a notice within them all the same: the learner reads no further, and the
   conformance suite fails a plugin whose notice is longer.
 - **It reaches the learner's agent, so it holds nothing the learner would not show one**:
