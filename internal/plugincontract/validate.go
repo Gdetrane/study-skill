@@ -544,6 +544,10 @@ func (r DiagnoseResult) Validate() error {
 			return fmt.Errorf("it holds the finding %s twice", f.Name)
 		case strings.TrimSpace(f.Message) == "":
 			return fmt.Errorf("the finding %s has no message", f.Name)
+		case !Shows(f.Message):
+			// study drops what shows nothing from a plugin's words: the
+			// learner would read a name and no sentence.
+			return fmt.Errorf("the finding %s has a message that shows nothing", f.Name)
 		}
 		seen[f.Name] = true
 	}

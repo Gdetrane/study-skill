@@ -198,6 +198,15 @@ func TestFindingsThatBreakTheContractAreRefused(t *testing.T) {
 			}
 		})
 	}
+	// A sentence that stands behind more of what shows nothing than study
+	// reads of a message passes the contract's check, and nothing of it is
+	// left to show: that is no message either.
+	behind := `{"findings": [{"name": "embedding", "ok": false, "message": "` + strings.Repeat(`\u200b`, 8000) + `it is down"}]}`
+	hidden := start(t, plugintest.NewComputer(t), "--result", "diagnose="+behind)
+	if got, err := hidden.Diagnose(ctx); got != nil || codeOf(err) != pluginclient.CodeFailedPrecondition ||
+		!strings.Contains(err.Error(), "gave an answer that breaks the contract: the finding embedding has a message that shows nothing") {
+		t.Errorf("Diagnose of a finding whose sentence stands behind what shows nothing = %+v, %v", got, err)
+	}
 	// And an answer that is no JSON at all, from a service that answers in
 	// text.
 	c := plugintest.NewComputer(t)

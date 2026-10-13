@@ -255,6 +255,8 @@ var broken = map[string]struct {
 		{Name: "endpoint", Message: "it is down"}}}, want: "it holds the finding endpoint twice"},
 	"its finding says nothing": {cfg: plugintest.Config{Findings: []plugincontract.Finding{{Name: "embedding", Message: " "}}},
 		want: "the finding embedding has no message"},
+	"its finding says what shows nothing": {cfg: plugintest.Config{Findings: []plugincontract.Finding{{Name: "embedding", Message: "\u200b\u2060\ufe0f"}}},
+		want: "the finding embedding has a message that shows nothing"},
 	"its finding does not say whether it is all right": {cfg: plugintest.Config{Twist: replaced("diagnose", `"ok":true,`, ``, false),
 		Findings: []plugincontract.Finding{{Name: "embedding", OK: true, Message: "it answers"}}}, want: `findings[0]: "ok" is missing`},
 	"its finding says more than study shows": {cfg: plugintest.Config{Findings: []plugincontract.Finding{{Name: "embedding",

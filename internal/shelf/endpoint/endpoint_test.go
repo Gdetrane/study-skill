@@ -507,6 +507,45 @@ func TestAnEndpointThatIsDownIsAReason(t *testing.T) {
 	reason(t, err, at.Host, "the embedding endpoint", "could not be reached")
 }
 
+// An endpoint that names the model it answered with as it was asked for it
+// gave no other name, whatever the address holds: the two names are compared
+// as the endpoint wrote them. Made safe to repeat first, a name that is a
+// piece of the endpoint's address is "[the address]", and would be shown as
+// a second model.
+func TestTheModelAnEndpointWasAskedForIsNoOtherName(t *testing.T) {
+	const model, ranker = "embedding-model-v2", "reranking-model-v2"
+	var other atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		answer := map[string]any{"model": model, "data": []map[string]any{{"index": 0, "embedding": ones(8)}}}
+		if strings.HasSuffix(r.URL.Path, "/rerank") {
+			answer = map[string]any{"model": ranker, "results": []map[string]any{
+				{"index": 0, "relevance_score": 0.9}, {"index": 1, "relevance_score": 0.1}}}
+		}
+		if other.Load() {
+			answer["model"] = "served-as-" + answer["model"].(string)
+		}
+		_ = json.NewEncoder(w).Encode(answer)
+	}))
+	defer server.Close()
+	// Each model's name is a piece of its endpoint's address.
+	e := embedder(t, endpoint.Embedding{Address: server.URL + "/models/" + model + "/v1", Model: model, Dimensions: 8})
+	r := reranker(t, endpoint.Reranking{Address: server.URL + "/models/" + ranker + "/v1", Model: ranker})
+	if _, answered, err := e.Test(ctx, time.Minute, "x"); err != nil || answered != "" {
+		t.Errorf("of an embedding endpoint that answered with the model it was asked for, Test gives the name %q, %v", answered, err)
+	}
+	if _, answered, err := r.Test(ctx, time.Minute, "x", []string{"a", "b"}); err != nil || answered != "" {
+		t.Errorf("of a reranking endpoint that answered with the model it was asked for, Test gives the name %q, %v", answered, err)
+	}
+	// Another name is given, without the piece of the address in it.
+	other.Store(true)
+	if _, answered, err := e.Test(ctx, time.Minute, "x"); err != nil || answered != "served-as-[the address]" {
+		t.Errorf("of an embedding endpoint that answered with another model, Test gives the name %q, %v", answered, err)
+	}
+	if _, answered, err := r.Test(ctx, time.Minute, "x", []string{"a", "b"}); err != nil || answered != "served-as-[the address]" {
+		t.Errorf("of a reranking endpoint that answered with another model, Test gives the name %q, %v", answered, err)
+	}
+}
+
 // A server closes a connection it kept open, when it is restarted or has
 // kept it long enough, and Shelf may send its next request on it before it
 // has seen that. A request changes nothing at the endpoint, so it is sent

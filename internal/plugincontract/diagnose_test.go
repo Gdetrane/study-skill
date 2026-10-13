@@ -54,6 +54,10 @@ func TestFindingsAreHeldToTheContract(t *testing.T) {
 		"the same name twice":     {[]plugincontract.Finding{ok, ok}, "it holds the finding embedding twice"},
 		"no message":              {[]plugincontract.Finding{{Name: "embedding", OK: true}}, "the finding embedding has no message"},
 		"a message of spaces":     {[]plugincontract.Finding{{Name: "embedding", Message: " \n\t"}}, "the finding embedding has no message"},
+		// Zero-width characters, a tag, a variation selector and the blank
+		// that is no white space: study shows none of it.
+		"a message of nothing": {[]plugincontract.Finding{{Name: "embedding", Message: "\u200b\U000E0041\ufe0f \u2800\u2060"}},
+			"the finding embedding has a message that shows nothing"},
 	} {
 		refusedFor(t, name, plugincontract.DiagnoseResult{Findings: tc.findings}.Validate(), tc.want)
 	}

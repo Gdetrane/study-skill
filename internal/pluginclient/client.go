@@ -807,8 +807,10 @@ func (s *Connection) Diagnose(ctx context.Context) ([]plugincontract.Finding, er
 		}
 		finding.Message = s.say(finding.Message, plugincontract.MaxFindingBytes)
 		if finding.Message == "" {
-			// It held only what shows nothing: the learner would read a
-			// name and no sentence.
+			// The contract's check passed it, so it holds something that
+			// shows, and nothing of that is left: it stood behind more of
+			// what shows nothing than study reads of a message. The learner
+			// would read a name and no sentence.
 			return nil, s.untested(&Error{Code: CodeFailedPrecondition, breaks: fmt.Sprintf("the finding %s has a message that "+
 				"shows nothing", finding.Name)})
 		}

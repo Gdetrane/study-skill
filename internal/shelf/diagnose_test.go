@@ -494,6 +494,10 @@ func TestShelfSaysWhichModelAnEndpointAnsweredAs(t *testing.T) {
 			"asked for the model test-reranker. It names the model it answered with Qwen3-Reranker-0.6B"},
 		"a name that is no text": {map[string]any{"id": "embeddinggemma"}, []any{7},
 			"asked for the model test-embedder", "asked for the model test-reranker"},
+		// Longer than any name: Shelf does not read it, and repeats none
+		// of it.
+		"a name that fills the answer": {strings.Repeat("m", 4000), strings.Repeat("r", 4000),
+			"asked for the model test-embedder", "asked for the model test-reranker"},
 		// What a server says is its own text: on one line, without what a
 		// terminal obeys or the key, and no longer than a name is shown.
 		"a name that is not one": {"gemma\x1b[2J\nsent with Bearer " + testKey, strings.Repeat("a-long-name-", 40),

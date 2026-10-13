@@ -545,12 +545,32 @@ func jsonProblem(err error) string {
 // tests the endpoint.
 type named string
 
+// maxNamed is how many bytes of an answer a model's name may take for Shelf
+// to read it. An answer is as large as its vectors, and a name could fill
+// it: Shelf shows sixty bytes of a name, and makes no copy of one that is
+// longer than any name.
+const maxNamed = 1024
+
 func (n *named) UnmarshalJSON(data []byte) error {
+	if len(data) > maxNamed {
+		return nil
+	}
 	var text string
 	if json.Unmarshal(data, &text) == nil {
 		*n = named(text)
 	}
 	return nil
+}
+
+// other is the name an endpoint gave the model it answered with, when that
+// is not the name it was asked for, made safe to repeat as the endpoint's
+// other words are. The two are compared as the endpoint wrote them: made
+// safe, a name is no longer itself where the endpoint's address holds it.
+func (c *caller) other(asked string, answered named) string {
+	if string(answered) == asked {
+		return ""
+	}
+	return c.said(string(answered))
 }
 
 // counted reads a list of an answer, of as many items as were asked for and
@@ -768,10 +788,10 @@ func (e *Embedder) Query(ctx context.Context, question string) ([]float32, error
 // finds is what a search will find.
 //
 // It also returns the name the endpoint gave the model it answered with,
-// when it gave one, made safe to repeat as the endpoint's other words are.
-// That name need not be the one the settings ask for: a server names one
-// model in several ways, and some answer with the one model they have
-// whatever they are asked for.
+// when it gave one that is not the name it was asked for, made safe to
+// repeat as the endpoint's other words are. A server names one model in
+// several ways, and some answer with the one model they have whatever
+// they are asked for.
 func (e *Embedder) Test(ctx context.Context, within time.Duration, question string) (vector []float32, answered string, err error) {
 	vectors, err := e.embed(ctx, within, e.cfg.Query, []string{e.cfg.Query.mark("", question)}, &answered)
 	if err != nil {
@@ -781,7 +801,8 @@ func (e *Embedder) Test(ctx context.Context, within time.Duration, question stri
 }
 
 // embed is one request: a vector for each of texts, in their order. The name
-// the endpoint gave its model is put in answered, when that is not nil.
+// the endpoint gave its model, when it is another than it was asked for, is
+// put in answered, when that is not nil.
 func (e *Embedder) embed(ctx context.Context, within time.Duration, marking Marking, texts []string, answered *string) ([][]float32, error) {
 	// The model, the texts, and what the settings add: an endpoint may
 	// refuse a request for one key it does not know.
@@ -813,7 +834,7 @@ func (e *Embedder) embed(ctx context.Context, within time.Duration, marking Mark
 		return nil, err
 	}
 	if answered != nil {
-		*answered = e.call.said(string(answer.Model))
+		*answered = e.call.other(e.cfg.Model, answer.Model)
 	}
 	what := e.call.what
 	if len(answer.Data.items) != len(texts) {
@@ -961,7 +982,8 @@ func (r *Reranker) Order(ctx context.Context, question string, texts []string) (
 // Test asks the endpoint to order texts for a question exactly as a search
 // asks it (Order is this), within a time of the caller's choosing: for
 // Shelf to test the endpoint with. It also returns the name the endpoint
-// gave the model it answered with, when it gave one, as Embedder.Test does.
+// gave the model it answered with, when that is another than it was asked
+// for, as Embedder.Test does.
 func (r *Reranker) Test(ctx context.Context, within time.Duration, question string, texts []string) (ranked []Ranked, answered string, err error) {
 	ranked, err = r.rank(ctx, within, question, texts, &answered)
 	if err != nil {
@@ -971,8 +993,8 @@ func (r *Reranker) Test(ctx context.Context, within time.Duration, question stri
 }
 
 // rank is one request: texts in the order the endpoint gives them for a
-// question. The name the endpoint gave its model is put in answered, when
-// that is not nil.
+// question. The name the endpoint gave its model, when it is another than
+// it was asked for, is put in answered, when that is not nil.
 func (r *Reranker) rank(ctx context.Context, within time.Duration, question string, texts []string, answered *string) ([]Ranked, error) {
 	documents := make([]string, len(texts))
 	for i, text := range texts {
@@ -994,7 +1016,7 @@ func (r *Reranker) rank(ctx context.Context, within time.Duration, question stri
 		return nil, err
 	}
 	if answered != nil {
-		*answered = r.call.said(string(answer.Model))
+		*answered = r.call.other(r.cfg.Model, answer.Model)
 	}
 	what := r.call.what
 	if len(answer.Results.items) != len(texts) {

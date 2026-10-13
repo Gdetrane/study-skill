@@ -93,7 +93,7 @@ func (s *Shelf) diagnose(ctx context.Context, _ json.RawMessage) (any, *pluginco
 // Shelf cannot tell these apart, so it says both names and no more.
 func asked(model, answered string) string {
 	said := "asked for the model " + short(model)
-	if answered != "" && answered != model {
+	if answered != "" {
 		said += ". It names the model it answered with " + short(answered)
 	}
 	return said
