@@ -35,9 +35,10 @@ func addKnowledgeTools(server *mcp.Server, c *core.Core) {
 			"untracked is a line someone added to sources.jsonl by hand: add the Source with source_add instead. " +
 			"The Knowledge base kind is none, which a Topic without one behaves as too; so does a Topic whose kind " +
 			"this version does not know, shown as it is recorded. With the kind plugin the Topic names a Knowledge " +
-			"base plugin, and each Source has an index: its state on this computer is indexed, indexing (with its " +
+			"base plugin, and each Source has an index: its state on this computer is indexed, outdated (indexed and " +
+			"searched as it is, and to be indexed again for the plugin's reason), indexing (with its " +
 			"progress), failed (with the plugin's reason), not_indexed or unknown. indexing names the plugin and gives " +
-			"the one action to take: study source index for Sources that are not indexed, or, with a problem, the " +
+			"the one action to take: study source index for Sources that are not indexed or are outdated, or, with a problem, the " +
 			"command that says what is wrong with the plugin. A Source that failed is no action: it stays failed, with " +
 			"the reason, until someone runs its retry, the command that has it tried again, which is there when " +
 			"trying again can come to anything. With a problem every state is unknown and the Topic " +

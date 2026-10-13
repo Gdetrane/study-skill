@@ -23,9 +23,9 @@ Evidence. It is one of two kinds:
 
 ## Indexing
 
-With a plugin, `status` and `sources` say whether each Source is `indexed`, `indexing`,
-`failed`, `not_indexed` or `unknown`, and `indexing` gives the one `action` to take. No tool
-indexes, and adding a Source indexes nothing.
+With a plugin, `status` and `sources` say whether each Source is `indexed`, `outdated`,
+`indexing`, `failed`, `not_indexed` or `unknown`, and `indexing` gives the one `action` to
+take. No tool indexes, and adding a Source indexes nothing.
 
 - The `action` is `study source index <topic>`: run it in your own shell, as you run
   `study check <lesson-id>`, and tell the learner what it printed. A book takes minutes. When
@@ -48,6 +48,10 @@ indexes, and adding a Source indexes nothing.
   learner the problem and its `action` once, then read the Sources yourself.
 - A Topic that is paused or finished has no `indexing` in `status`: nothing is to be done
   for it. `sources` still says what is indexed of it.
+- A Source is `outdated`: it is indexed, and searched as it is, and the plugin would index
+  it otherwise now, since the learner changed the plugin's settings; the `reason` says what
+  for. The `action` is then the indexing command, as for a Source that is not indexed:
+  handle it as above, and go on teaching and searching meanwhile.
 - A Source `failed`: tell the learner the reason the plugin gave, such as a scan without
   text, and read that Source yourself. It is no `action`, and stays `failed` until it is
   indexed again. Its `retry`, when it has one, is the command that has it tried again: run

@@ -28,6 +28,8 @@ import (
 
 	"github.com/mordor-forge/lamplight/v2/internal/plugincontract"
 	"github.com/mordor-forge/lamplight/v2/internal/shelf"
+	"github.com/mordor-forge/lamplight/v2/internal/shelf/endpoint"
+	"github.com/mordor-forge/lamplight/v2/internal/shelf/settings"
 )
 
 const usage = `study-shelf is Shelf, the Knowledge base plugin that ships with Lamplight.
@@ -56,6 +58,13 @@ Options, given where Shelf is registered:
                          which addresses are Sources. For a learner who
                          serves the pages they study from to themselves:
                            study knowledge-base add shelf --replace -- study-shelf --allow-loopback
+
+Settings, in a file of yours and never on this command line:
+  shelf.toml in the folder lamplight of your configuration folder
+  (~/.config/lamplight/shelf.toml) names an embedding endpoint, for a search
+  by what a question means, the Recipe for its model, a key if it takes one,
+  and a reranking endpoint. Without the file Shelf searches by keyword.
+  docs/shelf.md describes it.
 `
 
 func main() {
@@ -98,14 +107,43 @@ func run(args []string, stdout, stderr io.Writer) int {
 			"registered plugin: register Shelf with\n  study knowledge-base add shelf -- study-shelf\n", shelf.Name, plugincontract.DataFolderEnv)
 		return 1
 	}
-	settings := shelf.DefaultSettings()
-	settings.Fetch.Loopback = *loopback
-	plugin := shelf.New(shelf.Options{Folder: folder, Settings: settings})
+	how := shelf.DefaultSettings()
+	how.Fetch.Loopback = *loopback
+	// The learner's own settings, from a file of theirs: an embedding
+	// endpoint, a Recipe, a key. The environment says only where their
+	// configuration folder is. A file that cannot be used ends Shelf here,
+	// with the reason last on standard error, where study looks for it: a
+	// Shelf that searched by keyword alone, without a word, would leave
+	// the learner thinking that what they wrote was in use.
+	file, err := settings.Load(os.Getenv, folder)
+	if err != nil {
+		fmt.Fprintf(stderr, "%s: %v. See docs/shelf.md\n", shelf.Name, err)
+		return 1
+	}
+	if file.PassageSize != 0 {
+		how.PassageSize = file.PassageSize
+	}
+	agent := shelf.Name + "/" + shelf.VersionString()
+	if file.Embedding != nil {
+		file.Embedding.Agent = agent
+		if how.Embedder, err = endpoint.NewEmbedder(*file.Embedding); err != nil {
+			fmt.Fprintf(stderr, "%s: Shelf's settings file, %s, has an [embedding] table that Shelf cannot use: %v\n", shelf.Name, file.Path, err)
+			return 1
+		}
+	}
+	if file.Reranking != nil {
+		file.Reranking.Agent = agent
+		if how.Reranker, err = endpoint.NewReranker(*file.Reranking); err != nil {
+			fmt.Fprintf(stderr, "%s: Shelf's settings file, %s, has a [reranking] table that Shelf cannot use: %v\n", shelf.Name, file.Path, err)
+			return 1
+		}
+	}
+	plugin := shelf.New(shelf.Options{Folder: folder, Settings: how})
 
 	// study asks a plugin to exit by closing its standard input: Run
 	// returns then. A signal ends it too.
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
-	err := plugin.Server().Run(ctx, &mcp.StdioTransport{})
+	err = plugin.Server().Run(ctx, &mcp.StdioTransport{})
 	// Asked before stop, which ends the context itself: whether a signal
 	// ended the session, or something that is to be said.
 	signalled := ctx.Err() != nil

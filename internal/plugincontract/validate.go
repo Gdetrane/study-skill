@@ -395,10 +395,20 @@ func (s SourceStatus) Validate() error {
 		if strings.TrimSpace(s.Reason) == "" {
 			return fmt.Errorf("Source %s failed and has no reason", s.ID)
 		}
+	case StateOutdated:
+		// Found as it is, so of some content, and to be indexed again for
+		// a reason the learner is shown.
+		switch {
+		case s.Hash == "":
+			return fmt.Errorf("Source %s is outdated and has no hash", s.ID)
+		case strings.TrimSpace(s.Reason) == "":
+			return fmt.Errorf("Source %s is outdated and has no reason", s.ID)
+		}
 	case "":
 		return fmt.Errorf("Source %s has no state", s.ID)
 	default:
-		return fmt.Errorf("the state of Source %s is %s, not %s, %s or %s", s.ID, quote(s.State), StateIndexed, StateIndexing, StateFailed)
+		return fmt.Errorf("the state of Source %s is %s, not %s, %s, %s or %s", s.ID, quote(s.State), StateIndexed, StateIndexing,
+			StateFailed, StateOutdated)
 	}
 	if s.Hash != "" {
 		if err := CheckHash(s.Hash); err != nil {
@@ -418,6 +428,11 @@ func (r IndexResult) Validate(in IndexInput) error {
 	}
 	if r.Source.ID != in.Source.ID {
 		return fmt.Errorf("it speaks of Source %s, and Source %s was to be indexed", r.Source.ID, in.Source.ID)
+	}
+	if r.Source.State == StateOutdated {
+		// Asked to index it, a plugin is at work on it, has it indexed, or
+		// failed: what was outdated was just asked to be brought up to date.
+		return fmt.Errorf("it says Source %s is %s, which a Source that was just asked to be indexed is not", r.Source.ID, StateOutdated)
 	}
 	return nil
 }

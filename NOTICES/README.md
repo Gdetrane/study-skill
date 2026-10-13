@@ -19,7 +19,7 @@ What the go command links into each program, for Linux and macOS, on amd64 and a
 - `charm.land/lipgloss/v2` v2.0.6, in `study`: [LICENSE](modules/charm.land/lipgloss/v2/LICENSE)
 - `charm.land/log/v2` v2.0.1, in `study`: [LICENSE](modules/charm.land/log/v2/LICENSE)
 - `codeberg.org/readeck/go-readability/v2` v2.1.3, in `study-shelf`: [LICENSE](modules/codeberg.org/readeck/go-readability/v2/LICENSE)
-- `github.com/BurntSushi/toml` v1.6.0, in `study`: [COPYING](modules/github.com/BurntSushi/toml/COPYING)
+- `github.com/BurntSushi/toml` v1.6.0, in `study` and `study-shelf`: [COPYING](modules/github.com/BurntSushi/toml/COPYING)
 - `github.com/andybalholm/cascadia` v1.3.3, in `study-shelf`: [LICENSE](modules/github.com/andybalholm/cascadia/LICENSE)
 - `github.com/charmbracelet/colorprofile` v0.4.3, in `study`: [LICENSE](modules/github.com/charmbracelet/colorprofile/LICENSE)
 - `github.com/charmbracelet/fang` v1.0.0, in `study`: [LICENSE.md](modules/github.com/charmbracelet/fang/LICENSE.md)
