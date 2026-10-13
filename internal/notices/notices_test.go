@@ -173,6 +173,60 @@ func TestTheNoticesAreOfEveryBuildOfARelease(t *testing.T) {
 	}
 }
 
+// The folder is of no use in the repository alone: the release's
+// configuration has to put it, whole, in every archive and in both kinds of
+// package, and state for the packages the licences of what they carry, not
+// Lamplight's own alone. CI's snapshot job looks inside what GoReleaser
+// builds from this; that job is not required, and this test is.
+func TestEveryArchiveAndPackageIsToldToCarryTheNotices(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(repo, ".goreleaser.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config struct {
+		Archives []struct {
+			Files []string `yaml:"files"`
+		} `yaml:"archives"`
+		Nfpms []struct {
+			License  string `yaml:"license"`
+			Contents []struct {
+				Src      string `yaml:"src"`
+				Dst      string `yaml:"dst"`
+				Type     string `yaml:"type"`
+				Packager string `yaml:"packager"`
+			} `yaml:"contents"`
+		} `yaml:"nfpms"`
+	}
+	if err := yaml.Unmarshal(data, &config); err != nil {
+		t.Fatal(err)
+	}
+	if len(config.Archives) == 0 || len(config.Nfpms) == 0 {
+		t.Fatalf(".goreleaser.yaml has %d archives and %d packages, so this test proves nothing", len(config.Archives), len(config.Nfpms))
+	}
+	for _, archive := range config.Archives {
+		// Two stars: every file of the folder, however deep.
+		if want := notices.Folder + "/**"; !slices.Contains(archive.Files, want) {
+			t.Errorf("an archive's files are %v, without %s", archive.Files, want)
+		}
+	}
+	for _, pkg := range config.Nfpms {
+		where := map[string]string{}
+		for _, content := range pkg.Contents {
+			if content.Src == notices.Folder && content.Type == "tree" {
+				where[content.Packager] = content.Dst
+			}
+		}
+		if where["deb"] != "/usr/share/doc/lamplight/"+notices.Folder || where["rpm"] != "/usr/share/licenses/lamplight/"+notices.Folder {
+			t.Errorf("the packages put the whole folder in %v, want it beside Lamplight's licence in the deb and in the rpm", where)
+		}
+		for _, kind := range []string{"MIT", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause"} {
+			if !slices.Contains(strings.Split(pkg.License, " AND "), kind) {
+				t.Errorf("the packages state the licence %q, which does not name %s", pkg.License, kind)
+			}
+		}
+	}
+}
+
 // module makes a module's folder as the module cache would hold it.
 func module(t *testing.T, path string, files map[string]string) notices.Module {
 	t.Helper()

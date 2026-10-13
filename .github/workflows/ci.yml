@@ -81,6 +81,41 @@ jobs:
           for f in /usr/bin/study /usr/bin/study-shelf /usr/share/man/man1/study.1.gz /usr/share/zsh/site-functions/_study /usr/share/licenses/lamplight/LICENSE; do
             rpm -qlp "$rpm" | grep -qx "$f" || { echo "missing $f in $rpm"; exit 1; }
           done
+      - name: Check that every archive and package ships the notices of what the programs are built from
+        # The NOTICES folder as the repository holds it, which the "Lamplight
+        # core" job holds to what the two programs link: every file of it,
+        # PDFium's among them, in each archive and no other file beside them,
+        # and in the deb and the rpm beside Lamplight's own licence.
+        run: |
+          set -eu
+          tmp=$(mktemp -d)
+          find NOTICES -type f | sort > "$tmp/want"
+          test -s "$tmp/want"
+          grep -qxF NOTICES/pdfium/pdfium/LICENSE "$tmp/want"
+          for archive in dist/lamplight_linux_amd64.tar.gz dist/lamplight_linux_arm64.tar.gz dist/lamplight_darwin_amd64.tar.gz dist/lamplight_darwin_arm64.tar.gz; do
+            tar tzf "$archive" | grep '^NOTICES/' | grep -v '/$' | sort > "$tmp/got"
+            diff "$tmp/want" "$tmp/got" || { echo "$archive does not hold NOTICES as the repository does"; exit 1; }
+          done
+          for deb in dist/lamplight_*.deb; do
+            ar p "$deb" data.tar.gz | tar tz > "$tmp/deb"
+            while read -r f; do
+              grep -qxF "./usr/share/doc/lamplight/$f" "$tmp/deb" || { echo "missing $f in $deb"; exit 1; }
+            done < "$tmp/want"
+          done
+          for rpm in dist/lamplight-*.rpm; do
+            rpm -qlp "$rpm" > "$tmp/rpm"
+            while read -r f; do
+              grep -qxF "/usr/share/licenses/lamplight/$f" "$tmp/rpm" || { echo "missing $f in $rpm"; exit 1; }
+            done < "$tmp/want"
+            # The licence the package states is that of what it carries.
+            license=$(rpm -qp --queryformat '%{LICENSE}' "$rpm")
+            for kind in MIT Apache-2.0 BSD-3-Clause; do
+              case " $license " in
+              *" $kind "*) ;;
+              *) echo "$rpm states the licence \"$license\", which does not name $kind"; exit 1 ;;
+              esac
+            done
+          done
       - name: Install the snapshot with install.sh
         run: |
           set -eu
@@ -93,6 +128,17 @@ jobs:
           "$home/.local/bin/study-shelf" --version | grep -F snapshot
           test -s "$home/.local/share/man/man1/study.1.gz"
           test -s "$home/.local/share/bash-completion/completions/study"
+          # The notices were installed whole, and they are of these two
+          # programs: every module a released build names has its folder there.
+          notices="$home/.local/share/doc/lamplight/NOTICES"
+          diff -r NOTICES "$notices"
+          for program in study study-shelf; do
+            go version -m "$home/.local/bin/$program" | awk '$1 == "dep" { print $2 }' > "$home/deps"
+            test -s "$home/deps"
+            while read -r module; do
+              test -d "$notices/modules/$module" || { echo "the released $program holds $module, which has no notice"; exit 1; }
+            done < "$home/deps"
+          done
           # study links nothing of Shelf's (ADR-0012), in the release's builds too.
           if go version -m "$home/.local/bin/study" | grep -E 'modernc.org/sqlite|go-pdfium|wazero|go-readability'; then
             echo "the released study links what only study-shelf may"; exit 1
@@ -164,6 +210,17 @@ jobs:
           STUDY_DOWNLOAD_URL="file://$PWD/dist" sh install.sh
           "$home/.local/bin/study" --version | grep -F snapshot
           "$home/.local/bin/study-shelf" --version | grep -F snapshot
+          # As above: the notices, whole, and of what this system's two
+          # programs hold, which is more on macOS than on Linux.
+          notices="$home/.local/share/doc/lamplight/NOTICES"
+          diff -r NOTICES "$notices"
+          for program in study study-shelf; do
+            go version -m "$home/.local/bin/$program" | awk '$1 == "dep" { print $2 }' > "$home/deps"
+            test -s "$home/deps"
+            while read -r module; do
+              test -d "$notices/modules/$module" || { echo "the released $program holds $module, which has no notice"; exit 1; }
+            done < "$home/deps"
+          done
           export STUDY_HOME="$home/study" PATH="$home/.local/bin:$PATH"
           study knowledge-base add shelf -- study-shelf
           study knowledge-base check shelf

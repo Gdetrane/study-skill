@@ -215,6 +215,10 @@ Shelf is one program without dependencies to install. It is built from:
 | What runs the PDF reader | `github.com/tetratelabs/wazero`, a WebAssembly runtime | Apache-2.0 |
 | The text of a web page | `codeberg.org/readeck/go-readability`, after the reader view of Firefox | MIT |
 
+The licence of each, and of everything else `study-shelf` is built from, comes with every
+release, in its `NOTICES` folder. `NOTICES/pdfium` there says what the PDF reader itself is
+made of.
+
 The PDF reader runs inside Shelf, shut in: it is given the one file to read, and can open
 no other file, reach no network, and take no more memory than it is allowed. Why PDFium was
 chosen over `pdftotext` is in

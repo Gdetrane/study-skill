@@ -33,14 +33,21 @@ REPO=mordor-forge/study-skill        # bash, zsh; in fish: set REPO mordor-forge
 - [ ] #34's prerequisites, from `docs/release.md`, are done:
   - the `LICENSE` file at the repository root (MIT), which the archives and packages
     ship;
-  - the maintainer named in `.goreleaser.yaml` checked (deb and rpm metadata).
+  - `NOTICES`, the licences and notices of what `study` and `study-shelf` are built from
+    (#97), which they ship too. It is the folder `make notices` writes for the
+    dependencies of the commit to be released, and `NOTICES/pdfium` was written for the
+    go-pdfium that `go.mod` names: the test below fails otherwise. Run it with a release
+    of Go, as here, since a distribution's Go may keep no licence of its own to compare;
+  - the maintainer named in `.goreleaser.yaml` checked (deb and rpm metadata), and the
+    `license` above it, which names the kinds of licence in `NOTICES`.
 
   The release needs no secret and no other repository: it publishes to the GitHub release
   alone, and `install.sh` installs from there (ADR-0010).
 
   ```sh
   git cat-file -e upstream/v2:LICENSE && echo LICENSE present
-  grep -n maintainer .goreleaser.yaml
+  GOTOOLCHAIN=go1.26.8 go test -count=1 ./internal/notices
+  grep -n -B 8 maintainer: .goreleaser.yaml
   ```
 
 - [ ] #18's first half is done: the `v1.0.0` tag points at the last v1 commit, `main`'s
@@ -227,6 +234,18 @@ In this order: the v1 branch, the checks `main` requires, the rename, the merge,
       gh release view v2.0.0 -R $REPO
       ```
 
+- [ ] Each archive carries the notices of what its two programs are built from, PDFium's
+      among them: the `NOTICES` folder as the tagged commit holds it.
+
+      ```sh
+      gh release download v2.0.0 -R $REPO --pattern 'lamplight_*.tar.gz' --dir /tmp/lamplight-v2.0.0
+      git ls-tree -r --name-only v2.0.0 NOTICES | sort > /tmp/lamplight-v2.0.0/want
+      # Run through sh, so it reads the same in fish. It prints four lines.
+      sh -c 'for a in /tmp/lamplight-v2.0.0/*.tar.gz; do
+      tar tzf "$a" | grep "^NOTICES/" | grep -v "/\$" | sort | diff /tmp/lamplight-v2.0.0/want - && echo "$a holds NOTICES"
+      done'
+      ```
+
 - [ ] Each way to install works and passes `study doctor`. Run each `study` by its path:
       the trial build from step 2 may come first on `PATH`, and the install script says
       when another `study` does.
@@ -235,6 +254,7 @@ In this order: the v1 branch, the checks `main` requires, the rename, the merge,
       curl -fsSL https://raw.githubusercontent.com/mordor-forge/lamplight/main/install.sh | sh
       ~/.local/bin/study --version && ~/.local/bin/study doctor          # on Linux, and on a Mac
       ~/.local/bin/study-shelf --version                                 # Shelf, the same version
+      head -5 ~/.local/share/doc/lamplight/NOTICES/README.md             # the notices, installed
       ~/.local/bin/study knowledge-base add shelf -- ~/.local/bin/study-shelf
       ~/.local/bin/study knowledge-base check shelf                      # version 1; on a Mac too
       go install github.com/mordor-forge/lamplight/v2/cmd/study@v2.0.0   # replaces the trial build

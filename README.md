@@ -146,4 +146,5 @@ make lint       # gofmt and go vet
 
 ## License
 
-MIT: see [LICENSE](LICENSE).
+MIT: see [LICENSE](LICENSE). What `study` and `study-shelf` are built from, and the licence
+of each part, is in [NOTICES](NOTICES/README.md), which every release carries.
