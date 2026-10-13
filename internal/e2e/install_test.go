@@ -282,6 +282,68 @@ func TestTheInstallScript(t *testing.T) {
 			t.Errorf("~/.local/share holds %v, want the file that was there and the man page's folder", got)
 		}
 
+		// The doc folder is there and the copy fails halfway: the real
+		// chmod serves the two programs, and fails for a whole folder.
+		real, err := exec.LookPath("chmod")
+		if err != nil {
+			t.Fatal(err)
+		}
+		in = newInstall(t, rel.folder(t, host))
+		in.fake("chmod", `case $1 in -R) echo "chmod: no" >&2; exit 1 ;; esac; exec `+real+` "$@"`)
+		doc := filepath.Join(in.home, ".local", "share", "doc", "lamplight")
+		earlier := filepath.Join(doc, "NOTICES", "README.md")
+		writeExecutable(t, earlier, "the notices of v0.0.1\n")
+		out = in.mustRun()
+		in.wantStudy(filepath.Join(in.home, ".local", "bin", "study"), rel.version)
+		if !strings.Contains(out, "were not installed: could not write "+filepath.Join(doc, "NOTICES")+"\n") {
+			t.Errorf("a copy that failed was not said:\n%s", out)
+		}
+		in.wantEarlierNotices(doc, earlier)
+
+		// The new folder is whole beside the earlier one, and cannot take
+		// its name: the earlier one goes back to it.
+		real, err = exec.LookPath("mv")
+		if err != nil {
+			t.Fatal(err)
+		}
+		in = newInstall(t, rel.folder(t, host))
+		in.fake("mv", `case $1 in */.NOTICES.install.*) echo "mv: no" >&2; exit 1 ;; esac; exec `+real+` "$@"`)
+		doc = filepath.Join(in.home, ".local", "share", "doc", "lamplight")
+		earlier = filepath.Join(doc, "NOTICES", "README.md")
+		writeExecutable(t, earlier, "the notices of v0.0.1\n")
+		out = in.mustRun()
+		if !strings.Contains(out, "were not installed: could not write "+filepath.Join(doc, "NOTICES")+"\n") {
+			t.Errorf("a folder that could not take its name was not said:\n%s", out)
+		}
+		in.wantEarlierNotices(doc, earlier)
+
+		// An earlier folder that cannot be emptied does not keep the new
+		// one out: it is left aside, and the script says where.
+		if os.Getuid() != 0 {
+			in = newInstall(t, rel.folder(t, host))
+			doc = filepath.Join(in.home, ".local", "share", "doc", "lamplight")
+			locked := filepath.Join(doc, "NOTICES", "modules", "locked")
+			writeExecutable(t, filepath.Join(locked, "LICENSE"), "of a module v0.0.1 was built from\n")
+			if err := os.Chmod(locked, 0o555); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				left, _ := filepath.Glob(filepath.Join(doc, ".NOTICES.old.*", "modules", "locked"))
+				for _, dir := range append(left, locked) {
+					_ = os.Chmod(dir, 0o755)
+				}
+			})
+			out = in.mustRun()
+			in.wantNotices(filepath.Join(doc, "NOTICES"))
+			left, _ := filepath.Glob(filepath.Join(doc, ".NOTICES.old.*"))
+			if len(left) != 1 || !strings.Contains(out, "An earlier NOTICES could not be deleted, and is left as "+left[0]+"\n") {
+				t.Errorf("the earlier folder is left as %v, and the script does not say so:\n%s", left, out)
+			}
+			if !strings.Contains(out, "Installed "+filepath.Join(doc, "NOTICES")+"\n") {
+				t.Errorf("the new notices are in place and the script does not say so:\n%s", out)
+			}
+		}
+
 		// A release from before the notices holds none, and the script
 		// has nothing to say of them.
 		before := newRelease(t, []byte(standInStudy), []byte(standInShelf), "v0.0.0-standin", "NOTICES")
@@ -890,6 +952,22 @@ func (in *install) wantNotices(dir string) {
 		if got[name] != text {
 			in.t.Errorf("the notice %s was installed as %q, want %q", name, got[name], text)
 		}
+	}
+}
+
+// wantEarlierNotices checks that a run that could not install the notices
+// left the doc folder as it was: the earlier NOTICES with its file, and
+// nothing of the copy that failed.
+func (in *install) wantEarlierNotices(doc, file string) {
+	in.t.Helper()
+	if data, err := os.ReadFile(file); err != nil || string(data) != "the notices of v0.0.1\n" {
+		in.t.Errorf("the earlier notices are not as they were: %q, %v", data, err)
+	}
+	if got := names(in.t, filepath.Dir(file)); !slices.Equal(got, []string{filepath.Base(file)}) {
+		in.t.Errorf("the earlier NOTICES holds %v, want the one file it held", got)
+	}
+	if got := names(in.t, doc); !slices.Equal(got, []string{"NOTICES"}) {
+		in.t.Errorf("the doc folder holds %v, want the earlier NOTICES and nothing left beside it", got)
 	}
 }
 
