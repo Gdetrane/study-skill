@@ -1353,9 +1353,12 @@ summary, and never a generated answer. Evidence is quoted from it.
 - **Only what the Topic records is returned.** A search is limited to the Sources the Topic
   has, by their ids: a Topic that was removed and another made later under its id share a
   collection, and the removed Topic's Sources are still in it. And a Source is searched
-  only when the plugin says it is `indexed`, for a file with the hash of the Source's own
-  content: a plugin that breaks the contract may hold another file's text under the
-  Source's id, and says so through that hash. So the plugin is asked what it holds first
+  only when the plugin says, by the `hash` in its `status`, that what a search finds of it
+  is the Source's own content: a plugin that breaks the contract may hold another file's
+  text under the Source's id, and says so through that hash. That is every Source the
+  plugin says is `indexed`, and also one that is being indexed anew, or whose last
+  indexing failed, while its earlier content is still indexed: the contract has a plugin
+  give that content's hash, and find it. So the plugin is asked what it holds first
   (`status`), and then to search the Sources that passed (`search`, with their ids).
   `searched` lists them. A plugin that answers with a Passage of a Source it was not asked
   for breaks the contract: the whole answer is refused, with `failed_precondition`.
@@ -1448,8 +1451,9 @@ from it.
 ```
 
 - **What is asked of the plugin**: what it has indexed (`status`), and then each Passage
-  again (`passage`). The Source must be one the plugin holds `indexed` as the Topic records
-  it, as for a search, and each Passage must be a Passage of that Source: one of another
+  again (`passage`). The Source must be one a search covers: the plugin says, by the hash,
+  that it holds the content the Topic records. And each Passage must be a Passage of that
+  Source: one of another
   Source is `invalid_argument`, which keeps out the Passages of a Topic that was removed. A
   Passage the plugin does not have is `not_found`: its id names nothing once its Source was
   indexed anew, so search again.

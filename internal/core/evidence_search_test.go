@@ -921,3 +921,55 @@ func TestALatePluginIsStoppedAtOnce(t *testing.T) {
 		})
 	}
 }
+
+// A search covers what the plugin says, by the hash, that a search finds. A
+// Source that is being indexed anew, or whose last indexing failed, is found
+// as it was while its earlier content is still indexed, and a quote is
+// checked against its Passages. It is left out when the plugin gives no
+// hash for it, or the hash of other content than the Source's.
+func TestASourceWhoseOwnContentIsStillIndexedIsSearched(t *testing.T) {
+	ctx := context.Background()
+	s := newShelf(t)
+	strang := s.book(t, "strang.txt", elimination)
+	s.index(t, core.IndexSpec{})
+	first := s.search(t, core.PassageQuery{Query: "elimination produces triangular"}).Passages[0].ID
+	const other = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+	n := 0
+	for state, with := range map[string]string{
+		plugincontract.StateFailed:   `"reason":"its vectors are of another model"`,
+		plugincontract.StateIndexing: `"progress":0.5`,
+	} {
+		for hash, searched := range map[string]bool{strang.Hash: true, other: false, "": false} {
+			t.Run(state+" with the hash "+hash, func(t *testing.T) {
+				said := `{"id":"` + strang.ID + `","state":"` + state + `",` + with
+				if hash != "" {
+					said += `,"hash":"` + hash + `"`
+				}
+				// What the plugin says of the Source, whatever its index holds.
+				s.registerWith(t, "--result", `status={"sources":[`+said+`}]}`)
+				res := s.search(t, core.PassageQuery{Query: "elimination"})
+				n++
+				// A quote of its own each time, so that none was recorded before.
+				quote := []string{"Elimination produces", "produces an upper", "an upper triangular", "upper triangular system",
+					"Elimination produces an upper", "triangular system"}[n-1]
+				got, err := s.k.RecordEvidence(ctx, core.EvidenceSpec{Topic: "c", Lesson: "elimination", Source: strang.ID,
+					Passages: []string{first}, Quote: quote})
+				if searched {
+					if !slices.Equal(res.Searched, []string{strang.ID}) || len(res.Passages) == 0 || len(res.LeftOut) != 0 || res.Note != "" {
+						t.Errorf("SearchEvidence = %+v; want the Source searched: the plugin says a search finds its own content", res)
+					}
+					if err != nil || !got.Evidence.Checked {
+						t.Errorf("RecordEvidence = %+v, %v; want the quote checked against the Passage", got, err)
+					}
+					return
+				}
+				if len(res.Searched) != 0 || len(res.Passages) != 0 || len(res.LeftOut) != 1 || res.LeftOut[0].State != state {
+					t.Errorf("SearchEvidence = %+v; want the Source left out, as %s", res, state)
+				}
+				if core.CodeOf(err) != core.CodeFailedPrecondition || !strings.Contains(err.Error(), "does not hold Source "+strang.ID+" indexed") {
+					t.Errorf("RecordEvidence = %+v, %v (%s); want it refused: the Source's own content is not what a search finds", got, err, core.CodeOf(err))
+				}
+			})
+		}
+	}
+}

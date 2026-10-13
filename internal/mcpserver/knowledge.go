@@ -130,7 +130,8 @@ func addKnowledgeTools(server *mcp.Server, c *core.Core) {
 			"none. A quote that runs from one Passage into the next names both, in order, and must begin in the " +
 			"first and end in the last. Without passages nothing is checked: give the quote's location when you know " +
 			"it, and where it came from: source (read in the Source itself, such as a printed page number), " +
-			"knowledge_base (as a search gave it with a Passage), learner, or estimate. Record Evidence " +
+			"learner, or estimate. A location is from the Knowledge base only when study took it from a Passage: " +
+			"never say so yourself. Record Evidence " +
 			"whenever you teach from a Source; Lessons without Evidence are marked, never blocked. Recording the same " +
 			"Evidence twice changes nothing; evidence_retract takes back a mistake.",
 		Annotations: &mcp.ToolAnnotations{DestructiveHint: &notDestructive, IdempotentHint: true, OpenWorldHint: &closedWorld},

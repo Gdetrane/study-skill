@@ -810,8 +810,8 @@ hours before any learning happens is exactly what v1 produced.
     plugin knows it, and its score for that query. It reads the plugin's index and never a
     Source, so it has a tool, as indexing has not.
   - **It returns only what the Topic records.** The plugin is asked what it has indexed
-    first, and then to search, by their ids, the Topic's Sources that it holds `indexed`,
-    for a file with the hash of the Source's own content. A removed Topic and a later one
+    first, and then to search, by their ids, the Topic's Sources of which it says, by the
+    hash, that a search finds the Source's own content, whatever their state. A removed Topic and a later one
     of the same id share a collection, and a plugin that breaks the contract may hold
     another file's text under a Source's id. Asked in that order, the Passages returned
     are the best of what may be returned. The result names the Sources that were left out

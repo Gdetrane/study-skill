@@ -412,6 +412,9 @@ func (c *Core) startTopicPlugin(ctx context.Context, topicID, name, doing, other
 	}
 	switch {
 	case ctx.Err() != nil:
+		// Stopped, and perhaps just as its turn came: the turn is given
+		// back, or a few such stops would leave the plugin busy for good.
+		p.done()
 		return nil, &Error{Code: CodeCanceled, Err: ctx.Err(), Message: "the command was stopped before Knowledge base plugin " +
 			name + " was started"}
 	case err != nil:
@@ -518,12 +521,14 @@ func (p *topicPlugin) meanwhile(err error) error {
 // it does not (leftOut, each with its state, why, and what has it tried
 // again), and the one command to run next for those (action).
 //
-// All of it is as status and a listing of the Sources say it, by the same
-// rule (indexAsk): indexed is what the plugin says is, with the Source's own
-// hash for a file; study source index is the action only for a Source it
-// would hand the plugin and the plugin has not tried, never for one that
-// failed, or whose file is missing, changed or unreadable. fileState says
-// which a file is.
+// What is left out, and the action, are as status and a listing of the
+// Sources say them, by the same rule (indexAsk): study source index is the
+// action only for a Source it would hand the plugin and the plugin has not
+// tried, never for one that failed, or whose file is missing, changed or
+// unreadable. fileState says which a file is.
+//
+// What is held is what a search finds (found): the plugin says so by the
+// hash, with whatever state.
 func (p *topicPlugin) indexed(ctx context.Context, sources []Source, fileState func(context.Context, Source) string) (held []Source, leftOut []IndexedSource, action string, err error) {
 	asking, cancel := p.asking(ctx)
 	defer cancel()
@@ -535,8 +540,8 @@ func (p *topicPlugin) indexed(ctx context.Context, sources []Source, fileState f
 	ask.fileState = fileState
 	ask.answered(asking, p.name, p.conn.Contract(), said)
 	for i, src := range sources {
-		if state := ask.indexing.Sources[i]; state.State != IndexIndexed {
-			leftOut = append(leftOut, state)
+		if !found(src, statusOf(said, src.ID)) {
+			leftOut = append(leftOut, ask.indexing.Sources[i])
 			continue
 		}
 		held = append(held, src)
@@ -546,6 +551,22 @@ func (p *topicPlugin) indexed(ctx context.Context, sources []Source, fileState f
 		action = "study source list " + p.topic
 	}
 	return held, leftOut, action, nil
+}
+
+// found reports whether a search of the plugin finds the Source's own
+// content now. A plugin says which content a search finds of a Source by
+// the hash in its status, and that hash and its search always agree, the
+// contract says: so a Source that is being indexed anew, or whose last
+// indexing failed, is found while its earlier content is indexed, as one
+// that is indexed is. For a file the hash must be the Source's own: a
+// Source is its content, and a plugin that holds another file's text under
+// its id says so through that hash. Of a web page study knows no hash, and
+// takes the plugin's word that it holds one.
+func found(src Source, said *plugincontract.SourceStatus) bool {
+	if said == nil || said.Hash == "" {
+		return false
+	}
+	return src.Kind != SourceFile || said.Hash == src.Hash
 }
 
 // searchPassages asks the plugin for the Passages of some of the Topic's

@@ -389,8 +389,12 @@ what they needed:
   best ones, with a note of how many were left out: fifty Passages of 32 KiB are what the
   contract allows a plugin to give, and no help to whoever asked.
 - **The plugin says what it holds before it is asked to search.** A search is limited to
-  the Topic's Sources, by their ids, and of those to the ones the plugin says are indexed,
-  for a file with the hash of the Source's own content. `status` is asked first and
+  the Topic's Sources, by their ids, and of those to the ones of which the plugin says, by
+  the hash in its `status`, that a search finds the Source's own content. The state is not
+  what decides: the contract has `hash` and `search` always agree, so a Source that is
+  being indexed anew, or whose last indexing failed, is searched while its earlier content
+  is indexed, as Shelf says of a Source whose Passages have no vectors yet. `status` is
+  asked first and
   `search` is given the ids that passed: asked the other way round, the Passages of a
   Source that did not pass would have taken places among the best. A plugin that answers
   with a Passage of a Source it was not asked for breaks the contract, and its whole answer

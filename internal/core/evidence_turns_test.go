@@ -185,3 +185,42 @@ func TestATurnIsGivenBackHoweverItEnds(t *testing.T) {
 		})
 	}
 }
+
+// stoppedOnceATurnIsTaken is a command that is stopped at the moment its
+// turn comes: it reads as stopped as soon as a turn of the plugin is held.
+type stoppedOnceATurnIsTaken struct {
+	context.Context
+	k *Core
+}
+
+func (c stoppedOnceATurnIsTaken) Err() error {
+	if turnsTaken(c.k, "kb") > 0 {
+		return context.Canceled
+	}
+	return nil
+}
+
+// A command that is stopped just as its turn comes gives the turn back: an
+// MCP client cancels calls, and study mcp is one process for the whole of
+// the agent's session.
+func TestACommandStoppedAsItsTurnComesGivesItBack(t *testing.T) {
+	m, src, found := quotedTopic(t)
+	ctx := stoppedOnceATurnIsTaken{Context: context.Background(), k: m.Core}
+	for range mostAtOnce + 1 {
+		if _, err := m.SearchEvidence(ctx, PassageQuery{Topic: "c", Query: "elimination"}); CodeOf(err) != CodeCanceled {
+			t.Fatalf("SearchEvidence, stopped as its turn came = %v (%s); want canceled", err, CodeOf(err))
+		}
+		_, err := m.RecordEvidence(ctx, EvidenceSpec{Topic: "c", Lesson: "elimination", Source: src.ID,
+			Quote: "Elimination produces an upper triangular system.", Passages: []string{found[0].ID}})
+		if CodeOf(err) != CodeCanceled {
+			t.Fatalf("RecordEvidence, stopped as its turn came = %v (%s); want canceled", err, CodeOf(err))
+		}
+		if got := turnsTaken(m.Core, "kb"); got != 0 {
+			t.Fatalf("%d turns are still taken after a command that was stopped", got)
+		}
+	}
+	// And the plugin is not busy for the next one.
+	if res, err := m.SearchEvidence(context.Background(), PassageQuery{Topic: "c", Query: "elimination"}); err != nil || len(res.Passages) == 0 {
+		t.Errorf("the next SearchEvidence = %+v, %v", res, err)
+	}
+}

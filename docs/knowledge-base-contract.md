@@ -596,8 +596,8 @@ from the Passage, to check the quote against its text.
 - The Passage is the one the search gave: the same text, Source and location.
 - An id the collection does not have is refused with `not_found`.
 - **What `study` does with it.** It asks `status` first, and for a Passage only when the
-  Source the quote is from is `indexed` with the content the Topic records; a Passage of
-  another Source is refused. The quote must then be in the Passage's `text`, beginning
+  `hash` there says that what `search` finds of the Source is the content the Topic
+  records, whatever the state; a Passage of another Source is refused. The quote must then be in the Passage's `text`, beginning
   and ending where a word does, with nothing differing but how much white space there is
   and of which kind, an accent written apart or a ligature, the shape of a quotation mark,
   the length of a dash, and the hyphen and line break of a word cut at a line's end. White
