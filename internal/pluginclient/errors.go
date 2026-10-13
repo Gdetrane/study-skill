@@ -101,8 +101,8 @@ func StudyCode(pluginCode string) string {
 // blank, which shows as one (brailleBlank).
 //
 // Whoever looks for something in a plugin's words, to take it out, looks
-// once what shows nothing is out of them (seen), and not in what clean was
-// handed: what was found apart would be whole again here.
+// in them as they read without what shows nothing (readAs), and not as
+// clean was handed them: what was found apart would be whole again here.
 //
 // It reads the text once and stops where the cleaned text is full, so what
 // it costs is what it keeps: a plugin's message can be as long as a message
@@ -157,25 +157,6 @@ func clean(s string, max int) string {
 // whatever the plugin chose to write there. clean takes it for white space.
 const brailleBlank = plugincontract.BrailleBlank
 
-// seen is text without the characters that show nothing
-// (plugincontract.ShowsNothing), and with every other byte as it was. clean
-// leaves the same characters out: this is for leaving them out earlier,
-// before anything is looked for in the text.
-func seen(text string) string {
-	if !strings.ContainsFunc(text, plugincontract.ShowsNothing) {
-		return text
-	}
-	var b strings.Builder
-	for len(text) > 0 {
-		r, size := utf8.DecodeRuneInString(text)
-		if !plugincontract.ShowsNothing(r) {
-			b.WriteString(text[:size])
-		}
-		text = text[size:]
-	}
-	return b.String()
-}
-
 // cleanEnd is clean for text whose end matters more than its start, such as
 // what a program wrote before it failed: the last max bytes of the cleaned
 // text are kept. The text is short already: study keeps only the end of a
@@ -208,86 +189,5 @@ func reason(err error, address string) string {
 	for errors.As(err, &withURL) {
 		err = withURL.Err
 	}
-	return clean(without(seen(libraryPrefix.ReplaceAllString(err.Error(), "")), address), 400)
-}
-
-// without takes the parts of a registered address that may be a key out of
-// a text. The address whole is left as study itself shows it: its scheme
-// and host.
-//
-// A part is found in whatever letter case the service wrote it: a service
-// that writes an address in capitals, or the hexadecimal of an escape in
-// small letters, repeats it all the same.
-func without(text, address string) string {
-	if address == "" {
-		return text
-	}
-	// The address whole, as it reads in words that hold no character that
-	// shows nothing: the form secrets gives its parts in, too.
-	if whole := seen(address); whole != "" {
-		text = replaceFold(text, whole, Address(address)+"…")
-	}
-	for _, secret := range secrets(address) {
-		text = replaceFold(text, secret, "…")
-	}
-	return text
-}
-
-// replaceFold is text with every place where part stands, in whatever case
-// its letters are written, replaced by with.
-func replaceFold(text, part, with string) string {
-	if part == "" {
-		return text
-	}
-	low, where := folded(text)
-	lowPart, _ := folded(part)
-	before, _, found := strings.Cut(low, lowPart)
-	if !found {
-		return text
-	}
-	var b strings.Builder
-	done := 0
-	for found {
-		b.WriteString(text[where[done]:where[done+len(before)]])
-		b.WriteString(with)
-		done += len(before) + len(lowPart)
-		before, _, found = strings.Cut(low[done:], lowPart)
-	}
-	b.WriteString(text[where[done]:])
-	return b.String()
-}
-
-// folded is s with each letter as the one its cases have in common, and for
-// each byte of that the place in s of the character it is of, with the
-// length of s after the last: so that what is found in the one is known in
-// the other, whose letters may take more bytes or fewer.
-func folded(s string) (string, []int) {
-	var b strings.Builder
-	where := make([]int, 0, len(s)+1)
-	for at, r := range s {
-		least := r
-		for other := unicode.SimpleFold(r); other != r; other = unicode.SimpleFold(other) {
-			least = min(least, other)
-		}
-		before := b.Len()
-		b.WriteRune(least)
-		for range b.Len() - before {
-			where = append(where, at)
-		}
-	}
-	return b.String(), append(where, len(s))
-}
-
-// longestSecret is how many bytes the longest part of a registered address
-// has that without looks for: a text that was cut may end in the start of
-// one, up to a byte short of it.
-func longestSecret(address string) int {
-	if address == "" {
-		return 0
-	}
-	longest := len(seen(address))
-	for _, secret := range secrets(address) {
-		longest = max(longest, len(secret))
-	}
-	return longest
+	return clean(without(libraryPrefix.ReplaceAllString(err.Error(), ""), address), 400)
 }

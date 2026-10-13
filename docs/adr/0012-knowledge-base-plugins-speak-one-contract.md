@@ -442,18 +442,32 @@ what they needed:
     taken for white space: a run of it padded one line into what looked like two.
   - **Whatever is looked for in such words is looked for once those characters are out.**
     A key divided by a zero-width space is not found, and is whole again when the
-    character is left out afterwards. So the client leaves them out before it takes the
-    parts of a registered address out (`say`), and Shelf before it looks for its key
-    (`caller.said`): Shelf writes the sentence that `study` then cleans.
-  - **A part of a registered address is found however a service writes it.** A review
-    listed what the first version let through: the part in another letter case; escaped
-    where the registry has it plain, or the other way round; the part as a name or an id
-    in an answer `study` refuses, whose reason was not cleaned; and all of a key but its
-    last byte, where it stood across the place a long text is cut at, behind enough white
-    space that cleaning brought it to the front. Each is closed. What is left is said on
-    the pages and not closed: a piece of a path under eight bytes, or a value of a query
-    under six, that a service says on its own is a word like any other, and taking it out
-    wherever it stands would leave little of a service's words.
+    character is left out afterwards. So the client reads a text without them when it
+    takes the parts of a registered address out (`say`), and Shelf leaves them out before
+    it looks for its key (`caller.said`): Shelf writes the sentence that `study` then
+    cleans.
+  - **A part of a registered address is found as it reads, however a service spells
+    it.** A review listed what the first version let through: the part in another letter
+    case; escaped where the registry has it plain, or the other way round; the part as a
+    name or an id in an answer `study` refuses, whose reason was not cleaned; and all of
+    a key but its last byte, where it stood across the place a long text is cut at,
+    behind enough white space that cleaning brought it to the front. A list of spellings
+    to look for closed the first of these and no more: a key with every byte escaped, or
+    escaped twice, is none of the spellings a URL library writes. So the text and the
+    parts are both read first (`readAs`): every escape is the byte it stands for, and
+    again when that makes another; a plus sign is a space; a letter is the same in any
+    case; and what shows nothing is not there. A text that was cut loses what its end
+    reads as that begins a part.
+  - **All the parts are looked for in one reading of the text** (`parts`), a state for
+    each beginning of a part. Looking for them one after the other read a service's
+    words once for each, and an address may hold hundreds of values, with sixteen
+    mebibytes of words to read for them after the call's deadline has passed. Parts that
+    overlap are taken out as one place: taking the longer out first had left the end of
+    one standing where two were the same in letters of another length.
+  - What is left is said on the pages and not closed: a piece of a path under eight
+    bytes, or a value of a query under six, that a service says on its own is a word like
+    any other, and taking it out wherever it stands would leave little of a service's
+    words.
   - It is no error: no exit code, no next action and nothing that is recorded changes for
     it. `note` and `action` are about the Sources that were left out, and a notice is
     about the ones that were searched. The skill has the agent tell the learner what it

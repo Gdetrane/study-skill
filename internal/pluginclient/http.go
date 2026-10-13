@@ -7,7 +7,6 @@ import (
 	"mime"
 	"net/http"
 	"net/url"
-	"sort"
 	"strings"
 	"sync"
 
@@ -161,79 +160,4 @@ func Address(registered string) string {
 		return "its address"
 	}
 	return u.Scheme + "://" + u.Host
-}
-
-// secrets are the parts of a registered address that may be a key, longest
-// first: the address whole, what follows its host, its path, its query, and
-// each long piece of the two. Text a service wrote is shown without them: a
-// service that repeats the address it was asked at would otherwise have
-// study print what it never prints itself.
-//
-// Each part is as it reads where it is looked for: a service's words are
-// searched without the characters that show nothing (seen), and an address
-// may hold one, in its path or its key. Left as registered, such a part
-// would be found nowhere in them.
-//
-// And each is given in the ways a service may write it: as it is
-// registered, with its escapes read, and escaped as a path is and as a
-// query is. A registry that holds a key plain is repeated by a service that
-// logs it escaped, and the other way round.
-//
-// A piece of a path counts from eight bytes and a value of a query from
-// six, as it reads with its escapes read: shorter, it is a word of its own,
-// "v1" or "mcp", and taking it out of a service's words wherever it stands
-// would leave little of them. A key that short, said on its own and not as
-// part of the address, is shown.
-func secrets(registered string) []string {
-	found := map[string]bool{}
-	add := func(part string, least int) {
-		if part = seen(part); part != "" && len(part) >= least {
-			found[part] = true
-		}
-	}
-	// forms adds a piece in each way it may be written, when it is long
-	// enough as it reads.
-	forms := func(plain string, least int) {
-		if len(seen(plain)) < least {
-			return
-		}
-		add(plain, 1)
-		add(url.PathEscape(plain), 1)
-		add(url.QueryEscape(plain), 1)
-	}
-	add(registered, 1)
-	if u, err := url.Parse(registered); err == nil {
-		add(u.RequestURI(), 2)
-		add(u.EscapedPath(), 2)
-		add(u.Path, 2)
-		add(u.RawQuery, 1)
-		if plain, err := url.QueryUnescape(u.RawQuery); err == nil {
-			add(plain, 1)
-			add(u.Path+"?"+plain, 2)
-		}
-		for _, piece := range strings.Split(u.Path, "/") {
-			forms(piece, 8)
-		}
-		for _, piece := range strings.Split(u.EscapedPath(), "/") {
-			add(piece, 8)
-		}
-		for _, pair := range strings.Split(u.RawQuery, "&") {
-			_, value, _ := strings.Cut(pair, "=")
-			add(value, 6)
-			if plain, err := url.QueryUnescape(value); err == nil {
-				forms(plain, 6)
-			}
-		}
-	}
-	parts := make([]string, 0, len(found))
-	for part := range found {
-		parts = append(parts, part)
-	}
-	sort.Slice(parts, func(i, j int) bool {
-		if len(parts[i]) != len(parts[j]) {
-			return len(parts[i]) > len(parts[j])
-		}
-		return parts[i] < parts[j]
-	})
-	return parts
 }

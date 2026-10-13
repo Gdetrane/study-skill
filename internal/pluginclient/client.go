@@ -172,8 +172,9 @@ type Server struct {
 type Connection struct {
 	name string
 	// address is the URL of a plugin reached by URL, which no message may
-	// repeat.
+	// repeat, and parts what finds the parts of it in a text.
 	address string
+	parts   *parts
 	opts    Options
 
 	// proc is the command, when the plugin is one, and http what carries
@@ -267,7 +268,7 @@ func Start(ctx context.Context, env pluginregistry.Env, plugin pluginregistry.Pl
 		s.opts.Logger.Debug("started a Knowledge base plugin", "name", s.name, "pid", s.proc.PID())
 		transport = s.proc.Transport()
 	case plugin.URL != "":
-		s.address = plugin.URL
+		s.address, s.parts = plugin.URL, partsOf(plugin.URL)
 		transport, s.http = urlTransport(plugin.URL)
 	default:
 		return nil, errorf(CodeInternal, "Knowledge base plugin %s is registered with neither a command nor a URL", plugin.Name)
@@ -1084,28 +1085,15 @@ func text(res *mcp.CallToolResult) string {
 
 // say is text the plugin wrote, as study repeats it: cleaned, cut to max
 // bytes, and without the parts of a registered address that may be a key,
-// which a service can send back as easily as anything else. Only the start
-// of a long text is looked at.
+// which a service can send back as easily as anything else (parts.without).
 //
-// What shows nothing is left out before the address is looked for, and not
-// only by clean afterwards: a part of the address that a service repeated
-// with such a character inside it would be whole again once clean had left
-// the character out.
-//
-// A text that was cut may end in the start of a part of the address, which
-// is not found for one: all of a key but its last byte, behind enough white
-// space that clean brings it to the front. So what is looked at is longer
-// by the longest part, and that much is dropped again from the end of what
-// is left of it once what shows nothing is out, where such a start stands
-// in one piece.
+// Only the start of a long text is looked at. What that start ends in is
+// left out when it may be the start of a part of the address: all of a key
+// but its last byte is no key, and behind enough white space clean would
+// bring it to the front.
 func (s *Connection) say(text string, max int) string {
-	longest := longestSecret(s.address)
-	start := plugincontract.Cut(text, 16*max+4096+longest)
-	looked := seen(start)
-	if len(start) < len(text) {
-		looked = plugincontract.Cut(looked, len(looked)-min(longest, len(looked)))
-	}
-	return clean(without(looked, s.address), max)
+	start := plugincontract.Cut(text, 16*max+4096)
+	return clean(s.parts.without(start, len(start) < len(text)), max)
 }
 
 // tidy cleans what a plugin wrote of a Source for people to read.
