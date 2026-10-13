@@ -976,10 +976,12 @@ func (in *install) wantEarlierNotices(doc, file string) {
 }
 
 // wantShelfChecked runs the two commands the script prints, as the learner
-// does: the installed study's setup registers the study-shelf installed
-// beside it, and study checks it, starting it as it starts any plugin, and
-// they speak the contract. The home is a temporary folder here, from where
-// setup registers nothing unless it is forced to.
+// does, but for two flags: the installed study's setup registers the
+// study-shelf installed beside it, and study checks it, starting it as it
+// starts any plugin, and they speak the contract. --force is there because
+// the home is a folder of this test's: where that is under /tmp, setup takes
+// the two programs for ones that will soon be gone, and registers neither
+// unless it is forced to. --json is there to read what the check found.
 func (in *install) wantShelfChecked(study string) {
 	in.t.Helper()
 	env := []string{"HOME=" + in.home, "PATH=" + filepath.Dir(study) + string(os.PathListSeparator) + in.path,

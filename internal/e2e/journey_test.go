@@ -503,6 +503,10 @@ func TestTheV2Journey(t *testing.T) {
 	// "reply" means what "answer" means.
 	at := shelftest.NewEndpoint(t)
 	at.Same("reply", "answer")
+	// What the agent asks the book. It shares no word with the page that
+	// answers it, so a search by keyword finds nothing: only what the
+	// question means, which is the endpoint's to say, leads to the page.
+	const question = "which reply did Deep Thought give?"
 	settings := filepath.Join(j.home, ".config", "lamplight", "shelf.toml")
 	if err := os.WriteFile(settings, fmt.Appendf(nil, "format = 1\n\n[embedding]\nendpoint = %q\nrecipe = \"embeddinggemma-2\"\n", at.URL), 0o600); err != nil {
 		t.Fatal(err)
@@ -570,7 +574,7 @@ func TestTheV2Journey(t *testing.T) {
 	source := added.Source.ID
 	// Before anything is indexed, a search says so, and names the command.
 	var found core.PassageSearch
-	a.call("evidence_search", map[string]any{"topic": "c", "query": "the reply to everything"}, &found)
+	a.call("evidence_search", map[string]any{"topic": "c", "query": question}, &found)
 	if len(found.Passages) != 0 || len(found.LeftOut) != 1 || found.Action != "study source index c" {
 		t.Fatalf("a search before the book is indexed = %+v; want nothing found, and study source index c to run", found)
 	}
@@ -584,14 +588,20 @@ func TestTheV2Journey(t *testing.T) {
 		t.Fatalf("to index the book, the endpoint was asked %+v; want its two Passages, once", asked)
 	}
 	at.Forget()
-	// The agent searches the book through the server, in other words than
-	// the book's, and is given the book's own text with where it is.
-	a.call("evidence_search", map[string]any{"topic": "c", "query": "the reply to everything"}, &found)
+	// The agent searches the book through the server, with a question none
+	// of whose words is on the page, and is given the page's own text with
+	// where it is.
+	for _, word := range strings.Fields(strings.ToLower(strings.Trim(question, "?"))) {
+		if strings.Contains(strings.ToLower(answerPage), word) {
+			t.Fatalf("the question shares %q with the page, so a search by keyword would find the page too", word)
+		}
+	}
+	a.call("evidence_search", map[string]any{"topic": "c", "query": question}, &found)
 	if len(found.Passages) == 0 || found.Passages[0].Source != source || found.Passages[0].Location != "p. 1" ||
 		found.Passages[0].Text != answerPage || !slices.Equal(found.Searched, []string{source}) || found.Action != "" {
 		t.Fatalf("the search = %+v; want the book's first page first, as the book has it", found)
 	}
-	if asked := at.Asked(); len(asked) != 1 || fmt.Sprint(asked[0].Texts()) != "[task: search result | query: the reply to everything]" {
+	if asked := at.Asked(); len(asked) != 1 || fmt.Sprint(asked[0].Texts()) != "[task: search result | query: "+question+"]" {
 		t.Fatalf("for the search, the endpoint was asked %+v; want the question's vector, once", asked)
 	}
 	// The quote is recorded with the Passage it is from, and so checked

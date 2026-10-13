@@ -196,7 +196,9 @@ with `goreleaser check`, builds every artefact with
 platform holds both programs and that an archive, a deb and an rpm contain the
 completions, the man page and the licence, and installs the snapshot with `install.sh`
 into a temporary home. There it checks that the released `study` links nothing of Shelf's,
-registers the `study-shelf` that was installed and has `study knowledge-base check` start
+has `study setup` register the `study-shelf` that was installed, as it does for a learner
+(with `--force`, since that home is a temporary folder, and with nothing else on `PATH`,
+so that no agent of the runner's is set up), and has `study knowledge-base check` start
 it. It needs no secrets and is not a required check.
 
 The same job checks the notices in what was built: that each of the four archives holds
