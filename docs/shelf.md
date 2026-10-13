@@ -308,7 +308,7 @@ may fail until the endpoint answers.
 | `could not be reached` | The server is not running, or `endpoint` is not where it listens. Start it, or correct the address: for a server that speaks the OpenAI API it ends in `/v1`. |
 | `did not answer within 8s` | The server is busy, or loading its model. Ask again once it is up. |
 | `answered` a number from 500 to 599 | The server failed on its own side: its own log says why. |
-| `answered 401 Unauthorized`, `answered 403 Forbidden` | The `key` in the settings file is not one the server takes. |
+| `answered 401 Unauthorized`, `answered 403 Forbidden` | The `key` in the settings file, or in the file `key_file` names, is not one the server takes. |
 | `answered 404 Not Found` | The address is not the API's, or the server does not know the `model`. Check `endpoint` and `model`, or the Recipe. |
 | `answered` a number from 300 to 399 | Shelf follows no redirect. Give the address that answers. |
 | `gave vectors of 384 numbers, and Shelf's settings ask for 512` | The server has another model than the Recipe is for, or `dimensions` is more than the model gives. Serve the model the Recipe names, or set `dimensions` to a size the model has. |
@@ -446,6 +446,7 @@ and how it searches now, and has Shelf test each endpoint the file names, as
 | `endpoint` | The address the endpoint serves the OpenAI API at, as an OpenAI client's base address has it: `http://127.0.0.1:8080/v1` for llama.cpp, `http://127.0.0.1:11434/v1` for Ollama. Shelf posts to `/embeddings` below it. An address without a path stands for `/v1`. `http` or `https`, with no user name, password or query in it. |
 | `recipe` | A [Recipe](#recipes)'s name: the settings below, for one model. A setting you give beside it takes the place of the Recipe's. |
 | `key` | The endpoint's key, when it takes one: one word, and spaces around it are not part of it. It is sent as the request's bearer token, and to that endpoint alone: Shelf follows no redirect. |
+| `key_file` | Instead of `key`: a file that holds the key and nothing else ([A key in a file of its own](#a-key-in-a-file-of-its-own)). |
 | `model` | The model's name, as the endpoint knows it. Required without a `recipe`. |
 | `dimensions` | How many numbers Shelf keeps of each vector. A longer vector is cut to its first numbers and made of length 1 again, which only a model trained for it allows. A shorter one fails the Source. Always said, by you or by the Recipe: the size the model gives, which its own page says (768 for many), or fewer where the model was trained for that. Shelf then knows what it keeps, and sees it in the settings when the size changes. |
 | `send_dimensions` | `true` has the request ask the endpoint for vectors of that size, as the OpenAI API's `dimensions` does. Shelf checks the size either way. |
@@ -455,7 +456,7 @@ and how it searches now, and has Shelf test each endpoint the file names, as
 | `batch` | How many Passages one request holds while a Source is indexed, from 1 to 256. 16 unless you or the Recipe say. A server that takes fewer refuses the request, and the Source fails with what the server said. |
 | `[reranking]` | The endpoint that orders a search's Passages. Leave the table out for none. It works without `[embedding]` too, on what keyword search found. |
 | `endpoint` | As above. Shelf posts to `/rerank` below it, as llama.cpp's server takes it: the `model`, a `query`, the `documents` and `top_n`, answered with an `index` and a `relevance_score` for each document. |
-| `key`, `model` | As above. `model` is required. |
+| `key`, `key_file`, `model` | As above. `model` is required. |
 | `candidates` | How many of a search's best Passages are handed over, from 2 to 100. 30 unless you say, and never fewer than a search asks for. |
 
 **A request holds what the settings name, and nothing else**: the model, the texts, the
@@ -473,6 +474,37 @@ TOML, a setting or a Recipe it does not know, a newer format, an address that is
 Shelf does not search by keyword instead: you would think the endpoint you wrote in use.
 It says which line or setting is wrong and never what it holds, since it may hold the
 key. Keep the file yours alone to read (`chmod 600`) when it has a key in it.
+
+### A key in a file of its own
+
+A key in `shelf.toml` makes the settings file a secret: it cannot be kept with your other
+settings, and a program that keeps your secrets would have to write all of it. So a table
+can name a file for its key in place of the key:
+
+```toml
+[embedding]
+endpoint = "https://embeddings.example/v1"
+recipe = "embeddinggemma-2"
+key_file = "embedding.key"
+```
+
+- **The file holds the key and nothing else**: one word, with or without a line's end
+  behind it, as `printf` or a secrets manager writes it. Keep it yours alone to read
+  (`chmod 600`).
+- **It is named, and is beside `shelf.toml`**, in Lamplight's configuration folder. A
+  path is refused, whole or not: what the file holds is sent to the endpoint, so settings
+  that could name any file could have any file of yours sent. When you keep the key
+  elsewhere, link it there: `ln -s ~/.secrets/embedding.key ~/.config/lamplight/`.
+- **`key` and `key_file` in one table is refused**: one of the two.
+- **It is not an environment variable**, and cannot be: `study` starts Shelf with a few
+  variables of its own making, and a key in your shell never reaches it.
+- **The file is held to what the settings file is held to**: a file of its own, of 4096
+  bytes at most, with no second name elsewhere, and nowhere in the folders an index is
+  kept in. One Shelf cannot use stops it, with the file's name in the reason and never
+  what it holds.
+- **Keep it outside your Study home**, like the settings file. `study doctor` warns of a
+  `shelf.toml` that leads there, and reads nothing of it, so it does not see where a key
+  file is.
 
 **The file is not read from where an index is kept.** A settings file inside the folder
 Shelf keeps its index in, or inside the folder above it that holds every plugin's folder

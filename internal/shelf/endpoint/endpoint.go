@@ -483,7 +483,7 @@ func (c *caller) post(ctx context.Context, within time.Duration, most int64, bod
 		}
 		switch {
 		case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
-			reason += ". Check the key in Shelf's settings file"
+			reason += ". Check the key in Shelf's settings file, or in the key file they name"
 		case resp.StatusCode == http.StatusNotFound:
 			reason += ". Check the endpoint's address and the model's name in Shelf's settings file"
 		case resp.StatusCode >= 300 && resp.StatusCode < 400:

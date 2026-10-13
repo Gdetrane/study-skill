@@ -49,7 +49,7 @@ func TestANoticeHoldsNoKeyAndNoMoreOfAnAddressThanItsHost(t *testing.T) {
 		"These Passages were found by keyword alone: the embedding endpoint " + at.Host + " answered 401 Unauthorized: the key [the key] is not one of ours. " +
 			"You sent Authorization: Bearer [the key] to [the address] (POST [the address]), and the gateway sent Bearer [the key] on.",
 		"These Passages are in the order the search found them, and not reranked: the reranking endpoint " + at.Host + " answered 401 Unauthorized: ",
-		"Check the key in Shelf's settings file.",
+		"Check the key in Shelf's settings file, or in the key file they name.",
 	} {
 		if !strings.Contains(got.Notice, word) {
 			t.Errorf("the notice does not say %q:\n%s", word, got.Notice)

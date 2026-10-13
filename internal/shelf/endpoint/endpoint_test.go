@@ -435,7 +435,7 @@ func TestWhatAnEndpointGetsWrongIsAReason(t *testing.T) {
 			w.WriteHeader(http.StatusUnauthorized)
 			fmt.Fprint(w, `{"error": "invalid api key"}`)
 			return true
-		}, want: []string{"answered 401 Unauthorized", "invalid api key", "Check the key in Shelf's settings file"}},
+		}, want: []string{"answered 401 Unauthorized", "invalid api key", "Check the key in Shelf's settings file, or in the key file they name"}},
 		{name: "a model it does not have", answer: func(w http.ResponseWriter, _ *http.Request, _ map[string]any) bool {
 			http.Error(w, "model not found", http.StatusNotFound)
 			return true

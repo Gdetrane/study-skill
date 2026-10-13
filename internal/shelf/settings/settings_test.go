@@ -507,3 +507,190 @@ func TestASettingsFileInTheIndexFolderIsRefused(t *testing.T) {
 		}
 	})
 }
+
+// A key need not stand in the settings file: a table can name a file that
+// holds the key and nothing else. The settings then hold no secret, and
+// whatever keeps a learner's secrets writes one file for one key. The file
+// is named, and is beside the settings file, in whichever folder that is.
+func TestAKeyInAFileOfItsOwn(t *testing.T) {
+	c := newComputer(t)
+	beside := filepath.Join(c.config, "embedding.key")
+	elsewhere := filepath.Join(c.config, "reranking.key")
+	// As a program writes it, with a line's end, and as an editor does on
+	// another system.
+	for path, text := range map[string]string{beside: secret + "\n", elsewhere: "  " + secret + "-2\r\n"} {
+		if err := os.WriteFile(path, []byte(text), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	c.write(t, "format = 1\n[embedding]\nendpoint = \"http://127.0.0.1:8080/v1\"\nrecipe = \"embeddinggemma-2\"\n"+
+		"key_file = \"embedding.key\"\n[reranking]\nendpoint = \"http://127.0.0.1:8081/v1\"\nmodel = \"m\"\nkey_file = \"reranking.key\"\n")
+	got, err := c.load()
+	if err != nil || got.Embedding == nil || got.Reranking == nil || got.Embedding.Key != secret || got.Reranking.Key != secret+"-2" {
+		t.Fatalf("Load = %+v, %v; want each endpoint's key from its file", got, err)
+	}
+	// Without a key file the key is the one in the settings file, as ever.
+	c.write(t, "format = 1\n[embedding]\nendpoint = \"http://127.0.0.1:8080/v1\"\nrecipe = \"embeddinggemma-2\"\nkey = \""+secret+"\"\n")
+	if got, err := c.load(); err != nil || got.Embedding.Key != secret {
+		t.Errorf("Load with a key in the settings file = %+v, %v", got, err)
+	}
+	// The settings file reached by a link, as a learner has it who keeps
+	// their settings in one folder: the key file is beside the link, in the
+	// configuration folder, and not where the link leads.
+	kept := filepath.Join(c.home, "dotfiles", "shelf.toml")
+	if err := os.MkdirAll(filepath.Dir(kept), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(kept, []byte("format = 1\n[embedding]\nendpoint = \"http://127.0.0.1:8080/v1\"\nrecipe = \"embeddinggemma-2\"\n"+
+		"key_file = \"embedding.key\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(c.config, settings.FileName)
+	if err := os.Remove(link); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(kept, link); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := c.load(); err != nil || got.Embedding.Key != secret {
+		t.Errorf("Load of settings behind a link = %+v, %v; want the key from the file beside the link", got, err)
+	}
+}
+
+// A key file Shelf cannot use stops it, as a settings file does: the learner
+// who named one would not know that no key is sent. The reason names the
+// file and never holds what is in it.
+func TestAKeyFileThatCannotBeUsedSaysWhy(t *testing.T) {
+	table := "format = 1\n[embedding]\nendpoint = \"http://127.0.0.1:8080/v1\"\nrecipe = \"embeddinggemma-2\"\n"
+	for name, tc := range map[string]struct {
+		// file is what the key file holds, and "" for none; setting is what
+		// the table says of the key.
+		file, setting string
+		want          []string
+	}{
+		"a key and a key file":       {secret, "key = \"" + secret + "\"\nkey_file = \"the.key\"\n", []string{"has both a [embedding] key and a [embedding] key_file", "not both"}},
+		"a key file that is no text": {secret, "key_file = 7\n", []string{"[embedding] key_file that is not text"}},
+		"a key file without a name":  {secret, "key_file = \"  \"\n", []string{"[embedding] key_file that names no file"}},
+		"a home folder by its sign":  {secret, "key_file = \"~/the.key\"\n", []string{"is not the name of a file beside the settings file"}},
+		"a path below the folder":    {secret, "key_file = \"keys/the.key\"\n", []string{"is not the name of a file beside the settings file"}},
+		"a path out of the folder":   {secret, "key_file = \"../the.key\"\n", []string{"is not the name of a file beside the settings file", "link it there"}},
+		"a whole path":               {secret, "key_file = \"/etc/hostname\"\n", []string{"is not the name of a file beside the settings file"}},
+		"the folder above":           {secret, "key_file = \"..\"\n", []string{"is not the name of a file beside the settings file"}},
+		// A name is written into what Shelf says, on a terminal.
+		"a name of two lines":          {"", "key_file = \"the\\nkey\"\n", []string{"is not the name of a file beside the settings file"}},
+		"a name a terminal obeys":      {"", "key_file = \"the\\u001b[2Jkey\"\n", []string{"is not the name of a file beside the settings file"}},
+		"a file that is not there":     {"", "key_file = \"the.key\"\n", []string{"names a key file for [embedding], ", "the.key, that is not there"}},
+		"an empty file":                {"\n", "key_file = \"the.key\"\n", []string{"the.key, that is empty"}},
+		"two words":                    {secret + " " + secret, "key_file = \"the.key\"\n", []string{"holds more than a key", "one word"}},
+		"two lines":                    {secret + "\n" + secret + "\n", "key_file = \"the.key\"\n", []string{"holds more than a key"}},
+		"what a terminal obeys":        {secret + "\x1b[2J", "key_file = \"the.key\"\n", []string{"holds more than a key"}},
+		"bytes that are no text":       {secret + "\xff\xfe", "key_file = \"the.key\"\n", []string{"holds more than a key"}},
+		"more than any key":            {strings.Repeat(secret, 200), "key_file = \"the.key\"\n", []string{"is larger than 4096 bytes"}},
+		"a key no request can carry":   {secret + "\u00e9", "key_file = \"the.key\"\n", []string{"names a key file for [embedding] that Shelf cannot use", "one word of printable characters"}},
+		"the folder itself":            {"", "key_file = \".\"\n", []string{"is not the name of a file beside the settings file"}},
+		"a key file for the reranker":  {"", "[reranking]\nendpoint = \"http://127.0.0.1:8081/v1\"\nmodel = \"m\"\nkey_file = \"other.key\"\n", []string{"names a key file for [reranking], ", "other.key, that is not there"}},
+		"a setting of another's table": {secret, "passage_size = 900\n[reranking]\nendpoint = \"http://127.0.0.1:8081/v1\"\nkey = \"" + secret + "\"\nkey_file = \"the.key\"\n", []string{"has both a [reranking] key and a [reranking] key_file"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := newComputer(t)
+			if tc.file != "" {
+				if err := os.WriteFile(filepath.Join(c.config, "the.key"), []byte(tc.file), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			path := c.write(t, table+tc.setting)
+			_, err := c.load()
+			var refused *settings.Error
+			if !errors.As(err, &refused) || refused.Path != path {
+				t.Fatalf("Load = %v; want the settings file refused", err)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the reason does not say %q: %v", want, err)
+				}
+			}
+			if strings.Contains(err.Error(), secret) || strings.Contains(err.Error(), "sk-") {
+				t.Errorf("the reason holds the key: %v", err)
+			}
+			if strings.ContainsFunc(err.Error(), func(r rune) bool { return r < ' ' || r == 0x7f }) {
+				t.Errorf("the reason holds what a terminal obeys, or a line's end: %q", err)
+			}
+		})
+	}
+}
+
+// A key file is as much of a setting as the settings file, and is held to
+// what that is held to: no second name, and nowhere in the folders that hold
+// data, which the learner may have let their agent's sandbox write in.
+func TestAKeyFileIsAFileOfItsOwnOutsideTheIndexFolders(t *testing.T) {
+	text := func(keyFile string) string {
+		return "format = 1\n[embedding]\nendpoint = \"http://127.0.0.1:8080/v1\"\nrecipe = \"embeddinggemma-2\"\nkey_file = \"" + keyFile + "\"\n"
+	}
+	refused := func(t *testing.T, c computer, want string) {
+		t.Helper()
+		_, err := c.load()
+		var why *settings.Error
+		if !errors.As(err, &why) || !strings.Contains(err.Error(), want) || strings.Contains(err.Error(), secret) {
+			t.Errorf("Load = %v; want the key file refused, since it %s", err, want)
+		}
+	}
+	key := []byte(secret + "\n")
+	t.Run("by a link to a file in the folder of the plugins' folders", func(t *testing.T) {
+		c := newComputer(t)
+		inside := filepath.Join(filepath.Dir(c.data), "the.key")
+		if err := os.WriteFile(inside, key, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(inside, filepath.Join(c.config, "the.key")); err != nil {
+			t.Fatal(err)
+		}
+		c.write(t, text("the.key"))
+		refused(t, c, "is inside the folder Shelf keeps its index in")
+	})
+	t.Run("by a link to a file in the folder Shelf keeps its index in", func(t *testing.T) {
+		c := newComputer(t)
+		if err := os.WriteFile(filepath.Join(c.data, "the.key"), key, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(filepath.Join(c.data, "the.key"), filepath.Join(c.config, "the.key")); err != nil {
+			t.Fatal(err)
+		}
+		c.write(t, text("the.key"))
+		refused(t, c, "is inside the folder Shelf keeps its index in")
+	})
+	t.Run("with a second name", func(t *testing.T) {
+		c := newComputer(t)
+		beside := filepath.Join(c.config, "the.key")
+		if err := os.WriteFile(beside, key, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Link(beside, filepath.Join(c.home, "another-name")); err != nil {
+			t.Skipf("no hard links here: %v", err)
+		}
+		c.write(t, text("the.key"))
+		refused(t, c, "has a second name elsewhere (a hard link)")
+	})
+	// A learner who keeps the key elsewhere links it into the folder: that
+	// is their own doing, and the file a link of theirs leads to is read.
+	t.Run("by a link to a file elsewhere, which is the learner's own", func(t *testing.T) {
+		c := newComputer(t)
+		kept := filepath.Join(c.home, "secrets", "the.key")
+		if err := os.MkdirAll(filepath.Dir(kept), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(kept, key, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(kept, filepath.Join(c.config, "the.key")); err != nil {
+			t.Fatal(err)
+		}
+		c.write(t, text("the.key"))
+		if got, err := c.load(); err != nil || got.Embedding.Key != secret {
+			t.Errorf("Load = %+v, %v; want the key from the file the link leads to", got, err)
+		}
+		// Named by its path, the same file is refused: settings that
+		// could name any file would have Shelf read it, and send it.
+		c.write(t, text(kept))
+		refused(t, c, "is not the name of a file beside the settings file")
+	})
+}

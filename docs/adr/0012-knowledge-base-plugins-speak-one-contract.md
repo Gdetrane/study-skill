@@ -773,6 +773,22 @@ where it was stopped, and what a Recipe holds.
   reaches it, and an argument would show in the process list and be one more path for the
   registry to judge. The cost of one place: two Shelves registered on one computer share
   their settings.
+  - **A key may be in a file of its own, which the settings name** (`key_file`, decided on
+    13 October 2026). A key in the settings file makes all of it a secret: it cannot be
+    kept with a learner's other settings, and whatever keeps their secrets would write
+    the whole file for one of them. An environment variable is what such programs offer
+    first, and is the one way closed here on purpose. So a table names a file that holds
+    the key and nothing else, in place of `key` and never beside it. The file is named
+    and is in the folder the settings file is in: a path is refused. What a key file
+    holds is sent to the endpoint the settings name, so settings that could name any file
+    would let whoever came to write them have Shelf read any file of one word and send
+    it, from outside every sandbox. A learner who keeps the key elsewhere links it into
+    the folder, which is their own doing. The file is a setting like the other, and is
+    held to the same: a file of its own, small, with no second name, and nowhere in the
+    folders that hold data. Shelf does not look for the Study home here either, and `study doctor`
+    does not see the file, since `study` reads nothing of Shelf's settings: the learner's
+    page says to keep it outside. Considered and rejected: a command that prints the
+    key, which would have a settings file say which program runs.
   - **A file Shelf cannot use stops it**, with the reason last on its standard error, which
     `study knowledge-base check` shows. Searching by keyword instead was rejected: the
     learner who wrote an endpoint into the file would think it in use. The reason names a

@@ -335,8 +335,9 @@ func TestSourceIndexStoppedAndCarriedOn(t *testing.T) {
 			if got := indexedSources(calls); !slices.Equal(got, []string{first, long}) {
 				t.Errorf("the plugin was asked to index %v, want the first two Sources", got)
 			}
-			if last := calls[len(calls)-1]; last.Tool != "cancel" || last.Source() != long {
-				t.Errorf("the last thing the plugin was asked is %s of %s, want to stop indexing the long Source", last.Tool, last.Source())
+			if last := plugintest.LastBesidesStatus(calls); last.Tool != "cancel" || last.Source() != long {
+				t.Errorf("the last thing the plugin was asked, besides its status, is %s of %s, want to stop indexing the long Source",
+					last.Tool, last.Source())
 			}
 			s.nothingRunning(t)
 

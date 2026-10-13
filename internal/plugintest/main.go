@@ -199,6 +199,20 @@ func (c Call) Indexed() plugincontract.Source {
 	return in.Source
 }
 
+// LastBesidesStatus is the last call of some that is no status, and no call
+// at all when there is none. A plugin is asked for its status again and
+// again while it indexes, and answers two calls that are under way in
+// whichever order: what study asked it last may be recorded before a status
+// study had asked just before.
+func LastBesidesStatus(calls []Call) Call {
+	for i := len(calls) - 1; i >= 0; i-- {
+		if calls[i].Tool != plugincontract.ToolStatus {
+			return calls[i]
+		}
+	}
+	return Call{}
+}
+
 // ReadCalls reads the calls a test plugin started with --record path
 // received so far, in the order it received them, by every copy of it that
 // was started so: a plugin is started anew by each command and each tool
