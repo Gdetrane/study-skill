@@ -71,29 +71,39 @@ make notices        # go run ./internal/notices/gen
 ```
 
 It asks the go command what `./cmd/study` and `./cmd/study-shelf` link for each system a
-release is built for, which is less than `go.mod` names, and copies each module's licence
-files, and its `NOTICE` file where it has one, from the Go module cache, byte for byte. Go's
-own licence stands for the standard library. Run it after any change to a dependency, and
-commit what it writes.
+release is built for, which is less than `go.mod` names, and copies from the Go module
+cache, byte for byte, each module's licence files and the files that stand beside them.
+Which files those are is decided by their names, and `kindOf` in `internal/notices` says
+the rule: a licence is a file whose name holds `LICENSE`, `LICENCE` or `COPYING`, whatever
+it begins with, or is `COPYRIGHT`, and beside it go the module's `NOTICE`, `AUTHORS` and
+`CONTRIBUTORS`. Go's own licence stands for the standard library. Run it after any change
+to a dependency, and commit what it writes.
 
-`internal/notices` has the test that keeps it so, in the required "Lamplight core" job. It
-makes the folder again and fails on any difference: a module that is linked and has no
-notice, a notice of a module that is no longer linked, a version or a text that changed. It
-also fails when a module ships no licence file under a name it knows, and when a module
-other than go-pdfium embeds a file, which may be a program built elsewhere: both wait for
-a person.
+One thing about each module is written by a person: the licence it is under, in the words
+of the SPDX licence list, in `internal/notices/licences.go`. `make notices` refuses a
+module that is not there, and one whose files do not read as the licence written down for
+it. The list in `NOTICES/README.md` shows it for each part, with what a reader should know
+besides: two modules have such a remark.
+
+`internal/notices` has the tests that keep it so, in the required "Lamplight core" job.
+One makes the folder again and fails on any difference: a module that is linked and has no
+notice, a notice of a module that is no longer linked, a version or a text that changed.
+It also fails when a module ships no licence file, and when a module other than go-pdfium
+embeds a file, which may be a program built elsewhere: both wait for a person.
 
 `NOTICES/pdfium` is that case, and is kept by hand. go-pdfium embeds PDFium built, as
 `pdfium.wasm`, with no licence beside it. The folder's `README.md` says which PDFium the
-file was built from, how each part of it was shown to be in the file, and what was left
-out; `sources.toml` names the repository, the revision and the SHA-256 of every text. The
-test holds the folder to the go-pdfium that `go.mod` names and to the `pdfium.wasm` in the
-module cache: **a new go-pdfium fails it until the file has been looked at again**, as
-the last section of that `README.md` describes.
+file was built from, how the list of parts to look for was made, how each part was shown
+to be in the file, and what is not in it; `sources.toml` names the licence of each part,
+and the repository, the revision and the SHA-256 of every text. The test holds the folder
+to the go-pdfium that `go.mod` names and to the `pdfium.wasm` in the module cache: **a new
+go-pdfium fails it until the file has been looked at again**, as the last section of that
+`README.md` describes.
 
-The deb and rpm packages state their licence as the kinds of licence in `NOTICES`, in
-SPDX's words (`license` in `.goreleaser.yaml`). Add to it when a dependency brings a kind
-that is not there.
+The deb and rpm packages state as their licence every kind of licence in `NOTICES`, in
+SPDX's words (`license` in `.goreleaser.yaml`). A test holds it to what is written down
+for each part: it fails when a part is under a kind the packages do not name, and when
+they name one that nothing is under.
 
 ## The install script
 
@@ -113,7 +123,9 @@ It needs `curl`, `tar` and `sha256sum` or `shasum`, and no sudo. It:
    and only once both new ones have run `--version` there: the two are one release, and
    neither is installed when either does not run, and nothing is from an archive that
    holds only one. It puts the man page in `~/.local/share/man/man1`, and the archive's
-   `NOTICES` folder in `~/.local/share/doc/lamplight`, in place of an earlier release's;
+   `NOTICES` folder in `~/.local/share/doc/lamplight`, in place of an earlier release's:
+   the new folder is whole beside the earlier one before it takes its name, so a failure
+   leaves the earlier one as it was, and the script says so;
 4. runs `study completion install` for the learner's shell, and goes on when that fails;
 5. says when `~/.local/bin` is not on the `PATH`, or when another `study` comes first there,
    and prints the next steps: `study setup`, and the two commands that register Shelf and

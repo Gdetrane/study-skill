@@ -46,6 +46,9 @@ type Part struct {
 	Name string `toml:"name"`
 	// Version is the part's own name for what was built, where it has one.
 	Version string `toml:"version"`
+	// Licence is the licence the part is under, in SPDX's words: the one it
+	// is taken under where it is offered under a choice.
+	Licence string `toml:"licence"`
 	// Repository and Revision say where the part's source was read.
 	Repository string     `toml:"repository"`
 	Revision   string     `toml:"revision"`
@@ -61,10 +64,11 @@ type PartFile struct {
 	SHA256 string `toml:"sha256"`
 }
 
-// readPDFium reads the hand-kept folder and holds it to the go-pdfium that
-// is linked. It returns nil when no program links go-pdfium and there is no
-// folder.
-func readPDFium(folder string, modules []Module) (*Sources, error) {
+// ReadPDFium reads the hand-kept folder and holds it to the go-pdfium among
+// modules. It returns nil when no program links go-pdfium and there is no
+// folder, and refuses a folder that is there for a go-pdfium nothing links:
+// it would be carried as the notices of a file no program holds.
+func ReadPDFium(folder string, modules []Module) (*Sources, error) {
 	var linked *Module
 	for i := range modules {
 		if modules[i].Path == pdfiumModule {
@@ -105,7 +109,9 @@ func ReadSources(folder string) (*Sources, error) {
 
 // Check holds the folder to the go-pdfium that is linked: the notices were
 // written for that version and for the pdfium.wasm it embeds, and the folder
-// holds each file the list names, unchanged, and no other.
+// holds each file the list names, unchanged, and no other but README.md,
+// which says how the list was made and which NOTICES/README.md links to.
+// Each part's files read as the licence the list says the part is under.
 //
 // A new go-pdfium brings a pdfium.wasm built from another PDFium, perhaps
 // with other parts. Nothing here can tell: the check fails until someone has
@@ -139,6 +145,9 @@ func (s *Sources) Check(folder string, linked Module) error {
 
 	var problems []error
 	listed := map[string]bool{"README.md": true, sourcesFile: true}
+	if _, err := os.Stat(filepath.Join(folder, "README.md")); err != nil {
+		problems = append(problems, fmt.Errorf("%s has no README.md, which says how each part was found: %w", folder, err))
+	}
 	if len(s.Parts) == 0 {
 		problems = append(problems, fmt.Errorf("%s names no part", name))
 	}
@@ -146,19 +155,26 @@ func (s *Sources) Check(folder string, linked Module) error {
 		if part.Name == "" || part.Repository == "" || part.Revision == "" || len(part.Files) == 0 {
 			problems = append(problems, fmt.Errorf("%s: the part %q needs a name, a repository, a revision and a file", name, part.Name))
 		}
+		var texts [][]byte
 		for _, file := range part.Files {
 			if !filepath.IsLocal(filepath.FromSlash(file.Path)) || file.Source == "" {
 				problems = append(problems, fmt.Errorf("%s: %s: the file %q needs a path inside the folder and a source", name, part.Name, file.Path))
 				continue
 			}
 			listed[file.Path] = true
-			sum, err := sha256File(filepath.Join(folder, filepath.FromSlash(file.Path)))
+			data, err := os.ReadFile(filepath.Join(folder, filepath.FromSlash(file.Path)))
 			if err != nil {
 				problems = append(problems, fmt.Errorf("%s names a file that is not there: %w", name, err))
-			} else if sum != file.SHA256 {
+				continue
+			}
+			texts = append(texts, data)
+			if sum := sha256Hex(data); sum != file.SHA256 {
 				problems = append(problems, fmt.Errorf("%s is not the file %s names: its SHA-256 is %s, not %s. A notice is copied as it is, never edited",
 					filepath.Join(folder, filepath.FromSlash(file.Path)), sourcesFile, sum, file.SHA256))
 			}
+		}
+		if err := borneOut(part.Licence, texts...); err != nil {
+			problems = append(problems, fmt.Errorf("%s: the part %q: %w", name, part.Name, err))
 		}
 	}
 	err := filepath.WalkDir(folder, func(file string, entry fs.DirEntry, err error) error {
@@ -182,8 +198,12 @@ func sha256File(name string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	return sha256Hex(data), nil
+}
+
+func sha256Hex(data []byte) string {
 	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:]), nil
+	return hex.EncodeToString(sum[:])
 }
 
 // index is the part of README.md about what is inside pdfium.wasm.
@@ -206,7 +226,7 @@ file is made of and how that was found out.
 		if part.Version != "" {
 			name += " " + part.Version
 		}
-		fmt.Fprintf(&b, "- %s: %s\n", name, strings.Join(links, ", "))
+		fmt.Fprintf(&b, "- %s (%s): %s\n", name, part.Licence, strings.Join(links, ", "))
 	}
 	return b.String()
 }

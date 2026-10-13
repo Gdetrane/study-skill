@@ -85,12 +85,14 @@ nfpms:
     description: "Lamplight: see where you are in your studies, and what to do next"
     # Lamplight's own licence is MIT. The package also carries what its two
     # programs are built from, so this names every kind of licence in
-    # NOTICES, in SPDX's words: add to it when a dependency brings another
-    # kind. Anti-Grain Geometry's has no name there; PDFium files it as MIT.
+    # NOTICES, in SPDX's words, and no other: a test in internal/notices
+    # holds it to the licence written down for each part. Anti-Grain
+    # Geometry's has no name in SPDX's list, and LicenseRef-AGG-2.3 stands
+    # for the text in NOTICES/pdfium/agg/copying.
     license: >-
       MIT AND Apache-2.0 AND Apache-2.0 WITH LLVM-exception AND BSD-2-Clause
-      AND BSD-3-Clause AND FTL AND ICU AND IJG AND Unicode-3.0 AND Zlib AND
-      blessing
+      AND BSD-3-Clause AND FTL AND ICU AND IJG AND LicenseRef-AGG-2.3 AND
+      MIT-Modern-Variant AND Unicode-3.0 AND Zlib AND blessing
     maintainer: Gdetrane <Gdetrane@users.noreply.github.com>
     vendor: mordor-forge
     formats: [deb, rpm]

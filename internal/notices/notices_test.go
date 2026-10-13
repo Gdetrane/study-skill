@@ -219,15 +219,131 @@ func TestEveryArchiveAndPackageIsToldToCarryTheNotices(t *testing.T) {
 		if where["deb"] != "/usr/share/doc/lamplight/"+notices.Folder || where["rpm"] != "/usr/share/licenses/lamplight/"+notices.Folder {
 			t.Errorf("the packages put the whole folder in %v, want it beside Lamplight's licence in the deb and in the rpm", where)
 		}
-		for _, kind := range []string{"MIT", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause"} {
-			if !slices.Contains(strings.Split(pkg.License, " AND "), kind) {
-				t.Errorf("the packages state the licence %q, which does not name %s", pkg.License, kind)
+	}
+}
+
+// The packages state as their licence the licences of everything they
+// carry: every kind that the list in NOTICES names, and no other. A
+// dependency that brings a kind of licence the packages do not name fails
+// here, and so does a kind the packages name that nothing is under any more.
+func TestThePackagesStateEveryKindOfLicenceInTheNotices(t *testing.T) {
+	set, err := notices.Read(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(repo, ".goreleaser.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config struct {
+		Nfpms []struct {
+			License string `yaml:"license"`
+		} `yaml:"nfpms"`
+	}
+	if err := yaml.Unmarshal(data, &config); err != nil {
+		t.Fatal(err)
+	}
+	want := set.Licences()
+	if len(config.Nfpms) == 0 || len(want) < 5 {
+		t.Fatalf(".goreleaser.yaml has %d packages and the notices are under %v, so this test proves nothing", len(config.Nfpms), want)
+	}
+	for _, pkg := range config.Nfpms {
+		stated := strings.Split(pkg.License, " AND ")
+		for _, kind := range want {
+			if !slices.Contains(stated, kind) {
+				t.Errorf("a part in %s is under %s, which the packages' licence does not name: add it to license in .goreleaser.yaml\n%s",
+					notices.Folder, kind, pkg.License)
+			}
+		}
+		for _, kind := range stated {
+			if !slices.Contains(want, kind) {
+				t.Errorf("the packages' licence names %s, which nothing in %s is under: remove it from license in .goreleaser.yaml", kind, notices.Folder)
 			}
 		}
 	}
 }
 
-// module makes a module's folder as the module cache would hold it.
+// aRepository makes a repository that holds the two programs of a release
+// and the files given, and nothing of Lamplight's.
+func aRepository(t *testing.T, files map[string]string) string {
+	t.Helper()
+	dir := t.TempDir()
+	for name, text := range map[string]string{
+		"go.mod":                  "module example.com/app\n\ngo 1.26\n",
+		"cmd/study/main.go":       "package main\n\nfunc main() {}\n",
+		"cmd/study-shelf/main.go": "package main\n\nfunc main() {}\n",
+	} {
+		if _, given := files[name]; !given {
+			write(t, dir, name, text)
+		}
+	}
+	for name, text := range files {
+		write(t, dir, name, text)
+	}
+	return dir
+}
+
+// What is linked is asked of the go command as a release builds: the
+// caller's build flags and cgo are not a release's, and either would change
+// the answer. Here each would add a file that imports a module nobody has,
+// which the go command refuses.
+func TestWhatIsLinkedIsAskedAsAReleaseBuilds(t *testing.T) {
+	absent := "package main\n\nimport _ \"example.com/absent\"\n"
+	repo := aRepository(t, map[string]string{
+		"cmd/study/tagged.go":       "//go:build extra\n\n" + absent,
+		"cmd/study-shelf/with_c.go": "//go:build cgo\n\n" + absent,
+	})
+	t.Setenv("GOFLAGS", "-tags=extra")
+	t.Setenv("CGO_ENABLED", "1")
+	modules, err := notices.Linked(repo)
+	if err != nil {
+		t.Fatalf("the caller's GOFLAGS or CGO_ENABLED reached the go command:\n%v", err)
+	}
+	if len(modules) != 0 {
+		t.Errorf("two programs that import nothing link %v", modules)
+	}
+
+	// The proof that the two files are what the settings keep out.
+	for name, file := range map[string]string{"build tag": "cmd/study/tagged.go", "cgo": "cmd/study-shelf/with_c.go"} {
+		plain := aRepository(t, map[string]string{file: absent})
+		if _, err := notices.Linked(plain); err == nil || !strings.Contains(err.Error(), "example.com/absent") {
+			t.Errorf("the file behind the %s, built in, should have failed the listing: %v", name, err)
+		}
+	}
+}
+
+// A module that go.mod replaces is built from other code than its path
+// says, and may be under another licence: a person has to say whose notice
+// it carries.
+func TestAReplacedModuleIsRefused(t *testing.T) {
+	repo := aRepository(t, map[string]string{
+		"go.mod":            "module example.com/app\n\ngo 1.26\n\nrequire example.com/dep v0.0.0\n\nreplace example.com/dep => ./dep\n",
+		"dep/go.mod":        "module example.com/dep\n\ngo 1.26\n",
+		"dep/dep.go":        "package dep\n",
+		"dep/LICENSE":       mit,
+		"cmd/study/main.go": "package main\n\nimport _ \"example.com/dep\"\n\nfunc main() {}\n",
+	})
+	_, err := notices.Linked(repo)
+	if err == nil || !strings.Contains(err.Error(), "example.com/dep is replaced") {
+		t.Errorf("a replaced module was not refused by name: %v", err)
+	}
+}
+
+// What licences.go says of a module that is no longer linked is said of
+// nothing. Here no module of Lamplight's is linked at all.
+func TestWhatIsWrittenDownOfAModuleNothingLinksIsRefused(t *testing.T) {
+	_, err := notices.Read(aRepository(t, nil))
+	if err == nil || !strings.Contains(err.Error(), "which no program links") || !strings.Contains(err.Error(), "github.com/spf13/cobra") {
+		t.Errorf("a table that speaks of modules no program links was not refused: %v", err)
+	}
+}
+
+// mit is what any text of the MIT licence says, as far as this package
+// checks, with the white space of a real file.
+const mit = "Permission is hereby granted, free\r\n  of charge, to whoever reads this  \n"
+
+// module makes a module's folder as the module cache would hold it, for a
+// module that licences.go says is under MIT.
 func module(t *testing.T, path string, files map[string]string) notices.Module {
 	t.Helper()
 	dir := t.TempDir()
@@ -240,66 +356,136 @@ func module(t *testing.T, path string, files map[string]string) notices.Module {
 			t.Fatal(err)
 		}
 	}
-	return notices.Module{Path: path, Version: "v1.2.3", Dir: dir, Packages: []string{"."},
+	return notices.Module{Path: path, Version: "v1.2.3", Dir: dir, Packages: []string{"."}, Licence: "MIT",
 		LinkedBy: map[string][]notices.Target{"study-shelf": notices.Targets[2:]}}
 }
 
-func TestCollectReadsALicenceAndANoticeWhereverAModuleKeepsThem(t *testing.T) {
+// The rule is about names alone: kindOf in the package says it in words.
+func TestCollectReadsALicenceAndWhatStandsBesideItWhateverTheyAreCalled(t *testing.T) {
 	mod := module(t, "example.com/many", map[string]string{
-		"LICENSE":             "the licence\r\n  as it is  \n",
-		"NOTICE":              "the notice",
-		"LICENSE-MIT":         "a second licence",
-		"COPYING.LESSER":      "a third",
-		"licence.txt":         "in lower case",
+		// Licences.
+		"LICENSE":            mit,
+		"LICENSE-MIT":        "a second licence",
+		"COPYING.LESSER":     "a third",
+		"licence.txt":        "in lower case",
+		"MIT-LICENSE":        "with the word last",
+		"icu-license.html":   "<html>of code it took from elsewhere</html>",
+		"UNLICENSE":          "holds the word",
+		"COPYRIGHT":          "as musl names its own",
+		"LICENSES/MIT.txt":   "one text for each licence, in a folder",
+		"LICENSES/README.md": "whatever its name, in that folder",
+		// What stands beside one.
+		"NOTICE":                 "the notice",
+		"THIRD_PARTY_NOTICES.md": "of others",
+		"AUTHORS":                "who the authors are",
+		"CONTRIBUTORS.md":        "and the contributors",
+		// Neither.
 		"license.go":          "package many",
-		"LICENSES/MIT.txt":    "in a folder, which is not read",
-		"NOTICES.md":          "not a notice by its name",
-		"README.md":           "not one either",
-		"inner/used/LICENSE":  "of code taken from elsewhere, and linked",
-		"inner/COPYING":       "above a linked package",
-		"inner/unused/NOTICE": "beside a package that is not linked",
+		"licenses_test.go":    "package many",
+		".licenserc.yaml":     "a tool's settings",
+		"PATENTS":             "a grant, which asks nothing of who passes the code on",
+		"README.md":           "MIT, it says here",
+		"COPYRIGHT-HOLDERS":   "not a name the rule knows",
+		"docs/LICENSE":        "in a folder no linked package is in",
 		"testdata/LICENSE":    "of test data",
+		"inner/unused/NOTICE": "beside a package that is not linked",
+		// In and above the folder of a linked package.
+		"inner/used/LICENSE": "of code taken from elsewhere, and linked",
+		"inner/COPYING":      "above a linked package",
+		"inner/AUTHORS":      "of that code",
 	})
 	mod.Packages = []string{".", "inner/used"}
 	found, err := notices.Collect([]notices.Module{mod})
 	if err != nil {
 		t.Fatal(err)
 	}
-	var names []string
+	var licences, beside []string
 	for _, file := range found[0].Files {
-		names = append(names, file.Path)
+		if file.Licence {
+			licences = append(licences, file.Path)
+		} else {
+			beside = append(beside, file.Path)
+		}
 	}
-	want := []string{"COPYING.LESSER", "LICENSE", "LICENSE-MIT", "NOTICE", "licence.txt", "inner/COPYING", "inner/used/LICENSE"}
-	if !slices.Equal(names, want) {
-		t.Errorf("Collect read %v, want %v", names, want)
+	slices.Sort(licences)
+	slices.Sort(beside)
+	wantLicences := []string{"COPYING.LESSER", "COPYRIGHT", "LICENSE", "LICENSE-MIT", "LICENSES/MIT.txt", "LICENSES/README.md",
+		"MIT-LICENSE", "UNLICENSE", "icu-license.html", "inner/COPYING", "inner/used/LICENSE", "licence.txt"}
+	if !slices.Equal(licences, wantLicences) {
+		t.Errorf("Collect read as licences\n%v, want\n%v", licences, wantLicences)
+	}
+	wantBeside := []string{"AUTHORS", "CONTRIBUTORS.md", "NOTICE", "THIRD_PARTY_NOTICES.md", "inner/AUTHORS"}
+	if !slices.Equal(beside, wantBeside) {
+		t.Errorf("Collect read beside them\n%v, want\n%v", beside, wantBeside)
 	}
 	// Byte for byte: a licence is never tidied.
-	if got := string(found[0].Files[1].Data); got != "the licence\r\n  as it is  \n" {
-		t.Errorf("the licence was read as %q", got)
+	for _, file := range found[0].Files {
+		if file.Path == "LICENSE" && string(file.Data) != mit {
+			t.Errorf("the licence was read as %q", file.Data)
+		}
 	}
 }
 
 func TestAModuleWithNoLicenceFileIsRefused(t *testing.T) {
-	bare := module(t, "example.com/bare", map[string]string{"README.md": "MIT, it says here", "inner/unused/LICENSE": "not linked"})
-	fine := module(t, "example.com/fine", map[string]string{"LICENSE": "a licence"})
-	_, err := notices.Collect([]notices.Module{bare, fine})
-	if err == nil {
-		t.Fatal("a module that ships no licence file was accepted")
-	}
-	for _, want := range []string{"example.com/bare v1.2.3", "study-shelf on macOS", "no licence file"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("the refusal lacks %q: %v", want, err)
+	fine := module(t, "example.com/fine", map[string]string{"LICENSE": mit})
+	for name, files := range map[string]map[string]string{
+		"nothing but a README":             {"README.md": "MIT, it says here", "inner/unused/LICENSE": mit},
+		"a notice and its authors alone":   {"NOTICE": mit, "AUTHORS": "someone"},
+		"a grant of patents alone":         {"PATENTS": mit},
+		"a licence in Go alone":            {"license.go": "package bare // " + mit},
+		"a hidden file alone":              {".LICENSE": mit},
+		"a folder of that name, not files": {"LICENSE/README.md": mit},
+	} {
+		bare := module(t, "example.com/bare", files)
+		_, err := notices.Collect([]notices.Module{bare, fine})
+		if err == nil {
+			t.Fatalf("a module with %s was accepted", name)
+		}
+		for _, want := range []string{"example.com/bare v1.2.3", "study-shelf on macOS", "no licence file"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("%s: the refusal lacks %q: %v", name, want, err)
+			}
+		}
+		if strings.Contains(err.Error(), "example.com/fine") {
+			t.Errorf("%s: the refusal names a module that has its licence: %v", name, err)
 		}
 	}
-	if strings.Contains(err.Error(), "example.com/fine") {
-		t.Errorf("the refusal names a module that has its licence: %v", err)
+}
+
+// Under which licence a module is, a person says, in licences.go. A module
+// nobody has read is not released, and neither is one whose files do not
+// read as the licence that was written down for it.
+func TestAModuleIsHeldToTheLicenceWrittenDownForIt(t *testing.T) {
+	for _, tc := range []struct {
+		name, licence, text, want string
+	}{
+		{"nothing is written down", "", mit, "say under which licence it is"},
+		{"another licence is written down", "Apache-2.0", mit, "said to be under Apache-2.0"},
+		{"one of two is not in its files", "MIT AND BSD-3-Clause", mit, "said to be under BSD-3-Clause"},
+		{"a licence nothing knows the wording of", "MIT AND Imagined-1.0", mit, `"Imagined-1.0" is a licence internal/notices knows no wording of`},
+	} {
+		mod := module(t, "example.com/unread", map[string]string{"LICENSE": tc.text, "NOTICE": "Apache License, Version 2.0, it says beside it"})
+		mod.Licence = tc.licence
+		_, err := notices.Collect([]notices.Module{mod})
+		if err == nil || !strings.Contains(err.Error(), "example.com/unread v1.2.3") || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: want a refusal that names the module and says %q, got %v", tc.name, tc.want, err)
+		}
+	}
+	// Both of two, each in a file of its own, and across line breaks.
+	mod := module(t, "example.com/two", map[string]string{
+		"LICENSE":     mit,
+		"LICENSE-BSD": "Redistribution and use in source and\nbinary forms is permitted. Neither the\nname of anyone nor of anything.",
+	})
+	mod.Licence = "MIT AND BSD-3-Clause"
+	if _, err := notices.Collect([]notices.Module{mod}); err != nil {
+		t.Errorf("a module under two licences, with a file for each, was refused: %v", err)
 	}
 }
 
 // PDFium came inside a module whose own licence says nothing of it. A file
 // a module embeds is looked at by a person before it is released.
 func TestAModuleThatEmbedsAFileIsRefusedUntilItIsLookedAt(t *testing.T) {
-	mod := module(t, "example.com/blob", map[string]string{"LICENSE": "a licence", "engine.wasm": "\x00asm"})
+	mod := module(t, "example.com/blob", map[string]string{"LICENSE": mit, "engine.wasm": "\x00asm"})
 	mod.Embedded = []string{"engine.wasm"}
 	_, err := notices.Collect([]notices.Module{mod})
 	if err == nil || !strings.Contains(err.Error(), "example.com/blob v1.2.3") || !strings.Contains(err.Error(), "embeds engine.wasm") {
@@ -342,9 +528,9 @@ func TestWriteReplacesWhatItWroteAndKeepsWhatIsKeptByHand(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	found, err := notices.Collect([]notices.Module{
-		module(t, "example.com/Mixed/case/v2", map[string]string{"LICENSE.txt": "a licence", "NOTICE": "a notice"}),
-	})
+	remarked := module(t, "example.com/Mixed/case/v2", map[string]string{"LICENSE.txt": mit, "NOTICE": "a notice"})
+	remarked.Remark = "A port of something under another licence, which is not here."
+	found, err := notices.Collect([]notices.Module{remarked, module(t, "example.com/plain", map[string]string{"COPYING": mit})})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -357,8 +543,9 @@ func TestWriteReplacesWhatItWroteAndKeepsWhatIsKeptByHand(t *testing.T) {
 	delete(got, "README.md")
 	want := map[string]string{
 		"go/LICENSE": "Go's licence",
-		"modules/example.com/Mixed/case/v2/LICENSE.txt": "a licence",
+		"modules/example.com/Mixed/case/v2/LICENSE.txt": mit,
 		"modules/example.com/Mixed/case/v2/NOTICE":      "a notice",
+		"modules/example.com/plain/COPYING":             mit,
 		"pdfium/README.md":                              "kept by hand",
 		"pdfium/zlib/LICENSE":                           "kept by hand too",
 	}
@@ -370,10 +557,16 @@ func TestWriteReplacesWhatItWroteAndKeepsWhatIsKeptByHand(t *testing.T) {
 			t.Errorf("%s holds %q, want %q", name, got[name], text)
 		}
 	}
-	line := "- `example.com/Mixed/case/v2` v1.2.3, in `study-shelf` on macOS: " +
-		"[LICENSE.txt](modules/example.com/Mixed/case/v2/LICENSE.txt), [NOTICE](modules/example.com/Mixed/case/v2/NOTICE)\n"
-	if !strings.Contains(index, line) || !strings.Contains(index, "[LICENSE](go/LICENSE)") {
-		t.Errorf("the list does not name the module's files and Go's licence:\n%s", index)
+	// Each module with its licence, and what is remarked of one under it.
+	lines := "- `example.com/Mixed/case/v2` v1.2.3 (MIT), in `study-shelf` on macOS: " +
+		"[LICENSE.txt](modules/example.com/Mixed/case/v2/LICENSE.txt), [NOTICE](modules/example.com/Mixed/case/v2/NOTICE)\n" +
+		"\n  A port of something under another licence, which is not here.\n\n" +
+		"- `example.com/plain` v1.2.3 (MIT), in `study-shelf` on macOS: [COPYING](modules/example.com/plain/COPYING)\n"
+	if !strings.Contains(index, lines) || !strings.Contains(index, "BSD-3-Clause: [LICENSE](go/LICENSE)") {
+		t.Errorf("the list does not name the modules' files and licences, a remark, and Go's licence:\n%s", index)
+	}
+	if kinds := set.Licences(); !slices.Equal(kinds, []string{"BSD-3-Clause", "MIT"}) {
+		t.Errorf("the set is under %v, want Go's licence and the modules'", kinds)
 	}
 	if strings.Contains(index, "PDFium") {
 		t.Errorf("the list speaks of PDFium when no program links it:\n%s", index)

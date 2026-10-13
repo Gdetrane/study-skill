@@ -129,14 +129,15 @@ jobs:
           test -s "$home/.local/share/man/man1/study.1.gz"
           test -s "$home/.local/share/bash-completion/completions/study"
           # The notices were installed whole, and they are of these two
-          # programs: every module a released build names has its folder there.
+          # programs: every module a released build names has a file of its
+          # own there, not only a folder that holds another module's.
           notices="$home/.local/share/doc/lamplight/NOTICES"
           diff -r NOTICES "$notices"
           for program in study study-shelf; do
             go version -m "$home/.local/bin/$program" | awk '$1 == "dep" { print $2 }' > "$home/deps"
             test -s "$home/deps"
             while read -r module; do
-              test -d "$notices/modules/$module" || { echo "the released $program holds $module, which has no notice"; exit 1; }
+              find "$notices/modules/$module" -maxdepth 1 -type f | grep -q . || { echo "the released $program holds $module, which has no notice"; exit 1; }
             done < "$home/deps"
           done
           # study links nothing of Shelf's (ADR-0012), in the release's builds too.
@@ -218,7 +219,7 @@ jobs:
             go version -m "$home/.local/bin/$program" | awk '$1 == "dep" { print $2 }' > "$home/deps"
             test -s "$home/deps"
             while read -r module; do
-              test -d "$notices/modules/$module" || { echo "the released $program holds $module, which has no notice"; exit 1; }
+              find "$notices/modules/$module" -maxdepth 1 -type f | grep -q . || { echo "the released $program holds $module, which has no notice"; exit 1; }
             done < "$home/deps"
           done
           export STUDY_HOME="$home/study" PATH="$home/.local/bin:$PATH"

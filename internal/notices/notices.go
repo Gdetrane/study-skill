@@ -5,14 +5,17 @@
 // What a program is built from is what the go command says it links, for
 // each system a release is built for. go.mod says more: it also names what
 // only tests use, and what only systems no release is built for use. A
-// module's notice is its licence file as the module cache holds it, and its
-// NOTICE file where it has one, byte for byte. Go's own licence stands for
-// the standard library.
+// module's notice is its licence files as the module cache holds them, and
+// the files that stand beside them, byte for byte: which files those are is
+// decided by their names (kindOf). Go's own licence stands for the standard
+// library.
 //
-// One part is kept by hand: what is inside the pdfium.wasm that go-pdfium
-// embeds, which arrives built, with no licence beside it. NOTICES/pdfium
-// holds those texts, and its sources.toml says where each came from and
-// which go-pdfium they were written for (pdfium.go).
+// Two things are written by a person and held to the rest: under which
+// licence each module is, in SPDX's words (licences.go), and what is inside
+// the pdfium.wasm that go-pdfium embeds, which arrives built, with no
+// licence beside it. NOTICES/pdfium holds those texts, and its sources.toml
+// says where each came from and which go-pdfium they were written for
+// (pdfium.go).
 package notices
 
 import (
@@ -61,6 +64,10 @@ type Module struct {
 	Embedded []string
 	// LinkedBy says which program links it, and for which systems.
 	LinkedBy map[string][]Target
+	// Licence is the licence it is under, in SPDX's words, and Remark what
+	// a reader should know besides: what licences.go says of it.
+	Licence string
+	Remark  string
 }
 
 // A Notice is a module and the licence and notice files it ships.
@@ -69,11 +76,14 @@ type Notice struct {
 	Files []File
 }
 
-// A File is one licence or notice, as its module ships it.
+// A File is one licence, or one file that stands beside a licence, as its
+// module ships it.
 type File struct {
 	// Path is where the module keeps it, with slashes.
 	Path string
 	Data []byte
+	// Licence says that it is a licence, and not a file beside one.
+	Licence bool
 }
 
 // A Set is what the folder holds.
@@ -92,9 +102,12 @@ type Set struct {
 // Read finds out what the programs of the repository at repo are built from
 // and reads the notice of each part.
 func Read(repo string) (*Set, error) {
-	modules, err := linked(repo)
+	modules, err := Linked(repo)
 	if err != nil {
 		return nil, err
+	}
+	if gone := unlinked(modules); len(gone) != 0 {
+		return nil, fmt.Errorf("internal/notices/licences.go speaks of %s, which no program links: remove it there", strings.Join(gone, ", "))
 	}
 	set := &Set{}
 	if set.Modules, err = Collect(modules); err != nil {
@@ -114,15 +127,23 @@ func Read(repo string) (*Set, error) {
 	if err != nil {
 		return nil, err
 	}
-	if set.PDFium, err = readPDFium(filepath.Join(folder, pdfiumFolder), modules); err != nil {
+	if err := borneOut(goLicence, set.Go); err != nil {
+		return nil, fmt.Errorf("Go's licence: %w", err)
+	}
+	if set.PDFium, err = ReadPDFium(filepath.Join(folder, pdfiumFolder), modules); err != nil {
 		return nil, err
 	}
 	return set, nil
 }
 
-// linked asks the go command what each program is built from, for each
-// system, as a release builds it: without cgo and without build tags.
-func linked(repo string) ([]Module, error) {
+// Linked asks the go command what each program of the repository at repo is
+// built from, for each system, as a release builds it: without cgo and
+// without build tags, whatever the caller's environment asks for. Each
+// module comes with what licences.go says of it.
+//
+// A module that go.mod replaces is refused: its code is another's, and
+// nothing here knows whose notice it then carries.
+func Linked(repo string) ([]Module, error) {
 	found := map[string]*Module{}
 	packages := map[string]map[string]bool{}
 	embedded := map[string]map[string]bool{}
@@ -167,10 +188,27 @@ func linked(repo string) ([]Module, error) {
 	for name, mod := range found {
 		mod.Packages = sorted(packages[name])
 		mod.Embedded = sorted(embedded[name])
+		mod.Licence, mod.Remark = licences[name], remarks[name]
 		modules = append(modules, *mod)
 	}
 	sort.Slice(modules, func(i, j int) bool { return modules[i].Path < modules[j].Path })
 	return modules, nil
+}
+
+// unlinked are the modules licences.go speaks of that are not among modules.
+// What is said of a module that is no longer linked is said of nothing, and
+// would stay in the table as if it were true.
+func unlinked(modules []Module) []string {
+	spoken := map[string]bool{}
+	for _, table := range []map[string]string{licences, remarks} {
+		for name := range table {
+			spoken[name] = true
+		}
+	}
+	for _, mod := range modules {
+		delete(spoken, mod.Path)
+	}
+	return sorted(spoken)
 }
 
 func sorted(set map[string]bool) []string {
@@ -241,14 +279,18 @@ func goLicense(repo string) ([]byte, error) {
 	return data, err
 }
 
-// Collect reads the licence and notice files of each module. A module with
-// none is an error, which names it and what links it: it cannot be shipped
-// until its notice is found by hand.
+// Collect reads the licence files of each module, and the files that stand
+// beside them. Each of these is an error, which names the module and what
+// links it, since none can be released until a person has looked:
 //
-// So is a module that embeds a file, other than go-pdfium, whose
-// pdfium.wasm NOTICES/pdfium is for. A file a module embeds is not Go: it
-// may be a program built elsewhere, from parts with licences of their own
-// that no licence file of the module names, which is how PDFium arrived.
+//   - a module that ships no licence file: a NOTICE or a list of authors
+//     alone is no licence;
+//   - a module of which licences.go does not say under which licence it is,
+//     or says one that its files do not read as;
+//   - a module that embeds a file, other than go-pdfium, whose pdfium.wasm
+//     NOTICES/pdfium is for. A file a module embeds is not Go: it may be a
+//     program built elsewhere, from parts with licences of their own that
+//     no licence file of the module names, which is how PDFium arrived.
 func Collect(modules []Module) ([]Notice, error) {
 	var notices []Notice
 	var missing []error
@@ -257,9 +299,24 @@ func Collect(modules []Module) ([]Notice, error) {
 		if err != nil {
 			return nil, err
 		}
-		if len(files) == 0 {
+		var texts [][]byte
+		for _, file := range files {
+			if file.Licence {
+				texts = append(texts, file.Data)
+			}
+		}
+		if len(texts) == 0 {
 			missing = append(missing, fmt.Errorf("%s %s, in %s, ships no licence file that internal/notices knows the name of (looked in %s)",
 				mod.Path, mod.Version, LinkedBy(mod), mod.Dir))
+			continue
+		}
+		if mod.Licence == "" {
+			missing = append(missing, fmt.Errorf("%s %s, in %s: read its licence files and say under which licence it is, in SPDX's words, in licences in internal/notices/licences.go",
+				mod.Path, mod.Version, LinkedBy(mod)))
+			continue
+		}
+		if err := borneOut(mod.Licence, texts...); err != nil {
+			missing = append(missing, fmt.Errorf("%s %s, in %s: %w (licences in internal/notices/licences.go)", mod.Path, mod.Version, LinkedBy(mod), err))
 			continue
 		}
 		if unknown := unknownEmbeds(mod); len(unknown) != 0 {
@@ -290,10 +347,12 @@ func unknownEmbeds(mod Module) []string {
 	return unknown
 }
 
-// noticeFiles reads a module's licence and notice files: those at its root,
-// and those in the folder of a linked package or in a folder above it, which
-// is where a module keeps the licence of code it took from elsewhere. One
-// beside a package that is not linked, or beside test data, is not read.
+// noticeFiles reads a module's licence files and the files beside them:
+// those at its root, and those in the folder of a linked package or in a
+// folder above it, which is where a module keeps the licence of code it took
+// from elsewhere. One beside a package that is not linked, or beside test
+// data, is not read. In each of those folders, a folder named LICENSES is
+// read too: some modules keep one text for each licence there.
 func noticeFiles(mod Module) ([]File, error) {
 	folders := map[string]bool{".": true}
 	for _, pkg := range mod.Packages {
@@ -302,13 +361,14 @@ func noticeFiles(mod Module) ([]File, error) {
 		}
 	}
 	var files []File
-	for _, dir := range sorted(folders) {
+	read := func(dir string, kind func(name string) fileKind) ([]fs.DirEntry, error) {
 		entries, err := os.ReadDir(filepath.Join(mod.Dir, filepath.FromSlash(dir)))
 		if err != nil {
 			return nil, fmt.Errorf("%s %s: %w", mod.Path, mod.Version, err)
 		}
 		for _, entry := range entries {
-			if !entry.Type().IsRegular() || !isNotice(entry.Name()) {
+			k := kind(entry.Name())
+			if !entry.Type().IsRegular() || k == neither {
 				continue
 			}
 			name := path.Join(dir, entry.Name())
@@ -316,27 +376,86 @@ func noticeFiles(mod Module) ([]File, error) {
 			if err != nil {
 				return nil, fmt.Errorf("%s %s: %w", mod.Path, mod.Version, err)
 			}
-			files = append(files, File{Path: name, Data: data})
+			files = append(files, File{Path: name, Data: data, Licence: k == licence})
+		}
+		return entries, nil
+	}
+	for _, dir := range sorted(folders) {
+		entries, err := read(dir, kindOf)
+		if err != nil {
+			return nil, err
+		}
+		for _, entry := range entries {
+			if entry.IsDir() && isLicencesFolder(entry.Name()) {
+				if _, err := read(path.Join(dir, entry.Name()), kindInLicencesFolder); err != nil {
+					return nil, err
+				}
+			}
 		}
 	}
 	return files, nil
 }
 
-// isNotice reports whether a file's name says it is a licence or a notice:
-// LICENSE, LICENCE, COPYING or NOTICE, in any case, alone or with more after
-// it, as in LICENSE.txt, LICENSE-MIT and COPYING.LESSER. A Go file is not
-// one, whatever it is called.
-func isNotice(name string) bool {
-	if strings.EqualFold(path.Ext(name), ".go") {
-		return false
+// A fileKind is what a module's file is, as far as its name tells.
+type fileKind int
+
+const (
+	neither fileKind = iota
+	// licence is a text of a licence.
+	licence
+	// beside is a file a licence stands with and is no licence itself.
+	beside
+)
+
+// kindOf decides from a file's name alone whether a module ships it as a
+// licence, or as a file that stands beside one. The rule, in any case of
+// the letters:
+//
+//   - A licence is a file whose name holds LICENSE, LICENCE or COPYING,
+//     wherever in the name: LICENSE, LICENSE.txt, LICENSE-MIT, MIT-LICENSE,
+//     icu-license.html, COPYING.LESSER, UNLICENSE. So is one named COPYRIGHT,
+//     with or without an extension.
+//   - Beside a licence stand a file whose name holds NOTICE, as NOTICE.txt
+//     and THIRD_PARTY_NOTICES.md do, which Apache-2.0 has carried along, and
+//     one named AUTHORS or CONTRIBUTORS, with or without an extension: many
+//     licences name "the authors" as the holders of the copyright, and these
+//     files say who they are.
+//   - Nothing else is either. PATENTS, which the Go project's modules ship,
+//     grants rights to whoever receives the code and asks nothing of whoever
+//     passes it on, so it is not carried. A Go file and a hidden file are
+//     never one, whatever they are called.
+//
+// The rule errs towards carrying a file: one that is carried and need not
+// be costs a line in the list, and one that is left out is a licence broken.
+func kindOf(name string) fileKind {
+	if strings.HasPrefix(name, ".") || strings.EqualFold(path.Ext(name), ".go") {
+		return neither
 	}
 	upper := strings.ToUpper(name)
-	for _, word := range []string{"LICENSE", "LICENCE", "COPYING", "NOTICE"} {
-		if rest, ok := strings.CutPrefix(upper, word); ok && (rest == "" || strings.ContainsRune(".-_", rune(rest[0]))) {
-			return true
-		}
+	stem, _, _ := strings.Cut(upper, ".")
+	switch {
+	case strings.Contains(upper, "LICENSE"), strings.Contains(upper, "LICENCE"), strings.Contains(upper, "COPYING"), stem == "COPYRIGHT":
+		return licence
+	case strings.Contains(upper, "NOTICE"), stem == "AUTHORS", stem == "CONTRIBUTORS":
+		return beside
 	}
-	return false
+	return neither
+}
+
+// isLicencesFolder reports whether a folder is one that holds a text for
+// each licence, as the REUSE layout has it: LICENSES, in any case and
+// spelling.
+func isLicencesFolder(name string) bool {
+	return strings.EqualFold(name, "LICENSES") || strings.EqualFold(name, "LICENCES")
+}
+
+// kindInLicencesFolder is kindOf for a file of such a folder, where every
+// file is a licence whatever its name: Apache-2.0.txt, MIT.txt.
+func kindInLicencesFolder(name string) fileKind {
+	if strings.HasPrefix(name, ".") || strings.EqualFold(path.Ext(name), ".go") {
+		return neither
+	}
+	return licence
 }
 
 // LinkedBy says in words what links a module: "study", "study and
@@ -418,16 +537,21 @@ func (s *Set) index() []byte {
 	b.WriteString(`# Notices
 
 Lamplight's two programs, ` + "`study`" + ` and ` + "`study-shelf`" + `, are built from what is listed here.
-This folder holds the licence of each part as its authors publish it, and its ` + "`NOTICE`" + ` file
-where it has one. Lamplight's own licence is the ` + "`LICENSE`" + ` file beside this folder.
+This folder holds the licence of each part as its authors publish it, with the files that
+stand beside it: its ` + "`NOTICE`" + `, and its list of authors where it has one. Lamplight's own
+licence is the ` + "`LICENSE`" + ` file beside this folder.
 
 ` + "`make notices`" + ` writes this file and the folders ` + "`go`" + ` and ` + "`modules`" + ` from the Go module
 cache: do not edit them. The folder ` + "`pdfium`" + ` is kept by hand, as its ` + "`README.md`" + ` says. A
 test fails when a program is built from a module that has no notice here.
 
+Each part is listed with the licence it is under, in the words of the SPDX licence list,
+as a person read it in the part's files. Where a part is offered under a choice of
+licences, the one named is the one it is taken under.
+
 ## Go
 
-Both programs hold Go's runtime and standard library: [LICENSE](go/LICENSE).
+Both programs hold Go's runtime and standard library, ` + goLicence + `: [LICENSE](go/LICENSE).
 
 ## Go modules
 
@@ -440,7 +564,10 @@ What the go command links into each program, for Linux and macOS, on amd64 and a
 			links = append(links, fmt.Sprintf("[%s](%s)", file.Path, path.Join("modules", notice.Path, file.Path)))
 		}
 		in := linkedBy(notice.Module, func(program string) string { return "`" + program + "`" })
-		fmt.Fprintf(&b, "- `%s` %s, in %s: %s\n", notice.Path, notice.Version, in, strings.Join(links, ", "))
+		fmt.Fprintf(&b, "- `%s` %s (%s), in %s: %s\n", notice.Path, notice.Version, notice.Licence, in, strings.Join(links, ", "))
+		if notice.Remark != "" {
+			fmt.Fprintf(&b, "\n  %s\n\n", notice.Remark)
+		}
 	}
 	if s.PDFium != nil {
 		b.WriteString(s.PDFium.index())

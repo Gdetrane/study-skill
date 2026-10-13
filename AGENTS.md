@@ -264,11 +264,17 @@ GOOS=darwin go vet ./...            # macOS is supported too
   commit what it writes with the change: a test in `internal/notices` makes the folder
   again, from what the go command says `./cmd/study` and `./cmd/study-shelf` link for each
   system a release is built for, and fails on any difference. Never edit a licence text,
-  not even its white space. `NOTICES/pdfium` is kept by hand, for the `pdfium.wasm` that
-  go-pdfium embeds: a new go-pdfium fails the test until someone has found what its file
-  was built from and what is in it, as that folder's `README.md` describes, and has put a
-  notice there only for a part the file itself shows. A module that ships no licence file,
-  or that embeds a file, waits for a person in the same way.
+  not even its white space. For a module that is new, read its licence files and write
+  the licence it is under, in SPDX's words, in `internal/notices/licences.go`: the
+  packages' `license` in `.goreleaser.yaml` names every kind written there and in
+  `NOTICES/pdfium/sources.toml`, and a test holds it to them. `NOTICES/pdfium` is kept by
+  hand, for the `pdfium.wasm` that go-pdfium embeds: a new go-pdfium fails the test until
+  someone has found what its file was built from and what is in it, as that folder's
+  `README.md` describes. The parts to look for come from the build files at that
+  revision, never from memory, and each is looked for in the file by constants as well
+  as by text, since most compiled code leaves no text: a part has a notice there when
+  the file itself shows it. A module that ships no licence file, or that embeds a file,
+  waits for a person in the same way.
 - Use conventional commit prefixes such as `fix:`, `feat:`, `docs:`, `test:` and `ci:`.
 - Do not commit built binaries, Study homes or agent assessment reports.
 
@@ -381,7 +387,8 @@ GOOS=darwin go vet ./...            # macOS is supported too
 - `NOTICES` and `internal/notices`: the licences and notices of what `study` and
   `study-shelf` are built from, which every archive and package carries, and the package
   that writes the folder (`gen`, run by `make notices`) and holds it to what the programs
-  link. `NOTICES/pdfium`, with its `sources.toml`, is kept by hand.
+  link. Its `licences.go` says under which licence each module is, and `kindOf` which of
+  a module's files are carried. `NOTICES/pdfium`, with its `sources.toml`, is kept by hand.
 - `install.sh`: the install script the README gives (ADR-0010), in POSIX `sh`. It installs
   `study` and `study-shelf`, and the archive's `NOTICES` beside them, and relies on the
   names of the release files and of the files in an archive, set in `.goreleaser.yaml` and

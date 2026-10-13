@@ -3,6 +3,10 @@
 # which revision. Written by hand, as README.md describes. internal/notices
 # holds it to go.mod, to the pdfium.wasm in the module cache and to the files
 # of this folder, and lists its parts in ../README.md.
+#
+# Each part's licence is in SPDX's words, as its files read. Where a part is
+# offered under a choice of licences, the one named is the one it is taken
+# under, and a comment says what the choice was.
 format = 1
 
 # The file these notices were written for. A go-pdfium of another version
@@ -16,6 +20,7 @@ sha256 = "d1dbc423597c0c65cd932cd1bb6a452fdc457a1f3b5009d3d5ec4ca768c47f53"
 [[part]]
 name = "PDFium"
 version = "chromium/8057"
+licence = "BSD-3-Clause AND Apache-2.0"
 repository = "https://pdfium.googlesource.com/pdfium"
 revision = "a5a7089234f121990b336b3841008009dca143bf"
 
@@ -26,9 +31,12 @@ revision = "a5a7089234f121990b336b3841008009dca143bf"
 
 # The three that PDFium keeps in its own tree, at PDFium's revision.
 
+# Its licence has no name in SPDX's list. PDFium's README.pdfium files it
+# under MIT, which its words are not.
 [[part]]
 name = "Anti-Grain Geometry"
 version = "2.3"
+licence = "LicenseRef-AGG-2.3"
 repository = "https://pdfium.googlesource.com/pdfium"
 revision = "a5a7089234f121990b336b3841008009dca143bf"
 
@@ -40,6 +48,7 @@ revision = "a5a7089234f121990b336b3841008009dca143bf"
 [[part]]
 name = "Little CMS"
 version = "2.19"
+licence = "MIT"
 repository = "https://pdfium.googlesource.com/pdfium"
 revision = "a5a7089234f121990b336b3841008009dca143bf"
 
@@ -51,6 +60,7 @@ revision = "a5a7089234f121990b336b3841008009dca143bf"
 [[part]]
 name = "OpenJPEG"
 version = "2.5.4"
+licence = "BSD-2-Clause"
 repository = "https://pdfium.googlesource.com/pdfium"
 revision = "a5a7089234f121990b336b3841008009dca143bf"
 
@@ -61,9 +71,13 @@ revision = "a5a7089234f121990b336b3841008009dca143bf"
 
 # Those that PDFium's DEPS file fetches, each at the revision DEPS names.
 
+# FreeType is offered under the FreeType License or the GPL, and is taken
+# under the first. fthash.c is under a licence of its own, which is written
+# nowhere but at the head of the file: so the file is here, whole.
 [[part]]
 name = "FreeType"
 version = "2.14.3"
+licence = "FTL AND MIT"
 repository = "https://chromium.googlesource.com/chromium/src/third_party/freetype2"
 revision = "4800589f76dc62fbe523a74a59e0d4850a5dd7df"
 
@@ -77,9 +91,27 @@ revision = "4800589f76dc62fbe523a74a59e0d4850a5dd7df"
   source = "docs/FTL.TXT"
   sha256 = "5a5ee54c5001bbad1cdc1a57cc3dd4c42199b2da09d39c7ee41fab002d02967f"
 
+  [[part.file]]
+  path = "freetype/src/base/fthash.c"
+  source = "src/base/fthash.c"
+  sha256 = "693e5a54b3ce30140975a94a3369dbe706eb1f280c69e80da426d39cc45b94ef"
+
+[[part]]
+name = "HarfBuzz"
+version = "14.3.1"
+licence = "MIT-Modern-Variant"
+repository = "https://chromium.googlesource.com/external/github.com/harfbuzz/harfbuzz"
+revision = "886fc1e645388080b72f6d9b06347533a0018045"
+
+  [[part.file]]
+  path = "harfbuzz/COPYING"
+  source = "COPYING"
+  sha256 = "ba8f810f2455c2f08e2d56bb49b72f37fcf68f1f4fade38977cfd7372050ad64"
+
 [[part]]
 name = "ICU"
 version = "78"
+licence = "Unicode-3.0 AND ICU"
 repository = "https://chromium.googlesource.com/chromium/deps/icu"
 revision = "8cc91d9b6ab9991802fd208ee03a69714fd0251c"
 
@@ -91,6 +123,7 @@ revision = "8cc91d9b6ab9991802fd208ee03a69714fd0251c"
 [[part]]
 name = "libjpeg-turbo"
 version = "3.1.0"
+licence = "IJG AND BSD-3-Clause"
 repository = "https://chromium.googlesource.com/chromium/deps/libjpeg_turbo"
 revision = "640f254ad0fa03f6b1f29f89b7dd9366f2f6e533"
 
@@ -108,6 +141,7 @@ revision = "640f254ad0fa03f6b1f29f89b7dd9366f2f6e533"
 [[part]]
 name = "zlib"
 version = "1.3.2"
+licence = "Zlib"
 repository = "https://chromium.googlesource.com/chromium/src/third_party/zlib"
 revision = "285e94b8fa95ad3b7d16b80798ec8dce6febb8c8"
 
@@ -116,8 +150,24 @@ revision = "285e94b8fa95ad3b7d16b80798ec8dce6febb8c8"
   source = "LICENSE"
   sha256 = "e32ff4e00d9d94930537635291da39e7e612703334bf6fde8c7f1686fe8a45a2"
 
+# Chromium's own files in its zlib, adler32_simd.c among them, name "the
+# Chromium source repository LICENSE file", which zlib's repository does not
+# hold. PDFium's DEPS names no revision of Chromium: this is the head of
+# Chromium's branch 8057, the one PDFium's chromium/8057 goes with.
+[[part]]
+name = "Chromium, in zlib"
+licence = "BSD-3-Clause"
+repository = "https://chromium.googlesource.com/chromium/src"
+revision = "09191f75351f96c2aa3ea6f011c786a3dc27cb1a"
+
+  [[part.file]]
+  path = "chromium/LICENSE"
+  source = "LICENSE"
+  sha256 = "368cca1106be99d39ecd32a38d8305585d802a475effb66380b91ffc9bcf709b"
+
 [[part]]
 name = "Abseil"
+licence = "Apache-2.0"
 repository = "https://chromium.googlesource.com/chromium/src/third_party/abseil-cpp"
 revision = "435e7d977fb36fb47854a4c552c0706dad0bd7cf"
 
@@ -126,9 +176,11 @@ revision = "435e7d977fb36fb47854a4c552c0706dad0bd7cf"
   source = "LICENSE"
   sha256 = "c79a7fea0e3cac04cd43f20e7b648e5a0ff8fa5344e644b0ee09ca1162b62747"
 
-# fast_float is offered under three licences. PDFium takes it under MIT.
+# fast_float is offered under Apache-2.0, MIT or BSL-1.0. PDFium takes it
+# under MIT.
 [[part]]
 name = "fast_float"
+licence = "MIT"
 repository = "https://chromium.googlesource.com/external/github.com/fastfloat/fast_float"
 revision = "34164f547b7df3f5d794ff67e9f885c36819ebfc"
 
@@ -137,11 +189,30 @@ revision = "34164f547b7df3f5d794ff67e9f885c36819ebfc"
   source = "LICENSE-MIT"
   sha256 = "e562f3f974ced7e69dd1db77b820b36bcf8f30377f1aa105723fba449c53c4e6"
 
+# dragonbox is offered under Apache-2.0 with LLVM's exception or BSL-1.0.
+# PDFium's README.pdfium names both files, and both are here.
+[[part]]
+name = "dragonbox"
+licence = "Apache-2.0 WITH LLVM-exception"
+repository = "https://chromium.googlesource.com/external/github.com/jk-jeon/dragonbox"
+revision = "beeeef91cf6fef89a4d4ba5e95d47ca64ccb3a44"
+
+  [[part.file]]
+  path = "dragonbox/LICENSE-Apache2-LLVM"
+  source = "LICENSE-Apache2-LLVM"
+  sha256 = "9e45e856bedccee9f67254082ca11851d954de2fed7448c4bed19ad9aab99a91"
+
+  [[part.file]]
+  path = "dragonbox/LICENSE-Boost"
+  source = "LICENSE-Boost"
+  sha256 = "c9bff75738922193e67fa726fa225535870d2aa1059f91452c411736284ad566"
+
 # What built the file: the scripts, whose own code is linked into it, and
 # the compiler, whose C and C++ libraries are.
 
 [[part]]
 name = "pdfium-binaries"
+licence = "MIT"
 repository = "https://github.com/jerbob92/pdfium-binaries"
 revision = "b54b0ea110098401ab3ddf17c885b305310b290a"
 
@@ -150,9 +221,11 @@ revision = "b54b0ea110098401ab3ddf17c885b305310b290a"
   source = "LICENSE"
   sha256 = "493abc10084b58f97dce3fac1654624e1a25788f17180fe8925786c266cd2416"
 
+# Emscripten is offered under MIT or the University of Illinois/NCSA licence.
 [[part]]
 name = "Emscripten"
 version = "6.0.9"
+licence = "MIT"
 repository = "https://github.com/emscripten-core/emscripten"
 revision = "4e4223852a0835923411059a3929907d7df1232e"
 
@@ -163,6 +236,7 @@ revision = "4e4223852a0835923411059a3929907d7df1232e"
 
 [[part]]
 name = "musl, in Emscripten"
+licence = "MIT"
 repository = "https://github.com/emscripten-core/emscripten"
 revision = "4e4223852a0835923411059a3929907d7df1232e"
 
@@ -173,6 +247,7 @@ revision = "4e4223852a0835923411059a3929907d7df1232e"
 
 [[part]]
 name = "libc++, in Emscripten"
+licence = "Apache-2.0 WITH LLVM-exception"
 repository = "https://github.com/emscripten-core/emscripten"
 revision = "4e4223852a0835923411059a3929907d7df1232e"
 
@@ -183,6 +258,7 @@ revision = "4e4223852a0835923411059a3929907d7df1232e"
 
 [[part]]
 name = "libc++abi, in Emscripten"
+licence = "Apache-2.0 WITH LLVM-exception"
 repository = "https://github.com/emscripten-core/emscripten"
 revision = "4e4223852a0835923411059a3929907d7df1232e"
 
@@ -190,3 +266,14 @@ revision = "4e4223852a0835923411059a3929907d7df1232e"
   path = "libcxxabi/LICENSE.TXT"
   source = "system/lib/libcxxabi/LICENSE.TXT"
   sha256 = "e2b35be49f7284a45b7baca8fc7b3ab7440e7902392b2528a457816b5bb2a15c"
+
+[[part]]
+name = "compiler-rt, in Emscripten"
+licence = "Apache-2.0 WITH LLVM-exception"
+repository = "https://github.com/emscripten-core/emscripten"
+revision = "4e4223852a0835923411059a3929907d7df1232e"
+
+  [[part.file]]
+  path = "compiler-rt/LICENSE.TXT"
+  source = "system/lib/compiler-rt/LICENSE.TXT"
+  sha256 = "1a8f1058753f1ba890de984e48f0242a3a5c29a6a8f2ed9fd813f36985387e8d"
