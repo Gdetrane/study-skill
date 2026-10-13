@@ -56,15 +56,15 @@ func WordsOf(texts ...string) *Words {
 		// next word follows the hyphen at once.
 		before := ""
 		for i := 0; i < len(runes); {
-			if !unicode.IsLetter(runes[i]) {
-				if !(runes[i] == '-' && before != "" && i+1 < len(runes) && unicode.IsLetter(runes[i+1])) {
+			if !inWord(runes[i]) {
+				if !(runes[i] == '-' && before != "" && i+1 < len(runes) && inWord(runes[i+1])) {
 					before = ""
 				}
 				i++
 				continue
 			}
 			start := i
-			for i < len(runes) && unicode.IsLetter(runes[i]) {
+			for i < len(runes) && inWord(runes[i]) {
 				i++
 			}
 			word := strings.ToLower(string(runes[start:i]))
@@ -86,6 +86,12 @@ func WordsOf(texts ...string) *Words {
 }
 
 func isDivision(r rune) bool { return r == hyphenMark || r == noCharacter }
+
+// inWord reports whether a character is part of a word as a Source writes
+// one: a letter, a digit, so that "COVID-19" is a pair and "SHA256" a word,
+// or a mark that is written onto a letter, as the vowel signs of the Indic
+// scripts are, which no form of the text joins to their letter.
+func inWord(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) || unicode.IsMark(r) }
 
 // plain is text with its letters as Clean writes them: a ligature as the
 // letters it draws, and an accent in one form.
@@ -169,21 +175,22 @@ func Clean(text string, words *Words) string {
 		case isDivision(r):
 			// A division when it stands inside a word, as between "solu"
 			// and "tion"; anywhere else it is a character of a formula's
-			// font. Before a small letter it is taken for a division
-			// always. Before a capital it is one only when the Source's own
-			// words show it: "non-Euclidean" and "NASA" are divided so, and
-			// so are two symbols of a formula that happen to be letters.
-			if i > 0 && i+1 < len(runes) && unicode.IsLetter(runes[i-1]) && unicode.IsLetter(runes[i+1]) {
+			// font. Between a letter and a small letter it is taken for a
+			// division always. Before a capital, or beside a digit, it is
+			// one only when the Source's own words show it: "non-Euclidean",
+			// "NASA" and "COVID-19" are divided so, and so are two symbols
+			// of a formula, of which nothing shows what they are.
+			if i > 0 && i+1 < len(runes) && inWord(runes[i-1]) && inWord(runes[i+1]) {
 				left, right := i, i+1
-				for left > 0 && unicode.IsLetter(runes[left-1]) {
+				for left > 0 && inWord(runes[left-1]) {
 					left--
 				}
-				for right < len(runes) && unicode.IsLetter(runes[right]) {
+				for right < len(runes) && inWord(runes[right]) {
 					right++
 				}
 				before, after := plain(string(runes[left:i])), plain(string(runes[i+1:right]))
 				one, known := words.written(before, after)
-				if unicode.IsLower(runes[i+1]) {
+				if unicode.IsLetter(runes[i-1]) && unicode.IsLower(runes[i+1]) {
 					one, known = words.one(before, after), true
 				}
 				if known {
