@@ -438,7 +438,7 @@ func (c *answering) Read(ctx context.Context) (jsonrpc.Message, error) {
 func (s *Connection) wasAsked(method string) {
 	s.mu.Lock()
 	if s.asked == "" {
-		s.asked = clean(method, 60)
+		s.asked = s.say(method, 60)
 		if s.asked == "" {
 			s.asked = "without a method"
 		}
@@ -996,7 +996,7 @@ func (s *Connection) ask(ctx context.Context, tool string, limit time.Duration, 
 	// name or an id: the plugin's text, like any other.
 	if check != nil {
 		if err := check(); err != nil {
-			return s.misanswered(tool, s.say(err.Error(), 300))
+			return s.misanswered(tool, s.say(s.wrong(data, out, check, err), 300))
 		}
 	}
 	return nil
@@ -1091,9 +1091,40 @@ func text(res *mcp.CallToolResult) string {
 // left out when it may be the start of a part of the address: all of a key
 // but its last byte is no key, and behind enough white space clean would
 // bring it to the front.
-func (s *Connection) say(text string, max int) string {
+func (s *Connection) say(text string, max int) string { return s.sayStart(text, max, false) }
+
+// sayStart is say for a text that may be the start of a longer one already,
+// as cut says: what a service wrote when it refused a request is kept up to
+// a few hundred bytes.
+func (s *Connection) sayStart(text string, max int, cut bool) string {
 	start := plugincontract.Cut(text, 16*max+4096)
-	return clean(s.parts.without(start, len(start) < len(text)), max)
+	return clean(s.parts.without(start, cut || len(start) < len(text)), max)
+}
+
+// wrong is what is wrong with an answer, in the words of the contract's
+// check, for saying.
+//
+// Those words repeat what the answer held, a name, a state or an id, cut
+// short and with what is not ASCII written as escapes. A part of the
+// address in such a value is then no longer what say looks for: a key cut
+// in two, or one with an accent in it, would be shown. So when the answer
+// holds a part of the address anywhere, it is checked once more without
+// it, and what is wrong is said of that: of the same answer, as it is
+// shown. An answer that holds none is said of as it is.
+func (s *Connection) wrong(data json.RawMessage, out any, check func() error, err error) string {
+	if s.parts == nil {
+		return err.Error()
+	}
+	shown, changed := s.parts.withoutIn(data)
+	if !changed {
+		return err.Error()
+	}
+	if plugincontract.Decode(shown, out) == nil {
+		if again := check(); again != nil {
+			return again.Error()
+		}
+	}
+	return "it holds a value the contract does not have, with a part of the address study reaches the plugin at in it"
 }
 
 // tidy cleans what a plugin wrote of a Source for people to read.
@@ -1236,10 +1267,10 @@ func (s *Connection) failure(parent, limited context.Context, doing, tool string
 	// The connection broke: nothing more can be asked on it.
 	if s.proc == nil {
 		why := reason(err, s.address)
-		if refusal := s.http.refused(); refusal != "" {
+		if refusal, cut := s.http.refused(); refusal != "" {
 			// What the service itself said of why is worth more than the
 			// name of its status.
-			why = s.say(refusal, 300)
+			why = s.sayStart(refusal, 300, cut)
 		}
 		s.drop("its connection broke")
 		advice := fmt.Sprintf(" study speaks MCP revision %s over streamable HTTP. Check that the service is running, "+

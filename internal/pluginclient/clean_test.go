@@ -2,8 +2,10 @@ package pluginclient_test
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"runtime"
 	"strings"
 	"sync/atomic"
@@ -42,10 +44,10 @@ func TestWhatAPluginWroteIsCleaned(t *testing.T) {
 			"the plugin does not start fix: run this"},
 		{"not \xff\xfe text", 100, "not " + string(utf8.RuneError) + " text"},
 		{"abcdef", 3, "abc…"},
-		{"aéé", 2, "a…"},
+		{"a\u00e9\u00e9", 2, "a…"},
 		{"", 100, ""},
 		{" \n\t ", 100, ""},
-		{"déjà vu, 日本語", 100, "déjà vu, 日本語"},
+		{"d\u00e9jà vu, 日本語", 100, "d\u00e9jà vu, 日本語"},
 	} {
 		got := pluginclient.Clean(tc.in, tc.max)
 		if got != tc.want {
@@ -190,7 +192,7 @@ func TestTheEndOfWhatAPluginWroteIsKept(t *testing.T) {
 		{"loading the model... " + strings.Repeat("progress ", 100) + "\nRuntimeError: out of memory\n", 60,
 			"…progress progress progress RuntimeError: out of memory"},
 		{strings.Repeat("x", 500) + " the end", 20, "…the end"},
-		{strings.Repeat("é", 500), 21, "…" + strings.Repeat("é", 10)},
+		{strings.Repeat("\u00e9", 500), 21, "…" + strings.Repeat("\u00e9", 10)},
 		{"red \x1b[31m" + strings.Repeat("alert ", 50), 40, "…alert alert alert alert alert alert"},
 	} {
 		got := pluginclient.CleanEnd(tc.in, tc.max)
@@ -327,8 +329,24 @@ func TestAnAddressIsTakenOutHoweverAServiceWritesIt(t *testing.T) {
 			"the key s3cr3t+k3y+mine is not allowed", "the key … is not allowed"},
 		"a plus sign read as a space": {"https://kb.example/mcp?key=s3cr3t+k3y+mine",
 			"the key s3cr3t k3y mine is not allowed", "the key … is not allowed"},
-		"a key with an accent, in capitals": {"https://kb.example/mcp?key=clé-secrète",
-			"la clé CLÉ-SECRÈTE est refusée", "la clé … est refusée"},
+		// White space of any kind and length is one space where study
+		// shows it, so it is one space where the key is looked for.
+		"a key with spaces, said on two lines": {"https://kb.example/mcp?key=my%20secret%20key",
+			"the key my\n  secret\u00a0\tkey is not allowed", "the key … is not allowed"},
+		// A piece counts by what it reads as, not by how it is spelled.
+		"a piece that is long as it reads": {"https://kb.example/ab%3Acd%3Aef/mcp",
+			"the account ab:cd:ef is unknown", "the account … is unknown"},
+		"a key with an accent, in capitals": {"https://kb.example/mcp?key=cl\u00e9-secr\u00e8te",
+			"la cl\u00e9 CL\u00c9-SECR\u00c8TE est refus\u00e9e", "la cl\u00e9 … est refus\u00e9e"},
+		// A letter whose capital is two letters, and an accent written
+		// apart from its letter: what a service makes of a key when it
+		// writes it in capitals, or in the other of the two normal forms.
+		"a sharp s said as two capitals": {"https://kb.example/mcp?key=stra\u00dfe-secret",
+			"the key STRASSE-SECRET is not allowed", "the key … is not allowed"},
+		"two s said as a sharp s": {"https://kb.example/mcp?key=strasse-secret",
+			"the key stra\u00dfe-secret is not allowed", "the key … is not allowed"},
+		"an accent written apart": {"https://kb.example/mcp?key=cl\u00e9-secr\u00e8te",
+			"the key cle\u0301-SECRE\u0300TE is not allowed", "the key … is not allowed"},
 		// A long s and a Kelvin sign are an s and a k in another case, and
 		// take more bytes than they do.
 		"a key in letters of another length": {"https://kb.example/mcp?key=s3cret-pass-key",
@@ -356,14 +374,63 @@ func TestAnAddressIsTakenOutHoweverAServiceWritesIt(t *testing.T) {
 	// What is no part of the address stays, in the case it was written in,
 	// and so does a short word the address happens to hold.
 	for said, address := range map[string]string{
-		"The Model Was Not Found":             "https://kb.example/t0ken-in-the-path/mcp?key=s3cr3t-k3y-of-mine",
-		"version V1 of the MCP endpoint":      "https://kb.example/v1/mcp",
-		"a=1 is no setting of this endpoint":  "https://kb.example/mcp?b=2",
-		"100% of it, 50%25 and a+b":           "https://kb.example/t0ken-in-the-path/mcp",
+		"The Model Was Not Found":            "https://kb.example/t0ken-in-the-path/mcp?key=s3cr3t-k3y-of-mine",
+		"version V1 of the MCP endpoint":     "https://kb.example/v1/mcp",
+		"a=1 is no setting of this endpoint": "https://kb.example/mcp?b=2",
+		"100% of it, 50%25 and a+b":          "https://kb.example/t0ken-in-the-path/mcp",
+		// Short as it reads, though its escapes make it long.
+		"the account a:b:c is unknown":        "https://kb.example/a%3Ab%3Ac/mcp",
+		"the value a:b is unknown":            "https://kb.example/mcp?k=a%3Ab",
 		"bytes that are no text \xff\xfe %ff": "https://kb.example/t0ken-in-the-path/mcp",
 	} {
 		if got := pluginclient.Without(said, address); got != said {
 			t.Errorf("words that repeat nothing of %s became %q, want %q", address, got, said)
+		}
+	}
+}
+
+// A text that was cut may end anywhere in a key, and in a key that was
+// escaped, and escaped again: in the middle of an escape, or of an escape of
+// an escape's digit. Wherever it ends, nothing of the key is left that
+// reading the escapes brings back.
+func TestNoStartOfAKeyIsLeftWhereverATextIsCut(t *testing.T) {
+	const key = "k3y-0f-m1ne"
+	const address = "https://kb.example/mcp?key=" + key
+	escape := regexp.MustCompile(`%[0-9A-Fa-f]{2}`)
+	// What a text reads as to whoever reads its escapes, as often as there
+	// are any.
+	unescaped := func(text string) string {
+		for {
+			next := escape.ReplaceAllStringFunc(text, func(e string) string {
+				b, _ := hex.DecodeString(e[1:])
+				return string(b)
+			})
+			if next == text {
+				return text
+			}
+			text = next
+		}
+	}
+	form := key
+	for depth := 0; depth <= 5; depth++ {
+		if depth > 0 {
+			// Every byte of the form before, written as an escape.
+			var b strings.Builder
+			for i := 0; i < len(form); i++ {
+				fmt.Fprintf(&b, "%%%02X", form[i])
+			}
+			form = b.String()
+		}
+		for kept := 1; kept < len(form); kept++ {
+			got := pluginclient.WithoutOfAStart("the upstream refused "+form[:kept], address)
+			if left := unescaped(got); strings.Contains(left, key[:3]) || !strings.HasPrefix(got, "the upstream refused") {
+				t.Fatalf("a key escaped %d times and cut after %d of its %d bytes is shown as %q, which reads %q",
+					depth, kept, len(form), got, left)
+			}
+		}
+		// Whole, it is taken out, and what stands behind it stays.
+		if got := pluginclient.WithoutOfAStart("the upstream refused "+form+", twice", address); got != "the upstream refused …, twice" {
+			t.Errorf("a key escaped %d times, whole in a text that was cut, is shown as %q", depth, got)
 		}
 	}
 }

@@ -31,7 +31,9 @@ func TestABuiltStudyHasTheBuiltShelfTestItsEndpoints(t *testing.T) {
 	if real, err := filepath.EvalSymlinks(home); err == nil {
 		home = real
 	}
-	state, config := filepath.Join(home, ".local", "state"), filepath.Join(home, ".config")
+	// A configuration folder of its own, and not the one under the home
+	// folder: both programs are told of it, and both look there.
+	state, config := filepath.Join(home, ".local", "state"), filepath.Join(home, "configuration")
 	env := []string{"HOME=" + home, "STUDY_HOME=" + filepath.Join(home, "study"), "PATH=" + os.Getenv("PATH"),
 		"XDG_CONFIG_HOME=" + config, "XDG_STATE_HOME=" + state, "LANG=C.UTF-8"}
 	must := func(args ...string) string {

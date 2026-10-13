@@ -1,10 +1,15 @@
 package pluginclient
 
 import (
+	"bytes"
+	"encoding/json"
 	"net/url"
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"golang.org/x/text/cases"
+	"golang.org/x/text/unicode/norm"
 
 	"github.com/mordor-forge/lamplight/v2/internal/plugincontract"
 )
@@ -73,9 +78,12 @@ func secrets(registered string) []string {
 //     for, and so again when that byte makes another such: "%2573" is "%73"
 //     is "s". Any byte may be written so, and not only the ones a URL has
 //     to escape.
-//   - A plus sign is a space, as a query writes one.
-//   - A letter is the same in any case, and in any of the forms its cases
-//     share: a long s is an s.
+//   - A plus sign is a space, as a query writes one, and white space of
+//     any kind and length is one space, as study shows it (clean).
+//   - A letter is the same in any case, as Unicode folds case: a long s is
+//     an s, and a sharp s is two. And it is the same with its accent
+//     written onto it or apart. What one language does otherwise is not
+//     read so: a Turkish capital with a dot is no i.
 //   - What shows nothing is not there (plugincontract.ShowsNothing): a key
 //     with a zero-width space inside it is the key.
 func readAs(text string) (string, []int32) {
@@ -92,6 +100,7 @@ func readAs(text string) (string, []int32) {
 	// The characters they make, each as its cases have it in common.
 	read := make([]byte, 0, len(bytes))
 	where := make([]int32, 0, len(bytes)+1)
+	fold := cases.Fold()
 	for i := 0; i < len(bytes); {
 		r, size := utf8.DecodeRune(bytes[i:])
 		before := len(read)
@@ -100,14 +109,21 @@ func readAs(text string) (string, []int32) {
 			// A byte that is no text is itself.
 			read = append(read, bytes[i])
 		case plugincontract.ShowsNothing(r):
-		case r == '+':
-			read = append(read, ' ')
-		default:
-			least := r
-			for other := unicode.SimpleFold(r); other != r; other = unicode.SimpleFold(other) {
-				least = min(least, other)
+		case r == '+' || unicode.IsSpace(r) || r == plugincontract.BrailleBlank:
+			if len(read) == 0 || read[len(read)-1] != ' ' {
+				read = append(read, ' ')
 			}
-			read = utf8.AppendRune(read, least)
+		case r < utf8.RuneSelf:
+			if r >= 'A' && r <= 'Z' {
+				r += 'a' - 'A'
+			}
+			read = append(read, byte(r))
+		case unicode.SimpleFold(r) == r && norm.NFD.Properties(bytes[i:i+size]).Decomposition() == nil:
+			// No letter with another case, and nothing an accent is
+			// written onto: itself, as most of what is not ASCII is.
+			read = append(read, bytes[i:i+size]...)
+		default:
+			read = append(read, norm.NFD.String(fold.String(norm.NFD.String(string(r))))...)
 		}
 		for range len(read) - before {
 			where = append(where, from[i])
@@ -198,10 +214,11 @@ func partsOf(address string) *parts {
 	return p
 }
 
-// tailLooked is how many bytes of a text's end may be the start of
-// something cut short that is no start of a part as it stands: an escape
-// without its last digit, or a character without its last byte.
-const tailLooked = 8
+// cutShort reports whether a byte of what was read may be of something a
+// cut left unfinished at a text's end, and not read for what it stands for:
+// a percent sign or a digit of an escape, of which escaping an escape makes
+// as many as one likes, or a byte of a character without its last.
+func cutShort(c byte) bool { return c == '%' || isHex(c) || c >= utf8.RuneSelf }
 
 // without is text with every place where a part of the address stands, as
 // it reads, replaced by "…". Parts that overlap, or stand side by side, are
@@ -210,8 +227,8 @@ const tailLooked = 8
 // cut says that text is the start of a longer one. It may then end in the
 // start of a part, which is no part and is not found: all of a key but its
 // last byte. So whatever the end of such a text reads as that begins a
-// part is left out, with the few bytes behind it that may be an escape or a
-// character cut short.
+// part is left out, and so is what begins a part and is followed to the
+// end only by what a cut may have left unfinished (cutShort).
 func (p *parts) without(text string, cut bool) string {
 	if p == nil || text == "" {
 		return text
@@ -219,12 +236,16 @@ func (p *parts) without(text string, cut bool) string {
 	read, where := readAs(text)
 	// The places, from and to, in what was read: in order, and apart.
 	var places [][2]int
-	var tail [tailLooked]int32
+	// The state after each byte, for a text that was cut.
+	var states []int32
+	if cut {
+		states = make([]int32, 1, len(read)+1)
+	}
 	state := int32(0)
 	for i := 0; i < len(read); i++ {
 		state = p.next[state][read[i]]
-		if behind := len(read) - 1 - i; behind < tailLooked {
-			tail[behind] = state
+		if cut {
+			states = append(states, state)
 		}
 		n := int(p.ends[state])
 		if n == 0 {
@@ -240,9 +261,12 @@ func (p *parts) without(text string, cut bool) string {
 	end := len(text)
 	if cut {
 		kept := len(read)
-		for behind := 0; behind < tailLooked && behind <= len(read); behind++ {
-			if begun := int(p.depth[tail[behind]]); begun > 0 && behind < len(read) {
-				kept = min(kept, len(read)-behind-begun)
+		for at := len(read); ; at-- {
+			if begun := int(p.depth[states[at]]); begun > 0 {
+				kept = min(kept, at-begun)
+			}
+			if at == 0 || !cutShort(read[at-1]) {
+				break
 			}
 		}
 		end = int(where[kept])
@@ -265,6 +289,46 @@ func (p *parts) without(text string, cut bool) string {
 		b.WriteString(text[done:end])
 	}
 	return b.String()
+}
+
+// withoutIn is a JSON document with the parts of the address taken out of
+// every text in it, a name of a field included, and whether any was. It is
+// for saying what is wrong with an answer: see Connection.wrong.
+func (p *parts) withoutIn(data []byte) (shown []byte, changed bool) {
+	if p == nil {
+		return data, false
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	var document any
+	if decoder.Decode(&document) != nil {
+		return data, false
+	}
+	var walk func(any) any
+	walk = func(value any) any {
+		switch value := value.(type) {
+		case string:
+			said := p.without(value, false)
+			changed = changed || said != value
+			return said
+		case []any:
+			for i := range value {
+				value[i] = walk(value[i])
+			}
+		case map[string]any:
+			fields := make(map[string]any, len(value))
+			for name, held := range value {
+				fields[walk(name).(string)] = walk(held)
+			}
+			return fields
+		}
+		return value
+	}
+	shown, err := json.Marshal(walk(document))
+	if err != nil || !changed {
+		return data, false
+	}
+	return shown, true
 }
 
 // without takes the parts of a registered address that may be a key out of

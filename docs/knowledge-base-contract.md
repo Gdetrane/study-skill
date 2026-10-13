@@ -238,10 +238,10 @@ with `application/json` or with a stream of server-sent events.
   `study knowledge-base list`: the rest of an address, a path or a query, may be a key.
   Whatever a service writes, in a refusal, a `reason`, a `notice`, a finding or its own
   name, is shown without the path and the query of the address it is registered at, as
-  they read: in whatever letter case the service wrote them, and with any of their bytes
-  as percent-escapes or none. A piece of the path counts from eight bytes and a value of
-  the query from six: a shorter one said on its own is shown. Give a service a key longer
-  than that, or better, keep the key out of what it writes.
+  they read: in capitals or small letters, and with any of their bytes as percent-escapes
+  or none. A piece of the path counts from eight bytes and a value of the query from six:
+  a shorter one said on its own is shown. Give a service a key longer than that, of plain
+  letters and digits, or better, keep the key out of what it writes.
 - A service gets no folder from `study`, and keeps its index where it was told to.
 - **A service reads files and fetches addresses from where it runs, outside any sandbox
   the agent is in.** It is handed a file's path and must see the same file there. It must

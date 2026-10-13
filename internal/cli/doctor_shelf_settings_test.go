@@ -1,6 +1,7 @@
 package cli_test
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -97,8 +98,8 @@ func TestDoctorSaysWhenShelfsSettingsLeadIntoTheStudyHome(t *testing.T) {
 }
 
 // A learner who wrote Shelf's settings before their first Topic has no Study
-// home yet: nothing can be inside what is not there, and the doctor says
-// nothing of the file.
+// home yet: a file of its own is inside nothing, and the doctor says nothing
+// of it.
 func TestDoctorSaysNothingOfShelfsSettingsBeforeThereIsAStudyHome(t *testing.T) {
 	k := newKBComputer(t)
 	file := filepath.Join(filepath.Dir(k.registry()), "shelf.toml")
@@ -114,5 +115,74 @@ func TestDoctorSaysNothingOfShelfsSettingsBeforeThereIsAStudyHome(t *testing.T) 
 	r := k.run(t, "doctor", "--json")
 	if strings.Contains(r.stdout, "shelf_settings") {
 		t.Errorf("with no Study home yet, study doctor says of Shelf's settings:\n%s", r.stdout)
+	}
+}
+
+// Where study looks for the file is where Shelf reads it: in the folder
+// XDG_CONFIG_HOME names, when that is an absolute path, and not under the
+// home folder then. And a file study may not look at is not taken for one
+// that is not there.
+func TestDoctorLooksForShelfsSettingsWhereShelfReadsThem(t *testing.T) {
+	k := newKBComputer(t)
+	k.must(t, "topic", "create", "--title", "Linear algebra")
+	studyHome := k.env["STUDY_HOME"]
+	inside := filepath.Join(studyHome, "shelf.toml")
+	if err := os.WriteFile(inside, []byte("format = 1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := func(folder string) string {
+		t.Helper()
+		if err := os.MkdirAll(folder, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		file := filepath.Join(folder, "shelf.toml")
+		if err := os.Symlink(inside, file); err != nil {
+			t.Fatal(err)
+		}
+		return file
+	}
+	said := func() string {
+		t.Helper()
+		var out struct {
+			Data core.Diagnosis `json:"data"`
+		}
+		if err := json.Unmarshal([]byte(k.run(t, "doctor", "--json").stdout), &out); err != nil {
+			t.Fatal(err)
+		}
+		for _, f := range out.Data.Findings {
+			if f.Name == "shelf_settings" {
+				return f.Message
+			}
+		}
+		return ""
+	}
+	// The configuration folder is elsewhere: a link under the home folder
+	// is no settings file of Shelf's, and the one in that folder is.
+	elsewhere := filepath.Join(k.home, "xdg")
+	k.env["XDG_CONFIG_HOME"] = elsewhere
+	under := link(filepath.Join(k.home, ".config", "lamplight"))
+	if message := said(); message != "" {
+		t.Errorf("with the configuration folder elsewhere, study doctor says of a link under the home folder: %s", message)
+	}
+	link(filepath.Join(elsewhere, "lamplight"))
+	if message := said(); !strings.HasPrefix(message, "Shelf's settings file, $HOME/xdg/lamplight/shelf.toml, is in the Study home") {
+		t.Errorf("with the configuration folder elsewhere, study doctor says of Shelf's settings: %q", message)
+	}
+	// Without the variable it is the one under the home folder.
+	delete(k.env, "XDG_CONFIG_HOME")
+	if message := said(); !strings.HasPrefix(message, "Shelf's settings file, $HOME/.config/lamplight/shelf.toml, is in the Study home") {
+		t.Errorf("study doctor says of Shelf's settings under the home folder: %q", message)
+	}
+	// A folder study may not look into: whether the file is there is not
+	// known, and that is said, not passed over.
+	if os.Getuid() == 0 {
+		t.Skip("root looks into any folder")
+	}
+	if err := os.Chmod(filepath.Dir(under), 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(filepath.Dir(under), 0o700) })
+	if message := said(); !strings.HasPrefix(message, "study could not follow Shelf's settings file, $HOME/.config/lamplight/shelf.toml") {
+		t.Errorf("with a configuration folder study may not look into, study doctor says of Shelf's settings: %q", message)
 	}
 }

@@ -1,8 +1,11 @@
 package cli
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"syscall"
 
 	"github.com/mordor-forge/lamplight/v2/internal/core"
 	"github.com/mordor-forge/lamplight/v2/internal/pluginregistry"
@@ -39,18 +42,19 @@ func shelfSettingsPath(getenv func(string) string) string {
 //
 // It is decided as the registry decides it of a plugin's program, by file
 // identity and one hop at a time (pluginregistry.Guard), and a path that
-// could not be followed is said to be that, never taken for one outside. A
-// file that is not there is nothing to say anything of: the link that is
-// there and leads nowhere yet is.
+// could not be followed is said to be that, never taken for one outside: a
+// file below a folder study may not look into among them. A file that is
+// not there is nothing to say anything of: the link that is there and leads
+// nowhere yet is.
 func (a *app) diagnoseShelfSettings() (core.Finding, bool) {
 	f := core.Finding{Name: "shelf_settings", Status: core.FindingWarn}
 	path := shelfSettingsPath(a.opts.Getenv)
 	if path == "" {
 		return f, false
 	}
-	if _, err := os.Lstat(path); err != nil {
-		// Not there, or below a folder that cannot be looked into: the
-		// registry, which is in the same folder, has its own Finding.
+	if _, err := os.Lstat(path); errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) {
+		// No such file. One that may be there and cannot be looked at is
+		// followed below, and said to be that.
 		return f, false
 	}
 	c, err := core.Open(a.opts)

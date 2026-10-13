@@ -882,6 +882,28 @@ func TestAPassageIsHandedOnWithoutTheCharactersThatShowNothing(t *testing.T) {
 	if core.CodeOf(err) != core.CodeInvalidArgument || !strings.Contains(err.Error(), "a character that is not shown (U+E0049)") {
 		t.Errorf("a quote with tag characters = %v (%s); want it refused", err, core.CodeOf(err))
 	}
+
+	// The places of the block that hold no character yet are of it all the
+	// same: taken out, not compared, and in no quote. They are no format
+	// characters to Unicode, which a quote was compared without.
+	const unassigned = "\U000E0002"
+	second := newShelf(t)
+	strang = second.book(t, "strang.txt", "Elimination produces"+unassigned+" an upper tri\U000E0000angular system.\n")
+	second.index(t, core.IndexSpec{})
+	res = second.search(t, core.PassageQuery{Query: "elimination"})
+	if len(res.Passages) != 1 || res.Passages[0].Text != "Elimination produces an upper triangular system." {
+		t.Fatalf("SearchEvidence = %+v; want the Passage without any place of the tag block", res.Passages)
+	}
+	got, err = second.k.RecordEvidence(context.Background(), core.EvidenceSpec{Topic: "c", Lesson: "elimination", Source: strang.ID,
+		Quote: res.Passages[0].Text, Passages: []string{res.Passages[0].ID}})
+	if err != nil || !got.Evidence.Checked {
+		t.Errorf("the Passage's text as the search gave it, quoted = %+v, %v; want it checked", got.Evidence, err)
+	}
+	_, err = second.k.RecordEvidence(context.Background(), core.EvidenceSpec{Topic: "c", Lesson: "elimination", Source: strang.ID,
+		Quote: "Elimination produces" + unassigned + " an upper", Passages: []string{res.Passages[0].ID}})
+	if core.CodeOf(err) != core.CodeInvalidArgument || !strings.Contains(err.Error(), "a character that is not shown (U+E0002)") {
+		t.Errorf("a quote with a place of the tag block that holds no character = %v (%s); want it refused", err, core.CodeOf(err))
+	}
 }
 
 // Nothing else that shows nothing is taken out of a Passage: it is the
@@ -904,7 +926,7 @@ func TestAPassageKeepsTheOtherCharactersThatShowNothing(t *testing.T) {
 	if len(res.Passages) != 1 || res.Passages[0].Text != text {
 		t.Fatalf("SearchEvidence = %+v; want the Passage as the Source has it", res.Passages)
 	}
-	for name, quote := range map[string]string{"as it reads": read, "as the Passage has it, with the joiner and the soft hyphen": "keeps mi\u200cravam joined, the sign \u2764\ufe0f in its form, and trian\u00adgular"} {
+	for name, quote := range map[string]string{"as it reads": read, "with the joiner and the soft hyphen, which a quote may hold": "keeps mi\u200cravam joined, the sign \u2764\ufe0f in its form, and trian\u00adgular"} {
 		got, err := s.k.RecordEvidence(context.Background(), core.EvidenceSpec{Topic: "c", Lesson: "elimination", Source: strang.ID,
 			Quote: quote, Passages: []string{res.Passages[0].ID}})
 		if err != nil || !got.Evidence.Checked {

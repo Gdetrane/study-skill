@@ -63,8 +63,10 @@ type boundedTransport struct {
 	// protocol is the MCP revision the session speaks, once it is known.
 	protocol string
 	// refusal is what the service last answered a request it refused with:
-	// the status, and the start of what it wrote.
-	refusal string
+	// the status, and the start of what it wrote. refusalCut says that it
+	// wrote more than was kept.
+	refusal    string
+	refusalCut bool
 }
 
 // speaks records the MCP revision the session came to speak. Every request
@@ -78,11 +80,13 @@ func (t *boundedTransport) speaks(revision string) {
 	t.protocol = revision
 }
 
-// refused returns what the service last refused a request with, if it did.
-func (t *boundedTransport) refused() string {
+// refused returns what the service last refused a request with, if it did,
+// and whether that is only the start of what it wrote: a text that was cut
+// may end in the start of a key (parts.without).
+func (t *boundedTransport) refused() (said string, cut bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	return t.refusal
+	return t.refusal, t.refusalCut
 }
 
 func (t *boundedTransport) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -105,10 +109,13 @@ func (t *boundedTransport) RoundTrip(req *http.Request) (*http.Response, error) 
 	if resp.StatusCode >= 400 {
 		// What it says of why, for the learner: the start of it, kept
 		// aside, and the whole of it still there for whoever reads on.
-		start, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		// One byte more is read than is kept, to know whether there is more.
+		const kept = 512
+		start, _ := io.ReadAll(io.LimitReader(resp.Body, kept+1))
 		resp.Body = &joinedBody{Reader: io.MultiReader(bytes.NewReader(start), resp.Body), body: resp.Body}
 		t.mu.Lock()
-		t.refusal = strings.TrimSpace(http.StatusText(resp.StatusCode) + ": " + string(start))
+		t.refusal = strings.TrimSpace(http.StatusText(resp.StatusCode) + ": " + string(start[:min(kept, len(start))]))
+		t.refusalCut = len(start) > kept
 		t.mu.Unlock()
 	}
 	// A stream of events has no end to bound: the SDK bounds each event.

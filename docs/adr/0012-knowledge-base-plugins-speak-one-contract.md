@@ -456,18 +456,37 @@ what they needed:
     escaped twice, is none of the spellings a URL library writes. So the text and the
     parts are both read first (`readAs`): every escape is the byte it stands for, and
     again when that makes another; a plus sign is a space; a letter is the same in any
-    case; and what shows nothing is not there. A text that was cut loses what its end
-    reads as that begins a part.
+    case, as Unicode folds case and with its accent written on or apart
+    (`golang.org/x/text`, which `study` links already); white space of any kind is one
+    space; and what shows nothing is not there. A text that was cut loses what its end
+    reads as that begins a part, and so does what is kept of a service's refusal, which
+    is the first 512 bytes of what it wrote. Behind the start of a part there may stand
+    what the cut left unfinished, an escape without its last digit: as much of it as one
+    likes, since an escape's digit may be escaped in turn, so all of it is looked
+    through, and not a few bytes of it.
+  - **What is wrong with an answer is said of the answer without the address.** The
+    contract's check repeats the value it refuses, cut to 80 bytes and with what is not
+    ASCII written as escapes: a key in it was cut in two, or spelled in escapes, before
+    the client could look for it. An answer that holds a part of the address anywhere is
+    now checked once more without it, and what is wrong is said of that.
+  - **The method of a request a service sends `study`** is in the message that says the
+    service was stopped for it, and is read like any other of its words. It was only
+    cleaned.
   - **All the parts are looked for in one reading of the text** (`parts`), a state for
     each beginning of a part. Looking for them one after the other read a service's
     words once for each, and an address may hold hundreds of values, with sixteen
     mebibytes of words to read for them after the call's deadline has passed. Parts that
     overlap are taken out as one place: taking the longer out first had left the end of
     one standing where two were the same in letters of another length.
-  - What is left is said on the pages and not closed: a piece of a path under eight
+  - What is left is said on the pages and not closed. A piece of a path under eight
     bytes, or a value of a query under six, that a service says on its own is a word like
     any other, and taking it out wherever it stands would leave little of a service's
-    words.
+    words. Case is folded as Unicode folds it for every language at once, so what one
+    language does otherwise is not read so: a Turkish capital `İ` is no `i`. And all of
+    this is for a service that repeats its address,
+    which an honest one does in an error: one that means to show the learner's agent its
+    own key has other ways, a kind it names after it for one, and gains nothing, since
+    the key is its own.
   - It is no error: no exit code, no next action and nothing that is recorded changes for
     it. `note` and `action` are about the Sources that were left out, and a notice is
     about the ones that were searched. The skill has the agent tell the learner what it
@@ -567,8 +586,12 @@ what they needed:
     a Source says: the joiner a Persian word is written with, the selector that picks the
     form of a sign or of a Han character, the soft hyphen that says where a word
     divides. A quote is compared with that text, and a variation selector is a mark in
-    it, as an accent is. Tags are another matter: no writing uses them, and a model reads
-    them as letters. Considered and rejected:
+    it, as an accent is. Tags are another matter: nothing is written with them but the
+    flags of three countries, and a model reads them as letters. The whole block goes,
+    the places in it that hold no character yet included, and a quote is compared
+    without any of it: the first build compared without the format characters, which
+    those places are not, so a Passage quoted as it was handed on was refused. Considered
+    and rejected:
     - **Taking every such character out.** It misspells the scripts that need a joiner,
       and changes what a quote is compared with.
     - **Taking out runs of them only**, on the ground that writing uses one at a time. A

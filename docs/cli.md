@@ -1507,10 +1507,12 @@ from it.
     not `106`, and a full-width letter is not the plain one.
   - **The shape of a quotation mark and the length of a dash**: `’` for `'`, `“` for `"`,
     `—` or `−` for `-`. A single mark is not a double one: `f'` is not `f"`.
-  - **A character that is not shown**, where the Passage holds one: a soft hyphen, a
-    zero-width space. A quote may not hold one at all, beyond the few a script needs
-    (U+200C, U+200D and the soft hyphen): one that does is `invalid_argument`, which names
-    the character.
+  - **A format character, which is not shown**, where the Passage holds one: a soft
+    hyphen, a zero-width space. A quote may not hold one at all, beyond the few a script
+    needs (U+200C, U+200D and the soft hyphen): one that does is `invalid_argument`, which
+    names the character. The characters of the tag block count among them, all of them. A
+    variation selector does not: it is a mark, part of its character as an accent is, and
+    a quote has it where the Passage does.
   - **A word cut at a line's end may be quoted whole**: where two letters at least, the
     last of them small, are followed by a hyphen, a line break and a small letter, the
     hyphen and the break may be left out, so `elimi-`, a line break and `nation` is quoted
@@ -1903,10 +1905,13 @@ empty for a plugin that depends on nothing it could test.
   where the service is by the scheme and host of its address, and repeats nothing else of
   it, and what the service itself wrote is shown without the path and the query of its
   address: they may be a key. They are taken out as they read, however the service spelled
-  them: in whatever letter case, and with any of their bytes written as a percent-escape,
-  or none. A piece of the path counts from eight bytes and a value of the query from six:
-  a shorter one that a service says on its own, and not as part of the address, is a word
-  like any other, and is shown. So a key in an address is longer than that. A service that refuses says why, and the message
+  them: in capitals or small letters, with any of their bytes written as a percent-escape,
+  or none, and with white space of any kind where they have a space. A piece of the path
+  counts from eight bytes and a value of the query from six: a shorter one that a service
+  says on its own, and not as part of the address, is a word like any other, and is shown.
+  So a key in an address is longer than that. A letter is the same in any case as Unicode
+  folds case, `SS` for `ß` included, and with its accent written onto it or apart. What
+  one language does otherwise is not read so: a Turkish capital `İ` is no `i`. A service that refuses says why, and the message
   repeats that beside the revision of MCP `study` speaks, `2025-11-25`.
 - **Deadlines**: `study` has 30 seconds to start a plugin, or to reach it, and the plugin
   to answer `contract`. One that takes longer is stopped and reported, so the command never
@@ -1998,7 +2003,8 @@ computer has ([Knowledge base plugins](#knowledge-base-plugins)):
 - `knowledge_base` is the registry. Its message is the registry's path, or says that no
   plugin is registered. A registry `study` cannot read, or does not read because it is
   where the agent could write it, is a warning in the registry's own words, which say
-  what to do. No plugin is started then, and nothing below is reported.
+  what to do. No plugin is started then, and nothing below is reported but
+  `shelf_settings`.
 - `knowledge_base:<name>`, one for each registered plugin, in order of name. The plugin
   is started, or reached, asked which contract it speaks, and stopped again, as
   `study knowledge-base check <name>` does it. One that speaks the contract is `ok`, with
