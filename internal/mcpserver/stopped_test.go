@@ -155,6 +155,10 @@ func TestNoStoppedOperationReportsInternal(t *testing.T) {
 			_, err := outside.CheckPlugins(ctx)
 			return err
 		}},
+		{"StatusWithout", func(ctx context.Context) error {
+			_, err := outside.StatusWithout(ctx, []string{"kb"})
+			return err
+		}},
 		{"IndexSources", func(ctx context.Context) error {
 			_, err := outside.IndexSources(ctx, core.IndexSpec{Topic: "c"})
 			return err

@@ -131,6 +131,103 @@ func TestCheckPluginsWaitsForNoPlugin(t *testing.T) {
 	}
 }
 
+// A plugin that was only asked which contract it speaks has nothing to
+// finish: one that stays when its input closes is given a quarter of a
+// second, and again once it is signalled, whatever a plugin that indexes is
+// given.
+func TestCheckPluginsGivesAPluginLittleTimeToLeave(t *testing.T) {
+	c := plugintest.NewComputer(t)
+	record := filepath.Join(t.TempDir(), "record.json")
+	c.Register(t, "kb", plugintest.Command("--record", record, "--linger")...)
+	k := studyOn(t, c, "", core.PluginOptions{StopGrace: 15 * time.Second})
+	began := time.Now()
+	found, err := k.CheckPlugins(context.Background())
+	if took := time.Since(began); took > busy {
+		t.Errorf("CheckPlugins took %s over a plugin that stays when its input closes: it is given %s to leave, twice",
+			took, core.PluginGlanceGrace)
+	}
+	if err != nil || len(found.Plugins) != 1 || found.Plugins[0].Check == nil || found.Plugins[0].Problem != "" {
+		t.Errorf("CheckPlugins = %+v, %v; want the plugin's answer", found, err)
+	}
+	if started := plugintest.ReadRecord(t, record); !plugintest.Gone(started.PID, 5*time.Second) {
+		plugintest.Kill(started.PID)
+		t.Errorf("the plugin, process %d, was left running", started.PID)
+	}
+}
+
+// Stopped while a plugin is being waited for, CheckPlugins says so, at once,
+// and reports nothing of a check that was cut short.
+func TestCheckPluginsStoppedWhileItWaits(t *testing.T) {
+	c := plugintest.NewComputer(t)
+	record := filepath.Join(t.TempDir(), "record.json")
+	c.Register(t, "kb", plugintest.Command("--record", record, "--hang", "start")...)
+	k := studyOn(t, c, "", core.PluginOptions{})
+	ctx, stop := context.WithCancel(context.Background())
+	// Once the plugin was started, which its record says.
+	go func() {
+		for range 400 {
+			if _, err := os.Stat(record); err == nil {
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		stop()
+	}()
+	began := time.Now()
+	found, err := k.CheckPlugins(ctx)
+	if took := time.Since(began); took > busy {
+		t.Errorf("CheckPlugins took %s to end once the command was stopped", took)
+	}
+	if core.CodeOf(err) != core.CodeCanceled || !strings.Contains(err.Error(), "the command was stopped before every Knowledge base plugin") ||
+		len(found.Plugins) != 0 {
+		t.Errorf("CheckPlugins, stopped while it waited = %+v, %v (%s); want canceled, and nothing reported", found, err, core.CodeOf(err))
+	}
+	if started := plugintest.ReadRecord(t, record); !plugintest.Gone(started.PID, 5*time.Second) {
+		plugintest.Kill(started.PID)
+		t.Errorf("the plugin, process %d, was left running", started.PID)
+	}
+}
+
+// StatusWithout asks none of the plugins it is told to leave out: a plugin
+// that has just failed its check is not waited for a second time. The
+// Topics that name it come back without an Indexing, and every other Topic
+// as Status gives it.
+func TestStatusWithoutAsksNoneOfThePluginsLeftOut(t *testing.T) {
+	ctx := context.Background()
+	c := plugintest.NewComputer(t)
+	silent, answers := filepath.Join(t.TempDir(), "silent.json"), filepath.Join(t.TempDir(), "answers.json")
+	c.Register(t, "silent", plugintest.Command("--record", silent, "--hang", "start")...)
+	c.Register(t, "answers", plugintest.Command("--record", answers)...)
+	k := studyOn(t, c, "", core.PluginOptions{})
+	for topic, plugin := range map[string]string{"a": "silent", "b": "answers", "d": "missing"} {
+		namedTopic(t, k, topic, plugin)
+		addBook(t, k, topic, filepath.Join(c.Home, "Books", topic+".txt"), pages(2, topic))
+	}
+	began := time.Now()
+	status, err := k.StatusWithout(ctx, []string{"silent"})
+	if took := time.Since(began); took > busy {
+		t.Errorf("StatusWithout took %s: the plugin that never answers has %s, and was to be left out", took, patient)
+	}
+	if err != nil || len(status.Topics) != 3 {
+		t.Fatalf("StatusWithout = %+v, %v", status.Topics, err)
+	}
+	if x := status.Topics[0].Indexing; x != nil {
+		t.Errorf("the Topic whose plugin was left out has %+v; want no Indexing", x)
+	}
+	if x := status.Topics[1].Indexing; x == nil || x.Problem != "" || x.Action != "study source index b" {
+		t.Errorf("the Topic whose plugin answers has %+v", x)
+	}
+	if x := status.Topics[2].Indexing; x == nil || !strings.Contains(x.Problem, "no Knowledge base plugin named missing is registered") {
+		t.Errorf("the Topic that names a plugin this computer lacks has %+v", x)
+	}
+	if _, err := os.Stat(silent); err == nil {
+		t.Error("the plugin that was left out was started")
+	}
+	if tools := plugintest.Tools(plugintest.ReadCalls(t, answers)); !slices.Equal(tools, []string{"contract", "status"}) {
+		t.Errorf("the other plugin was asked %v", tools)
+	}
+}
+
 // What keeps the registry from being read is said once, for all of it, and a
 // command that was stopped says so.
 func TestCheckPluginsWithoutARegistryToRead(t *testing.T) {

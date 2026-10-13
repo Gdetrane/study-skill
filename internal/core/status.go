@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -70,7 +71,15 @@ type localState struct {
 // which of the Topic's Sources it has indexed, without waiting for it
 // (askPlugins): a plugin that is missing, slow or broken leaves its Topics'
 // Sources not known, and status as quick as it would be without it.
-func (c *Core) Status(ctx context.Context) (Status, error) { return c.where(ctx, true) }
+func (c *Core) Status(ctx context.Context) (Status, error) { return c.where(ctx, true, nil) }
+
+// StatusWithout is Status for whoever has just asked some plugins and found
+// them wanting, as study doctor has: the plugins named are not asked again,
+// and the Topics that name them come back without an Indexing. A plugin that
+// did not answer once would otherwise be waited for a second time.
+func (c *Core) StatusWithout(ctx context.Context, plugins []string) (Status, error) {
+	return c.where(ctx, true, plugins)
+}
 
 // ActiveTopic says which Topic the agent is working on, and why, or nil
 // when there is none: what Status says of it, and nothing else. It is for a
@@ -79,13 +88,13 @@ func (c *Core) Status(ctx context.Context) (Status, error) { return c.where(ctx,
 // anything: such a command has no use for what is indexed, and must not
 // start a plugin, or wait for one, to learn it.
 func (c *Core) ActiveTopic(ctx context.Context) (*ActiveTopic, error) {
-	status, err := c.where(ctx, false)
+	status, err := c.where(ctx, false, nil)
 	return status.ActiveTopic, err
 }
 
 // where is Status, which asks each Topic's Knowledge base plugin what it has
-// indexed only when indexing is set.
-func (c *Core) where(ctx context.Context, indexing bool) (Status, error) {
+// indexed only when indexing is set, and none of the plugins in without.
+func (c *Core) where(ctx context.Context, indexing bool, without []string) (Status, error) {
 	status := Status{StudyHome: c.home, Topics: []Topic{}, Problems: []TopicProblem{}}
 	home, err := os.OpenRoot(c.home)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -104,6 +113,9 @@ func (c *Core) where(ctx context.Context, indexing bool) (Status, error) {
 				// A Topic that is paused or finished has nothing to do
 				// next, indexing included. A listing of its Sources still
 				// asks its plugin.
+				return
+			}
+			if name, ok := pluginOf(t.KnowledgeBase); ok && slices.Contains(without, name) {
 				return
 			}
 			ask := newIndexAsk(t.ID, t.KnowledgeBase, sources)
