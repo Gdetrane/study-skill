@@ -428,7 +428,8 @@ what they needed:
     at least two, then a hyphen, a line break and a small letter;
   - a line break inside text of a script written without spaces between its words.
 
-  And a quote begins and ends where a word of the Passage does. The first version of this
+  And a quote begins and ends where a word of the Passage does, and never between a
+  letter and a mark written onto it. The first version of this
   check read both texts as NFKC and compared no white space at all, and a review showed
   what that passes: `asymmetric matrix` for "a symmetric matrix", `stable` for "unstable",
   `2n` for "2ⁿ", `106` for "10⁶", `rm -rf / tmp` for `rm -rf /tmp`, `f"` for `f'`. Each

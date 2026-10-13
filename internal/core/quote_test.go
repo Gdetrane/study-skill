@@ -37,6 +37,16 @@ func TestAQuoteIsInAPassage(t *testing.T) {
 		{"one letter of a word", "the pivots", "e", false},
 		{"a word of one letter", "let e be the base", "e", true},
 		{"a mark alone", "the pivots, on the diagonal.", ".", false},
+		// A mark written onto a letter is part of its word and of its
+		// character: a vowel sign that no form of the text joins to its
+		// letter, an accent that has no letter of its own.
+		{"a word without its last vowel sign", "\U00000643\U0000062A\U00000627\U00000628\U0000064C \U0000062C\U0000062F\U0000064A\U0000062F", "\U00000643\U0000062A\U00000627\U00000628", false},
+		{"the word with it", "\U00000643\U0000062A\U00000627\U00000628\U0000064C \U0000062C\U0000062F\U0000064A\U0000062F", "\U00000643\U0000062A\U00000627\U00000628\U0000064C", true},
+		{"a letter without the mark over it", "the mean x\U00000304 of the sample", "the mean x", false},
+		{"the letter with its mark", "the mean x\U00000304 of the sample", "the mean x\U00000304 of", true},
+		{"a quote that begins at a mark", "the mean x\U00000304 of the sample", "\U00000304 of the sample", false},
+		{"a consonant without its vowel sign, in a script without spaces", "\U00000E01\U00000E34\U00000E19\U00000E02\U00000E49\U00000E32\U00000E27", "\U00000E01", false},
+		{"with it", "\U00000E01\U00000E34\U00000E19\U00000E02\U00000E49\U00000E32\U00000E27", "\U00000E01\U00000E34\U00000E19", true},
 
 		// Letters in another form are the same letters, and nothing else is
 		// made like anything else.
@@ -79,6 +89,9 @@ func TestAQuoteIsInAPassage(t *testing.T) {
 		{"a hyphen followed by a space and no line break stays", "Elimi- nation produces", "Elimination produces", false},
 		{"a hyphen left hanging stays", "pre- and post-processing", "pre and post-processing", false},
 		{"a hyphen after one letter stays", "choose n-\nk of them", "choose nk of them", false},
+		{"a word cut after its capital and one letter", "Re-\nmember the pivots", "Remember the pivots", true},
+		{"a hyphen after capitals stays", "the AB-\ntest ran", "the ABtest ran", false},
+		{"a hyphen after one capital stays", "an X-\nray of it", "an Xray of it", false},
 		{"a hyphen with nothing after it but a mark", "the pivot- , and", "the pivot , and", false},
 		{"a hyphen inside a line stays", "a well-known result", "a wellknown result", false},
 		{"a minus at a line's end stays", "a -\nb is the difference", "a b is the difference", false},

@@ -1461,7 +1461,8 @@ from it.
   indexed anew, so search again.
 - **A quote is in a Passage's text** when its characters are there, in order and with
   nothing between them, and it begins and ends where a word of the Passage does: `stable`
-  is not in "unstable", and `500 steps` is not in "1500 steps". "Checked" has to mean that
+  is not in "unstable", and `500 steps` is not in "1500 steps". Nor does it begin or end
+  between a letter and a mark written onto it, such as a vowel sign, in any script. "Checked" has to mean that
   the words are the Source's, so little is let pass. A Passage is text as it was extracted
   from a file, and whoever quotes it types on a keyboard, so this much may differ and no
   more:
@@ -1479,14 +1480,15 @@ from it.
     zero-width space. A quote may not hold one at all, beyond the few a script needs
     (U+200C, U+200D and the soft hyphen): one that does is `invalid_argument`, which names
     the character.
-  - **A word cut at a line's end may be quoted whole**: where small letters, at least two,
-    are followed by a hyphen, a line break and a small letter, the hyphen and the break
-    may be left out, so `elimi-`, a line break and `nation` is quoted as `elimination`.
+  - **A word cut at a line's end may be quoted whole**: where two letters at least, the
+    last of them small, are followed by a hyphen, a line break and a small letter, the
+    hyphen and the break may be left out, so `elimi-`, a line break and `nation` is quoted
+    as `elimination`.
     The break alone may be left out too, since a compound cut at its own hyphen
     (`well-known`) looks the same. The end of a Passage is a line break, when the quote
     goes on in the next. Every other hyphen stays: "pre- and post-" keeps both, and so do
-    a hyphen before a digit, after a single letter, and one a plugin has already joined
-    the lines around.
+    a hyphen before a digit, after a single letter or after capitals, and one a plugin
+    has already joined the lines around.
   - **A line break inside text written without spaces between words** (Chinese, Japanese,
     Thai and the like) may be left out, and a quote of such text begins and ends anywhere.
 

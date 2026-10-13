@@ -27,17 +27,21 @@ import (
 //     where the Passage has it, and nowhere else: "a symmetric matrix" is
 //     not "asymmetric matrix", and "rm -rf /tmp" is not "rm -rf / tmp".
 //   - A quote begins and ends where a word of the Passage does: "stable" is
-//     not in "unstable", and "500 steps" is not in "1500 steps".
+//     not in "unstable", and "500 steps" is not in "1500 steps". Nor does it
+//     begin or end between a letter and a mark written onto it, in any
+//     script: a vowel sign is part of its word, and of its character.
 //   - A single quotation mark of any shape is a single one, and a double a
 //     double: ’ for ' and “ for ". The two are not each other: f' is not f".
 //   - A dash of any length is a dash: — for -, and a minus sign too.
 //   - A character that is not shown is not compared, where the Passage holds
 //     one: a soft hyphen, a zero-width space. A quote may not hold one at
 //     all, beyond the few a script needs (cleanQuote).
-//   - A word cut at a line's end may be quoted whole: where small letters,
-//     at least two of them, are followed by a hyphen, a line break and a
-//     small letter, the hyphen and the break may be left out, or the break
-//     alone. Any other hyphen stays: "pre- and post-" keeps its two.
+//   - A word cut at a line's end may be quoted whole: where two letters at
+//     least, the last of them small, are followed by a hyphen, a line break
+//     and a small letter, the hyphen and the break may be left out, or the
+//     break alone. "Re-" and "member" at a sentence's start are "Remember";
+//     "n-" and "k" keep their hyphen, as does "AB-" before anything. Any
+//     other hyphen stays: "pre- and post-" keeps its two.
 //   - The end of a Passage is white space with a line break in it, when the
 //     quote goes on in the next: a quote has white space there, as between
 //     any two words, unless a word was cut there or the script is written
@@ -87,8 +91,23 @@ func unspaced(r rune) bool {
 }
 
 // wordy reports whether a character is part of a word that white space or a
-// mark ends: a letter or a digit of a script that divides its words.
-func wordy(r rune) bool { return (unicode.IsLetter(r) || unicode.IsDigit(r)) && !unspaced(r) }
+// punctuation mark ends: a letter, a digit, or a mark written onto one, of a
+// script that divides its words.
+func wordy(r rune) bool {
+	return (unicode.IsLetter(r) || unicode.IsDigit(r) || unicode.IsMark(r)) && !unspaced(r)
+}
+
+// joined reports whether two characters that stand side by side in a
+// Passage belong together, so that no quote begins or ends between them:
+// two characters of one word, or a mark and what it is written onto, which
+// are one character to whoever reads them, in a script with spaces or
+// without. A text's end is 0, and joined to nothing.
+func joined(first, second rune) bool {
+	if first == 0 || second == 0 {
+		return false
+	}
+	return unicode.IsMark(second) || wordy(first) && wordy(second)
+}
 
 // isLineBreak reports whether a white space character ends a line.
 func isLineBreak(r rune) bool {
@@ -253,14 +272,14 @@ func (t passageText) holds(quote []rune) bool {
 	if len(t.starts) > 1 {
 		firstEnd, lastStart = t.starts[1], t.starts[len(t.starts)-1]
 	}
-	beginsWord, endsWord := wordy(quote[0]), wordy(quote[m-1])
 	state := make([]uint64, words)
 	end, endBit := (m-1)/64, uint64(1)<<((m-1)%64)
 	for j, r := range t.runes {
 		mask := masks[r]
-		// A quote begins only in the first Passage, and never inside a word.
+		// A quote begins only in the first Passage, and never inside a word
+		// or a character.
 		carry := uint64(0)
-		if j < firstEnd && !(beginsWord && wordy(before[j])) {
+		if j < firstEnd && !joined(before[j], quote[0]) {
 			carry = 1
 		}
 		ended := false
@@ -281,8 +300,8 @@ func (t passageText) holds(quote []rune) bool {
 			}
 			state[w] = next
 		}
-		// And ends only in the last, and never inside a word.
-		if ended && j >= lastStart && !(endsWord && wordy(after[j])) {
+		// And ends only in the last, and never inside a word or a character.
+		if ended && j >= lastStart && !joined(quote[m-1], after[j]) {
 			return true
 		}
 	}

@@ -2,7 +2,6 @@ package core
 
 import (
 	"context"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -200,9 +199,13 @@ func (c *Core) SearchEvidence(ctx context.Context, q PassageQuery) (PassageSearc
 		}
 	}
 	// The Sources to search, in the order they were added, each once.
+	asked := make(map[string]bool, len(q.Sources))
+	for _, id := range q.Sources {
+		asked[id] = true
+	}
 	var sources []Source
 	for _, id := range k.order {
-		if len(q.Sources) == 0 || slices.Contains(q.Sources, id) {
+		if len(q.Sources) == 0 || asked[id] {
 			sources = append(sources, *k.sources[id])
 		}
 	}
