@@ -29,6 +29,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -47,10 +48,12 @@ const (
 	DefaultTimeout = 2 * time.Minute
 	// DefaultQueryTimeout is how long it has for the one vector of a
 	// search, and DefaultRerankTimeout for ordering a search's Passages.
-	// Together they stay under the minute study gives a search, so that
-	// Shelf can still answer by keyword when an endpoint does not.
-	DefaultQueryTimeout  = 15 * time.Second
-	DefaultRerankTimeout = 30 * time.Second
+	// Together they are thirty seconds of the forty-five study gives a
+	// search, starting Shelf included: so that Shelf can still answer, by
+	// keyword or in the order it found, when an endpoint does not, and
+	// say so, where study would otherwise stop it and say nothing of why.
+	DefaultQueryTimeout  = 10 * time.Second
+	DefaultRerankTimeout = 20 * time.Second
 	// DefaultMaxBytes is how large one answer with vectors may be, and
 	// DefaultRerankMaxBytes one answer of the reranking endpoint.
 	DefaultMaxBytes       = 64 << 20
@@ -197,9 +200,11 @@ type Embedding struct {
 	Key string
 	// Model is the model's name, as the endpoint knows it.
 	Model string
-	// Dimensions is how many numbers Shelf keeps of each vector. A longer
-	// vector is cut to it and made of length 1 again, which only a model
-	// trained for it allows. 0 keeps a vector as the endpoint gives it.
+	// Dimensions is how many numbers Shelf keeps of each vector: the size
+	// the model gives, or fewer. A longer vector is cut to it and made of
+	// length 1 again, which only a model trained for it allows. It is
+	// always said: what is kept is then of one size that the settings
+	// name, and a size that changes is seen in them.
 	Dimensions int
 	// SendDimensions has the request ask the endpoint for vectors of that
 	// size, as the OpenAI API's dimensions does. It is sent only when this
@@ -230,12 +235,10 @@ func (e Embedding) Check() error {
 		return errors.New("model is missing: the name of the model, as the endpoint knows it")
 	case len(e.Model) > maxName || !plain(e.Model):
 		return fmt.Errorf("model is not a name of up to %d bytes", maxName)
-	case e.Key != "" && !headerValue(e.Key):
-		return errors.New("key is not one line of printable characters")
+	case !keyValue(e.Key):
+		return errors.New("key is not one word of printable characters")
 	case e.Dimensions < 0 || e.Dimensions > MaxDimensions:
 		return fmt.Errorf("dimensions is not a number from 1 to %d", MaxDimensions)
-	case e.SendDimensions && e.Dimensions == 0:
-		return errors.New("send_dimensions is set, and dimensions does not say how many numbers to ask for")
 	case e.Batch < 0 || e.Batch > MaxBatch:
 		return fmt.Errorf("batch is not a number from 1 to %d", MaxBatch)
 	}
@@ -254,6 +257,12 @@ func (e Embedding) Check() error {
 			"document_request what the request tells the endpoint to write itself: an endpoint takes one of the two, " +
 			"or the text would be marked twice")
 	}
+	// Said last, since it is what is left out most: every other mistake of
+	// the table is named before this one.
+	if e.Dimensions == 0 {
+		return errors.New("dimensions is missing: how many numbers a vector of the model has, which the model's own page " +
+			"says (768 for many), or how many of them to keep")
+	}
 	return nil
 }
 
@@ -265,6 +274,14 @@ func headerValue(s string) bool {
 		}
 	}
 	return true
+}
+
+// keyValue reports whether a key can be sent as a request's bearer token,
+// exactly as it is written: one word. A key with a space at its end would
+// be sent without it, and an endpoint that repeated what it was sent would
+// then repeat a key Shelf does not know for its own (caller.said).
+func keyValue(key string) bool {
+	return headerValue(key) && !strings.Contains(key, " ")
 }
 
 // route is the address a request is posted to: last below the address the
@@ -304,13 +321,19 @@ func route(address, last string) (*url.URL, error) {
 type caller struct {
 	// what is how the endpoint is spoken of: "the embedding endpoint
 	// 127.0.0.1:8080".
-	what     string
-	url      string
+	what string
+	url  string
+	// path is the address without its scheme and host: what a server names
+	// when it says what it was asked for.
+	path     string
 	key      string
 	agent    string
 	maxBytes int64
 	client   *http.Client
 }
+
+// bearer is a bearer token as a request's header holds it.
+var bearer = regexp.MustCompile(`(?i)\bbearer\s+[^\s"',;]+`)
 
 func newCaller(kind string, to *url.URL, key, agent string, maxBytes int64) *caller {
 	// Go's own transport with its defaults: it verifies certificates, and
@@ -318,11 +341,18 @@ func newCaller(kind string, to *url.URL, key, agent string, maxBytes int64) *cal
 	// computer. No address is refused: the endpoint is the learner's.
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.MaxResponseHeaderBytes = 1 << 20
+	if to.Scheme != "https" {
+		// An http endpoint is asked directly, proxy or none: a proxy asked
+		// to pass an http request on reads all of it, the key and every
+		// Passage. Through one, an https request stays between Shelf and
+		// the endpoint.
+		transport.Proxy = nil
+	}
 	if agent == "" {
 		agent = "study-shelf"
 	}
 	return &caller{
-		what: kind + " " + to.Host, url: to.String(), key: key, agent: agent, maxBytes: maxBytes,
+		what: kind + " " + to.Host, url: to.String(), path: to.Path, key: key, agent: agent, maxBytes: maxBytes,
 		client: &http.Client{
 			Transport: transport,
 			// A redirect is not followed: the key would go where the
@@ -335,9 +365,14 @@ func newCaller(kind string, to *url.URL, key, agent string, maxBytes int64) *cal
 // close lets go of the connections kept for a next request.
 func (c *caller) close() { c.client.CloseIdleConnections() }
 
-// post sends body as JSON and reads the answer into out. Whatever goes
-// wrong is a *Problem, unless ctx was done, which gives ctx's error.
-func (c *caller) post(ctx context.Context, within time.Duration, body, out any) error {
+// post sends body as JSON and reads the answer into out: an answer of up to
+// most bytes, or of as many as an answer may ever have when most is 0.
+// Whatever goes wrong is a *Problem, unless ctx was done, which gives ctx's
+// error.
+func (c *caller) post(ctx context.Context, within time.Duration, most int64, body, out any) error {
+	if most <= 0 || most > c.maxBytes {
+		most = c.maxBytes
+	}
 	data, err := json.Marshal(body)
 	if err != nil {
 		return problem("Shelf could not write its request to %s", c.what)
@@ -393,12 +428,12 @@ func (c *caller) post(ctx context.Context, within time.Duration, body, out any) 
 	}
 	// One byte more than is allowed, to tell an answer of that size from a
 	// larger one.
-	answer, err := io.ReadAll(io.LimitReader(resp.Body, c.maxBytes+1))
+	answer, err := io.ReadAll(io.LimitReader(resp.Body, most+1))
 	if err != nil {
 		return failed(err)
 	}
-	if int64(len(answer)) > c.maxBytes {
-		return problem("%s sent more than %s in one answer, the most Shelf reads", c.what, size(c.maxBytes))
+	if int64(len(answer)) > most {
+		return problem("%s sent more than %s in one answer, the most Shelf reads of an answer to what it asked", c.what, size(most))
 	}
 	if err := json.Unmarshal(answer, out); err != nil {
 		return problem("%s did not answer as its API does: %s", c.what, jsonProblem(err))
@@ -407,19 +442,90 @@ func (c *caller) post(ctx context.Context, within time.Duration, body, out any) 
 }
 
 func size(n int64) string {
-	if n >= 1<<20 {
+	switch {
+	case n >= 1<<20:
 		return fmt.Sprintf("%d MB", n>>20)
+	case n >= 1<<10:
+		return fmt.Sprintf("%d KB", n>>10)
 	}
 	return fmt.Sprintf("%d bytes", n)
 }
 
+// answerError is what is wrong with an answer, in words that repeat nothing
+// of it.
+type answerError string
+
+func (e answerError) Error() string { return string(e) }
+
 // jsonProblem says what is wrong with an answer without repeating it.
 func jsonProblem(err error) string {
+	var said answerError
+	if errors.As(err, &said) {
+		return string(said)
+	}
 	var wrongType *json.UnmarshalTypeError
 	if errors.As(err, &wrongType) && wrongType.Field != "" {
-		return fmt.Sprintf("its %s is a %s", wrongType.Field, wrongType.Value)
+		// The kind of value alone: a number is repeated whole there.
+		kind, _, _ := strings.Cut(wrongType.Value, " ")
+		return fmt.Sprintf("its %s is a %s", wrongType.Field, kind)
 	}
 	return "its answer is not JSON"
+}
+
+// counted reads a list of an answer, of as many items as were asked for and
+// no more: it gives up at the item after. What an answer is decoded into is
+// so bounded by what was asked, and not by how many bytes the answer has: a
+// few megabytes of empty items would otherwise take a hundred times that.
+type counted[T any] struct {
+	most  int
+	items []T
+}
+
+func (l *counted[T]) UnmarshalJSON(data []byte) error {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	if tok, err := dec.Token(); err != nil || tok != json.Delim('[') {
+		return answerError("what should be a list of results is none")
+	}
+	for dec.More() {
+		if len(l.items) >= l.most {
+			return answerError(fmt.Sprintf("it holds more than the %d results that were asked for", l.most))
+		}
+		var item T
+		if err := dec.Decode(&item); err != nil {
+			return err
+		}
+		l.items = append(l.items, item)
+	}
+	return nil
+}
+
+// numbers is a vector as an endpoint gives it: a list of numbers, and no
+// more of them than a vector may ever have.
+type numbers []float32
+
+func (n *numbers) UnmarshalJSON(data []byte) error {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	tok, err := dec.Token()
+	switch {
+	case err == nil && tok == nil:
+		// No vector, which whoever reads the answer says.
+		return nil
+	case err != nil || tok != json.Delim('['):
+		return answerError("an embedding is no list of numbers")
+	}
+	out := make([]float32, 0, 1024)
+	for dec.More() {
+		if len(out) >= MaxDimensions {
+			return answerError(fmt.Sprintf("a vector has more than %d numbers, the most Shelf takes", MaxDimensions))
+		}
+		var x float32
+		if err := dec.Decode(&x); err != nil {
+			return answerError("an embedding holds what is no number a vector can hold")
+		}
+		out = append(out, x)
+	}
+	*n = out
+	return nil
 }
 
 // message is what an endpoint says went wrong, taken from the body of its
@@ -458,9 +564,6 @@ func message(body []byte) string {
 // on one line, without what a terminal would act on, short, and without the
 // key, should the endpoint have repeated it.
 func (c *caller) said(text string) string {
-	if c.key != "" {
-		text = strings.ReplaceAll(text, c.key, "[the key]")
-	}
 	text = strings.Join(strings.Fields(strings.Map(func(r rune) rune {
 		switch {
 		case r == '\n' || r == '\t' || r == '\r':
@@ -470,6 +573,20 @@ func (c *caller) said(text string) string {
 		}
 		return r
 	}, strings.ToValidUTF8(text, ""))), " ")
+	// The key is looked for in the text as it will be shown: one repeated
+	// with a character in it that is not shown is whole again by now. And
+	// whatever follows "Bearer" is a key, Shelf's own or not: a server that
+	// repeats the header it was sent repeats it as it was sent.
+	text = bearer.ReplaceAllString(text, "Bearer [the key]")
+	if c.key != "" {
+		text = strings.ReplaceAll(text, c.key, "[the key]")
+	}
+	// Nor the rest of the address, which a server names when it says what
+	// it was asked for, and which may hold what is the learner's alone.
+	text = strings.ReplaceAll(text, c.url, "[the address]")
+	if len(c.path) > 1 {
+		text = strings.ReplaceAll(text, c.path, "[the address]")
+	}
 	const most = 300
 	if len(text) > most {
 		cut := most
@@ -540,10 +657,6 @@ func (e *Embedder) Documents(ctx context.Context, title string, texts []string, 
 		if err != nil {
 			return nil, err
 		}
-		if len(out) > 0 && len(vectors[0]) != len(out[0]) {
-			return nil, problem("%s gave vectors of %d numbers and then of %d: Shelf compares vectors of one size",
-				e.call.what, len(out[0]), len(vectors[0]))
-		}
 		out = append(out, vectors...)
 		if done != nil {
 			done(len(out))
@@ -572,23 +685,33 @@ func (e *Embedder) embed(ctx context.Context, within time.Duration, marking Mark
 	if e.cfg.SendDimensions {
 		request["dimensions"] = e.cfg.Dimensions
 	}
-	var answer struct {
-		Data []struct {
-			Index     *int      `json:"index"`
-			Embedding []float32 `json:"embedding"`
-		} `json:"data"`
+	type vector struct {
+		Index     *int    `json:"index"`
+		Embedding numbers `json:"embedding"`
 	}
-	if err := e.call.post(ctx, within, request, &answer); err != nil {
+	var answer struct {
+		Data counted[vector] `json:"data"`
+	}
+	answer.Data.most = len(texts)
+	// An answer is as large as the vectors that were asked for, written
+	// out, and a little: of the size the request names, or of the largest
+	// a vector may have.
+	each := MaxDimensions
+	if e.cfg.SendDimensions {
+		each = e.cfg.Dimensions
+	}
+	const aNumber, around = 32, 64 << 10
+	if err := e.call.post(ctx, within, int64(len(texts))*int64(each)*aNumber+around, request, &answer); err != nil {
 		return nil, err
 	}
 	what := e.call.what
-	if len(answer.Data) != len(texts) {
-		return nil, problem("%s gave %d vectors for %d texts", what, len(answer.Data), len(texts))
+	if len(answer.Data.items) != len(texts) {
+		return nil, problem("%s gave %d vectors for %d texts", what, len(answer.Data.items), len(texts))
 	}
 	// Each vector says which text it is of. An endpoint that does not say
 	// gives them in the order of the texts.
 	out := make([][]float32, len(texts))
-	for place, item := range answer.Data {
+	for place, item := range answer.Data.items {
 		at := place
 		if item.Index != nil {
 			at = *item.Index
@@ -596,27 +719,24 @@ func (e *Embedder) embed(ctx context.Context, within time.Duration, marking Mark
 		if at < 0 || at >= len(out) || out[at] != nil {
 			return nil, problem("%s gave vectors that are not one for each text: it numbers one %d, of %d texts", what, at, len(texts))
 		}
-		vector := item.Embedding
+		vector := []float32(item.Embedding)
 		switch want := e.cfg.Dimensions; {
 		case len(vector) == 0:
 			return nil, problem("%s gave a vector of no numbers", what)
-		case want > 0 && len(vector) < want:
+		case len(vector) < want:
 			return nil, problem("%s gave vectors of %d numbers, and Shelf's settings ask for %d: set dimensions to a size "+
 				"the model has", what, len(vector), want)
-		case want > 0:
+		default:
 			// The first numbers of a longer vector, which a model trained
-			// for it allows, whether or not the endpoint was asked to cut.
-			vector = vector[:want]
+			// for it allows, whether or not the endpoint was asked to cut:
+			// a copy of them, so that the rest is let go of. Every vector
+			// Shelf keeps is so of the one size its settings name.
+			vector = slices.Clone(vector[:want])
 		}
 		if !unit(vector) {
 			return nil, problem("%s gave a vector that is all zeros, or holds what is no number", what)
 		}
 		out[at] = vector
-	}
-	for at := range out {
-		if len(out[at]) != len(out[0]) {
-			return nil, problem("%s gave vectors of different sizes, %d numbers and %d", what, len(out[0]), len(out[at]))
-		}
 	}
 	return out, nil
 }
@@ -667,8 +787,8 @@ func (r Reranking) Check() error {
 		return errors.New("model is missing: the name of the reranking model, as the endpoint knows it")
 	case len(r.Model) > maxName || !plain(r.Model):
 		return fmt.Errorf("model is not a name of up to %d bytes", maxName)
-	case r.Key != "" && !headerValue(r.Key):
-		return errors.New("key is not one line of printable characters")
+	case !keyValue(r.Key):
+		return errors.New("key is not one word of printable characters")
 	case r.Candidates != 0 && (r.Candidates < 2 || r.Candidates > MaxCandidates):
 		return fmt.Errorf("candidates is not a number from 2 to %d", MaxCandidates)
 	}
@@ -726,21 +846,23 @@ func (r *Reranker) Order(ctx context.Context, question string, texts []string) (
 	// The request llama.cpp's server takes at /v1/rerank, which is the one
 	// Shelf was measured with.
 	request := map[string]any{"model": r.cfg.Model, "query": squeeze(question), "documents": documents, "top_n": len(documents)}
-	var answer struct {
-		Results []struct {
-			Index *int     `json:"index"`
-			Score *float64 `json:"relevance_score"`
-		} `json:"results"`
+	type ranked struct {
+		Index *int     `json:"index"`
+		Score *float64 `json:"relevance_score"`
 	}
-	if err := r.call.post(ctx, r.cfg.Timeout, request, &answer); err != nil {
+	var answer struct {
+		Results counted[ranked] `json:"results"`
+	}
+	answer.Results.most = len(texts)
+	if err := r.call.post(ctx, r.cfg.Timeout, 0, request, &answer); err != nil {
 		return nil, err
 	}
 	what := r.call.what
-	if len(answer.Results) != len(texts) {
-		return nil, problem("%s ranked %d Passages of the %d it was handed", what, len(answer.Results), len(texts))
+	if len(answer.Results.items) != len(texts) {
+		return nil, problem("%s ranked %d Passages of the %d it was handed", what, len(answer.Results.items), len(texts))
 	}
 	out, seen := make([]Ranked, 0, len(texts)), make([]bool, len(texts))
-	for _, result := range answer.Results {
+	for _, result := range answer.Results.items {
 		switch {
 		case result.Index == nil || result.Score == nil:
 			return nil, problem("%s did not answer as its API does: a result without its index or its relevance_score", what)

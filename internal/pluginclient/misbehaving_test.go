@@ -993,7 +993,12 @@ func TestAnAnswerOverTheLimitIsNotRead(t *testing.T) {
 	c := plugintest.NewComputer(t)
 	record := filepath.Join(t.TempDir(), "record.json")
 	plugin := c.Register(t, "kb", plugintest.Command("--record", record, "--flood", "status")...)
-	s, err := pluginclient.Start(context.Background(), c.Env(""), plugin, quick(c))
+	// This is about the limit, not the deadline: reading up to the limit
+	// takes seconds under the race detector, and longer on a busy
+	// computer, where the ten seconds of the other tests ran out first.
+	opts := quick(c)
+	opts.CallTimeout = time.Minute
+	s, err := pluginclient.Start(context.Background(), c.Env(""), plugin, opts)
 	if err != nil {
 		t.Fatal(err)
 	}

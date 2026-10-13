@@ -371,7 +371,7 @@ func (s *Shelf) contract(context.Context, json.RawMessage) (any, *plugincontract
 func (s *Shelf) fits(have index.Made) bool {
 	e := s.settings.Embedder
 	return e != nil && have.Any() && have.Model == e.Model() && have.Document == e.Document() &&
-		(e.Dimensions() == 0 || have.Dimensions == e.Dimensions())
+		have.Dimensions == e.Dimensions()
 }
 
 // behind says why a Source that is indexed is not found by what a question

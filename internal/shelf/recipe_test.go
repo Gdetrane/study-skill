@@ -261,7 +261,12 @@ func holdRecipeTo(t *testing.T, at asked) {
 	// what Shelf sends.
 	longest := strings.Repeat("The eigenvalues of a symmetric matrix are real, and its eigenvectors can be chosen orthonormal. ", 40)
 	longest = longest[:cut.Longest(recipe.PassageSize)]
-	batch := make([]string, endpoint.DefaultBatch)
+	// As many as the Recipe's settings send at once.
+	most := read.Embedding.Batch
+	if most == 0 {
+		most = endpoint.DefaultBatch
+	}
+	batch := make([]string, most)
 	for i := range batch {
 		batch[i] = fmt.Sprintf("%d %s", i, longest[4:])
 	}

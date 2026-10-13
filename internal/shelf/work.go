@@ -216,9 +216,9 @@ func (s *Shelf) embed(ctx context.Context, title string, texts []string, advance
 	var failed *endpoint.Problem
 	switch {
 	case errors.As(err, &failed):
-		return nil, index.Made{}, wrong("%s. Shelf has an embedding endpoint in its settings, and indexes a Source with a vector for each "+
-			"of its Passages or not at all: index it again once the endpoint answers, or take the endpoint out of Shelf's settings "+
-			"file to search by keyword alone", failed.Reason)
+		// What went wrong, and no more: study shows a reason up to three
+		// hundred bytes, and gives the command that has it tried again.
+		return nil, index.Made{}, wrong("%s", failed.Reason)
 	case err != nil:
 		return nil, index.Made{}, err
 	}
@@ -255,7 +255,7 @@ func (s *Shelf) embedIndexed(ctx context.Context, c *index.Collection, in plugin
 	if ctx.Err() != nil {
 		return errStopped
 	}
-	err = shown.Embed(context.WithoutCancel(ctx), hash, made, vectors)
+	err = shown.Embed(context.WithoutCancel(ctx), hash, texts, made, vectors)
 	if errors.Is(err, index.ErrChanged) {
 		return wrong(anew)
 	}

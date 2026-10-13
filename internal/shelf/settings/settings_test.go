@@ -152,8 +152,15 @@ func TestTheRecipeForAServerThatMarksTheTextsItself(t *testing.T) {
 		t.Fatal(err)
 	}
 	e := got.Embedding
-	if e.Model != "google/embeddinggemma-2" || e.Dimensions != 512 || !e.SendDimensions {
+	// Eight Passages in a request: the server this Recipe was held to
+	// refuses more.
+	if e.Model != "google/embeddinggemma-2" || e.Dimensions != 512 || !e.SendDimensions || e.Batch != 8 {
 		t.Errorf("the embedding endpoint is %+v", e)
+	}
+	// A batch the learner gives beside the Recipe takes its place.
+	c.write(t, "format = 1\n[embedding]\nendpoint = \"https://embeddings.example/v1\"\nrecipe = \"embeddinggemma-2-prompts\"\nbatch = 32\n")
+	if own, err := c.load(); err != nil || own.Embedding.Batch != 32 {
+		t.Errorf("with a batch of the learner's own, the settings are %+v, %v", own.Embedding, err)
 	}
 	if e.Query.Text != "" || e.Document.Text != "" || fmt.Sprint(e.Query.Fields, e.Document.Fields) != "map[prompt:query] map[prompt:document]" {
 		t.Errorf("a question is marked %+v and a document %+v", e.Query, e.Document)
@@ -177,6 +184,7 @@ func TestSettingsOfTheLearnersOwn(t *testing.T) {
 [embedding]
 endpoint = "http://127.0.0.1:11434/v1"
 model = "nomic-embed-text"
+dimensions = 768
 query = "search_query: {text}"
 document = "search_document: {text}"
 passage_size = 900
@@ -186,7 +194,7 @@ batch = 8
 	if err != nil {
 		t.Fatal(err)
 	}
-	if e := got.Embedding; e.Model != "nomic-embed-text" || e.Dimensions != 0 || e.SendDimensions || e.Batch != 8 ||
+	if e := got.Embedding; e.Model != "nomic-embed-text" || e.Dimensions != 768 || e.SendDimensions || e.Batch != 8 ||
 		e.Query.Text != "search_query: {text}" || e.Document.Text != "search_document: {text}" || got.PassageSize != 900 {
 		t.Errorf("the embedding endpoint is %+v, with Passages of %d", e, got.PassageSize)
 	}
@@ -249,7 +257,8 @@ func TestAFileThatCannotBeUsedSaysWhy(t *testing.T) {
 		"an endpoint that is a file":  {embedding + "endpoint = \"file:///etc/passwd\"\nmodel = \"m\"\n", []string{"not an http or https address"}},
 		"a size that is text":         {embedding + "endpoint = \"http://127.0.0.1:8080/v1\"\nmodel = \"m\"\ndimensions = \"512\"\n", []string{"[embedding] dimensions that is not a whole number"}},
 		"a size that is too large":    {embedding + "endpoint = \"http://127.0.0.1:8080/v1\"\nmodel = \"m\"\ndimensions = 100000\n", []string{"dimensions that is not a number from 1 to 16384"}},
-		"a size to ask for, and none": {embedding + "endpoint = \"http://127.0.0.1:8080/v1\"\nmodel = \"m\"\nsend_dimensions = true\n", []string{"dimensions does not say"}},
+		"a model without its size":    {embedding + "endpoint = \"http://127.0.0.1:8080/v1\"\nmodel = \"m\"\n", []string{"dimensions is missing", "768 for many"}},
+		"a size of none":              {embedding + "endpoint = \"http://127.0.0.1:8080/v1\"\nrecipe = \"embeddinggemma-2\"\ndimensions = 0\n", []string{"dimensions that is not a number from 1 to 16384"}},
 		"a switch that is a number":   {embedding + "endpoint = \"http://127.0.0.1:8080/v1\"\nmodel = \"m\"\nsend_dimensions = 1\n", []string{"send_dimensions that is not true or false"}},
 		"a mark without the text":     {embedding + "endpoint = \"http://127.0.0.1:8080/v1\"\nmodel = \"m\"\nquery = \"query: \"\n", []string{"holds {text} 0 times"}},
 		"fields that are text":        {embedding + "endpoint = \"http://127.0.0.1:8080/v1\"\nmodel = \"m\"\nquery_request = \"query\"\n", []string{"query_request that is not a table of fields"}},
@@ -331,7 +340,7 @@ func TestASettingsFileInTheIndexFolderIsRefused(t *testing.T) {
 	const text = "format = 1\n[embedding]\nendpoint = \"http://127.0.0.1:8080/v1\"\nrecipe = \"embeddinggemma-2\"\n"
 	refused := func(t *testing.T, got settings.Settings, err error) {
 		t.Helper()
-		if err == nil || !strings.Contains(err.Error(), "inside the folder Shelf keeps its index in, or is reached through it") {
+		if err == nil || !strings.Contains(err.Error(), "is inside the folder Shelf keeps its index in, or the folder of the plugins' folders above it, or is reached through one of them") {
 			t.Errorf("Load() = %+v, %v; want the file refused for where it is", got, err)
 		}
 		if got.Embedding != nil {
@@ -434,6 +443,67 @@ func TestASettingsFileInTheIndexFolderIsRefused(t *testing.T) {
 		got, err := settings.Load(c.getenv, filepath.Join(c.home, "not-made"))
 		if err != nil || got.Embedding == nil {
 			t.Errorf("Load() = %+v, %v", got, err)
+		}
+	})
+	// The folder above Shelf's holds every plugin's folder, and is the one
+	// the contract's page has the learner let a sandbox write in.
+	plugins := func(c computer) string { return filepath.Dir(c.data) }
+	t.Run("the file is a link into the plugins' folder, beside Shelf's", func(t *testing.T) {
+		c := newComputer(t)
+		write(t, filepath.Join(plugins(c), "planted.toml"))
+		link(t, filepath.Join(plugins(c), "planted.toml"), filepath.Join(c.config, "shelf.toml"))
+		got, err := c.load()
+		refused(t, got, err)
+	})
+	t.Run("the file is a link into another plugin's folder", func(t *testing.T) {
+		c := newComputer(t)
+		write(t, filepath.Join(plugins(c), "other", "shelf.toml"))
+		link(t, filepath.Join(plugins(c), "other", "shelf.toml"), filepath.Join(c.config, "shelf.toml"))
+		got, err := c.load()
+		refused(t, got, err)
+	})
+	t.Run("a folder above an index folder of another name is not looked for", func(t *testing.T) {
+		// Started by hand with a folder elsewhere, Shelf guards that folder:
+		// the folder above it is then anything, the home folder perhaps.
+		c := newComputer(t)
+		c.write(t, text)
+		data := filepath.Join(c.home, "shelf-data")
+		if err := os.Mkdir(data, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		got, err := settings.Load(c.getenv, data)
+		if err != nil || got.Embedding == nil {
+			t.Errorf("Load() = %+v, %v", got, err)
+		}
+	})
+	t.Run("the file has a second name in the index folder", func(t *testing.T) {
+		c := newComputer(t)
+		path := c.write(t, text)
+		// The file is where it should be, and whoever writes the index
+		// folder writes it all the same, under its other name.
+		if err := os.Link(path, filepath.Join(c.data, "second-name.toml")); err != nil {
+			t.Skipf("no second name can be made here: %v", err)
+		}
+		got, err := c.load()
+		if err == nil || !strings.Contains(err.Error(), "has a second name elsewhere (a hard link)") || got.Embedding != nil {
+			t.Errorf("Load() = %+v, %v; want the file refused for its second name", got, err)
+		}
+	})
+	t.Run("an index folder that cannot be looked at decides nothing", func(t *testing.T) {
+		if os.Getuid() == 0 {
+			t.Skip("root looks at every folder")
+		}
+		c := newComputer(t)
+		c.write(t, text)
+		// Whether the settings are reached through Shelf's folder cannot be
+		// told when the folder cannot be looked at: that is no "it is not".
+		if err := os.Chmod(plugins(c), 0); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(plugins(c), 0o700) })
+		got, err := c.load()
+		if err == nil || !strings.Contains(err.Error(), "cannot be read (permission denied)") || got.Embedding != nil {
+			t.Errorf("Load() = %+v, %v; want the file refused: where it is could not be decided", got, err)
 		}
 	})
 }

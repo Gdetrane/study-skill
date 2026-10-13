@@ -143,7 +143,7 @@ func TestAFileFromBeforeVectorsIsReadWhereItCannotBeWritten(t *testing.T) {
 	if found := nearest(t, c, made, along(8, 0, 1), 5); len(found) != 0 {
 		t.Errorf("%d Passages are found by vectors the file does not hold", len(found))
 	}
-	if err := c.Embed(ctx, old.ID, old.Hash, made, axes(2, 8, 0)); err == nil || !strings.Contains(err.Error(), "Shelf may not write in its folder here") {
+	if err := c.Embed(ctx, old.ID, old.Hash, textsOf(t, c, old.ID), made, axes(2, 8, 0)); err == nil || !strings.Contains(err.Error(), "Shelf may not write in its folder here") {
 		t.Errorf("Embed in a folder that cannot be written: %v", err)
 	}
 	if err := f.Close(); err != nil {

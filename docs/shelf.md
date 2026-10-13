@@ -156,9 +156,10 @@ indexed.
 ### When an endpoint does not answer
 
 A search is answered all the same, by what is left. An embedding endpoint that is down,
-takes longer than 15 seconds, or answers with what is no vector leaves a search by keyword.
-A reranking endpoint that fails, or takes longer than 30 seconds, leaves the order the
-search had. Shelf says so in its answer, in three fields of its own beside the Passages,
+takes longer than 10 seconds, or answers with what is no vector leaves a search by keyword.
+A reranking endpoint that fails, or takes longer than 20 seconds, leaves the order the
+search had. Together that is 30 of the 45 seconds `study` gives a search, starting Shelf
+included, so that Shelf is still there to answer and to say what it did without. Shelf says so in its answer, in three fields of its own beside the Passages,
 which the contract lets a plugin add:
 
 | Field | Says |
@@ -168,7 +169,8 @@ which the contract lets a plugin add:
 | `notice` | In words for you, what the search did less than its settings ask for, and why: `These Passages were found by keyword alone: the embedding endpoint 127.0.0.1:8080 could not be reached: …`. It is left out when there is nothing to say. |
 
 Shelf names an endpoint by its host. It never repeats the endpoint's key, nor the rest of
-its address, and keeps neither in its index.
+its address, and keeps neither in its index: where an endpoint's own words repeat them,
+or anything after "Bearer", Shelf takes them out before it repeats the words.
 
 `study` does not search a plugin yet: `study evidence search` and the agent's
 `evidence_search` tool are the next change (issue #82). Until then what Shelf indexed is
@@ -326,14 +328,14 @@ the settings expect.
 | `[embedding]` | The endpoint that gives Shelf its vectors. Leave the table out to search by keyword alone. |
 | `endpoint` | The address the endpoint serves the OpenAI API at, as an OpenAI client's base address has it: `http://127.0.0.1:8080/v1` for llama.cpp, `http://127.0.0.1:11434/v1` for Ollama. Shelf posts to `/embeddings` below it. An address without a path stands for `/v1`. `http` or `https`, with no user name, password or query in it. |
 | `recipe` | A [Recipe](#recipes)'s name: the settings below, for one model. A setting you give beside it takes the place of the Recipe's. |
-| `key` | The endpoint's key, when it takes one. It is sent as the request's bearer token, and to that endpoint alone: Shelf follows no redirect. |
+| `key` | The endpoint's key, when it takes one: one word, and spaces around it are not part of it. It is sent as the request's bearer token, and to that endpoint alone: Shelf follows no redirect. |
 | `model` | The model's name, as the endpoint knows it. Required without a `recipe`. |
 | `dimensions` | How many numbers Shelf keeps of each vector. A longer vector is cut to its first numbers and made of length 1 again, which only a model trained for it allows. A shorter one fails the Source. Left out, a vector is kept as the endpoint gives it. |
 | `send_dimensions` | `true` has the request ask the endpoint for vectors of that size, as the OpenAI API's `dimensions` does. Shelf checks the size either way. |
 | `query`, `document` | Text for Shelf to write around a question and around a Passage, for a model that wants them marked: `query = "search_query: {text}"`. `{text}` is where the text goes, and `{title}`, in `document`, the Source's title. |
 | `query_request`, `document_request` | Fields for Shelf to add to the request instead, for a server that marks the texts itself: `query_request = { prompt = "query" }`. Text, numbers and `true` or `false`. |
 | `passage_size` | About how long a Passage is, in characters, from 200 to 5000: no longer than the model reads at once. It decides how Sources are cut from then on, and changes nothing that is indexed. |
-| `batch` | How many Passages one request holds while a Source is indexed, from 1 to 256. 16 unless you say. |
+| `batch` | How many Passages one request holds while a Source is indexed, from 1 to 256. 16 unless you or the Recipe say. A server that takes fewer refuses the request, and the Source fails with what the server said. |
 | `[reranking]` | The endpoint that orders a search's Passages. Leave the table out for none. It works without `[embedding]` too, on what keyword search found. |
 | `endpoint` | As above. Shelf posts to `/rerank` below it, as llama.cpp's server takes it: the `model`, a `query`, the `documents` and `top_n`, answered with an `index` and a `relevance_score` for each document. |
 | `key`, `model` | As above. `model` is required. |
@@ -355,11 +357,16 @@ instead: you would think the endpoint you wrote in use. Shelf says which line or
 is wrong and never what it holds, since it may hold the key. Keep the file yours alone to
 read (`chmod 600`) when it has a key in it.
 
-**The file is not read from Shelf's own folder.** A settings file inside the folder Shelf
-keeps its index in, or reached through it by a link, is refused. That folder holds data,
-and you may have let your agent's sandbox write there so that `study source index` can run
-inside it: a settings file found there would be the agent's to write, and with it the
-address Shelf sends your books to, and its key, from outside the sandbox.
+**The file is not read from where an index is kept.** A settings file inside the folder
+Shelf keeps its index in, or inside the folder above it that holds every plugin's folder
+(`knowledge-base-plugins` in your state folder), or reached through either by a link, is
+refused. Those folders hold data, and you may have let your agent's sandbox write there so
+that `study source index` can run inside it: a settings file found there would be the
+agent's to write, and with it the address Shelf sends your books to, and its key, from
+outside the sandbox. A file with a second name elsewhere (a hard link) is refused for the
+same reason, wherever the other name is. **Do not link the file into your Study home
+either**, to have it sync with your notes: your agent writes there, and Shelf cannot know
+where your Study home is to refuse it.
 
 **Behind a proxy**, Shelf needs to be told, to fetch web pages and to reach an endpoint
 that is not on your computer. `study` starts a plugin with a small environment of its own
@@ -372,9 +379,11 @@ export HTTPS_PROXY=http://proxy.example:3128
 exec study-shelf "$@"
 ```
 
-An endpoint on your own computer is never reached through the proxy. And the rule that
-Shelf fetches no web page from your own computer is for Sources, which your agent names:
-an endpoint is yours to name, and is usually there.
+An endpoint on your own computer is never reached through the proxy, and neither is one
+whose address is `http`, wherever it is: a proxy that passes an `http` request on reads
+all of it, the key and every Passage. Through a proxy, give the endpoint an `https`
+address. And the rule that Shelf fetches no web page from your own computer is for
+Sources, which your agent names: an endpoint is yours to name, and is usually there.
 
 ### Recipes
 
@@ -384,7 +393,7 @@ EmbeddingGemma 2, Google's open model (Apache 2.0), which differ in who marks th
 | Recipe | For | It sets |
 |---|---|---|
 | `embeddinggemma-2` | A server that embeds a text as it is sent, such as llama.cpp, Ollama and vLLM. Shelf writes the model's marks itself, and cuts the vectors. | `model = "google/embeddinggemma-2"`, `dimensions = 512`, `query = "task: search result \| query: {text}"`, `document = "title: {title} \| text: {text}"`, `passage_size = 1500` |
-| `embeddinggemma-2-prompts` | A server that applies the model's prompts itself, by name, and refuses a key it does not know. Shelf sends the texts as they are. | `model = "google/embeddinggemma-2"`, `dimensions = 512`, `send_dimensions = true`, `query_request = { prompt = "query" }`, `document_request = { prompt = "document" }`, `passage_size = 1500` |
+| `embeddinggemma-2-prompts` | A server that applies the model's prompts itself, by name, and refuses a key it does not know. Shelf sends the texts as they are. | `model = "google/embeddinggemma-2"`, `dimensions = 512`, `send_dimensions = true`, `query_request = { prompt = "query" }`, `document_request = { prompt = "document" }`, `passage_size = 1500`, `batch = 8` |
 
 - **Set `model` beside the Recipe when your server knows the model by another name.** Ollama
   wants the name you pulled it under.
@@ -396,6 +405,10 @@ EmbeddingGemma 2, Google's open model (Apache 2.0), which differ in who marks th
 - **Passages of about 1,500 characters**, the size the measurements were made with, which
   is Shelf's own without a Recipe too. The longest Passage Shelf then cuts is 2,001
   characters, which the model reads whole.
+- **Eight Passages in a request, with `embeddinggemma-2-prompts`.** A server of that kind
+  is often the model's own library behind a small program, and takes few texts at once:
+  the one this Recipe was held to refuses more than eight. Set `batch` when yours takes
+  more.
 - Changing from one Recipe to the other is a change of how Passages were marked: Shelf
   cannot know that the two servers mark alike, so it says of what is indexed that it is to
   be indexed again.
@@ -416,9 +429,11 @@ document = "search_document: {text}"
 
 ## Serving EmbeddingGemma 2
 
-Shelf downloads no model and starts no server: you run one, and name its address. What
-follows is where to begin, and was not run while this page was written, so check each flag
-with your server's own `--help`: they change between versions.
+Shelf downloads no model and starts no server: you run one, and name its address. The
+`llama-server` lines below were run as they are written, on a graphics card, with a build
+of llama.cpp of 8 October 2026 (commit `de7fa0a`). Flags change between versions, so ask
+your server's own `--help` when one is refused. The Ollama address is from Ollama's
+documentation and was not tried.
 
 **llama.cpp** serves the model's text side through `llama-server`, from a GGUF file of the
 model. The measurements were made with it, and a 4-bit file, of 176 MB, gave the same
@@ -435,9 +450,12 @@ llama-server -m embeddinggemma-2.gguf --embedding --host 127.0.0.1 --port 8080 \
 ```
 
 The sizes are what matter: a server refuses a text that is longer, in tokens, than what it
-was started to take at once (`-ub`, and the context `-c`), and a Passage of 2,000
-characters is several hundred tokens. The settings for it are
-`endpoint = "http://127.0.0.1:8080/v1"` and `recipe = "embeddinggemma-2"`.
+was started to take at once (`-ub`, and the context `-c`), with "input is too large to
+process. increase the physical batch size". A Passage of 2,000 characters is several
+hundred tokens, and sixteen of them go in one request as these lines start the server.
+The model's file says how its vectors are pooled, so `--pooling` is not needed. The
+settings for it are `endpoint = "http://127.0.0.1:8080/v1"` and
+`recipe = "embeddinggemma-2"`.
 
 **Ollama** serves the OpenAI API at `http://127.0.0.1:11434/v1`, and uses a graphics card
 when it finds one. Use the Recipe `embeddinggemma-2`, and set `model` to the name
@@ -458,9 +476,11 @@ llama-server -m qwen3-reranker-0.6b.gguf --reranking --host 127.0.0.1 --port 808
 ```
 
 To hold your endpoint to a Recipe, Lamplight's own test asks it for vectors and checks what
-comes back: that it takes the Recipe's requests, sixteen of the longest Passages at once
-among them, that the vectors have the Recipe's size, and that eight questions each find
-the Passage that answers them. From a checkout of the repository:
+comes back: that it takes the Recipe's requests, a whole batch of the longest Passages at
+once among them, that the vectors have the Recipe's size, and that eight questions each
+find the Passage that answers them. Both Recipes were held to a real server this way:
+`embeddinggemma-2` to llama.cpp with the 4-bit file, and `embeddinggemma-2-prompts` to
+the model's own library on a graphics card. From a checkout of the repository:
 
 ```sh
 LAMPLIGHT_TEST_EMBEDDING_ENDPOINT=http://127.0.0.1:8080/v1 \

@@ -30,6 +30,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 
+	"github.com/mordor-forge/lamplight/v2/internal/plugincontract"
 	"github.com/mordor-forge/lamplight/v2/internal/shelf/cut"
 	"github.com/mordor-forge/lamplight/v2/internal/shelf/endpoint"
 )
@@ -78,6 +79,9 @@ type Recipe struct {
 	// PassageSize is about how long a Passage may be for the model, in
 	// characters.
 	PassageSize int
+	// Batch is how many Passages one request asks vectors for, when it is
+	// not the endpoint client's own number.
+	Batch int
 }
 
 // recipes are the Recipes this Shelf has.
@@ -91,7 +95,9 @@ type Recipe struct {
 //   - embeddinggemma-2-prompts is for a server that applies the model's
 //     prompts itself, by name: the request names the prompt and the size,
 //     and the texts go as they are. Marked by Shelf as well, a text would be
-//     marked twice there.
+//     marked twice there. Such a server is the model's own library behind a
+//     small program, and takes few texts in one request: the one this
+//     Recipe was held to takes eight, so eight is what it asks for.
 //
 // 512 numbers of the model's 768: on four books and 300 questions the right
 // Passage was found as often with 512 as with 768, and a third less is kept,
@@ -107,7 +113,7 @@ var recipes = map[string]Recipe{
 		Model: "google/embeddinggemma-2", Dimensions: 512, SendDimensions: true,
 		Query:       endpoint.Marking{Fields: map[string]any{"prompt": "query"}},
 		Document:    endpoint.Marking{Fields: map[string]any{"prompt": "document"}},
-		PassageSize: cut.DefaultSize,
+		PassageSize: cut.DefaultSize, Batch: 8,
 	},
 }
 
@@ -178,21 +184,32 @@ func Read(path, dataFolder string) (Settings, error) {
 		return fail("is not a file. Shelf's settings are a file of that name, in TOML")
 	case info.Size() > maxBytes:
 		return fail("is larger than %d MB, which no settings file is", maxBytes>>20)
+	case links(info) > 1:
+		// Whoever can write the file under its other name writes Shelf's
+		// settings, wherever that name is.
+		return fail("has a second name elsewhere (a hard link): what is written under that name is written here. Shelf's " +
+			"settings are a file of their own: copy it there")
 	}
 	// The folder Shelf keeps its index in holds data, and the contract has
 	// a plugin load no settings from it. It is more than a formality: the
-	// learner may have let their agent's sandbox write in that folder, so
-	// that study source index can run there, and a settings file found
-	// through it would let whoever writes an index say where Shelf sends a
-	// book's text and its key, from outside the sandbox.
+	// learner may have let their agent's sandbox write there, so that
+	// study source index can run in it, and a settings file found through
+	// it would let whoever writes an index say where Shelf sends a book's
+	// text and its key, from outside the sandbox. The folder above it holds
+	// every plugin's folder, and is the one the contract's page has the
+	// learner allow, so it is looked for as well.
 	if dataFolder != "" {
-		switch through, err := reachedThrough(path, dataFolder); {
+		folders := []string{dataFolder}
+		if above := filepath.Dir(dataFolder); filepath.Base(above) == plugincontract.DataFoldersName {
+			folders = append(folders, above)
+		}
+		switch through, err := reachedThrough(path, folders...); {
 		case err != nil:
 			return unreadable(err)
 		case through:
-			return fail("is inside the folder Shelf keeps its index in, or is reached through it. That folder holds data, " +
-				"which more than you may write: keep the settings in a folder that is yours alone, and have no link lead " +
-				"from there into Shelf's folder")
+			return fail("is inside the folder Shelf keeps its index in, or the folder of the plugins' folders above it, or " +
+				"is reached through one of them. Those folders hold data, which more than you may write: keep the settings " +
+				"in a folder that is yours alone, and have no link lead from there into them")
 		}
 	}
 	file, err := os.Open(path)
@@ -224,21 +241,35 @@ func cause(err error) error {
 	return err
 }
 
-// reachedThrough reports whether the file at path is inside folder, or is
-// reached through it: whether any folder a name is looked up in, on the way
-// to the file, is that folder. It follows the path one name at a time and
-// each link as it meets it, and tells folders apart by what they are, not
-// by what they are called.
+// reachedThrough reports whether the file at path is inside one of folders,
+// or is reached through one: whether any folder a name is looked up in, on
+// the way to the file, is one of them. It follows the path one name at a
+// time and each link as it meets it, and tells folders apart by what they
+// are, not by what they are called.
 //
 // Nobody but the learner writes the folders on the way to their settings,
-// short of the one this looks for, so the file may be opened by its path
-// afterwards: a path that does not pass through Shelf's folder holds no
-// name that whoever writes there could change.
-func reachedThrough(path, folder string) (bool, error) {
-	target, err := os.Stat(folder)
-	if err != nil {
-		// A folder that is not there holds no settings file.
+// short of the ones this looks for, so the file may be opened by its path
+// afterwards: a path that passes through none of them holds no name that
+// whoever writes there could change.
+//
+// A folder that cannot be looked at decides nothing, and is an error: only
+// one that is not there holds no settings file.
+func reachedThrough(path string, folders ...string) (bool, error) {
+	var targets []fs.FileInfo
+	for _, folder := range folders {
+		switch target, err := os.Stat(folder); {
+		case errors.Is(err, fs.ErrNotExist):
+		case err != nil:
+			return false, err
+		default:
+			targets = append(targets, target)
+		}
+	}
+	if len(targets) == 0 {
 		return false, nil
+	}
+	isOne := func(here fs.FileInfo) bool {
+		return slices.ContainsFunc(targets, func(target fs.FileInfo) bool { return os.SameFile(here, target) })
 	}
 	const mostLinks = 40
 	// The names as they are written, a ".." among them taken where it
@@ -257,7 +288,7 @@ func reachedThrough(path, folder string) (bool, error) {
 		if err != nil {
 			return false, err
 		}
-		if os.SameFile(here, target) {
+		if isOne(here) {
 			return true, nil
 		}
 		if name == ".." {
@@ -372,7 +403,7 @@ func embedding(t table) (endpoint.Embedding, int, string) {
 		}
 	}
 	e.Model, e.Dimensions, e.SendDimensions = recipe.Model, recipe.Dimensions, recipe.SendDimensions
-	e.Query, e.Document = recipe.Query, recipe.Document
+	e.Query, e.Document, e.Batch = recipe.Query, recipe.Document, recipe.Batch
 	size := recipe.PassageSize
 
 	var given bool
@@ -385,6 +416,9 @@ func embedding(t table) (endpoint.Embedding, int, string) {
 	if e.Key, _, reason = t.text("key"); reason != "" {
 		return e, 0, reason
 	}
+	// A key is one word: pasted with a space or a line's end around it, it
+	// is the word.
+	e.Key = strings.TrimSpace(e.Key)
 	if model, given, reason := t.text("model"); reason != "" {
 		return e, 0, reason
 	} else if given {
@@ -393,7 +427,7 @@ func embedding(t table) (endpoint.Embedding, int, string) {
 	if n, given, reason := t.integer("dimensions"); reason != "" {
 		return e, 0, reason
 	} else if given {
-		if n < 0 || n > endpoint.MaxDimensions {
+		if n < 1 || n > endpoint.MaxDimensions {
 			return e, 0, fmt.Sprintf("has an [embedding] dimensions that is not a number from 1 to %d", endpoint.MaxDimensions)
 		}
 		e.Dimensions = int(n)
@@ -483,6 +517,7 @@ func reranking(t table) (endpoint.Reranking, string) {
 	if r.Key, _, reason = t.text("key"); reason != "" {
 		return r, reason
 	}
+	r.Key = strings.TrimSpace(r.Key)
 	if r.Model, _, reason = t.text("model"); reason != "" {
 		return r, reason
 	}

@@ -303,7 +303,7 @@ func TestIndexedContentIsGivenVectors(t *testing.T) {
 		t.Errorf("Texts of a Source nothing is indexed of = %q, %q, %v", none, texts, err)
 	}
 
-	if err := c.Embed(ctx, source.ID, source.Hash, made, axes(3, 8, 0)); err != nil {
+	if err := c.Embed(ctx, source.ID, source.Hash, texts, made, axes(3, 8, 0)); err != nil {
 		t.Fatal(err)
 	}
 	now, err := c.Source(ctx, source.ID)
@@ -322,7 +322,7 @@ func TestIndexedContentIsGivenVectors(t *testing.T) {
 
 	// Vectors of another model take the place of the first.
 	other := index.Made{Model: "another-model", Document: "{text}", Dimensions: 4}
-	if err := c.Embed(ctx, source.ID, source.Hash, other, axes(3, 4, 1)); err != nil {
+	if err := c.Embed(ctx, source.ID, source.Hash, texts, other, axes(3, 4, 1)); err != nil {
 		t.Fatal(err)
 	}
 	if found := nearest(t, c, made, along(8, 1, 1), 5); len(found) != 0 {
@@ -334,15 +334,29 @@ func TestIndexedContentIsGivenVectors(t *testing.T) {
 
 	// Vectors of content that is no longer the Source's are not written:
 	// another hash, another number of Passages, a Source nothing is indexed
-	// of.
+	// of. Nor are vectors of other Passages of the same content, though
+	// there be as many: the same page cut otherwise since, so that a vector
+	// would be kept for a text it was not made of.
+	otherwise := []string{texts[0], "The second page speaks of", "nullity. " + texts[2]}
 	for name, try := range map[string]func() error{
-		"another hash":            func() error { return c.Embed(ctx, source.ID, hash("f"), made, axes(3, 8, 0)) },
-		"too few vectors":         func() error { return c.Embed(ctx, source.ID, source.Hash, made, axes(2, 8, 0)) },
-		"a Source nobody indexed": func() error { return c.Embed(ctx, "nothing.z9", hash("a"), made, axes(3, 8, 0)) },
+		"another hash":   func() error { return c.Embed(ctx, source.ID, hash("f"), texts, made, axes(3, 8, 0)) },
+		"fewer Passages": func() error { return c.Embed(ctx, source.ID, source.Hash, texts[:2], made, axes(2, 8, 0)) },
+		"more Passages": func() error {
+			return c.Embed(ctx, source.ID, source.Hash, append(texts[:3:3], "A fourth."), made, axes(4, 8, 0))
+		},
+		"as many, cut otherwise": func() error { return c.Embed(ctx, source.ID, source.Hash, otherwise, made, axes(3, 8, 0)) },
+		"the same in other order": func() error {
+			return c.Embed(ctx, source.ID, source.Hash, []string{texts[1], texts[0], texts[2]}, made, axes(3, 8, 0))
+		},
+		"a Source nobody indexed": func() error { return c.Embed(ctx, "nothing.z9", hash("a"), texts, made, axes(3, 8, 0)) },
 	} {
 		if err := try(); !errors.Is(err, index.ErrChanged) {
 			t.Errorf("%s: Embed = %v, want it to say the content changed", name, err)
 		}
+	}
+	// A vector for each text, or nothing is asked of the index at all.
+	if err := c.Embed(ctx, source.ID, source.Hash, texts, made, axes(2, 8, 0)); err == nil || errors.Is(err, index.ErrChanged) {
+		t.Errorf("two vectors for three Passages: Embed = %v", err)
 	}
 	if still, err := c.Source(ctx, source.ID); err != nil || still.Made != other {
 		t.Errorf("a refused Embed changed the Source's vectors: %+v, %v", still, err)
@@ -468,7 +482,7 @@ func TestAFileFromBeforeVectorsIsReadAndThenBroughtUpToDate(t *testing.T) {
 					t.Errorf("the new content's vectors find %+v", found)
 				}
 			default:
-				if err := c.Embed(ctx, old.ID, old.Hash, made, axes(2, 8, 0)); err != nil {
+				if err := c.Embed(ctx, old.ID, old.Hash, textsOf(t, c, old.ID), made, axes(2, 8, 0)); err != nil {
 					t.Fatal(err)
 				}
 				if found := nearest(t, c, made, along(8, 1, 1), 1); len(found) != 1 || found[0].Text != "Another old page speaks of traces." {
@@ -553,5 +567,53 @@ func BenchmarkNearest(b *testing.B) {
 				}
 			}
 		})
+	}
+}
+
+// textsOf are the texts of the Passages that are indexed for a Source, in
+// their order: what vectors are made of, and given back with.
+func textsOf(t *testing.T, c *index.Collection, source string) []string {
+	t.Helper()
+	_, texts, err := c.Texts(ctx, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return texts
+}
+
+// The format of a collection's file is looked at again when Shelf writes
+// content: a newer Shelf may have brought the file to a format of its own
+// since this one opened it, and what this one writes is not what that
+// format holds.
+func TestAFileBroughtToANewerFormatIsNotWrittenTo(t *testing.T) {
+	dir := t.TempDir()
+	c := collection(t, reopen(t, dir), "raised")
+	source, passages := book("book.a1", "a", "The first content speaks of elimination.", "And of pivots.")
+	source.Made = made
+	if err := c.Replace(ctx, source, passages, directions(len(passages), made.Dimensions)); err != nil {
+		t.Fatal(err)
+	}
+	db := raw(t, filepath.Join(dir, "raised.sqlite"))
+	if _, err := db.Exec(fmt.Sprintf("PRAGMA user_version = %d", index.Format+1)); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	fresh, freshPassages := book("book.a1", "b", "Other content, for a format this Shelf does not know.")
+	var newer *index.NewerError
+	for name, write := range map[string]func() error{
+		"Replace": func() error { return c.Replace(ctx, fresh, freshPassages, nil) },
+		"Embed": func() error {
+			return c.Embed(ctx, source.ID, source.Hash, textsOf(t, c, source.ID), made, directions(len(passages), made.Dimensions))
+		},
+	} {
+		if err := write(); !errors.As(err, &newer) {
+			t.Errorf("%s into a file that is now in a newer format = %v; want it refused as newer", name, err)
+		}
+	}
+	// What was there is still there, for the Shelf that knows the format.
+	if got, err := c.Source(ctx, source.ID); err != nil || got.Hash != source.Hash {
+		t.Errorf("after the refused writes the Source is %+v, %v", got, err)
 	}
 }

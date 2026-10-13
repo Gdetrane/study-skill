@@ -350,7 +350,13 @@ func (c *Collection) upgrade(ctx context.Context, tx *sql.Tx) error {
 	if err := tx.QueryRowContext(ctx, "PRAGMA user_version").Scan(&format); err != nil {
 		return c.wrap(err)
 	}
-	if format >= Format {
+	switch {
+	case format > Format:
+		// A newer Shelf brought the file to a format of its own since this
+		// one opened it: what this one would write is not what that format
+		// holds.
+		return &NewerError{Collection: c.name, Format: int64(format)}
+	case format == Format:
 		return nil
 	}
 	for _, statement := range append(append([]string{}, vectorSchema...), fmt.Sprintf("PRAGMA user_version = %d", Format)) {
@@ -554,15 +560,20 @@ func (c *Collection) Texts(ctx context.Context, source string) (hash string, tex
 // Embed gives vectors to the Passages that are indexed for a Source, in the
 // place of the vectors they had: one for each Passage, in their order, made
 // as made says. The Passages and their ids stay as they are. hash is the
-// hash of the content the vectors are of: when the Source's content is
-// another by now, nothing is written and the error is ErrChanged. It is one
-// transaction, so a Source's vectors are all of one making, whatever stops
-// Shelf on the way.
-func (c *Collection) Embed(ctx context.Context, source, hash string, made Made, vectors [][]float32) error {
-	return c.embed(ctx, source, hash, made, vectors, nil)
+// hash of the content the vectors are of, and texts the Passages' texts they
+// were made of, as Texts gave them: when the Source's content is another by
+// now, or its Passages are, though of the same content and as many, nothing
+// is written and the error is ErrChanged. A vector is so never kept for a
+// text it was not made of. It is one transaction, so a Source's vectors are
+// all of one making, whatever stops Shelf on the way.
+func (c *Collection) Embed(ctx context.Context, source, hash string, texts []string, made Made, vectors [][]float32) error {
+	return c.embed(ctx, source, hash, texts, made, vectors, nil)
 }
 
-func (c *Collection) embed(ctx context.Context, source, hash string, made Made, vectors [][]float32, work *Work) error {
+func (c *Collection) embed(ctx context.Context, source, hash string, texts []string, made Made, vectors [][]float32, work *Work) error {
+	if len(texts) != len(vectors) {
+		return fmt.Errorf("%d vectors for %d Passages", len(vectors), len(texts))
+	}
 	if !made.Any() {
 		return errors.New("vectors come with what they were made with")
 	}
@@ -578,14 +589,37 @@ func (c *Collection) embed(ctx context.Context, source, hash string, made Made, 
 		return err
 	}
 	var has string
-	var passages int
-	err = tx.QueryRowContext(ctx, `SELECT coalesce(hash, ''), (SELECT count(*) FROM passages WHERE source = sources.id)
-		FROM sources WHERE id = ?`, source).Scan(&has, &passages)
+	err = tx.QueryRowContext(ctx, `SELECT coalesce(hash, '') FROM sources WHERE id = ?`, source).Scan(&has)
 	switch {
-	case errors.Is(err, sql.ErrNoRows) || (err == nil && (has != hash || passages != len(vectors))):
+	case errors.Is(err, sql.ErrNoRows) || (err == nil && has != hash):
 		return ErrChanged
 	case err != nil:
 		return c.wrap(err)
+	}
+	// The Passages are the ones the vectors were made of, each in its
+	// place: the same content cut otherwise since is other Passages.
+	rows, err := tx.QueryContext(ctx, `SELECT passages_text.text FROM passages p JOIN passages_text ON passages_text.rowid = p.key
+		WHERE p.source = ? ORDER BY p.place`, source)
+	if err != nil {
+		return c.wrap(err)
+	}
+	at, same := 0, true
+	for rows.Next() {
+		var text string
+		if err := rows.Scan(&text); err != nil {
+			rows.Close()
+			return c.wrap(err)
+		}
+		same = same && at < len(texts) && texts[at] == text
+		at++
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return c.wrap(err)
+	}
+	rows.Close()
+	if !same || at != len(texts) {
+		return ErrChanged
 	}
 	if err := c.dropVectors(ctx, tx, source); err != nil {
 		return err

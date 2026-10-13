@@ -528,15 +528,28 @@ where it was stopped, and what a Recipe holds.
     `study knowledge-base check` shows. Searching by keyword instead was rejected: the
     learner who wrote an endpoint into the file would think it in use. The reason names a
     line or a setting and never repeats a value, which may be the key.
-  - **A settings file inside the folder Shelf keeps its index in, or reached through it, is
-    refused.** The contract already has a plugin load no settings from its folder. It
-    matters because that folder is the one the learner is told to let their agent's
-    sandbox write in, so that `study source index` can run there. A settings file found
-    through it would be the agent's to write, and with it the address every Passage is
-    sent to, and the key, by a Shelf that the MCP server starts outside the sandbox. Shelf
-    follows the path to the file one name at a time and tells folders apart by what they
-    are. It does not look for the Study home, which it is not told of: `study` starts a
-    plugin in the configuration folder only when that is outside it.
+  - **A settings file inside the folder Shelf keeps its index in, or the folder of every
+    plugin's folder above it, or reached through either, is refused.** The contract
+    already has a plugin load no settings from its folder. It matters because the folder
+    above is the one the contract's page has the learner let their agent's sandbox write
+    in, so that `study source index` can run there. A settings file found through it would
+    be the agent's to write, and with it the address every Passage is sent to, and the
+    key, by a Shelf that the MCP server starts outside the sandbox. Shelf follows the path
+    to the file one name at a time and tells folders apart by what they are; a folder it
+    cannot look at decides nothing, and stops it; and a file with a second name is
+    refused, since the other name may be where an agent writes. It does not look for the
+    Study home, which it is not told of: `study` starts a plugin in the configuration
+    folder only when that is outside it, and the learner's page says not to link the file
+    there. A review found the first version guarding Shelf's folder alone, and taking one
+    it could not look at for one that is not there.
+  - **What an endpoint answers is bounded by what was asked.** An answer is read up to
+    the size the vectors asked for can have, no more results are decoded than were asked
+    for, and no vector of more than 16,384 numbers: a few megabytes of empty results took
+    half a gigabyte to hold before. An endpoint's own words reach a reason with the key,
+    whatever follows "Bearer", and the address taken out, after the characters that are
+    not shown: a key repeated with one of those inside it came back whole. And an `http`
+    endpoint is asked directly whatever proxy the environment names, since a proxy reads
+    an `http` request whole.
 - **A Recipe says who marks the texts, and Shelf sends nothing its settings do not name.**
   The list above has a Recipe hold "the text the model wants before a query and before a
   document". A real EmbeddingGemma 2 service showed that this is one of two ways: it
@@ -585,8 +598,8 @@ where it was stopped, and what a Recipe holds.
   again over this one's.
 - **An endpoint that fails takes from a search only what it would have added.** Without
   the question's vector the search is by keyword, and without the reranker's answer in the
-  order it had, each after a deadline that leaves time for the rest: 15 and 30 seconds of
-  the minute `study` gives a search. The contract has no word for a search that did less
+  order it had, each after a deadline that leaves time for the rest: 10 and 20 seconds of
+  the 45 `study` gives a search, starting Shelf included. The contract has no word for a search that did less
   than it could, so Shelf says it in three fields of its own beside the Passages, `search`,
   `reranked` and `notice`, which `study` reads past until it is taught them. While a Source
   is indexed there is nothing to fall back to: the Source is `failed`, with a reason that

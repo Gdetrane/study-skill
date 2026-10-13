@@ -206,6 +206,9 @@ GOOS=darwin go vet ./...            # macOS is supported too
     their size) before it is used, no redirect is followed, and what goes wrong is an
     `*endpoint.Problem`, which names the endpoint by its host and never holds the key or
     the rest of the address: a server's own words reach it only through `caller.said`.
+    A list of an answer is decoded through `counted`, and a vector through `numbers`:
+    what an answer decodes to is bounded by what was asked for, never by its bytes alone.
+    An `http` endpoint is asked without the environment's proxy.
   - An endpoint is the learner's choice, so it is not held to `web.Fetcher`'s rule, and is
     usually on the computer Shelf runs on. Never loosen that rule for Sources to make an
     endpoint reachable, and never fetch a Source's page through the endpoint's client.

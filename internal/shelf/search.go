@@ -159,18 +159,9 @@ func (s *Shelf) nearest(ctx context.Context, c *index.Collection, in plugincontr
 	case err != nil:
 		return nil, "", err
 	}
-	// With no size in the settings, a vector is as long as the endpoint
-	// makes it, and that can have changed since a Source was indexed.
-	compared := 0
-	for _, source := range fitting {
-		if source.Made.Dimensions == len(question) {
-			compared++
-		}
-	}
-	if compared == 0 {
-		return nil, alone + fmt.Sprintf("the embedding endpoint gave the question a vector of %d numbers, and the Sources' vectors have %d. "+
-			"Index them again, or say in Shelf's settings how many numbers to keep.", len(question), fitting[0].Made.Dimensions), nil
-	}
+	// The question's vector is of the size the settings name, as the
+	// vectors of every Source that fits them are: the endpoint client cuts
+	// to it, and refuses a shorter one.
 	found, err = c.Nearest(ctx, index.Made{Model: e.Model(), Document: e.Document()}, question, each, in.Sources)
 	if err != nil {
 		return nil, "", err
@@ -178,7 +169,7 @@ func (s *Shelf) nearest(ctx context.Context, c *index.Collection, in plugincontr
 	if found == nil {
 		found = []index.Found{}
 	}
-	if others := len(indexed) - compared; others > 0 {
+	if others := len(indexed) - len(fitting); others > 0 {
 		notice = fmt.Sprintf("%d of the %d Sources searched were searched by keyword alone: their Passages have no vectors of the model %s, "+
 			"which Shelf's settings name. Index them again to have their Passages embedded.", others, len(indexed), short(e.Model()))
 	}

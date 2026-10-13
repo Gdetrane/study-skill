@@ -464,7 +464,7 @@ func TestAnEndpointThatFailsLeavesTheSourceFailed(t *testing.T) {
 		{name: "too much", answer: func(w http.ResponseWriter, _ *http.Request, body map[string]any) bool {
 			vectors(w, len(body["input"].([]any)), 20000)
 			return true
-		}, change: func(e *endpoint.Embedding) { e.MaxBytes = 256 << 10 }, want: []string{"sent more than 262144 bytes in one answer"}, batches: 1},
+		}, change: func(e *endpoint.Embedding) { e.MaxBytes = 256 << 10 }, want: []string{"sent more than 256 KB in one answer"}, batches: 1},
 		{name: "an error at the second batch", answer: func() func(w http.ResponseWriter, r *http.Request, _ map[string]any) bool {
 			var seen atomic.Int64
 			return func(w http.ResponseWriter, _ *http.Request, _ map[string]any) bool {
@@ -500,7 +500,12 @@ func TestAnEndpointThatFailsLeavesTheSourceFailed(t *testing.T) {
 			at.Forget()
 			at.Answer(tc.answer)
 			began := time.Now()
-			failed := asking.fails("failing", book, append(tc.want, "the embedding endpoint "+at.Host, "index it again once the endpoint answers")...)
+			failed := asking.fails("failing", book, append(tc.want, "the embedding endpoint "+at.Host)...)
+			// What went wrong and no more: study shows three hundred bytes
+			// of a reason, and gives the command that has it tried again.
+			if len(failed.Reason) > 300 || strings.Contains(failed.Reason, "key] key]") {
+				t.Errorf("the reason is %d bytes, more than study shows, or was taken apart twice: %s", len(failed.Reason), failed.Reason)
+			}
 			if took := time.Since(began); took > time.Minute {
 				t.Errorf("it took %s to find out", took)
 			}

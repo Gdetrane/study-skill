@@ -37,6 +37,13 @@ var Tools = []string{ToolContract, ToolIndex, ToolStatus, ToolCancel, ToolSearch
 // where it was told to.
 const DataFolderEnv = "LAMPLIGHT_PLUGIN_DATA"
 
+// DataFoldersName is the name of the folder, in Lamplight's folder of the
+// learner's state folder, that holds the folder of each plugin started by a
+// command, under the plugin's name. It is the folder a learner lets an
+// agent's sandbox write in so that indexing can run there, so a plugin
+// takes nothing from it, or from its own folder in it, for a setting.
+const DataFoldersName = "knowledge-base-plugins"
+
 // Kinds of Source a plugin can index.
 const (
 	SourceFile = "file"

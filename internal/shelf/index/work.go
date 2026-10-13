@@ -213,8 +213,8 @@ func (w *Work) Replace(ctx context.Context, source Source, passages []Passage, v
 
 // Embed gives vectors to the Passages that are indexed for the Source, as
 // Collection.Embed does, and ends the work in the same transaction.
-func (w *Work) Embed(ctx context.Context, hash string, made Made, vectors [][]float32) error {
-	if err := w.c.embed(ctx, w.source, hash, made, vectors, w); err != nil {
+func (w *Work) Embed(ctx context.Context, hash string, texts []string, made Made, vectors [][]float32) error {
+	if err := w.c.embed(ctx, w.source, hash, texts, made, vectors, w); err != nil {
 		return err
 	}
 	w.over = true

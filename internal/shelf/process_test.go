@@ -421,7 +421,7 @@ func TestStudyShelfDoesNotStartOnSettingsItCannotUse(t *testing.T) {
 		"a Recipe it does not have":  {strings.Replace(good, "embeddinggemma-2", "embeddinggemma-9", 1), false, []string{"names a Recipe this Shelf does not have", "embeddinggemma-2 and embeddinggemma-2-prompts"}},
 		"a newer format":             {strings.Replace(good, "format = 1", "format = 2", 1), false, []string{"is in format 2", "this one reads format 1", "update Lamplight"}},
 		"no format":                  {strings.TrimPrefix(good, "format = 1\n"), false, []string{"does not say which format"}},
-		"a file in the index folder": {good, true, []string{"is inside the folder Shelf keeps its index in, or is reached through it"}},
+		"a file in the index folder": {good, true, []string{"is inside the folder Shelf keeps its index in, or the folder of the plugins' folders above it"}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			computer := plugintest.NewComputer(t)

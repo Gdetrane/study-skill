@@ -230,7 +230,12 @@ func TestMain(m *testing.M) {
 		switch os.Getenv(crashVectorsEnv) {
 		case "embed":
 			source, passages := oldContent()
-			err = c.Embed(ctx, source.ID, source.Hash, newMade, directions(len(passages), newMade.Dimensions))
+			// The Passages' texts as the index holds them: this is the
+			// child that is killed, and has no test to fail.
+			var texts []string
+			if _, texts, err = c.Texts(ctx, source.ID); err == nil {
+				err = c.Embed(ctx, source.ID, source.Hash, texts, newMade, directions(len(passages), newMade.Dimensions))
+			}
 		case "replace":
 			source, passages := newContent()
 			source.Made = newMade

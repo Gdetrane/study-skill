@@ -168,12 +168,12 @@ func TestAQuestionIsMarkedAsOne(t *testing.T) {
 	}
 }
 
-// A text with nothing written around it, and vectors kept as they come: a
-// model that wants neither.
+// A text with nothing written around it, and vectors of the size the model
+// gives, which the settings name: a model that wants no marks.
 func TestATextIsSentAsItIsWhenNothingMarksIt(t *testing.T) {
 	at := shelftest.NewEndpoint(t)
 	at.Size(384)
-	e := embedder(t, endpoint.Embedding{Address: at.URL, Model: "plain-model"})
+	e := embedder(t, endpoint.Embedding{Address: at.URL, Model: "plain-model", Dimensions: 384})
 	vectors, err := e.Documents(ctx, "A title", []string{"one  text", "another"}, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -184,7 +184,7 @@ func TestATextIsSentAsItIsWhenNothingMarksIt(t *testing.T) {
 	if at.Asked()[0].Key != "" {
 		t.Errorf("a key was sent, and the settings have none")
 	}
-	if len(vectors[0]) != 384 || len(vectors[1]) != 384 || e.Dimensions() != 0 || e.Document() != "{text}" {
+	if len(vectors[0]) != 384 || len(vectors[1]) != 384 || e.Dimensions() != 384 || e.Document() != "{text}" {
 		t.Errorf("vectors of %d numbers, and the embedder says %d and %q", len(vectors[0]), e.Dimensions(), e.Document())
 	}
 }
@@ -241,7 +241,7 @@ func TestAServerThatMarksTheTextsItselfIsToldInAField(t *testing.T) {
 }
 
 func TestWhatTheSettingsCannotSayIsRefused(t *testing.T) {
-	good := endpoint.Embedding{Address: "http://127.0.0.1:8080/v1", Model: "m"}
+	good := endpoint.Embedding{Address: "http://127.0.0.1:8080/v1", Model: "m", Dimensions: 768}
 	if err := good.Check(); err != nil {
 		t.Fatalf("a plain endpoint is refused: %v", err)
 	}
@@ -256,9 +256,12 @@ func TestWhatTheSettingsCannotSayIsRefused(t *testing.T) {
 		"a query in it":              {func(e *endpoint.Embedding) { e.Address = "http://127.0.0.1/v1?api-key=secret" }, "a query or a fragment"},
 		"no model":                   {func(e *endpoint.Embedding) { e.Model = "" }, "model is missing"},
 		"a model of two lines":       {func(e *endpoint.Embedding) { e.Model = "a\nb" }, "model is not a name"},
-		"a key of two lines":         {func(e *endpoint.Embedding) { e.Key = "a\nb" }, "key is not one line"},
+		"a key of two lines":         {func(e *endpoint.Embedding) { e.Key = "a\nb" }, "key is not one word"},
+		"a key of two words":         {func(e *endpoint.Embedding) { e.Key = "sk-test key" }, "key is not one word"},
+		"a key with a space after":   {func(e *endpoint.Embedding) { e.Key = "sk-test " }, "key is not one word"},
 		"a size below none":          {func(e *endpoint.Embedding) { e.Dimensions = -1 }, "dimensions is not a number"},
-		"a size to ask for":          {func(e *endpoint.Embedding) { e.SendDimensions = true }, "dimensions does not say"},
+		"no size":                    {func(e *endpoint.Embedding) { e.Dimensions = 0 }, "dimensions is missing"},
+		"a size beyond any":          {func(e *endpoint.Embedding) { e.Dimensions = endpoint.MaxDimensions + 1 }, "dimensions is not a number"},
 		"too large a batch":          {func(e *endpoint.Embedding) { e.Batch = 1000 }, "batch is not a number"},
 		"a mark without the text":    {func(e *endpoint.Embedding) { e.Query.Text = "query: " }, "holds {text} 0 times"},
 		"a mark with the text twice": {func(e *endpoint.Embedding) { e.Document.Text = "{text} {text}" }, "holds {text} 2 times"},
@@ -295,7 +298,7 @@ func TestRequestsGoBelowTheAddress(t *testing.T) {
 	}))
 	defer server.Close()
 	for _, base := range []string{"", "/", "/v1", "/v1/", "/api/openai/v2"} {
-		e := embedder(t, endpoint.Embedding{Address: server.URL + base, Model: "m"})
+		e := embedder(t, endpoint.Embedding{Address: server.URL + base, Model: "m", Dimensions: 8})
 		_, _ = e.Query(ctx, "x")
 		r, err := endpoint.NewReranker(endpoint.Reranking{Address: server.URL + base, Model: "m"})
 		if err != nil {
@@ -355,15 +358,32 @@ func TestWhatAnEndpointGetsWrongIsAReason(t *testing.T) {
 		{name: "too many vectors", answer: func(w http.ResponseWriter, _ *http.Request, _ map[string]any) bool {
 			vectors(w, ones(600), ones(600), ones(600), ones(600))
 			return true
-		}, want: []string{"gave 4 vectors for 3 texts"}},
+		}, want: []string{"did not answer as its API does", "more than the 3 results that were asked for"}},
+		{name: "a great many results of nothing", answer: func(w http.ResponseWriter, _ *http.Request, _ map[string]any) bool {
+			// Few bytes each, and each a value to hold once it is read.
+			fmt.Fprint(w, `{"data": [`+strings.Repeat("{},", 500000)+`{}]}`)
+			return true
+		}, want: []string{"more than the 3 results that were asked for"}},
+		{name: "a vector longer than a vector may be", answer: func(w http.ResponseWriter, _ *http.Request, _ map[string]any) bool {
+			vectors(w, ones(endpoint.MaxDimensions+1), ones(endpoint.MaxDimensions+1), ones(endpoint.MaxDimensions+1))
+			return true
+		}, want: []string{"a vector has more than 16384 numbers"}},
+		{name: "a number no vector can hold", answer: func(w http.ResponseWriter, _ *http.Request, _ map[string]any) bool {
+			fmt.Fprint(w, `{"data": [{"index": 0, "embedding": [1e`+strings.Repeat("9", 5000)+`]}]}`)
+			return true
+		}, want: []string{"did not answer as its API does", "what is no number a vector can hold"}},
+		{name: "a field of another kind", answer: func(w http.ResponseWriter, _ *http.Request, _ map[string]any) bool {
+			fmt.Fprint(w, `{"data": [{"index": "first", "embedding": [1]}]}`)
+			return true
+		}, want: []string{"did not answer as its API does", "index is a string"}},
 		{name: "vectors that are too short", answer: func(w http.ResponseWriter, _ *http.Request, _ map[string]any) bool {
 			vectors(w, ones(384), ones(384), ones(384))
 			return true
 		}, want: []string{"gave vectors of 384 numbers", "ask for 512", "set dimensions"}},
-		{name: "vectors of different sizes", answer: func(w http.ResponseWriter, _ *http.Request, _ map[string]any) bool {
-			vectors(w, ones(384), ones(768), ones(384))
+		{name: "vectors of different sizes, one of them too short", answer: func(w http.ResponseWriter, _ *http.Request, _ map[string]any) bool {
+			vectors(w, ones(768), ones(384), ones(768))
 			return true
-		}, change: func(e *endpoint.Embedding) { e.Dimensions = 0 }, want: []string{"vectors of different sizes, 384 numbers and 768"}},
+		}, want: []string{"gave vectors of 384 numbers", "ask for 512"}},
 		{name: "a vector of zeros", answer: func(w http.ResponseWriter, _ *http.Request, _ map[string]any) bool {
 			vectors(w, ones(512), make([]float32, 512), ones(512))
 			return true
@@ -373,9 +393,10 @@ func TestWhatAnEndpointGetsWrongIsAReason(t *testing.T) {
 			return true
 		}, want: []string{"a vector of no numbers"}},
 		{name: "two vectors for one text", answer: func(w http.ResponseWriter, _ *http.Request, _ map[string]any) bool {
-			fmt.Fprint(w, `{"data": [{"index": 0, "embedding": [1]}, {"index": 0, "embedding": [1]}, {"index": 2, "embedding": [1]}]}`)
+			one, _ := json.Marshal(ones(512))
+			fmt.Fprintf(w, `{"data": [{"index": 0, "embedding": %s}, {"index": 0, "embedding": %s}, {"index": 2, "embedding": %s}]}`, one, one, one)
 			return true
-		}, change: func(e *endpoint.Embedding) { e.Dimensions = 0 }, want: []string{"not one for each text"}},
+		}, want: []string{"not one for each text"}},
 		{name: "vectors as text", answer: func(w http.ResponseWriter, _ *http.Request, _ map[string]any) bool {
 			fmt.Fprint(w, `{"data": [{"index": 0, "embedding": "AACAPwAAgD8="}]}`)
 			return true
@@ -389,7 +410,25 @@ func TestWhatAnEndpointGetsWrongIsAReason(t *testing.T) {
 			// A server that repeats what it was sent, the key among it.
 			fmt.Fprintf(w, `{"error": {"message": "input is too large to process for %s\u001b[31m", "type": "server_error"}}`, r.Header.Get("Authorization"))
 			return true
-		}, want: []string{"answered 500 Internal Server Error", "input is too large to process", "[the key]"}},
+		}, want: []string{"answered 500 Internal Server Error", "input is too large to process for Bearer [the key]"}},
+		{name: "an error that repeats the key with what is not shown in it", answer: func(w http.ResponseWriter, r *http.Request, _ map[string]any) bool {
+			w.WriteHeader(http.StatusForbidden)
+			// The key with a zero-width space, an escape and a NUL in it:
+			// each is taken out of what is shown, which leaves the key.
+			fmt.Fprintf(w, `{"error": {"message": "no access for the key %s\u200b%s\u001b%s\u0000%s"}}`, key[:3], key[3:9], key[9:14], key[14:])
+			return true
+		}, want: []string{"answered 403 Forbidden", "no access for the key [the key]"}},
+		{name: "an error that repeats another key than Shelf's", answer: func(w http.ResponseWriter, r *http.Request, _ map[string]any) bool {
+			w.WriteHeader(http.StatusForbidden)
+			// As a gateway does that sends its own key on.
+			fmt.Fprint(w, `{"error": {"message": "upstream refused Authorization: Bearer sk-gateway-0123456789abcdef, try later"}}`)
+			return true
+		}, want: []string{"upstream refused Authorization: Bearer [the key], try later"}},
+		{name: "an error that names the address", answer: func(w http.ResponseWriter, r *http.Request, _ map[string]any) bool {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			fmt.Fprintf(w, "Cannot POST %s on http://%s%s", r.URL.Path, r.Host, r.URL.Path)
+			return true
+		}, want: []string{"answered 405 Method Not Allowed", "Cannot POST [the address] on [the address]"}},
 		{name: "a key it does not take", answer: func(w http.ResponseWriter, _ *http.Request, _ map[string]any) bool {
 			w.WriteHeader(http.StatusUnauthorized)
 			fmt.Fprint(w, `{"error": "invalid api key"}`)
@@ -406,7 +445,13 @@ func TestWhatAnEndpointGetsWrongIsAReason(t *testing.T) {
 		{name: "more than Shelf reads", answer: func(w http.ResponseWriter, _ *http.Request, _ map[string]any) bool {
 			vectors(w, ones(40000), ones(40000), ones(40000))
 			return true
-		}, change: func(e *endpoint.Embedding) { e.MaxBytes = 128 << 10 }, want: []string{"sent more than 131072 bytes in one answer"}},
+		}, change: func(e *endpoint.Embedding) { e.MaxBytes = 128 << 10 }, want: []string{"sent more than 128 KB in one answer"}},
+		{name: "more than the vectors that were asked for can be", answer: func(w http.ResponseWriter, _ *http.Request, _ map[string]any) bool {
+			// Three vectors of 512 numbers are some tens of kilobytes: an
+			// answer of megabytes is not read to its end.
+			fmt.Fprint(w, `{"data": [], "padding": "`+strings.Repeat("x", 4<<20)+`"}`)
+			return true
+		}, change: func(e *endpoint.Embedding) { e.SendDimensions = true }, want: []string{"sent more than 112 KB in one answer"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			at := shelftest.NewEndpoint(t)
@@ -423,6 +468,12 @@ func TestWhatAnEndpointGetsWrongIsAReason(t *testing.T) {
 			said := reason(t, err, at.Host, tc.want...)
 			if strings.ContainsRune(said, 0x1b) {
 				t.Errorf("the reason holds what a terminal would act on: %q", said)
+			}
+			// A reason is a sentence or two, whatever the endpoint sent, and
+			// holds neither the key nor the rest of the address.
+			if len(said) > 600 || strings.Contains(said, key) || strings.Contains(said, "sk-gateway") || strings.Contains(said, "/v1/embeddings") ||
+				strings.Contains(said, "key] key]") {
+				t.Errorf("the reason is %d bytes, or holds the key or the address: %.700q", len(said), said)
 			}
 			// It was asked once, with the key, and not again: Shelf does not
 			// hammer an endpoint that is in trouble.
