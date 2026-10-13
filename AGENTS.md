@@ -87,6 +87,17 @@ GOOS=darwin go vet ./...            # macOS is supported too
   changes it, and only `internal/cli` may import that. Never import the registrar from the
   core or the server, and never give the core a way to write the registry: a test fails
   when `go list -deps ./internal/mcpserver` contains it.
+- `study setup` registers Shelf through the registrar (`internal/cli/setup_shelf.go`), so
+  by the checks of `study knowledge-base add`: it takes the `study-shelf` beside the
+  `study` agents run, else the first on `PATH`, and decides nothing itself about where
+  that leads. A plugin the learner registered as `shelf` is never replaced and never
+  removed: setup looks for one before anything else, and then leaves Shelf as it is.
+  Setup replaces and removes only the registration its record says it made, while the
+  registry still holds exactly that one, which the registrar decides under the registry's
+  lock (`Spec.Replacing`, `RemoveExactly`): never have setup pass `Replace`, or call
+  `Remove`. Shelf is no agent's, so `--remove --agent` leaves it registered. `study` reads
+  nothing of Shelf's settings file and asks none of its endpoints: what is wrong with the
+  file is Shelf's to say when it does not start.
 - Nothing the registry depends on may be in the Study home or be reached through it: not
   Lamplight's configuration folder, not a plugin's program. That is decided by file
   identity, one hop of the path at a time, on folders that are then used as they were
@@ -107,7 +118,9 @@ GOOS=darwin go vet ./...            # macOS is supported too
   its own in the learner's state folder, outside the Study home, and stopped with its
   process group when its Connection is closed.
 - Four things in the core start a plugin, each through `startPlugin`, and each stops it
-  before it returns: `CheckPlugin` (`study knowledge-base check`), `IndexSources`
+  before it returns: `checkPlugin`, which asks a plugin its contract and nothing else, for
+  `CheckPlugin` (`study knowledge-base check`) and `CheckPlugins` (`study doctor`, every
+  registered plugin, with the time of a glance); `IndexSources`
   (`study source index`), `askPlugins`, which `Status` and `ListSources` use to ask what a
   Topic's plugin has indexed, and `startTopicPlugin`, which `SearchEvidence` and
   `recordQuoted` use to search a Topic's Sources and to read the Passages a quote is
@@ -142,6 +155,10 @@ GOOS=darwin go vet ./...            # macOS is supported too
   only for a Source it would hand over and the plugin has not tried, or calls `outdated`,
   never for one that failed or whose file is missing, changed or unreadable. A search, and a refused
   recording, decide it by the same code (`indexAsk`): never write that rule a second time.
+  `study doctor` waits for no plugin either, and has none index: `CheckPlugins` has the
+  glance's time for every registered plugin together, and what the doctor says of a
+  Topic's Sources is `Status`'s own `Indexing`, problem, Sources and action
+  (`diagnoseKnowledgeBase` in `internal/cli`). Nothing about a plugin is a failed Finding.
 - A search of a Topic's Sources, and the reading of a Passage to check a quote, have
   `core.PluginEvidenceTimeout`, forty-five seconds, for the registry, the start and every
   answer together (`PluginOptions.EvidenceTimeout` in tests), and the plugin is asked
@@ -272,7 +289,10 @@ GOOS=darwin go vet ./...            # macOS is supported too
   skill in `~/.agents/skills/study`.
 - Tests of `study setup` and the Claude Code plugin run with a `PATH` holding only fake
   `claude` and `codex` scripts; a guard fails the test if the real ones could be reached.
-  Never run the real agents with commands that change anything.
+  Never run the real agents with commands that change anything. A `study-shelf` on such a
+  `PATH`, or beside the test's `study`, is a script whose interpreter is the test plugin
+  (`shelfAt` in `internal/cli`), or the one built from the checkout (`shelftest.Shelf`):
+  never one that is installed on the computer.
 - Every git configuration a test writes includes `[maintenance]` `auto = false`: git's
   background maintenance would otherwise still be writing to `.git` while the test removes
   its folder. A test that writes a `.gitconfig` also points `GIT_CONFIG_GLOBAL` at it and
@@ -293,8 +313,9 @@ GOOS=darwin go vet ./...            # macOS is supported too
   test plugin writes what it is asked beside the record (`plugintest.ReadCalls`): assert
   on that, the collection and the Source of each call, rather than on what `study` says it
   asked.
-- Shelf's own tests, and the test of `install.sh`, start the `study-shelf` built from the
-  checkout (`shelftest.Shelf`, which a `-short` run skips), on a `plugintest.Computer`.
+- Shelf's own tests, the test of `install.sh` and the acceptance walkthrough start the
+  `study-shelf` built from the checkout (`shelftest.Shelf`, which a `-short` run skips),
+  the first on a `plugintest.Computer`.
   No test reads a real book: a PDF is written for the test (`shelftest.PDF`), and a web
   page is served by the test. A new point where a write of the index could be cut short
   gets a name in `index` and a row in the test that kills Shelf there. The tests that
@@ -358,12 +379,15 @@ GOOS=darwin go vet ./...            # macOS is supported too
 - `internal/library`: building and searching the Library index.
 - `internal/xdg`: the one place the home folder and the `XDG_*` folders are read from the
   environment. A relative one is ignored, as the XDG specification says.
-- `internal/cli`: the `study` command line (cobra and fang), including `study setup`.
+- `internal/cli`: the `study` command line (cobra and fang), including `study setup`, which
+  registers Shelf (`setup_shelf.go`), and what `study doctor` says of the Knowledge base
+  plugins (`doctor_knowledge_base.go`).
 - `internal/mcpserver`: the MCP server, its tools and its Instructions for agents.
 - `internal/claudeplugin` and `.claude-plugin/marketplace.json`: the Claude Code plugin,
   generated by `study claude-plugin-path`.
 - `internal/e2e`: end-to-end tests: the learner loop driven by a scripted agent, the
-  v2.0 acceptance walkthrough from `study setup` to an imported v1 Topic, `install.sh`
+  v2.0 acceptance walkthrough from `study setup` to an imported v1 Topic, with the built
+  `study-shelf` registered by setup and a PDF indexed, searched and quoted, `install.sh`
   run against a local folder of release files, which holds both programs, and a built
   `study` that starts the test plugin and stops it when it exits or is signalled.
 - `skills/lamplight`: the `lamplight` skill, embedded in the binary.

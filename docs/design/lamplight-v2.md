@@ -953,9 +953,25 @@ hours before any learning happens is exactly what v1 produced.
       reason. `study` names `study source index` as what to do next, and asked for again,
       its Passages are given vectors and are not read again.
     - Starting, `contract` and `status` ask no endpoint anything.
-- **Still to build for v2.0** (ADR-0012): what sets Shelf up and checks it for the learner
-  (`study setup`, `study doctor`, the walkthrough), and the notices of what the two
-  programs are built from.
+- **Setting Shelf up, and checking it, is `study`'s** (`docs/cli.md`).
+  - `study setup` registers the `study-shelf` beside `study`, else the first on `PATH`, as
+    the plugin `shelf`, through the registrar and so by its checks. It records the
+    registration, replaces and removes only the one it made while the registry still
+    holds exactly that, and leaves a plugin the learner registered as `shelf` as it is.
+    Shelf is no agent's: `--remove --agent` leaves it registered.
+  - `study doctor` starts each registered plugin, or reaches it, to see that it speaks the
+    contract, and says of each active Topic what `status` says of its Sources, with the
+    same one command. A plugin has the two seconds of a glance, none is asked to index,
+    and nothing about a plugin is a failure.
+  - `study` does not read Shelf's settings file and asks none of its endpoints. A file
+    Shelf cannot use keeps it from starting, and the doctor shows Shelf's reason. Whether
+    an endpoint answers is learned by indexing and by searching.
+  - The acceptance walkthrough has the built `study-shelf` registered by setup, a PDF
+    indexed, searched and quoted as checked Evidence, with an endpoint of the test's own.
+    The same with a real book and a real model is the maintainer's
+    (`docs/release-checklist.md`).
+- **Still to build for v2.0** (ADR-0012): the notices of what the two programs are built
+  from.
   - A plugin reached by URL is a service outside any sandbox, so it must itself be told
     what it may read and fetch.
   - Nothing shows the learner a search's `notice` yet: the contract has no word for a
@@ -1093,7 +1109,9 @@ checksums, puts `study` in `~/.local/bin` and installs completions; running it a
 upgrades. The release also holds deb and rpm packages, and `go install` works. There is no
 Homebrew cask and no AUR package. `study setup` installs the `lamplight` skill and registers
 the MCP server at user scope for Claude Code and Codex, never overwrites a folder it did not
-create, and can be reversed exactly with `--remove`. Claude Code can instead use the
+create, and can be reversed exactly with `--remove`. It also registers Shelf as the
+Knowledge base plugin `shelf` when `study-shelf` is installed, and never replaces a plugin
+the learner registered under that name (see Knowledge). Claude Code can instead use the
 marketplace plugin, which includes a session-start hook that prints `status` when the agent
 starts inside the Study home. Other agents use `npx skills add` and a documented MCP snippet.
 
@@ -1250,7 +1268,9 @@ web/                        dashboard, in a later point release
   run unused.
 - The MCP server through the Go SDK's in-memory transport; the CLI by comparing `--json`
   output with saved expected files.
-- `study setup` against fake `claude` and `codex` executables.
+- `study setup` against fake `claude` and `codex` executables, with and without a
+  `study-shelf` that is the test plugin, and `study doctor` with plugins that start, hang
+  and are gone.
 - **The learner loop**, built right after the tracer bullet and the History engine: a
   scripted agent drives the core over the in-memory MCP transport through teaching, an
   Attempt that fails, feedback, a fix, completion, a Card Review, a crash during completion

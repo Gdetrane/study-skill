@@ -767,6 +767,21 @@ where it was stopped, and what a Recipe holds.
   a size it is read up to; and nothing but indexing and searching asks one, so starting
   Shelf and saying what is indexed stay as quick as they were. `contract` lists
   `embedding` when the settings name an endpoint, whether or not it answers.
+- **`study setup` registers Shelf, and replaces no registration but its own.** A learner
+  who installs Lamplight has `study-shelf` beside `study`, and nothing that tells `study`
+  so. Setup registers it as `shelf`: the one beside the `study` that agents run, since the
+  two are one release, else the first on `PATH`. It goes through the registrar, so by the
+  checks of `study knowledge-base add`, and records what it registered. It asks the
+  registry to replace, or to remove, only that registration, and the registry decides it
+  under its lock. A plugin the learner registered as `shelf` is theirs whatever it runs,
+  the same `study-shelf` included: setup leaves it, and so does `--remove`.
+- **`study doctor` checks a plugin by starting it.** It starts each registered plugin, or
+  reaches it, as `study knowledge-base check` does, with the two seconds of a glance, and
+  says of a Topic's Sources what `status` says, by the same rule. It has no plugin index.
+  `study` reads no settings of a plugin's: Shelf's file is Shelf's, and a file Shelf
+  cannot use shows as a Shelf that does not start, with Shelf's reason. Whether an
+  endpoint answers is learned by indexing and by searching. Having the doctor ask is not
+  decided: the contract has no tool that would.
 
 Considered and rejected:
 
