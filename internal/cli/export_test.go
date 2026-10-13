@@ -99,3 +99,11 @@ func WriteScores(s *core.CriterionScores) string {
 	writeScores(&b, s, "")
 	return b.String()
 }
+
+// RenderPluginCheck renders what study knowledge-base check prints for
+// people, as a terminal would be sent it.
+func RenderPluginCheck(r core.PluginCheck) string {
+	var b strings.Builder
+	_ = writePluginCheck(&b, r)
+	return b.String()
+}

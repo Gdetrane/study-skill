@@ -1,0 +1,44 @@
+{
+  "ok": true,
+  "data": {
+    "name": "kb",
+    "command": [
+      "$PLUGIN",
+      "lamplight-test-plugin",
+      "--finding",
+      "embedding=ok:the embedding endpoint 127.0.0.1:PORT gave a question's vector, of 512 numbers, asked for the model embeddinggemma-2",
+      "--finding",
+      "reranking=wrong:the reranking endpoint 127.0.0.1:PORT could not be reached: connection refused. Check that its server is running, and its address in Shelf's settings file. Without the reranking endpoint a search gives its Passages in the order it found them."
+    ],
+    "contract": {
+      "version": 1,
+      "sources": [
+        "file",
+        "url"
+      ],
+      "search": [
+        "keyword"
+      ],
+      "locations": [
+        "pages"
+      ]
+    },
+    "server": {
+      "name": "test-plugin",
+      "version": "1.0.0"
+    },
+    "data_folder": "$HOME/.local/state/lamplight/knowledge-base-plugins/kb",
+    "findings": [
+      {
+        "name": "embedding",
+        "ok": true,
+        "message": "the embedding endpoint 127.0.0.1:PORT gave a question's vector, of 512 numbers, asked for the model embeddinggemma-2"
+      },
+      {
+        "name": "reranking",
+        "ok": false,
+        "message": "the reranking endpoint 127.0.0.1:PORT could not be reached: connection refused. Check that its server is running, and its address in Shelf's settings file. Without the reranking endpoint a search gives its Passages in the order it found them."
+      }
+    ]
+  }
+}

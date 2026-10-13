@@ -1,0 +1,7 @@
+{
+  "ok": false,
+  "error": {
+    "code": "failed_precondition",
+    "message": "Knowledge base plugin kb did not answer its diagnose tool within 400ms, so study stopped it. The last it wrote on its standard error: testing the embedding endpoint. So study does not know whether what the plugin depends on is all right, and uses the plugin all the same"
+  }
+}

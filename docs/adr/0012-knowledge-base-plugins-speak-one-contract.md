@@ -35,8 +35,8 @@ of the Topic's Knowledge base plugin. The agent installs no second server and ca
 
 ### The contract, version 1
 
-A Knowledge base plugin is an MCP server with these six tools. Their names and shapes are
-Lamplight's; what is behind them is the plugin's.
+A Knowledge base plugin is an MCP server with these seven tools. Their names and shapes
+are Lamplight's; what is behind them is the plugin's.
 
 | Tool | Takes | Gives back |
 | --- | --- | --- |
@@ -46,6 +46,7 @@ Lamplight's; what is behind them is the plugin's.
 | `cancel` | a collection and a Source's id | indexing of that Source stops; what was indexed stays |
 | `search` | a collection, a query, a limit, optionally some Sources | Passages, best first, each with its score for that query; and a notice, when the search did less than the plugin is set to |
 | `passage` | a collection and a Passage's id | that Passage |
+| `diagnose` | nothing | what the plugin found when it tested what it depends on: a short list of findings, each with a name, whether it is all right, and a sentence |
 
 - A **collection** is a name `study` chooses for a Topic. A plugin keeps collections apart
   and knows nothing else about Topics.
@@ -849,9 +850,59 @@ where it was stopped, and what a Recipe holds.
   says of a Topic's Sources what `status` says, by the same rule. A plugin that failed its
   check is not asked again for its Topics. It has no plugin index.
   `study` reads no settings of a plugin's: Shelf's file is Shelf's, and a file Shelf
-  cannot use shows as a Shelf that does not start, with Shelf's reason. Whether an
-  endpoint answers is learned by indexing and by searching. Having the doctor ask is not
-  decided: the contract has no tool that would.
+  cannot use shows as a Shelf that does not start, with Shelf's reason.
+- **A plugin tests what it depends on, and `study doctor` asks it to** (decided on 13
+  October 2026). Shelf with an embedding endpoint in its settings started, spoke the
+  contract and passed every check while that endpoint was down, served another model or
+  gave vectors of another length: the learner found out when a book had been read and
+  its Passages could not be embedded, or when a search fell back to keyword. `study`
+  cannot test the endpoint itself, since it reads no settings of a plugin's and must not
+  learn its key. So the contract has a seventh tool, `diagnose`: no input, and a short
+  list of findings, each with a name, whether it is all right, and a sentence in the
+  plugin's words. A plugin that depends on nothing answers with none.
+  - **Named `diagnose`, not `check`**, which would read as the glossary's Check.
+  - **The contract stays version 1.** No `study` that speaks it was released, so there is
+    no version 1 without the tool, and a plugin that lacks it does not speak the contract.
+  - **A finding carries no fix.** A plugin's words are shown as its words, cleaned and cut
+    as a `reason` is, and `study` adds no command that a plugin chose: a command a plugin
+    could put on the learner's screen as "the fix" is one the learner might run.
+  - **Ten seconds for the whole answer.** Longer than the two of a glance, since the test
+    asks over a network and a model may have to wake; no longer, since the doctor asks
+    every plugin and a learner waits for it. The plugins are asked at once, each when it
+    has said which contract it speaks, so the doctor's wait grows by ten seconds at most,
+    however many there are: fourteen in all, two for the plugins to start, the ten, and
+    two for the plugins of the Topics to say what they have indexed. A plugin gives each
+    thing it tests less than its ten, as Shelf gives each endpoint eight, and tests them
+    side by side: it then says in time which one did not answer, where `study` could only
+    say that the plugin did not.
+  - **A finding that is not all right is a warning**, in the doctor and in
+    `study knowledge-base check`, which exits with 0: the plugin starts and speaks the
+    contract, and a Topic studies without the endpoint as it did before. `study` cannot
+    know which finding keeps a Source from being indexed, so the doctor's Finding of a
+    Topic names what its plugin found not all right beside `study source index`, which
+    may fail until that is put right.
+  - **A plugin that does not say what it found is used all the same.** Late, refusing, or
+    with an answer that breaks the contract, it has still started and said which
+    contract it speaks, and `status`, indexing and a search never ask this tool. So it is
+    not said to "not speak the contract". The doctor's Finding is a warning with no fix,
+    and `study knowledge-base check` fails with `failed_precondition`, whatever code the
+    plugin refused with, and names no command: the one command that shows more of a
+    plugin is that check, which would say the same. One that was late is not started
+    again in the same run of the doctor to say what it has indexed.
+  - **No MCP tool asks it.** What a plugin finds of what it depends on is the learner's
+    question, and no agent needs the answer; and no tool waits ten seconds for a plugin.
+    That the tool has a plugin ask its endpoints is not the reason: a search has Shelf
+    ask both. It is kept to the command line as indexing is: one function of the core
+    asks it, which the server cannot reach, and tests hold that for the core, for the
+    client, for every other package the server is built from, and for the tools where a
+    plugin fails.
+  - **Shelf sends an endpoint what a search sends it**, the Recipe's request and the key,
+    with text of Shelf's own, and holds the answer to the checks a search makes. A test
+    that only opened a connection would find an endpoint up whose model is missing. It
+    does not hold the name of the model in the answer to the one in the settings:
+    servers name what they serve in ways of their own, and a model of another size shows
+    in the length of its vectors. The finding says which model was asked for, and the
+    name the endpoint answered with when that is another, and is all right either way.
 
 Considered and rejected:
 
@@ -870,6 +921,10 @@ Considered and rejected:
 
 ## Consequences
 
+- `study doctor` and `study knowledge-base check` have a plugin test what it depends on:
+  with an endpoint that does not answer, the doctor takes up to ten seconds longer than
+  it did, fourteen at most for all it asks of plugins. Stopped meanwhile, it reports
+  `canceled` and gives no verdict.
 - v2.0 ships the contract, `study` as its client, the registry, Topics naming a plugin,
   `evidence_search` with the quote check, and Shelf with keyword and embedding search and
   optional reranking. Layout-aware conversion and a context for each Passage come later, as

@@ -1,0 +1,16 @@
+✓ config                       no $HOME/.config/lamplight/config.toml; using the defaults
+✓ study_home                   $HOME/study
+✓ git                          git 2.47.1
+✓ git_identity                 Checkpoints are saved as Ada Lovelace <ada@example.com>
+✓ local_state                  $HOME/study/.lamplight/state.toml
+✓ topics                       1 Topic
+✓ library                      no index yet: study library build <folder> indexes your books
+✓ knowledge_base               $HOME/.config/lamplight/knowledge-base-plugins.json
+✓ knowledge_base:kb            started by $PLUGIN lamplight-test-plugin --record $RECORD --finding 'embedding=ok:the embedding endpoint 127.0.0.1:PORT gave a question'\''s vector, of 512 numbers, asked for the model embeddinggemma-2' --finding 'reranking=wrong:the reranking endpoint 127.0.0.1:PORT could not be reached: connection refused. Check that its server is running, and its address in Shelf'\''s settings file. Without the reranking endpoint a search gives its Passages in the order it found them.', speaks version 1 of Lamplight's contract
+✓ knowledge_base:kb:embedding  the embedding endpoint 127.0.0.1:PORT gave a question's vector, of 512 numbers, asked for the model embeddinggemma-2
+! knowledge_base:kb:reranking  the reranking endpoint 127.0.0.1:PORT could not be reached: connection refused. Check that its server is running, and its address in Shelf's settings file. Without the reranking endpoint a search gives its Passages in the order it found them.
+✓ log                          $HOME/.local/state/lamplight/study.log (level info)
+✓ completion                   skipped: $SHELL is not bash, zsh or fish
+✓ setup                        no Claude Code or Codex found; other agents need an MCP server that runs study mcp
+
+Ready to study, with 1 warning.

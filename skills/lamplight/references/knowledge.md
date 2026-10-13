@@ -21,7 +21,8 @@ Evidence. It is one of two kinds:
   shows. Registering, changing and removing a plugin are the learner's to do
   (Instruction 14): when none is registered, say so and leave the Topic as it is. Shelf,
   the plugin that comes with Lamplight, is registered as `shelf` by `study setup`, which
-  the learner runs, and `study doctor` tells them whether a plugin starts.
+  the learner runs, and `study doctor` tells them whether a plugin starts, and whether
+  what it depends on answers, such as the embedding endpoint the learner serves.
 
 ## Indexing
 

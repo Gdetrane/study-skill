@@ -68,7 +68,7 @@ func TestCheckPluginsChecksEveryRegisteredPlugin(t *testing.T) {
 
 	wantGood := &core.PluginCheck{Name: "good", Command: good.Command, DataFolder: c.DataFolder("good"),
 		Contract: core.PluginContract{Version: 1, Sources: []string{"file", "url"}, Search: []string{"keyword"}, Locations: []string{"pages"}},
-		Server:   core.PluginServer{Name: "a-plugin", Version: "2.0.0"}}
+		Server:   core.PluginServer{Name: "a-plugin", Version: "2.0.0"}, Findings: []core.PluginFinding{}}
 	if g := got["good"]; g.Problem != "" || g.Fix != "" || !reflect.DeepEqual(g.Check, wantGood) {
 		t.Errorf("a plugin that speaks the contract = %+v (%+v); want %+v", g, g.Check, wantGood)
 	}
@@ -89,10 +89,11 @@ func TestCheckPluginsChecksEveryRegisteredPlugin(t *testing.T) {
 		}
 	}
 
-	// The one that was started was asked which contract it speaks, and is
-	// gone; the one inside the Study home was never started.
-	if tools := plugintest.Tools(plugintest.ReadCalls(t, record)); !slices.Equal(tools, []string{"contract"}) {
-		t.Errorf("the plugin was asked %v, want its contract and nothing else", tools)
+	// The one that was started was asked which contract it speaks and what
+	// it found of what it depends on, and is gone; the one inside the Study
+	// home was never started.
+	if tools := plugintest.Tools(plugintest.ReadCalls(t, record)); !slices.Equal(tools, []string{"contract", "diagnose"}) {
+		t.Errorf("the plugin was asked %v, want its contract, what it found of what it depends on, and nothing else", tools)
 	}
 	if started := plugintest.ReadRecord(t, record); !plugintest.Gone(started.PID, 5*time.Second) {
 		plugintest.Kill(started.PID)

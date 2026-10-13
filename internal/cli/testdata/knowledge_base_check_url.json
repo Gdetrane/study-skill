@@ -19,6 +19,7 @@
     "server": {
       "name": "a-service",
       "version": "0.9"
-    }
+    },
+    "findings": []
   }
 }

@@ -17,6 +17,7 @@ import (
 
 	"github.com/mordor-forge/lamplight/v2/internal/cli"
 	"github.com/mordor-forge/lamplight/v2/internal/core"
+	"github.com/mordor-forge/lamplight/v2/internal/plugincontract"
 	"github.com/mordor-forge/lamplight/v2/internal/plugintest"
 )
 
@@ -37,9 +38,10 @@ func (k *kbComputer) check(t *testing.T, start time.Duration, args ...string) re
 		Now:    func() time.Time { return fixedNow },
 		NewID:  func() string { return fmt.Sprintf("id%03d", n.Add(1)) },
 		Plugins: core.PluginOptions{
-			Environ:      func() []string { return []string{"HOME=" + k.home, "STUDY_HOME=" + k.env["STUDY_HOME"]} },
-			StartTimeout: start,
-			StopGrace:    300 * time.Millisecond,
+			Environ:         func() []string { return []string{"HOME=" + k.home, "STUDY_HOME=" + k.env["STUDY_HOME"]} },
+			StartTimeout:    start,
+			StopGrace:       300 * time.Millisecond,
+			DiagnoseTimeout: k.diagnose,
 		},
 	}
 	var stdout, stderr bytes.Buffer
@@ -64,6 +66,24 @@ func withTestPlugin(args ...string) func(*testing.T) *kbComputer {
 		k.must(t, append([]string{"knowledge-base", "add", "kb", "--"}, plugintest.Command(args...)...)...)
 		return k
 	}
+}
+
+// withASilentPlugin is a computer where the test plugin is registered as kb,
+// and says which contract it speaks and nothing of what it found of what it
+// depends on. It has less than half a second for that.
+func withASilentPlugin(t *testing.T) *kbComputer {
+	t.Helper()
+	k := withTestPlugin("--hang", "diagnose", "--stderr", "testing the embedding endpoint")(t)
+	k.diagnose = 400 * time.Millisecond
+	return k
+}
+
+// The findings of a plugin that depends on two endpoints, one of which is
+// down: as the test plugin is told to give them.
+var twoFindings = []string{
+	"--finding", "embedding=ok:the embedding endpoint 127.0.0.1:8080 gave a question's vector, of 512 numbers, asked for the model embeddinggemma-2",
+	"--finding", "reranking=wrong:the reranking endpoint 127.0.0.1:8081 could not be reached: connection refused. Check that its server is running, and its address in Shelf's settings file. Without the reranking endpoint a search gives its " +
+		"Passages in the order it found them.",
 }
 
 // withService is a computer where a service on this computer, which answers
@@ -135,6 +155,17 @@ func TestKnowledgeBaseCheckJSON(t *testing.T) {
 		{"knowledge_base_check_url", withService(aPlugin(plugintest.Config{Name: "a-service", Version: "0.9"})), patient, "remote", cli.ExitOK},
 		{"knowledge_base_check_later_kinds", withTestPlugin("--contract",
 			`{"version": 1, "sources": ["file", "recording"], "search": ["embedding", "keyword"], "locations": ["pages", "time"]}`), patient, "kb", cli.ExitOK},
+		// What the plugin found of what it depends on is part of the answer,
+		// and a finding that is not all right is no failure of the check: the
+		// plugin starts and speaks the contract.
+		{"knowledge_base_check_findings", withTestPlugin(twoFindings...), patient, "kb", cli.ExitOK},
+		{"knowledge_base_check_url_findings", withService(aPlugin(plugintest.Config{Findings: []plugincontract.Finding{
+			{Name: "upstream", Message: "the index behind this service has not answered since Tuesday"}}})), patient, "remote", cli.ExitOK},
+		// A plugin that does not say what it found in the time it has for
+		// that, or says what is no finding, does not speak the contract.
+		{"knowledge_base_check_no_findings_in_time", withASilentPlugin, patient, "kb", cli.ExitError},
+		{"knowledge_base_check_broken_findings", withTestPlugin("--result", `diagnose={"findings": [{"name": "embedding", "ok": true}]}`),
+			patient, "kb", cli.ExitError},
 		{"knowledge_base_check_unknown", withPlugins, patient, "notes", cli.ExitError},
 		{"knowledge_base_check_bad_name", withPlugins, patient, "My Shelf", cli.ExitUsage},
 		{"knowledge_base_check_does_not_start", withTestPlugin("--exit", "3", "--stderr", "cannot open the index: disk full"), patient, "kb", cli.ExitError},
@@ -202,6 +233,22 @@ func TestKnowledgeBaseCheckHumanOutput(t *testing.T) {
 		t.Errorf("study knowledge-base check repeats the address: %s", reached.stdout)
 	}
 	golden(t, "knowledge_base_check_url.txt", reached.stdout)
+	// What the plugin found of what it depends on, under what it says of
+	// itself: a line for each finding, and the check succeeds whatever they
+	// say.
+	found := withTestPlugin(twoFindings...)(t).check(t, 20*time.Second, "knowledge-base", "check", "kb")
+	if found.code != cli.ExitOK || found.stderr != "" {
+		t.Errorf("a plugin with a finding that is not all right: exit %d, stderr %q", found.code, found.stderr)
+	}
+	golden(t, "knowledge_base_check_findings.txt", found.stdout)
+	// One that never says what it found fails the check, with how long it
+	// had and what it last wrote.
+	silent := withASilentPlugin(t).check(t, 20*time.Second, "knowledge-base", "check", "kb")
+	if silent.code != cli.ExitError || silent.stdout != "" ||
+		!strings.Contains(silent.stderr, "Knowledge base plugin kb did not answer its diagnose tool within 400ms, so study stopped it") ||
+		!strings.Contains(silent.stderr, "testing the embedding endpoint") {
+		t.Errorf("a plugin that does not say what it found: exit %d, stdout %q, stderr %q", silent.code, silent.stdout, silent.stderr)
+	}
 
 	// A failure goes to stderr, with the advice, and nothing to stdout.
 	broken := withTestPlugin("--exit", "3", "--stderr", "cannot open the index")(t)
@@ -225,11 +272,12 @@ func TestKnowledgeBaseCheckKeepsAPluginOffTheTerminal(t *testing.T) {
 		// said is a text of the plugin's that study repeats, cleaned.
 		said string
 	}{
-		"a plugin that speaks":        {[]string{"--name", "kb" + escapes, "--version", "1" + escapes, "--stderr", "ready" + escapes + `\n`}, "gotcha"},
-		"a plugin that does not":      {[]string{"--exit", "1", "--stderr", "failed" + escapes + `\n`}, "failed"},
-		"a plugin that breaks it":     {[]string{"--contract", `{"version": 1, "sources": ["file\u001b[2J"], "search": ["keyword"], "locations": []}`}, ""},
-		"a plugin that refuses":       {[]string{"--refuse", "contract=internal:no way" + escapes}, "no way"},
-		"a plugin that writes no MCP": {[]string{"--garbage", "--stderr", "noise" + escapes}, "noise"},
+		"a plugin that speaks":          {[]string{"--name", "kb" + escapes, "--version", "1" + escapes, "--stderr", "ready" + escapes + `\n`}, "gotcha"},
+		"a plugin that does not":        {[]string{"--exit", "1", "--stderr", "failed" + escapes + `\n`}, "failed"},
+		"a plugin that breaks it":       {[]string{"--contract", `{"version": 1, "sources": ["file\u001b[2J"], "search": ["keyword"], "locations": []}`}, ""},
+		"a plugin that refuses":         {[]string{"--refuse", "contract=internal:no way" + escapes}, "no way"},
+		"a plugin that writes no MCP":   {[]string{"--garbage", "--stderr", "noise" + escapes}, "noise"},
+		"a plugin that found something": {[]string{"--finding", "embedding=wrong:it is down" + escapes + `\n, said the server`}, "it is down"},
 	} {
 		for _, mode := range [][]string{nil, {"--json"}} {
 			record := filepath.Join(t.TempDir(), "record.json")

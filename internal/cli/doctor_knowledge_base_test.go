@@ -18,8 +18,9 @@ import (
 
 // doctor runs study doctor on the computer, which must come out healthy:
 // nothing about a Knowledge base plugin keeps the learner from studying.
-// And it asks the plugin which contract it speaks and what it has indexed,
-// never anything else: study doctor has no plugin index. It writes nothing
+// And it asks the plugin which contract it speaks, what it found of what it
+// depends on and what it has indexed, never anything else: study doctor has
+// no plugin index, and none search. It writes nothing
 // in the Study home, and nothing in the configuration folder, where the
 // registry is. The record's place, another in every run of the tests, is
 // replaced.
@@ -36,7 +37,7 @@ func (s *shelfComputer) doctor(t *testing.T, args ...string) result {
 		t.Errorf("study doctor %s: exit %d, stderr %q", strings.Join(args, " "), r.code, r.stderr)
 	}
 	for _, call := range s.calls(t)[before:] {
-		if call.Tool != "contract" && call.Tool != "status" {
+		if call.Tool != "contract" && call.Tool != "diagnose" && call.Tool != "status" {
 			t.Errorf("study doctor %s asked the plugin %s", strings.Join(args, " "), call.Tool)
 		}
 	}

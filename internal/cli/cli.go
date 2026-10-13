@@ -434,9 +434,12 @@ func (a *app) rootCommand() *cobra.Command {
 		Long: "Diagnose your setup. doctor works even when the rest of study cannot, and tells you how to\n" +
 			"fix what it finds. It exits with 1 when something must be fixed, and 0 otherwise.\n\n" +
 			"It starts each Knowledge base plugin registered on this computer, or reaches it, to see that\n" +
-			"it speaks Lamplight's contract, as study knowledge-base check does, and asks the plugin of\n" +
-			"each Topic which Sources it has indexed, as study status does. A plugin has a couple of\n" +
-			"seconds for it: doctor waits for none, and has none index anything.",
+			"it speaks Lamplight's contract and to have it test what it depends on, as study\n" +
+			"knowledge-base check does, and asks the plugin of each Topic which Sources it has indexed,\n" +
+			"as study status does. A plugin has two seconds to start and say which contract it speaks,\n" +
+			"ten to test what it depends on, and two to say what it has indexed. The plugins are asked\n" +
+			"side by side, so doctor waits for them fourteen seconds at most, however many there are,\n" +
+			"and has none index anything. Stopped while it waits, it reports canceled and no verdict.",
 		Args: noArgs,
 		RunE: a.runDoctor,
 	}
@@ -554,9 +557,17 @@ func (a *app) runDoctor(cmd *cobra.Command, _ []string) error {
 	for _, f := range a.diagnoseKnowledgeBase(cmd.Context()) {
 		d.Add(f)
 	}
+	// The plugins are what the doctor waits for, and where it is stopped.
+	if err := doctorStopped(cmd.Context()); err != nil {
+		return a.fail(err)
+	}
 	d.Add(a.diagnoseLogs())
 	d.Add(a.diagnoseCompletion())
 	d.Add(a.diagnoseSetup(cmd.Context()))
+	// Stopped, it has not looked at everything, and gives no verdict.
+	if err := doctorStopped(cmd.Context()); err != nil {
+		return a.fail(err)
+	}
 	if !d.Healthy {
 		a.exit = ExitError
 		if a.json {

@@ -57,3 +57,7 @@ func SetCheckWritable(check func(folder *os.File) error) func() {
 // ProbeName is how the name of the file study makes in a plugin's folder,
 // and removes, to learn whether it can be written in begins.
 const ProbeName = probeName
+
+// WithDefaults is the options a plugin is started with, given the ones a
+// caller set: each time that was left out is the usual one.
+func WithDefaults(o Options) Options { return o.withDefaults() }

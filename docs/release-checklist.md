@@ -211,8 +211,15 @@ Nothing here needs an account, or a service that is not yours (ADR-0011).
       sh -c 'file="${XDG_CONFIG_HOME:-$HOME/.config}/lamplight/shelf.toml"
       set -C && printf "format = 1\n\n[embedding]\nendpoint = \"http://127.0.0.1:8080/v1\"\nrecipe = \"embeddinggemma-2\"\n" > "$file" &&
       chmod 600 "$file" && echo "wrote $file"'
-      study knowledge-base check shelf     # now: searches by keyword, by embedding
+      study knowledge-base check shelf     # now: searches by keyword, by embedding; and
+                                           # "✓ embedding  the embedding endpoint 127.0.0.1:8080 gave a question's vector…"
+      study doctor                         # knowledge_base:shelf:embedding is ok
       ```
+
+      Shelf tested the endpoint for that, with one question of its own: the server's log
+      shows the request. Stop the server and run `study doctor` again: it warns that the
+      embedding endpoint 127.0.0.1:8080 could not be reached, within ten seconds, and is
+      still "Ready to study". Start the server again before going on.
 
 - [ ] A real book is indexed with its vectors. Take a Topic of the trial Study home, and a
       PDF with a text layer that you know well:

@@ -31,6 +31,18 @@ func ShowsNothing(r rune) bool {
 		unicode.Is(unicode.Other_Default_Ignorable_Code_Point, r)
 }
 
+// Shows reports whether text holds anything a reader would see where study
+// shows it: a character that is neither white space, nor the braille blank,
+// nor one that shows nothing. A plugin's sentence that does not is none.
+func Shows(text string) bool {
+	for _, r := range text {
+		if !unicode.IsSpace(r) && r != BrailleBlank && !ShowsNothing(r) {
+			return true
+		}
+	}
+	return false
+}
+
 // BrailleBlank is the braille pattern with no dot raised. It shows as a
 // blank that takes room, and is neither white space to Unicode nor one of
 // the characters a display ignores. study takes it for white space in the

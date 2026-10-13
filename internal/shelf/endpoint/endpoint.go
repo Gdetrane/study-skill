@@ -55,6 +55,12 @@ const (
 	// say so, where study would otherwise stop it and say nothing of why.
 	DefaultQueryTimeout  = 10 * time.Second
 	DefaultRerankTimeout = 20 * time.Second
+	// DefaultTestTimeout is how long an endpoint has for the one request by
+	// which Shelf tests it when study asks what Shelf depends on: less than
+	// the ten seconds the contract gives Shelf for all of that answer, so
+	// that Shelf says in time that an endpoint did not answer, where study
+	// would otherwise stop it and say nothing of which one.
+	DefaultTestTimeout = 8 * time.Second
 	// DefaultMaxBytes is how large one answer with vectors may be, and
 	// DefaultRerankMaxBytes one answer of the reranking endpoint.
 	DefaultMaxBytes       = 64 << 20
@@ -440,6 +446,13 @@ func (c *caller) post(ctx context.Context, within time.Duration, most int64, bod
 	if c.key != "" {
 		req.Header.Set("Authorization", "Bearer "+c.key)
 	}
+	// A request changes nothing at the endpoint, so it can be sent a second
+	// time. Marked so, it is: once, on a new connection, when the server
+	// had closed the connection Shelf kept open from the request before,
+	// as a server does that was restarted or that keeps none for long.
+	// Shelf would otherwise say "EOF" of an endpoint that answers, or of
+	// one that is gone. The mark is an empty list, which is not sent.
+	req.Header["Idempotency-Key"] = []string{}
 	failed := func(err error) error {
 		var timeout interface{ Timeout() bool }
 		switch {
@@ -447,14 +460,15 @@ func (c *caller) post(ctx context.Context, within time.Duration, most int64, bod
 			// The caller's own time is over, or it was told to stop.
 			return ctx.Err()
 		case timed.Err() != nil, errors.As(err, &timeout) && timeout.Timeout():
-			return problem("%s did not answer within %s", c.what, within)
+			return problem("%s did not answer within %s. Check that its server is not busy, or still loading the model", c.what, within)
 		}
 		// The cause without the address: a url.Error repeats it whole.
 		var wrapped *url.Error
 		if errors.As(err, &wrapped) {
 			err = wrapped.Err
 		}
-		return problem("%s could not be reached: %s", c.what, c.said(err.Error()))
+		return problem("%s could not be reached: %s. Check that its server is running, and its address in Shelf's settings file",
+			c.what, c.said(err.Error()))
 	}
 	resp, err := c.client.Do(req)
 	if err != nil {
@@ -474,6 +488,8 @@ func (c *caller) post(ctx context.Context, within time.Duration, most int64, bod
 			reason += ". Check the endpoint's address and the model's name in Shelf's settings file"
 		case resp.StatusCode >= 300 && resp.StatusCode < 400:
 			reason += ". Shelf follows no redirect: give the address that answers in its settings file"
+		case resp.StatusCode >= 500:
+			reason += ". The fault is on the server's side: its own log says more"
 		}
 		return &Problem{Reason: reason}
 	}
@@ -521,6 +537,40 @@ func jsonProblem(err error) string {
 		return fmt.Sprintf("its %s is a %s", wrongType.Field, kind)
 	}
 	return "its answer is not JSON"
+}
+
+// named is the name an endpoint gives the model it answered with, when it
+// gives one as text. An answer is none the worse for naming no model, or
+// for naming it in a shape of its own: Shelf only repeats the name, when it
+// tests the endpoint.
+type named string
+
+// maxNamed is how many bytes of an answer a model's name may take for Shelf
+// to read it. An answer is as large as its vectors, and a name could fill
+// it: Shelf shows sixty bytes of a name, and makes no copy of one that is
+// longer than any name.
+const maxNamed = 1024
+
+func (n *named) UnmarshalJSON(data []byte) error {
+	if len(data) > maxNamed {
+		return nil
+	}
+	var text string
+	if json.Unmarshal(data, &text) == nil {
+		*n = named(text)
+	}
+	return nil
+}
+
+// other is the name an endpoint gave the model it answered with, when that
+// is not the name it was asked for, made safe to repeat as the endpoint's
+// other words are. The two are compared as the endpoint wrote them: made
+// safe, a name is no longer itself where the endpoint's address holds it.
+func (c *caller) other(asked string, answered named) string {
+	if string(answered) == asked {
+		return ""
+	}
+	return c.said(string(answered))
 }
 
 // counted reads a list of an answer, of as many items as were asked for and
@@ -696,6 +746,10 @@ func (e *Embedder) Model() string    { return e.cfg.Model }
 func (e *Embedder) Dimensions() int  { return e.cfg.Dimensions }
 func (e *Embedder) Document() string { return e.cfg.Document.String() }
 
+// Name is how the endpoint is spoken of to the learner: "the embedding
+// endpoint 127.0.0.1:8080". Its host, and nothing else of its address.
+func (e *Embedder) Name() string { return e.call.what }
+
 // Documents returns a vector for each of texts, stretches of a document
 // with that title, in their order, each of length 1 and all of one size.
 // It asks in batches, one after the other, and calls done, when it is not
@@ -708,7 +762,7 @@ func (e *Embedder) Documents(ctx context.Context, title string, texts []string, 
 		for i, text := range batch {
 			marked[i] = e.cfg.Document.mark(title, text)
 		}
-		vectors, err := e.embed(ctx, e.cfg.Timeout, e.cfg.Document, marked)
+		vectors, err := e.embed(ctx, e.cfg.Timeout, e.cfg.Document, marked, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -722,15 +776,34 @@ func (e *Embedder) Documents(ctx context.Context, title string, texts []string, 
 
 // Query returns the vector of a question, of length 1.
 func (e *Embedder) Query(ctx context.Context, question string) ([]float32, error) {
-	vectors, err := e.embed(ctx, e.cfg.QueryTimeout, e.cfg.Query, []string{e.cfg.Query.mark("", question)})
-	if err != nil {
-		return nil, err
-	}
-	return vectors[0], nil
+	vector, _, err := e.Test(ctx, e.cfg.QueryTimeout, question)
+	return vector, err
 }
 
-// embed is one request: a vector for each of texts, in their order.
-func (e *Embedder) embed(ctx context.Context, within time.Duration, marking Marking, texts []string) ([][]float32, error) {
+// Test asks the endpoint for the vector of a question exactly as a search
+// asks it (Query is this): the same request, to the same address, with the
+// same marking and key, and the answer held to the same checks. Only the
+// time is the caller's: within, in place of the time a search gives the
+// endpoint. It is for Shelf to test the endpoint with, so that what it
+// finds is what a search will find.
+//
+// It also returns the name the endpoint gave the model it answered with,
+// when it gave one that is not the name it was asked for, made safe to
+// repeat as the endpoint's other words are. A server names one model in
+// several ways, and some answer with the one model they have whatever
+// they are asked for.
+func (e *Embedder) Test(ctx context.Context, within time.Duration, question string) (vector []float32, answered string, err error) {
+	vectors, err := e.embed(ctx, within, e.cfg.Query, []string{e.cfg.Query.mark("", question)}, &answered)
+	if err != nil {
+		return nil, "", err
+	}
+	return vectors[0], answered, nil
+}
+
+// embed is one request: a vector for each of texts, in their order. The name
+// the endpoint gave its model, when it is another than it was asked for, is
+// put in answered, when that is not nil.
+func (e *Embedder) embed(ctx context.Context, within time.Duration, marking Marking, texts []string, answered *string) ([][]float32, error) {
 	// The model, the texts, and what the settings add: an endpoint may
 	// refuse a request for one key it does not know.
 	request := map[string]any{"model": e.cfg.Model, "input": texts}
@@ -745,7 +818,8 @@ func (e *Embedder) embed(ctx context.Context, within time.Duration, marking Mark
 		Embedding numbers `json:"embedding"`
 	}
 	var answer struct {
-		Data counted[vector] `json:"data"`
+		Model named           `json:"model"`
+		Data  counted[vector] `json:"data"`
 	}
 	answer.Data.most = len(texts)
 	// An answer is as large as the vectors that were asked for, written
@@ -758,6 +832,9 @@ func (e *Embedder) embed(ctx context.Context, within time.Duration, marking Mark
 	const aNumber, around = 32, 64 << 10
 	if err := e.call.post(ctx, within, int64(len(texts))*int64(each)*aNumber+around, request, &answer); err != nil {
 		return nil, err
+	}
+	if answered != nil {
+		*answered = e.call.other(e.cfg.Model, answer.Model)
 	}
 	what := e.call.what
 	if len(answer.Data.items) != len(texts) {
@@ -884,6 +961,11 @@ func (r *Reranker) Close() { r.call.close() }
 // Candidates is how many of the best Passages are handed over.
 func (r *Reranker) Candidates() int { return r.cfg.Candidates }
 
+// Model is the reranking model's name, and Name how the endpoint is spoken
+// of to the learner: "the reranking endpoint 127.0.0.1:8081".
+func (r *Reranker) Model() string { return r.cfg.Model }
+func (r *Reranker) Name() string  { return r.call.what }
+
 // Ranked is one text as the endpoint ranks it: its place in what was handed
 // over, and its score, higher for a better answer.
 type Ranked struct {
@@ -894,6 +976,26 @@ type Ranked struct {
 // Order returns the texts in the order the endpoint gives them for a
 // question, the best first: each of them once.
 func (r *Reranker) Order(ctx context.Context, question string, texts []string) ([]Ranked, error) {
+	return r.rank(ctx, r.cfg.Timeout, question, texts, nil)
+}
+
+// Test asks the endpoint to order texts for a question exactly as a search
+// asks it (Order is this), within a time of the caller's choosing: for
+// Shelf to test the endpoint with. It also returns the name the endpoint
+// gave the model it answered with, when that is another than it was asked
+// for, as Embedder.Test does.
+func (r *Reranker) Test(ctx context.Context, within time.Duration, question string, texts []string) (ranked []Ranked, answered string, err error) {
+	ranked, err = r.rank(ctx, within, question, texts, &answered)
+	if err != nil {
+		return nil, "", err
+	}
+	return ranked, answered, nil
+}
+
+// rank is one request: texts in the order the endpoint gives them for a
+// question. The name the endpoint gave its model, when it is another than
+// it was asked for, is put in answered, when that is not nil.
+func (r *Reranker) rank(ctx context.Context, within time.Duration, question string, texts []string, answered *string) ([]Ranked, error) {
 	documents := make([]string, len(texts))
 	for i, text := range texts {
 		documents[i] = squeeze(text)
@@ -906,11 +1008,15 @@ func (r *Reranker) Order(ctx context.Context, question string, texts []string) (
 		Score *float64 `json:"relevance_score"`
 	}
 	var answer struct {
+		Model   named           `json:"model"`
 		Results counted[ranked] `json:"results"`
 	}
 	answer.Results.most = len(texts)
-	if err := r.call.post(ctx, r.cfg.Timeout, 0, request, &answer); err != nil {
+	if err := r.call.post(ctx, within, 0, request, &answer); err != nil {
 		return nil, err
+	}
+	if answered != nil {
+		*answered = r.call.other(r.cfg.Model, answer.Model)
 	}
 	what := r.call.what
 	if len(answer.Results.items) != len(texts) {

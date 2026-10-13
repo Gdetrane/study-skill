@@ -1,8 +1,8 @@
 // Package pluginclient is study as the MCP client of a Knowledge base plugin
 // (ADR-0012): it starts a registered command, or reaches a registered URL,
 // checks that what answers speaks Lamplight's contract, and asks it to
-// index, to say what is indexed, to stop, to search and to give a Passage
-// again.
+// index, to say what is indexed, to stop, to search, to give a Passage
+// again and to test what it depends on.
 //
 // A command is started as the registry's rules need it to be (StartCommand).
 // The program is the one pluginregistry.OpenCommand checked, with nothing on
@@ -66,6 +66,9 @@ const (
 	// DefaultSearchTimeout is how long a search may take: a plugin may have
 	// a model embed the query and another reorder what it found.
 	DefaultSearchTimeout = 60 * time.Second
+	// DefaultDiagnoseTimeout is how long it has to test what it depends on
+	// and say what it found: the contract's own time for it.
+	DefaultDiagnoseTimeout = plugincontract.DiagnoseTime
 	// DefaultStopGrace is how long a command has to exit once its input is
 	// closed, and again after SIGTERM, before it is killed.
 	DefaultStopGrace = 2 * time.Second
@@ -77,7 +80,7 @@ const (
 const MCPVersion = "2025-11-25"
 
 // MaxTools is how many tools of a plugin study lists before it stops
-// looking for the contract's six, and maxToolPages in how many pages.
+// looking for the contract's seven, and maxToolPages in how many pages.
 const (
 	MaxTools     = 1000
 	maxToolPages = 100
@@ -125,12 +128,13 @@ type Options struct {
 	// that is only asked what it has indexed, or to search, needs no such
 	// folder, and is not held to one.
 	Indexes bool
-	// StartTimeout, CallTimeout, SearchTimeout and StopGrace replace the
-	// defaults above when they are not zero.
-	StartTimeout  time.Duration
-	CallTimeout   time.Duration
-	SearchTimeout time.Duration
-	StopGrace     time.Duration
+	// StartTimeout, CallTimeout, SearchTimeout, DiagnoseTimeout and StopGrace
+	// replace the defaults above when they are not zero.
+	StartTimeout    time.Duration
+	CallTimeout     time.Duration
+	SearchTimeout   time.Duration
+	DiagnoseTimeout time.Duration
+	StopGrace       time.Duration
 }
 
 func (o Options) withDefaults() Options {
@@ -145,7 +149,8 @@ func (o Options) withDefaults() Options {
 		usual time.Duration
 	}{
 		{&o.StartTimeout, DefaultStartTimeout}, {&o.CallTimeout, DefaultCallTimeout},
-		{&o.SearchTimeout, DefaultSearchTimeout}, {&o.StopGrace, DefaultStopGrace},
+		{&o.SearchTimeout, DefaultSearchTimeout}, {&o.DiagnoseTimeout, DefaultDiagnoseTimeout},
+		{&o.StopGrace, DefaultStopGrace},
 	} {
 		if *d.value <= 0 {
 			*d.value = d.usual
@@ -529,7 +534,7 @@ func (s *Connection) askedWhy() string {
 }
 
 // handshake opens the MCP session and checks that a Knowledge base plugin
-// is at the other end: it has the six tools, and its contract tool gives a
+// is at the other end: it has the seven tools, and its contract tool gives a
 // version this study knows. parent is the caller's context and limited the
 // same with the deadline of limit, which the whole start has.
 func (s *Connection) handshake(parent, limited context.Context, limit time.Duration, transport mcp.Transport) error {
@@ -770,6 +775,86 @@ func (s *Connection) Passage(ctx context.Context, collection, id string) (plugin
 	return out.Passage, nil
 }
 
+// Diagnose asks the plugin to test what it depends on, an endpoint it asks
+// over a network say, and returns what it found: a finding for each, and
+// none for a plugin that depends on nothing of the kind. A finding that is
+// not all right is no error: the plugin answered, and said so.
+//
+// What it answers is the learner's to read, at a command line, and it may
+// take the ten seconds the contract gives it: whoever calls it does so for
+// study doctor or study knowledge-base check, and no MCP tool leads here.
+//
+// A finding's message is the plugin's text. It is returned cleaned, as a
+// reason is: one line, with nothing a terminal would interpret, cut to
+// plugincontract.MaxFindingBytes, and without the parts of a registered
+// address that may be a key. A name is shown as it is, so one that holds
+// such a part is no name: the answer breaks the contract.
+//
+// An error is said of this tool alone, and is failed_precondition whatever
+// the plugin refused with, or canceled (untested).
+func (s *Connection) Diagnose(ctx context.Context) ([]plugincontract.Finding, error) {
+	var out plugincontract.DiagnoseResult
+	err := s.ask(ctx, plugincontract.ToolDiagnose, s.opts.DiagnoseTimeout, struct{}{}, &out, func() error { return out.Validate() })
+	if err != nil {
+		return nil, s.untested(err)
+	}
+	findings := make([]plugincontract.Finding, 0, len(out.Findings))
+	for i, finding := range out.Findings {
+		if s.say(finding.Name, plugincontract.MaxKindBytes) != finding.Name {
+			// Not shown: what it holds may be the key.
+			return nil, s.untested(&Error{Code: CodeFailedPrecondition, breaks: fmt.Sprintf("findings[%d] has a name that holds a "+
+				"part of the address study reaches the plugin at, which may be a key: nothing a plugin depends on is named so", i)})
+		}
+		finding.Message = s.say(finding.Message, plugincontract.MaxFindingBytes)
+		if finding.Message == "" {
+			// The contract's check passed it, so it holds something that
+			// shows, and nothing of that is left: it stood behind more of
+			// what shows nothing than study reads of a message. The learner
+			// would read a name and no sentence.
+			return nil, s.untested(&Error{Code: CodeFailedPrecondition, breaks: fmt.Sprintf("the finding %s has a message that "+
+				"shows nothing", finding.Name)})
+		}
+		findings = append(findings, finding)
+	}
+	return findings, nil
+}
+
+// untested is the error of a plugin that did not say what it found of what
+// it depends on, given the error of asking it.
+//
+// It is said of the diagnose tool alone. A plugin that is asked it started
+// and said which contract it speaks, and its other tools are none the worse
+// for this one: "does not speak Lamplight's contract" would be said of a
+// plugin study goes on using. So an answer that breaks the contract is said
+// to be that, with what of it does.
+//
+// It names nothing to run. What the client says of another tool that failed
+// ends with a command that shows more, study knowledge-base check among
+// them, and that command asks this tool again and says the same.
+//
+// And it is failed_precondition whatever code the plugin refused with: the
+// tool is asked nothing a plugin could find wrong or missing, so
+// invalid_argument and not_found would be said of what the learner typed,
+// which was the plugin's name and was right. A call that was stopped stays
+// canceled.
+func (s *Connection) untested(err error) error {
+	var failed *Error
+	if !errors.As(err, &failed) || failed.Code == CodeCanceled {
+		return err
+	}
+	said := &Error{Code: CodeFailedPrecondition, Err: err, Late: failed.Late, Message: strings.TrimSuffix(failed.Message, failed.advice)}
+	switch {
+	case failed.breaks != "":
+		said.Message = "the diagnose tool of Knowledge base plugin " + s.name + " gave an answer that breaks the contract: " +
+			failed.breaks + ". docs/knowledge-base-contract.md describes the contract"
+	case failed.broke != "":
+		// The plugin had started and said which contract it speaks: that it
+		// "does not speak MCP" would be said of a plugin study goes on using.
+		said.Message = "Knowledge base plugin " + s.name + " did not answer its diagnose tool: " + failed.broke
+	}
+	return said
+}
+
 // located checks that a Passage's location is of a kind the plugin said it
 // gives: what a location means is decided by its kind, and study was told
 // which kinds to expect.
@@ -904,14 +989,24 @@ func (s *Connection) ask(ctx context.Context, tool string, limit time.Duration, 
 	// stopped nothing and a score of 0. What is wrong may be said with a
 	// key as the plugin spelled it.
 	if err := plugincontract.Decode(data, out); err != nil {
-		return s.notTheContract("what its " + tool + " tool gave back is not what the contract describes: " + s.say(err.Error(), 300))
+		return s.misanswered(tool, s.say(err.Error(), 300))
 	}
+	// What is wrong with an answer is said with what the answer held, a
+	// name or an id: the plugin's text, like any other.
 	if check != nil {
 		if err := check(); err != nil {
-			return s.notTheContract("what its " + tool + " tool gave back is not what the contract describes: " + err.Error())
+			return s.misanswered(tool, s.say(err.Error(), 300))
 		}
 	}
 	return nil
+}
+
+// misanswered is the error for a tool whose answer is not what the contract
+// describes. breaks says what of the answer is not, and is kept alone too.
+func (s *Connection) misanswered(tool, breaks string) *Error {
+	refusal := s.notTheContract("what its " + tool + " tool gave back is not what the contract describes: " + breaks)
+	refusal.breaks = breaks
+	return refusal
 }
 
 // callWithin calls a tool and returns the JSON object of its result. parent
@@ -931,7 +1026,9 @@ func (s *Connection) callWithin(parent, limited context.Context, tool, doing str
 		return nil, s.failure(parent, limited, doing, tool, limit, err)
 	}
 	if res.NeedsInput() {
-		return nil, s.notTheContract("its " + tool + " tool asks study for more input, which no tool of the contract does")
+		refusal := s.notTheContract("its " + tool + " tool asks study for more input, which no tool of the contract does")
+		refusal.breaks = "it asks study for more input, which no tool of the contract does"
+		return nil, refusal
 	}
 	data, isJSON := payload(res)
 	if res.IsError {
@@ -943,7 +1040,9 @@ func (s *Connection) callWithin(parent, limited context.Context, tool, doing str
 		return nil, s.toolError(tool, refusal.Error)
 	}
 	if !isJSON {
-		return nil, s.notTheContract("its " + tool + " tool gave back no JSON object: neither as structured content nor as text")
+		refusal := s.notTheContract("its " + tool + " tool gave back no JSON object: neither as structured content nor as text")
+		refusal.breaks = "it is no JSON object, neither as structured content nor as text"
+		return nil, refusal
 	}
 	return data, nil
 }
@@ -1018,8 +1117,10 @@ func (s *Connection) toolError(tool string, body plugincontract.ErrorBody) *Erro
 	case plugincontract.CodeUnsupported:
 		refusal = errorf(code, "Knowledge base plugin %s cannot do what its %s tool was asked: %s", s.name, tool, said)
 	default:
-		refusal = errorf(code, "Knowledge base plugin %s failed in its %s tool: %s. The plugin's own messages may say more; "+
-			"study knowledge-base check %s shows whether it still starts", s.name, tool, said, s.name)
+		refusal = errorf(code, "Knowledge base plugin %s failed in its %s tool: %s", s.name, tool, said)
+		refusal.advice = ". The plugin's own messages may say more; study knowledge-base check " + s.name +
+			" shows whether it still starts"
+		refusal.Message += refusal.advice
 	}
 	refusal.AboutTheCall = true
 	return refusal
@@ -1101,13 +1202,20 @@ func (s *Connection) failure(parent, limited context.Context, doing, tool string
 		if s.proc != nil {
 			wrote := s.wrote()
 			s.drop("it did not answer in time, and study stopped it")
-			return errorf(CodeFailedPrecondition, "Knowledge base plugin %s did not %s within %s, so study stopped it.%s Run "+
-				"its command in a terminal to see what it waits for: study knowledge-base list shows the command", s.name,
-				doing, limit, wrote)
+			late := errorf(CodeFailedPrecondition, "Knowledge base plugin %s did not %s within %s, so study stopped it.%s",
+				s.name, doing, limit, wrote)
+			late.advice = " Run its command in a terminal to see what it waits for: study knowledge-base list shows the command"
+			late.Message += late.advice
+			late.Late = true
+			return late
 		}
 		s.drop("it did not answer in time")
-		return errorf(CodeFailedPrecondition, "Knowledge base plugin %s did not %s within %s. Check that the service at %s "+
-			"is running and is not busy: study knowledge-base list shows its whole address", s.name, doing, limit, Address(s.address))
+		late := errorf(CodeFailedPrecondition, "Knowledge base plugin %s did not %s within %s.", s.name, doing, limit)
+		late.advice = " Check that the service at " + Address(s.address) + " is running and is not busy: study knowledge-base " +
+			"list shows its whole address"
+		late.Message += late.advice
+		late.Late = true
+		return late
 	case ended != "" && !exited && misread == nil:
 		// The Connection was closed, or given up, under this call: that is
 		// what happened to this call too. What the plugin wrote that was no
@@ -1133,11 +1241,12 @@ func (s *Connection) failure(parent, limited context.Context, doing, tool string
 			why = s.say(refusal, 300)
 		}
 		s.drop("its connection broke")
-		return &Error{Code: CodeFailedPrecondition, Err: err, Message: fmt.Sprintf("Knowledge base plugin %s does not answer as an "+
-			"MCP server at %s (%s). study speaks MCP revision %s over streamable HTTP. Check that the service is running, "+
+		advice := fmt.Sprintf(" study speaks MCP revision %s over streamable HTTP. Check that the service is running, "+
 			"that it speaks that revision or an earlier one, and that the address is the one of its MCP endpoint: study "+
-			"knowledge-base list shows it, and study knowledge-base add %s --replace --url <URL> changes it",
-			s.name, Address(s.address), why, MCPVersion, s.name)}
+			"knowledge-base list shows it, and study knowledge-base add %s --replace --url <URL> changes it", MCPVersion, s.name)
+		return &Error{Code: CodeFailedPrecondition, Err: err, advice: advice, Message: fmt.Sprintf("Knowledge base plugin %s "+
+			"does not answer as an MCP server at %s (%s).", s.name, Address(s.address), why) + advice,
+			broke: fmt.Sprintf("the service at %s did not answer as an MCP server does (%s)", Address(s.address), why)}
 	}
 	// What was read and was no MCP message is why, whatever the library
 	// came to report first.
@@ -1150,20 +1259,25 @@ func (s *Connection) failure(parent, limited context.Context, doing, tool string
 	how, wrote := s.proc.how(), s.wrote()
 	s.drop("its connection broke")
 	const look = " Run its command in a terminal to see why: study knowledge-base list shows the command"
+	gone := func(message string) *Error {
+		return &Error{Code: CodeFailedPrecondition, Err: err, Message: message + look, advice: look}
+	}
 	switch {
 	case !hungUp(err):
 		// Something was read, and it was no MCP message. That the program
 		// exited since says nothing: its pipes were closed on it.
+		what := reason(rootCause(err), "")
 		return &Error{Code: CodeFailedPrecondition, Err: err, Message: fmt.Sprintf("Knowledge base plugin %s does not speak MCP "+
 			"on its standard output: study read something there that is no MCP message (%s), and stopped it.%s A plugin "+
 			"writes only MCP messages on its standard output, each of %d MiB at most, and anything else on its standard error",
-			s.name, reason(rootCause(err), ""), wrote, plugincontract.MaxMessageBytes>>20)}
+			s.name, what, wrote, plugincontract.MaxMessageBytes>>20),
+			broke: fmt.Sprintf("study read something on its standard output that is no MCP message (%s), and stopped it.%s",
+				what, wrote)}
 	case exited:
-		return &Error{Code: CodeFailedPrecondition, Err: err, Message: fmt.Sprintf("Knowledge base plugin %s stopped before it "+
-			"could %s (%s).%s%s", s.name, doing, how, wrote, look)}
+		return gone(fmt.Sprintf("Knowledge base plugin %s stopped before it could %s (%s).%s", s.name, doing, how, wrote))
 	}
-	return &Error{Code: CodeFailedPrecondition, Err: err, Message: fmt.Sprintf("Knowledge base plugin %s closed its standard "+
-		"output before it could %s, so study stopped it.%s%s", s.name, doing, wrote, look)}
+	return gone(fmt.Sprintf("Knowledge base plugin %s closed its standard output before it could %s, so study stopped it.%s",
+		s.name, doing, wrote))
 }
 
 // The MCP library reports what went wrong on its own side with errors of the

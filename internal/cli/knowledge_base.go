@@ -193,7 +193,12 @@ func (a *app) knowledgeBaseCommand() *cobra.Command {
 		Use:   "check <name>",
 		Short: "Start or reach a Knowledge base plugin and see which contract it speaks",
 		Long: "Start the Knowledge base plugin registered under a name, or reach it at its URL, ask\n" +
-			"which version of Lamplight's contract it speaks and what it can do, and stop it again.\n\n" +
+			"which version of Lamplight's contract it speaks and what it can do, have it test what it\n" +
+			"depends on, such as an endpoint its settings name, and stop it again.\n\n" +
+			"What the plugin found is shown in its own words, a line for each thing it tested. One\n" +
+			"that is not all right is no failure: the plugin answered, and said what it lacks. A\n" +
+			"plugin has ten seconds to say what it found. One that does not, or says it otherwise\n" +
+			"than the contract has it, fails the check, and study uses it all the same.\n\n" +
 			"A command is started as study starts it for a Topic: the program that is registered,\n" +
 			"without a shell, in the registry's folder, and with a folder of its own, which\n" +
 			"LAMPLIGHT_PLUGIN_DATA names. That folder is in Lamplight's state folder\n" +
@@ -208,7 +213,8 @@ func (a *app) knowledgeBaseCommand() *cobra.Command {
 			"A plugin reached by URL is shown by the scheme and host of its address: the rest may be\n" +
 			"a key, and study knowledge-base list shows it.\n\n" +
 			"A plugin that does not start, does not answer in time, answers something that is no\n" +
-			"MCP, or speaks another contract is reported with what to do, and is not left running.",
+			"MCP, or speaks another contract is reported with what to do, and is not left running.\n" +
+			"Nothing is indexed or searched.",
 		Example: "  study knowledge-base check shelf\n  study knowledge-base check remote --json",
 		Args:    exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -382,8 +388,32 @@ func writePluginCheck(w io.Writer, r core.PluginCheck) error {
 	for i, row := range rows {
 		fmt.Fprintf(&b, "  %s  %s\n", styleDim.Render(pad(labels[i], width)), row[1])
 	}
+	writePluginFindings(&b, r.Findings)
 	_, err := io.WriteString(w, b.String())
 	return err
+}
+
+// writePluginFindings writes what a plugin found when it tested what it
+// depends on: a line for each finding, with the plugin's name for it and the
+// plugin's sentence, and nothing for a plugin that depends on nothing. The
+// words are the plugin's, so they are printed as text from a file is.
+func writePluginFindings(b *strings.Builder, findings []core.PluginFinding) {
+	if len(findings) == 0 {
+		return
+	}
+	b.WriteString("  It tested what it depends on:\n")
+	names := make([]string, len(findings))
+	for i, f := range findings {
+		names[i] = printable(f.Name)
+	}
+	width := widest(names)
+	for i, f := range findings {
+		mark := styleOK.Render("✓")
+		if !f.OK {
+			mark = styleWarn.Render("!")
+		}
+		fmt.Fprintf(b, "    %s %s  %s\n", mark, styleLabel.Render(pad(names[i], width)), printable(f.Message))
+	}
 }
 
 func writePluginList(w io.Writer, l core.PluginList) error {

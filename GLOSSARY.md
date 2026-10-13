@@ -180,6 +180,14 @@ _Avoid_: Rating, recall check
 **Log**:
 Application diagnostics: errors, warnings and debug output. Never the learner's activity.
 
+**Finding**:
+One thing `study doctor` says of the learner's setup: a name, whether it is all right, a
+warning or a failure, a message, and a fix when a command would put it right. It is said
+each time and recorded nowhere. What a Knowledge base plugin found when it tested what it
+depends on becomes Findings of the doctor's too, one for each thing, under the plugin's
+name and the plugin's name for it, with the plugin's own sentence and no fix.
+_Avoid_: Check (which is a Lesson's), diagnostic, issue
+
 ### People and notes
 
 **Learner profile**:
@@ -225,7 +233,9 @@ _Avoid_: Preset, profile
 **Endpoint**:
 A service the learner names in Shelf's settings file and runs or chooses themselves: the
 embedding endpoint turns text into vectors, by the OpenAI embeddings API, and the reranking
-endpoint orders a search's Passages. Shelf asks one only to index and to search.
+endpoint orders a search's Passages. Shelf asks one only to index and to search, and once,
+with text of its own, when `study doctor` or `study knowledge-base check` has Shelf test
+it: what Shelf found of each endpoint is then a Finding.
 _Avoid_: Provider, backend, model server
 
 **Indexed**:

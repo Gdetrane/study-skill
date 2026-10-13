@@ -517,6 +517,16 @@ func TestTheV2Journey(t *testing.T) {
 		fmt.Sprint(checked.Contract.Search) != "[keyword embedding]" {
 		t.Fatalf("study knowledge-base check shelf = %+v; want the study-shelf beside study, which searches by embeddings too", checked)
 	}
+	// The check has Shelf test the endpoint its settings name, with a
+	// question of Shelf's own: the learner hears now whether it answers, and
+	// not once a book was read.
+	if f := checked.Findings; len(f) != 1 || f[0].Name != "embedding" || !f[0].OK || !strings.Contains(f[0].Message, "the embedding endpoint "+at.Host) {
+		t.Fatalf("study knowledge-base check shelf found %+v; want the embedding endpoint, which answers", f)
+	}
+	if asked := at.Asked(); len(asked) != 1 || fmt.Sprint(asked[0].Texts()) != "[task: search result | query: What does a shelf hold?]" {
+		t.Fatalf("to test the endpoint, Shelf asked it %+v; want one question of Shelf's own", asked)
+	}
+	at.Forget()
 	j.study(nil, "setup", "--check")
 
 	a := &agent{t: t, home: j.studyHome, clock: j.clock}
@@ -617,10 +627,14 @@ func TestTheV2Journey(t *testing.T) {
 	if said := a.refused("evidence_record", cite("The answer to everything is 42."), core.CodeInvalidArgument); !strings.Contains(said, "the quote is not in the text of Passage") {
 		t.Fatalf("a paraphrase was refused with %q", said)
 	}
-	// study doctor finds the plugin in order, and nothing left to index.
+	// study doctor finds the plugin in order, its endpoint answering, and
+	// nothing left to index.
 	findings := j.doctor()
 	if f := findings["knowledge_base:shelf"]; f.Status != core.FindingOK || !strings.Contains(f.Message, "speaks version 1 of Lamplight's contract") {
 		t.Errorf("study doctor says of Shelf: %+v", f)
+	}
+	if f := findings["knowledge_base:shelf:embedding"]; f.Status != core.FindingOK || !strings.Contains(f.Message, at.Host) {
+		t.Errorf("study doctor says of Shelf's embedding endpoint: %+v", f)
 	}
 	if f, has := findings["indexing:c"]; has {
 		t.Errorf("with the book indexed, study doctor says of the Topic's Sources: %+v", f)

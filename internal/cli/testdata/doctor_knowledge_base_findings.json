@@ -1,0 +1,79 @@
+{
+  "ok": true,
+  "data": {
+    "study_home": "$HOME/study",
+    "healthy": true,
+    "findings": [
+      {
+        "name": "config",
+        "status": "ok",
+        "message": "no $HOME/.config/lamplight/config.toml; using the defaults"
+      },
+      {
+        "name": "study_home",
+        "status": "ok",
+        "message": "$HOME/study"
+      },
+      {
+        "name": "git",
+        "status": "ok",
+        "message": "git 2.47.1"
+      },
+      {
+        "name": "git_identity",
+        "status": "ok",
+        "message": "Checkpoints are saved as Ada Lovelace <ada@example.com>"
+      },
+      {
+        "name": "local_state",
+        "status": "ok",
+        "message": "$HOME/study/.lamplight/state.toml"
+      },
+      {
+        "name": "topics",
+        "status": "ok",
+        "message": "1 Topic"
+      },
+      {
+        "name": "library",
+        "status": "ok",
+        "message": "no index yet: study library build <folder> indexes your books"
+      },
+      {
+        "name": "knowledge_base",
+        "status": "ok",
+        "message": "$HOME/.config/lamplight/knowledge-base-plugins.json"
+      },
+      {
+        "name": "knowledge_base:kb",
+        "status": "ok",
+        "message": "started by $PLUGIN lamplight-test-plugin --record $RECORD --finding 'embedding=ok:the embedding endpoint 127.0.0.1:PORT gave a question'\\''s vector, of 512 numbers, asked for the model embeddinggemma-2' --finding 'reranking=wrong:the reranking endpoint 127.0.0.1:PORT could not be reached: connection refused. Check that its server is running, and its address in Shelf'\\''s settings file. Without the reranking endpoint a search gives its Passages in the order it found them.', speaks version 1 of Lamplight's contract"
+      },
+      {
+        "name": "knowledge_base:kb:embedding",
+        "status": "ok",
+        "message": "the embedding endpoint 127.0.0.1:PORT gave a question's vector, of 512 numbers, asked for the model embeddinggemma-2"
+      },
+      {
+        "name": "knowledge_base:kb:reranking",
+        "status": "warn",
+        "message": "the reranking endpoint 127.0.0.1:PORT could not be reached: connection refused. Check that its server is running, and its address in Shelf's settings file. Without the reranking endpoint a search gives its Passages in the order it found them."
+      },
+      {
+        "name": "log",
+        "status": "ok",
+        "message": "$HOME/.local/state/lamplight/study.log (level info)"
+      },
+      {
+        "name": "completion",
+        "status": "ok",
+        "message": "skipped: $SHELL is not bash, zsh or fish"
+      },
+      {
+        "name": "setup",
+        "status": "ok",
+        "message": "no Claude Code or Codex found; other agents need an MCP server that runs study mcp"
+      }
+    ]
+  }
+}

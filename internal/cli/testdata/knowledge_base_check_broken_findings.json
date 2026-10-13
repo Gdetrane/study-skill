@@ -1,0 +1,7 @@
+{
+  "ok": false,
+  "error": {
+    "code": "failed_precondition",
+    "message": "the diagnose tool of Knowledge base plugin kb gave an answer that breaks the contract: findings[0]: \"message\" is missing. docs/knowledge-base-contract.md describes the contract. So study does not know whether what the plugin depends on is all right, and uses the plugin all the same"
+  }
+}

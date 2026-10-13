@@ -1,0 +1,10 @@
+✓ Knowledge base plugin kb speaks version 1 of Lamplight's contract.
+  Started by:    $PLUGIN lamplight-test-plugin --finding 'embedding=ok:the embedding endpoint 127.0.0.1:PORT gave a question'\''s vector, of 512 numbers, asked for the model embeddinggemma-2' --finding 'reranking=wrong:the reranking endpoint 127.0.0.1:PORT could not be reached: connection refused. Check that its server is running, and its address in Shelf'\''s settings file. Without the reranking endpoint a search gives its Passages in the order it found them.'
+  Calls itself:  test-plugin 1.0.0
+  Indexes:       files, web pages
+  Searches:      by keyword
+  Locations:     pages
+  Its folder:    $HOME/.local/state/lamplight/knowledge-base-plugins/kb
+  It tested what it depends on:
+    ✓ embedding  the embedding endpoint 127.0.0.1:PORT gave a question's vector, of 512 numbers, asked for the model embeddinggemma-2
+    ! reranking  the reranking endpoint 127.0.0.1:PORT could not be reached: connection refused. Check that its server is running, and its address in Shelf's settings file. Without the reranking endpoint a search gives its Passages in the order it found them.

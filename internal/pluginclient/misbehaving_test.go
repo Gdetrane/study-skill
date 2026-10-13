@@ -120,7 +120,7 @@ func TestAPluginThatDoesNotSpeakIsRefused(t *testing.T) {
 		{"asks study for its roots", quickOptions, []string{"--ask", "contract", "--ask-method", "roots/list", "--ask-times", "1"},
 			pluginclient.CodeFailedPrecondition, []string{"Knowledge base plugin kb sent study a request (roots/list), and study stopped it"}},
 		{"is another MCP server", quickOptions, []string{"--tools", "contract,status"}, pluginclient.CodeFailedPrecondition,
-			[]string{"Knowledge base plugin kb does not speak Lamplight's contract: it is an MCP server without the index, cancel, search and passage tools",
+			[]string{"Knowledge base plugin kb does not speak Lamplight's contract: it is an MCP server without the index, cancel, search, passage and diagnose tools",
 				"docs/knowledge-base-contract.md"}},
 		{"has no tools at all", quickOptions, []string{"--tools", "none"}, pluginclient.CodeFailedPrecondition,
 			[]string{"does not speak Lamplight's contract"}},

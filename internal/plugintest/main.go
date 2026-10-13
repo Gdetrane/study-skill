@@ -41,8 +41,15 @@ const Arg = "lamplight-test-plugin"
 //	--sources KINDS     the kinds of Source it indexes: file,url
 //	--page-delay D      take D over each page it indexes
 //	--name N, --version V   what it calls itself
-//	--tools TOOLS       the tools it has, when not the contract's six
+//	--tools TOOLS       the tools it has, when not the contract's seven
 //	--contract JSON     what its contract tool gives back
+//	--finding NAME=ok:SENTENCE, --finding NAME=wrong:SENTENCE
+//	                    a finding of its diagnose tool, which gives them in
+//	                    the order of the flags, and none without one. What
+//	                    the contract does not allow of them, too many or
+//	                    none of its shape, is given with --result, and a
+//	                    plugin that says nothing in time with --delay,
+//	                    --wait or --hang
 //	--result TOOL=JSON  what TOOL gives back, whatever it is asked
 //	--refuse TOOL=CODE:MESSAGE   TOOL refuses every call
 //	--plain-error TOOL=TEXT      TOOL fails with text that is no JSON
@@ -64,7 +71,7 @@ const Arg = "lamplight-test-plugin"
 //	                    places
 //	--stderr TEXT       write TEXT on its standard error first
 //	--escaped           read \x1b, \a, \n and the like in the texts of
-//	                    --name, --version, --stderr, --notice, --refuse and
+//	                    --name, --version, --stderr, --notice, --refuse, --finding and
 //	                    --plain-error as the characters they stand for: the
 //	                    registry stores no argument with such a character
 //	                    in it, and a plugin can write one all the same
@@ -268,6 +275,22 @@ func (p pairs) Set(value string) error {
 	return nil
 }
 
+// findings collects flags given as NAME=ok:SENTENCE or NAME=wrong:SENTENCE,
+// in the order they are given.
+type findings []plugincontract.Finding
+
+func (f *findings) String() string { return fmt.Sprint([]plugincontract.Finding(*f)) }
+
+func (f *findings) Set(value string) error {
+	name, rest, named := strings.Cut(value, "=")
+	verdict, sentence, judged := strings.Cut(rest, ":")
+	if !named || !judged || (verdict != "ok" && verdict != "wrong") {
+		return fmt.Errorf("%q is not NAME=ok:SENTENCE or NAME=wrong:SENTENCE", value)
+	}
+	*f = append(*f, plugincontract.Finding{Name: name, OK: verdict == "ok", Message: sentence})
+	return nil
+}
+
 func run(args []string) int {
 	// Started as the interpreter of a script, by a first line of
 	// "#!<this binary> lamplight-test-plugin", the plugin is handed the
@@ -311,6 +334,7 @@ func run(args []string) int {
 	flags.BoolVar(&cfg.TextOnly, "text-only", false, "")
 	flags.StringVar(&cfg.Notice, "notice", "", "")
 	delays := pairs{}
+	flags.Var((*findings)(&cfg.Findings), "finding", "")
 	flags.Var(pairs(cfg.Results), "result", "")
 	flags.Var(pairs(cfg.Refusals), "refuse", "")
 	flags.Var(pairs(cfg.PlainErrors), "plain-error", "")
@@ -325,6 +349,9 @@ func run(args []string) int {
 			for tool, text := range texts {
 				texts[tool] = unescaped(text)
 			}
+		}
+		for i := range cfg.Findings {
+			cfg.Findings[i].Message = unescaped(cfg.Findings[i].Message)
 		}
 	}
 

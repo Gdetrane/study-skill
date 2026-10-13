@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mordor-forge/lamplight/v2/internal/cli"
 )
@@ -17,6 +18,9 @@ import (
 type kbComputer struct {
 	home string
 	env  map[string]string
+	// diagnose is how long a plugin has to say what it found of what it
+	// depends on, when a test gives it less than the contract does.
+	diagnose time.Duration
 }
 
 func newKBComputer(t *testing.T) *kbComputer {

@@ -58,7 +58,9 @@ var indexingNames = []string{"IndexSources", "IndexSpec", "IndexResult", "IndexO
 // cause to be asked: which contract it speaks, when it is started or
 // reached, what it has indexed, to search what it has indexed, and to give
 // a Passage again. Each reads the plugin's index. index and cancel are not
-// among them, and must never be: they are for study source index alone.
+// among them, and must never be: they are for study source index alone. Nor
+// is diagnose, which has a plugin send requests to whatever its settings
+// name: it is for study knowledge-base check and study doctor alone.
 var askedOfAPlugin = []string{"contract", "status", "search", "passage"}
 
 // toolsThatAskAPlugin are the tools that have a Topic's plugin asked
@@ -83,8 +85,8 @@ var toolsThatAskAPlugin = map[string][][]string{
 }
 
 // TestNoToolHasAPluginIndex: no MCP tool causes a Knowledge base plugin's
-// index tool to be called, or its cancel tool, and none registers, changes
-// or removes a plugin.
+// index tool to be called, or its cancel tool, or its diagnose tool, and
+// none registers, changes or removes a plugin.
 //
 // This is what the server does, not how it is written. Two plugins are
 // registered on the computer, a command that records what it is asked and a
@@ -166,6 +168,11 @@ func TestNoToolHasAPluginIndex(t *testing.T) {
 							"plugin index, or stop indexing. The MCP server runs outside the agent's sandbox, so a plugin that "+
 							"indexes for it reads any file the agent named as a Source. Indexing is study source index "+
 							"(ADR-0012)", tool, named, call.Tool, call.Source())
+					case call.Tool == "diagnose":
+						t.Fatalf("calling %s had Knowledge base plugin %s test what it depends on, with its diagnose tool: no "+
+							"tool has a plugin do that. The MCP server runs outside the agent's sandbox, and diagnose has a "+
+							"plugin send requests to whatever its settings name. It is for study knowledge-base check and "+
+							"study doctor (ADR-0012)", tool, named)
 					case !slices.Contains(askedOfAPlugin, call.Tool):
 						t.Fatalf("calling %s asked Knowledge base plugin %s its %s tool: a tool has a plugin asked which "+
 							"contract it speaks, what it has indexed, to search that and to give a Passage again, and nothing "+
@@ -277,6 +284,17 @@ func TestNoToolHasAPluginIndex(t *testing.T) {
 			if got := plugintest.Tools(asked()[named][seen:]); !slices.Contains(got, "index") {
 				t.Fatalf("study source index left no record of the plugin indexing (%v), so this test proves nothing", got)
 			}
+			// And so is a plugin that tests what it depends on: checked the
+			// one supported way, it is asked its diagnose tool, which no
+			// call of a tool above had it asked.
+			seen = len(asked()[named])
+			if _, err := k.CheckPlugin(context.Background(), named); err != nil {
+				t.Fatalf("study knowledge-base check %s: %v", named, err)
+			}
+			if got := plugintest.Tools(asked()[named][seen:]); !slices.Equal(got, []string{"contract", "diagnose"}) {
+				t.Fatalf("study knowledge-base check had the plugin asked %v; want its contract and its diagnose tool, or this test "+
+					"proves nothing of the tools", got)
+			}
 		})
 	}
 }
@@ -307,6 +325,12 @@ func TestNoToolHasAPluginIndex(t *testing.T) {
 // has it give a Passage again, are the two operations that are for it. It
 // reads whole files, the declarations outside any function among them, and
 // takes the package by whatever name a file imports it under.
+//
+// A plugin's diagnose tool, which has it test what it depends on, is asked
+// in one function as well: checkPlugin, which only CheckPlugin and
+// glancePlugin use, for study knowledge-base check and study doctor. Nothing
+// else in the core uses those, and the server cannot name them: so no
+// operation a tool calls has a plugin send requests to its endpoints.
 func TestTheCoreAsksAPluginToIndexInOnePlace(t *testing.T) {
 	var importers []string
 	for _, line := range goList(t, "-f", `{{.ImportPath}} {{join .Imports ","}}`, "./...") {
@@ -352,7 +376,7 @@ func TestTheCoreAsksAPluginToIndexInOnePlace(t *testing.T) {
 	}
 	// The core is read as this test expects: each is used where it may be,
 	// as often as it may be.
-	for name, want := range map[string]int{"Start": 1, "startPlugin": 4, "Index": 1, "Cancel": 2, "Search": 2, "Passage": 1,
+	for name, want := range map[string]int{"Start": 1, "startPlugin": 4, "Index": 1, "Cancel": 2, "Search": 2, "Passage": 1, "Diagnose": 1,
 		"askToIndex": 1, "indexSources": 1, "startTopicPlugin": 2, "searchPassages": 1, "readPassage": 1, "quotedPassages": 1,
 		"recordQuoted": 1, "checkPlugin": 2, "glancePlugin": 1} {
 		if found[name] != want {
@@ -379,7 +403,7 @@ import (
 func (c *Core) CheckPlugin() { c.checkPlugin() }
 func (c *Core) CheckPlugins() { c.glancePlugin() }
 func (c *Core) glancePlugin() { c.checkPlugin() }
-func (c *Core) checkPlugin() { conn, _ := c.startPlugin(); conn.Contract() }
+func (c *Core) checkPlugin() { conn, _ := c.startPlugin(); conn.Contract(); conn.Diagnose(nil) }
 func (c *Core) askPlugin() { conn, _ := c.startPlugin(); conn.Status(nil, "c") }
 func (c *Core) IndexSources() { conn, _ := c.startPlugin(); (&indexRun{conn: conn}).indexSources() }
 func (r *indexRun) indexSources() { r.askToIndex() }
@@ -418,6 +442,33 @@ func (c *Core) Status() { indexer(conn).Index(nil, "c", plugincontract.Source{})
 `,
 		"what a tool reaches tells the plugin to stop indexing": `package core
 func (c *Core) askPlugin() { conn.Cancel(nil, "c", "s") }
+`,
+		"what a tool reaches has the plugin test what it depends on": `package core
+func (c *Core) askPlugin() { conn.Diagnose(nil) }
+`,
+		"an operation a tool calls has the plugin test what it depends on": `package core
+func (c *Core) Status() { conn, _ := c.plugin(); conn.Diagnose(nil) }
+`,
+		"the plugin's diagnose tool is taken as a value": `package core
+func (c *Core) ListSources() { test := conn.Diagnose; test(nil) }
+`,
+		"the plugin's diagnose tool is asked through an interface": `package core
+type tester interface{ Diagnose(ctx context.Context) }
+func (c *Core) Status() { tester(conn).Diagnose(nil) }
+`,
+		"what starts a Topic's plugin to search it has it test what it depends on": `package core
+func (c *Core) startTopicPlugin() { conn, _ := c.startPlugin(); conn.Diagnose(nil) }
+`,
+		"the function that searches has the plugin test what it depends on": `package core
+func (p *topicPlugin) searchPassages() { p.conn.Diagnose(nil) }
+`,
+		"what runs the indexing has the plugin test what it depends on": `package core
+func (r *indexRun) indexSources() { r.conn.Diagnose(nil) }
+`,
+		"a method of the same name on another type has the plugin test what it depends on": `package core
+type sly struct{}
+func (sly) checkPlugin() { conn.Diagnose(nil) }
+func (c *Core) Status() { sly{}.checkPlugin() }
 `,
 		"an operation a tool calls searches the plugin": `package core
 func (c *Core) ListEvidence() { conn.Search(nil, "c", "q", 5, nil) }
@@ -599,12 +650,15 @@ var usedOnlyIn = map[string][]string{
 // asked for a Passage again in readPassage, and nowhere else: usedOnlyIn
 // says who may use those two. The other Search the core has is the
 // Library's, which is no plugin, and ownProcessGroup sets how a Check's
-// program is stopped, which is no plugin's either.
+// program is stopped, which is no plugin's either. A plugin is asked to
+// test what it depends on in checkPlugin and nowhere else, which usedOnlyIn
+// keeps to CheckPlugin and the doctor's glance: neither is a tool's.
 var askedOfAConnection = map[string][]string{
-	"Index":   {"indexRun.askToIndex"},
-	"Cancel":  {"indexRun.ended", "ownProcessGroup"},
-	"Search":  {"Core.SearchLibrary", "topicPlugin.searchPassages"},
-	"Passage": {"topicPlugin.readPassage"},
+	"Index":    {"indexRun.askToIndex"},
+	"Cancel":   {"indexRun.ended", "ownProcessGroup"},
+	"Search":   {"Core.SearchLibrary", "topicPlugin.searchPassages"},
+	"Passage":  {"topicPlugin.readPassage"},
+	"Diagnose": {"Core.checkPlugin"},
 }
 
 // asksAPlugin reports whether a name is one of those methods.
@@ -710,8 +764,8 @@ func pluginUses(t *testing.T, sources []coreSource) (found map[string]int, probl
 					found[name]++
 					if !slices.Contains(askedOfAConnection[name], in) {
 						problem("%s uses %s, which a Knowledge base plugin's Connection has: only %v may, so that no MCP tool "+
-							"has a plugin index, or stop indexing, and none searches one unnoticed (ADR-0012)", where(), name,
-							askedOfAConnection[name])
+							"has a plugin index, stop indexing, or test what it depends on, and none searches one unnoticed "+
+							"(ADR-0012)", where(), name, askedOfAConnection[name])
 					}
 				case guarded:
 					found[name]++
@@ -753,13 +807,36 @@ func receiverOf(expr ast.Expr) string {
 // other method of a Connection asks for it. So each tool's name is used in
 // the one method that is called after it, and nowhere is a tool named by a
 // text of the client's own.
+//
+// And no method asks another's tool by calling that method: a Search that
+// called Diagnose when the plugin refused it would have every tool that
+// searches test what the plugin depends on, with the core none the wiser.
+// The client calls none of a Connection's asking methods anywhere. What
+// calls a tool at all is one function, callWithin, which only the handshake
+// and ask use, and ask is called once in each asking method, with that
+// method's own tool, named by the contract's name for it. The list of the
+// contract's tools is read by the handshake alone, so no tool is asked by
+// its place in that list.
 func TestTheClientAsksEachToolInOneMethod(t *testing.T) {
 	files, err := filepath.Glob(filepath.Join("..", "pluginclient", "*.go"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	only := map[string]string{"ToolIndex": "Connection.Index", "ToolStatus": "Connection.Status", "ToolCancel": "Connection.Cancel",
-		"ToolSearch": "Connection.Search", "ToolPassage": "Connection.Passage"}
+		"ToolSearch": "Connection.Search", "ToolPassage": "Connection.Passage", "ToolDiagnose": "Connection.Diagnose"}
+	// asking are the methods of a Connection that ask a plugin a tool, and
+	// calledIn where the client's own way to a tool may be used. Search and
+	// Passage are names of fields of the contract's types too, so of those
+	// only a call counts.
+	asking := []string{"Index", "Status", "Cancel", "Diagnose"}
+	calledIn := map[string][]string{
+		"CallTool":   {"Connection.callWithin"},
+		"callWithin": {"Connection.ask", "Connection.handshake"},
+		"ask": {"Connection.Index", "Connection.Status", "Connection.Cancel", "Connection.Search", "Connection.Passage",
+			"Connection.Diagnose"},
+		"Tools": {"Connection.handshake"},
+	}
+	asks := map[string]int{}
 	found := map[string]int{}
 	// methods are the exported methods of a Connection.
 	methods := map[string]bool{}
@@ -782,14 +859,54 @@ func TestTheClientAsksEachToolInOneMethod(t *testing.T) {
 					}
 				}
 			}
+			// called are the selectors that are called: x.Search(...).
+			called := map[*ast.SelectorExpr]bool{}
+			ast.Inspect(decl, func(n ast.Node) bool {
+				if call, ok := n.(*ast.CallExpr); ok {
+					if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
+						called[sel] = true
+					}
+				}
+				return true
+			})
 			ast.Inspect(decl, func(n ast.Node) bool {
 				switch x := n.(type) {
+				case *ast.CallExpr:
+					// ask(ctx, tool, ...): the tool is the contract's name
+					// for the method's own, written out.
+					if sel, ok := x.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "ask" {
+						asks[in]++
+						tool, named := ast.Expr(nil), false
+						if len(x.Args) > 1 {
+							tool = x.Args[1]
+						}
+						if arg, ok := tool.(*ast.SelectorExpr); ok {
+							named = only[arg.Sel.Name] == in
+						}
+						if !named {
+							t.Errorf("%s: %s calls ask with a tool that is not the contract's name for its own: each method "+
+								"asks the one tool it is called after, named so that this test can follow it", name, in)
+						}
+					}
 				case *ast.SelectorExpr:
 					if may, guarded := only[x.Sel.Name]; guarded {
 						found[x.Sel.Name]++
 						if in != may {
 							t.Errorf("%s: %s uses %s: only %s asks a plugin that tool, so that who has a plugin index is "+
 								"whoever calls that method", name, in, x.Sel.Name, may)
+						}
+					}
+					if slices.Contains(asking, x.Sel.Name) || called[x] && (x.Sel.Name == "Search" || x.Sel.Name == "Passage") {
+						t.Errorf("%s: %s uses .%s: the client calls none of a Connection's asking methods. One that asked "+
+							"another tool, when its own call failed say, would have whatever reaches it ask that tool too, and "+
+							"the tests that read the core for who has a plugin index, or test what it depends on, would not "+
+							"see it (ADR-0012)", name, in, x.Sel.Name)
+					}
+					if may, guarded := calledIn[x.Sel.Name]; guarded {
+						found[x.Sel.Name]++
+						if !slices.Contains(may, in) {
+							t.Errorf("%s: %s uses %s: only %v may, so that every tool of a plugin is asked in the one method "+
+								"called after it", name, in, x.Sel.Name, may)
 						}
 					}
 				case *ast.BasicLit:
@@ -807,11 +924,24 @@ func TestTheClientAsksEachToolInOneMethod(t *testing.T) {
 			t.Errorf("the client does not use plugincontract.%s, so this test no longer reads the client as it is", tool)
 		}
 	}
+	for name := range calledIn {
+		if found[name] == 0 {
+			t.Errorf("the client does not use %s, so this test no longer reads the client as it is", name)
+		}
+	}
+	for _, method := range calledIn["ask"] {
+		if asks[method] != 1 {
+			t.Errorf("%s calls ask %d times, want once: each asking method asks its one tool, once", method, asks[method])
+		}
+	}
+	if found["CallTool"] != 1 {
+		t.Errorf("the client calls a tool in %d places, want the one, callWithin", found["CallTool"])
+	}
 	// And a Connection has the methods the test above knows, and no other:
 	// that test tells what asks a plugin to index, to stop, to search or
 	// for a Passage by the names of these methods.
-	want := []string{"Cancel", "Close", "Contract", "DataFolder", "Ended", "GiveUp", "Index", "Name", "Passage", "Search", "Server",
-		"Status"}
+	want := []string{"Cancel", "Close", "Contract", "DataFolder", "Diagnose", "Ended", "GiveUp", "Index", "Name", "Passage", "Search",
+		"Server", "Status"}
 	if got := slices.Sorted(maps.Keys(methods)); !slices.Equal(got, want) {
 		t.Errorf("a Connection has the methods %v, want %v: say here what a new one is, and in askedOfAConnection where the "+
 			"core may call it if it asks a plugin for more than its contract and what it has indexed (ADR-0012)", got, want)

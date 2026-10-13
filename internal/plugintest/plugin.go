@@ -95,8 +95,12 @@ type Config struct {
 	// Name and Version are what it calls itself. Empty is "test-plugin" and
 	// "1.0.0".
 	Name, Version string
-	// Tools are the tools it has. Nil is the contract's six.
+	// Tools are the tools it has. Nil is the contract's seven.
 	Tools []string
+	// Findings are what its diagnose tool gives back: the test plugin
+	// depends on nothing and tests nothing, so it says what it is told to.
+	// Nil is no finding.
+	Findings []plugincontract.Finding
 	// Results replaces what a tool gives back with a JSON object, given as
 	// text, whatever it was asked: for testing what study makes of an answer
 	// that is not the contract's.
@@ -236,6 +240,7 @@ func (p *Plugin) Server() *mcp.Server {
 		{plugincontract.ToolCancel, "Stop indexing a Source.", p.cancel},
 		{plugincontract.ToolSearch, "The Passages of a collection that answer a query, best first.", p.search},
 		{plugincontract.ToolPassage, "One Passage of a collection, by its id.", p.passage},
+		{plugincontract.ToolDiagnose, "Test what this plugin depends on, and say what was found.", p.diagnose},
 	} {
 		if !slices.Contains(p.cfg.Tools, tool.name) {
 			continue
@@ -324,6 +329,16 @@ func (p *Plugin) contract(context.Context, json.RawMessage) (any, *plugincontrac
 		Search:    []string{plugincontract.SearchKeyword},
 		Locations: []string{plugincontract.LocationPages},
 	}, nil
+}
+
+// diagnose gives the findings the plugin was told to give. It takes no
+// arguments, and passes over whatever it is given.
+func (p *Plugin) diagnose(context.Context, json.RawMessage) (any, *plugincontract.ErrorBody) {
+	findings := p.cfg.Findings
+	if findings == nil {
+		findings = []plugincontract.Finding{}
+	}
+	return plugincontract.DiagnoseResult{Findings: findings}, nil
 }
 
 func (p *Plugin) index(_ context.Context, args json.RawMessage) (any, *plugincontract.ErrorBody) {
