@@ -402,8 +402,8 @@ func TestIndexingIsFollowedStoppedAndCarriedOn(t *testing.T) {
 	if got := sourcesOf(asked(calls, "cancel")); !slices.Equal(got, []string{long.ID}) {
 		t.Errorf("the plugin was told to stop %v, want the Source it was indexing", got)
 	}
-	if last := calls[len(calls)-1]; last.Tool != "cancel" {
-		t.Errorf("the last thing the plugin was asked is %s, want cancel", last.Tool)
+	if last := plugintest.LastBesidesStatus(calls); last.Tool != "cancel" {
+		t.Errorf("the last thing the plugin was asked, besides its status, is %s, want cancel", last.Tool)
 	}
 	// Its program is gone, and with it whatever it was doing.
 	s.stopped(t)

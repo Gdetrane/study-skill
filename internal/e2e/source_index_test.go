@@ -205,8 +205,9 @@ func TestABuiltStudyIndexesIsStoppedAndCarriesOn(t *testing.T) {
 			if got := indexedBy(calls); !slices.Equal(got, []string{ids["first"], ids["long"]}) {
 				t.Errorf("the plugin was asked to index %v, want the first two books", got)
 			}
-			if last := calls[len(calls)-1]; last.Tool != "cancel" || last.Source() != ids["long"] {
-				t.Errorf("the last thing the plugin was asked is %s of %s, want to stop indexing the long book", last.Tool, last.Source())
+			if last := plugintest.LastBesidesStatus(calls); last.Tool != "cancel" || last.Source() != ids["long"] {
+				t.Errorf("the last thing the plugin was asked, besides its status, is %s of %s, want to stop indexing the long book",
+					last.Tool, last.Source())
 			}
 			if !plugintest.Gone(plugin.PID, 5*time.Second) {
 				t.Errorf("the plugin, process %d, outlived study", plugin.PID)
