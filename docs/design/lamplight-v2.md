@@ -651,13 +651,15 @@ hours before any learning happens is exactly what v1 produced.
   `study knowledge-base check`.
   - The contract, version 1, is `docs/knowledge-base-contract.md` for whoever writes a
     plugin and `internal/plugincontract` for `study`; a test keeps the two in step, down to
-    the page's examples. It is six tools with fixed names: `contract` (the version, and the
+    the page's examples. It is seven tools with fixed names: `contract` (the version, and the
     kinds of Source, of search and of location the plugin has), `index` (one Source of a
     collection; it answers at once with the Source's state), `status` (each Source
     `indexed`, `indexing` with its progress or `failed` with the reason, and the hash of
     the content that is indexed), `cancel` (stop indexing a Source; it answers once the
-    work has stopped), `search` (Passages for a query, best first, each with its score) and
-    `passage` (one Passage again, without a score). A Passage is the Source's own text as
+    work has stopped), `search` (Passages for a query, best first, each with its score),
+    `passage` (one Passage again, without a score) and `diagnose` (what the plugin found
+    when it tested what it depends on: findings, each with a name, whether it is all right
+    and a sentence; it was added to version 1, of which nothing was released). A Passage is the Source's own text as
     extracted, with a location when the plugin knows one. A location says its kind: `pages`
     now, others such as a time range later, without a new contract version; a Passage from
     a web page has none. A file is indexed by its content hash, and the plugin gives the
@@ -855,7 +857,7 @@ hours before any learning happens is exactly what v1 produced.
     core and the MCP server are built from and fails when any of it is there. The release
     archives and packages hold both programs, and `install.sh` installs both, each only
     once both have run.
-  - It is an MCP server over its standard input and output with the contract's six tools,
+  - It is an MCP server over its standard input and output with the contract's seven tools,
     and the conformance suite passes against the built program, started as `study` starts
     it, with PDFs and with web pages.
   - **The PDF reader is PDFium, compiled to WebAssembly and run inside Shelf by wazero**,
@@ -973,8 +975,22 @@ hours before any learning happens is exactly what v1 produced.
     check is not asked again for the Topics that name it. None is asked to index, and
     nothing about a plugin is a failure.
   - `study` does not read Shelf's settings file and asks none of its endpoints. A file
-    Shelf cannot use keeps it from starting, and the doctor shows Shelf's reason. Whether
-    an endpoint answers is learned by indexing and by searching.
+    Shelf cannot use keeps it from starting, and the doctor shows Shelf's reason.
+  - **A plugin tests what it depends on, and the doctor asks it to** (`diagnose`). Shelf
+    starts and speaks the contract with an endpoint down, so `study doctor` and
+    `study knowledge-base check` have each plugin say what it found, once it has said
+    which contract it speaks: every plugin at once, with the contract's ten seconds, so
+    the doctor's wait grows by ten at most, however many are registered. A finding is the
+    plugin's name for what it tested, whether it is all right, and a sentence, cleaned and
+    cut like a `reason`, with no command of the plugin's choosing. One that is not all
+    right is a warning and never unhealthy; a plugin that depends on nothing adds no
+    line. **No MCP tool asks `diagnose`**: it has a plugin send requests to wherever its
+    settings point, and is kept to the command line as indexing is.
+  - Shelf tests each endpoint in its settings file as a search asks it: one question
+    embedded, with the Recipe's request and the key, the answer held to `dimensions` and
+    to numbers; one question and two texts reranked. The text is Shelf's own, never a
+    Topic's. Both at once, each with eight seconds, and a finding names an endpoint by its
+    host and never holds the key.
   - The acceptance walkthrough has the built `study-shelf` registered by setup, a PDF
     indexed, searched and quoted as checked Evidence, with an endpoint of the test's own.
     The same with a real book and a real model is the maintainer's

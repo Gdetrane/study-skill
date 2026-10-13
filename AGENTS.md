@@ -125,34 +125,55 @@ GOOS=darwin go vet ./...            # macOS is supported too
   its own in the learner's state folder, outside the Study home, and stopped with its
   process group when its Connection is closed.
 - Four things in the core start a plugin, each through `startPlugin`, and each stops it
-  before it returns: `checkPlugin`, which asks a plugin its contract and nothing else, for
-  `CheckPlugin` (`study knowledge-base check`) and `CheckPlugins` (`study doctor`, every
-  registered plugin, with the time of a glance); `IndexSources`
+  before it returns: `checkPlugin`, which asks a plugin its contract and then to test what
+  it depends on (`diagnose`), and nothing else, for `CheckPlugin`
+  (`study knowledge-base check`) and `CheckPlugins` (`study doctor`, every registered
+  plugin, with the time of a glance for the first and the contract's ten seconds for the
+  second); `IndexSources`
   (`study source index`), `askPlugins`, which `Status` and `ListSources` use to ask what a
   Topic's plugin has indexed, and `startTopicPlugin`, which `SearchEvidence` and
   `recordQuoted` use to search a Topic's Sources and to read the Passages a quote is
   checked against. The last two are reached by MCP tools, and they ask a plugin's
   `status`, `search` and `passage` tools and nothing else. **No MCP tool has a plugin
   index, or stop indexing**: the server runs outside the agent's sandbox, and a plugin
-  that indexed for it would read any file the agent named as a Source. Three tests in
-  `internal/mcpserver` keep it so.
+  that indexed for it would read any file the agent named as a Source. **Nor does one
+  have a plugin test what it depends on**: `diagnose` has a plugin send requests to
+  wherever its settings point, an embedding endpoint say, which is the learner's to
+  start from a command line. Three tests in `internal/mcpserver` keep it so.
   `TestNoToolHasAPluginIndex` registers plugins that record what they are asked, has the
   Topic name one and hold a Source it has not indexed from before the first tool is
   called, calls every tool (`everyToolOn`: add a new tool there) and fails when the plugin
-  was asked `index` or `cancel`, or anything that is not in `askedOfAPlugin`, or when the
+  was asked `index`, `cancel` or `diagnose`, or anything that is not in `askedOfAPlugin`, or when the
   registry changed; `toolsThatAskAPlugin` says, for each tool that asks a plugin anything,
   exactly which of its tools are asked and in which order, in each way the session takes,
   and the session takes the ways that end in a refusal too.
   `TestTheCoreAsksAPluginToIndexInOnePlace` reads the core: a Connection's `Index` is
   called in `indexRun.askToIndex` alone, which only `IndexSources` reaches, which the
   server cannot name, its `Cancel` in `indexRun.ended` alone, its `Search` in
-  `topicPlugin.searchPassages` and its `Passage` in `topicPlugin.readPassage`
-  (`askedOfAConnection`). `TestTheClientAsksEachToolInOneMethod` holds the client to
+  `topicPlugin.searchPassages`, its `Passage` in `topicPlugin.readPassage` and its
+  `Diagnose` in `Core.checkPlugin` alone, which only `CheckPlugin` and the doctor's
+  `glancePlugin` reach (`askedOfAConnection`, `usedOnlyIn`).
+  `TestTheClientAsksEachToolInOneMethod` holds the client to
   naming each tool in the one method called after it, and a Connection to the methods
   those tests know: say there what a new one is. Change them on purpose when a tool
   comes to ask a plugin something else, name nothing else in the core `Index`, `Cancel`,
-  `Search` or `Passage`, and keep `reflect` out of the core: it calls by a name those
-  tests cannot read.
+  `Search`, `Passage` or `Diagnose`, and keep `reflect` out of the core: it calls by a
+  name those tests cannot read.
+- What a plugin says of what it depends on is the plugin's words and no more. A finding
+  has a name, whether it is all right and a message; the client cleans and cuts the
+  message as it does a `reason` (`Connection.Diagnose`), and the adapters print it through
+  `printable()` as text, never as a command: `study` adds no fix to a plugin's finding,
+  and passes over a field a plugin adds. In `study doctor` a finding that is not all right
+  is a warning, never a failure, and a plugin with none adds no Finding. The doctor asks
+  every plugin at once, each when it has said which contract it speaks, so its wait for
+  plugins is the glance and `core.PluginDiagnoseTimeout` after it, however many are
+  registered: never ask them one after the other.
+- Shelf tests an endpoint with the request a search sends it (`endpoint.Embedder.Test`,
+  which `Query` is, and `endpoint.Reranker.Test`, which `Order` is), with text of its own
+  and nothing of a collection, both endpoints at once, each under `Settings.TestTime`,
+  which is less than the contract's time for the whole answer. Whatever it says of an
+  endpoint is an `endpoint.Problem`'s reason: the host, and never the key or the rest of
+  the address.
 - Nothing that shows where the learner is waits for a plugin. `askPlugins` has
   `core.PluginGlanceTimeout`, two seconds, for the registry, the start and the answers
   together, and shows the Sources as not known when it is missed. Opening a Session asks
@@ -374,7 +395,7 @@ GOOS=darwin go vet ./...            # macOS is supported too
   (`source_index.go`), searches it and reads its Passages (`evidence_search.go`), and
   checks a quote against them (`quote.go`).
 - `internal/plugincontract`: the contract a Knowledge base plugin speaks, version 1: the
-  six tools' inputs and results as Go types, the limits, the error codes, and what each
+  seven tools' inputs and results as Go types, the limits, the error codes, and what each
   answer must hold (`Validate`). It holds no client and no server.
 - `internal/pluginclient`: `study` as the MCP client of a plugin: starting a registered
   command or reaching a registered URL, the deadlines, and a `Connection` with the contract's
@@ -383,9 +404,10 @@ GOOS=darwin go vet ./...            # macOS is supported too
   temporary folders (`Computer`), and the conformance suite.
 - `cmd/study-shelf`: Shelf's entry point: its few flags, and the MCP server over the
   standard streams.
-- `internal/shelf`: Shelf. The package itself holds the six tools (`shelf.go`), the
-  indexing of one Source, which goes on after `index` has answered (`work.go`), and one
-  search, by keyword, by vectors and with a reranker (`search.go`). Below it:
+- `internal/shelf`: Shelf. The package itself holds the tools (`shelf.go`), the
+  indexing of one Source, which goes on after `index` has answered (`work.go`), one
+  search, by keyword, by vectors and with a reranker (`search.go`), and the test of the
+  endpoints its settings name (`diagnose.go`). Below it:
   `index`, one SQLite file for each collection, with the format, the full-text search, the
   Passages' vectors and what keeps SQLite inside Shelf's folder; `pdf`, a PDF's pages
   through PDFium; `web`, a web page fetched within limits and its readable text; `cut`,

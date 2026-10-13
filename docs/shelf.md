@@ -35,8 +35,9 @@ The registry records which registration setup made. Yours is not one of them, so
 leaves it as it is from then on, and `study setup --remove` does not remove it
 ([docs/cli.md](cli.md#shelf)).
 
-`study doctor` says whether Shelf starts, and which Sources of your Topics it has not
-indexed ([docs/cli.md](cli.md#study-doctor)).
+`study doctor` says whether Shelf starts, whether the endpoints its settings name answer
+([What study doctor tests](#what-study-doctor-tests)), and which Sources of your Topics it
+has not indexed ([docs/cli.md](cli.md#study-doctor)).
 
 `check` starts Shelf as `study` starts it for a Topic, and reports the contract it speaks:
 version 1, Sources that are files and web pages, pages as locations, and how it searches:
@@ -174,8 +175,9 @@ themselves.
 Searching reads the index and never a Source: a book that was moved away is still found,
 and a search is answered while another book is being indexed. A search asks the embedding
 endpoint once, for the question's vector, and the reranking endpoint once. Nothing else
-Shelf does asks either of them, short of indexing: not starting, and not saying what is
-indexed.
+Shelf does asks either of them, short of indexing and of the test `study doctor` asks for
+([What study doctor tests](#what-study-doctor-tests)): not starting, and not saying what
+is indexed.
 
 ### When an endpoint does not answer
 
@@ -225,6 +227,54 @@ have them and by keyword in the others, and its `notice` says how many those are
 Shelf tells the model by the name in its settings. A server that comes to serve another
 model under a name it served before is one Shelf cannot tell from the first: remove the
 Topic's file from Shelf's folder then (see below), and index again.
+
+## What study doctor tests
+
+Shelf starts, says which contract it speaks and says what is indexed whether or not the
+endpoints in its settings file answer: none of that asks them. So `study doctor` and
+`study knowledge-base check shelf` have Shelf test them, and you hear that an endpoint is
+down before a book is read for nothing, or a search has quietly fallen back to keyword.
+
+- **The embedding endpoint is asked for the vector of one question, as a search asks
+  it**: the same address and request, with the Recipe's marking of a question or the
+  fields it adds to the request, `dimensions` when the Recipe sends it, and the key. The
+  answer is held to what a search holds it to: one vector, of at least the `dimensions`
+  your settings name, that is not all zeros and holds nothing but numbers.
+- **The reranking endpoint is asked to order two short texts for one question**, and its
+  answer is held to its shape: a place and a score for each text.
+- **What is sent is Shelf's own, the same every time**: the question "What does a shelf
+  hold?", and the texts "A shelf holds books." and "A lamp gives light." Nothing of a
+  Topic, a Source or a question of yours goes to an endpoint for a test.
+- **Each endpoint has 8 seconds, and the two are asked side by side.** `study` gives a
+  plugin 10 seconds to say what it found, so Shelf says in time which endpoint did not
+  answer. A search gives the embedding endpoint 10 seconds, and the reranking endpoint
+  20: a server that needs longer than 8 for its first answer, since it loads the model
+  then, is a warning once and none when you ask again.
+- **With no endpoint in the settings file there is nothing to test**, and the doctor
+  says nothing of Shelf's endpoints.
+- **A finding names an endpoint by its host**, like everything Shelf says of one: never
+  its key, nor the rest of its address, whatever the endpoint itself answered.
+
+`study doctor` shows a Finding for each endpoint, `knowledge_base:shelf:embedding` and
+`knowledge_base:shelf:reranking`. One that is not all right is a warning, and never keeps
+you from studying. It ends with what Shelf does meanwhile: without the embedding endpoint
+no Source is indexed, and a search is by keyword alone; without the reranking endpoint a
+search gives its Passages in the order it found them.
+
+| The warning says | What to do |
+|---|---|
+| `could not be reached` | The server is not running, or `endpoint` is not where it listens. Start it, or correct the address: for a server that speaks the OpenAI API it ends in `/v1`. |
+| `did not answer within 8s` | The server is busy, or loading its model. Ask again once it is up. |
+| `answered 401 Unauthorized`, `answered 403 Forbidden` | The `key` in the settings file is not one the server takes. |
+| `answered 404 Not Found` | The address is not the API's, or the server does not know the `model`. Check `endpoint` and `model`, or the Recipe. |
+| `answered` a number from 300 to 399 | Shelf follows no redirect. Give the address that answers. |
+| `gave vectors of 384 numbers, and Shelf's settings ask for 512` | The server has another model than the Recipe is for, or `dimensions` is more than the model gives. Serve the model the Recipe names, or set `dimensions` to a size the model has. |
+| `gave a vector that is all zeros, or holds what is no number` | The server answers and its model does not: look at the server's own log. |
+| `did not answer as its API does`, `ranked 1 Passages of the 2 it was handed` | What answers at that address is not the service the settings take it for. Check `endpoint`, and that it is the embedding server's in `[embedding]` and the reranker's in `[reranking]`. |
+
+Once it is put right, `study doctor` says so. A Source whose indexing failed meanwhile is
+tried again by `study source index <topic>`, and Sources that were indexed with another
+model are said to be [outdated](#vectors-of-another-model), with the same command.
 
 ## Where the index is
 
@@ -341,10 +391,10 @@ model = "qwen3-reranker-0.6b"
 making: an `OPENAI_API_KEY` or `OPENAI_BASE_URL` in your shell never reaches Shelf. Its
 environment tells Shelf where your configuration folder is, and nothing else.
 
-After a change, `study knowledge-base check shelf` says whether Shelf can use the file,
-and how it searches now. It does not ask the endpoints anything, and neither does
-`study doctor`: the first `study source index` does, and a Source fails with the reason
-when one does not answer as the settings expect.
+After a change, `study knowledge-base check shelf` says whether Shelf can use the file
+and how it searches now, and has Shelf test each endpoint the file names, as
+`study doctor` does: one request to each, of Shelf's own text
+([What study doctor tests](#what-study-doctor-tests)).
 
 | Setting | Is |
 |---|---|

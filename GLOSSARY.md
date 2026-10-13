@@ -225,7 +225,8 @@ _Avoid_: Preset, profile
 **Endpoint**:
 A service the learner names in Shelf's settings file and runs or chooses themselves: the
 embedding endpoint turns text into vectors, by the OpenAI embeddings API, and the reranking
-endpoint orders a search's Passages. Shelf asks one only to index and to search.
+endpoint orders a search's Passages. Shelf asks one only to index and to search, and once,
+with text of its own, when `study doctor` has Shelf test it.
 _Avoid_: Provider, backend, model server
 
 **Indexed**:
