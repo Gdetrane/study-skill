@@ -1091,8 +1091,21 @@ func text(res *mcp.CallToolResult) string {
 // only by clean afterwards: a part of the address that a service repeated
 // with such a character inside it would be whole again once clean had left
 // the character out.
+//
+// A text that was cut may end in the start of a part of the address, which
+// is not found for one: all of a key but its last byte, behind enough white
+// space that clean brings it to the front. So what is looked at is longer
+// by the longest part, and that much is dropped again from the end of what
+// is left of it once what shows nothing is out, where such a start stands
+// in one piece.
 func (s *Connection) say(text string, max int) string {
-	return clean(without(seen(plugincontract.Cut(text, 16*max+4096)), s.address), max)
+	longest := longestSecret(s.address)
+	start := plugincontract.Cut(text, 16*max+4096+longest)
+	looked := seen(start)
+	if len(start) < len(text) {
+		looked = plugincontract.Cut(looked, len(looked)-min(longest, len(looked)))
+	}
+	return clean(without(looked, s.address), max)
 }
 
 // tidy cleans what a plugin wrote of a Source for people to read.

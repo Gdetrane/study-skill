@@ -1,9 +1,12 @@
 package pluginclient_test
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"unicode/utf8"
 
@@ -279,5 +282,118 @@ func TestAnAddressThatHoldsWhatShowsNothingIsStillTakenOut(t *testing.T) {
 	// for: looked for, it would be found between any two letters.
 	if got := pluginclient.Without("words", "\u200b"); got != "words" {
 		t.Errorf("an address of one character that shows nothing made %q of a plugin's words", got)
+	}
+}
+
+// A service repeats the address it is registered at in a way of its own: in
+// capitals, with its escapes read, or escaped where the registry has it
+// plain, the hexadecimal in either case. Each is the address all the same,
+// and none of it is shown.
+func TestAnAddressIsTakenOutHoweverAServiceWritesIt(t *testing.T) {
+	for name, tc := range map[string]struct{ address, said, not string }{
+		"a piece of the path in capitals": {"https://kb.example/t0ken-in-the-path/mcp",
+			"no account T0KEN-IN-THE-PATH here", "T0KEN"},
+		"the key in capitals": {"https://kb.example/mcp?key=s3cr3t-k3y-of-mine",
+			"the key S3CR3T-K3Y-OF-MINE is not allowed", "S3CR3T"},
+		"the address whole, in capitals": {"https://kb.example/t0ken-in-the-path/mcp?key=s3cr3t-k3y",
+			"nothing at HTTPS://KB.EXAMPLE/T0KEN-IN-THE-PATH/MCP?KEY=S3CR3T-K3Y", "T0KEN"},
+		"a plain key, said escaped": {"https://kb.example/mcp?key=s3cr3t/k3y:of-mine",
+			"the key s3cr3t%2Fk3y%3Aof-mine is not allowed", "k3y"},
+		"a plain key, said escaped in small letters": {"https://kb.example/mcp?key=s3cr3t/k3y:of-mine",
+			"the key s3cr3t%2fk3y%3aof-mine is not allowed", "k3y"},
+		"an escaped key, said plain": {"https://kb.example/mcp?key=s3cr3t%2Fk3y%3Aof-mine",
+			"the key s3cr3t/k3y:of-mine is not allowed", "k3y"},
+		"an escaped key, said in small letters": {"https://kb.example/mcp?key=s3cr3t%2Fk3y%3Aof-mine",
+			"the key s3cr3t%2fk3y%3aof-mine is not allowed", "k3y"},
+		"a plain piece of the path, said escaped": {"https://kb.example/t0ken:in+the,path/mcp",
+			"no account t0ken%3Ain%2Bthe%2Cpath here", "t0ken"},
+		"an escaped piece of the path, said plain": {"https://kb.example/t0ken%3Ain%2Cthe-path/mcp",
+			"no account t0ken:in,the-path here", "t0ken"},
+		"the query with its escapes read": {"https://kb.example/mcp?a=b%20c&key=s3cr3t%2Fk3y",
+			"asked with a=b c&key=s3cr3t/k3y", "s3cr3t"},
+		"a key with an accent, in capitals": {"https://kb.example/mcp?key=cl\u00e9-secr\u00e8te",
+			"la cl\u00e9 CL\u00c9-SECR\u00c8TE est refus\u00e9e", "secr"},
+		// A long s and a Kelvin sign are an s and a k in another case, and
+		// take more bytes than they do.
+		"a key in letters of another length": {"https://kb.example/mcp?key=s3cret-pass-key",
+			"\u03bb: the key S3CRET-PA\u017f\u017f-\u212aEY is not allowed", "s3cret"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := pluginclient.Without(tc.said, tc.address)
+			if strings.Contains(strings.ToLower(got), strings.ToLower(tc.not)) {
+				t.Errorf("of an address registered as %s, a service's words %q are shown as %q", tc.address, tc.said, got)
+			}
+			if !strings.Contains(got, "…") {
+				t.Errorf("%q became %q: nothing was taken out of it", tc.said, got)
+			}
+			// What stands around the part stays as it was written.
+			first, _, _ := strings.Cut(tc.said, " ")
+			if !strings.HasPrefix(got, first+" ") || !utf8.ValidString(got) {
+				t.Errorf("%q became %q: its first word is gone, or it is no text any more", tc.said, got)
+			}
+		})
+	}
+	// What is no part of the address stays, in the case it was written in,
+	// and so does a short word the address happens to hold.
+	for said, address := range map[string]string{
+		"The Model Was Not Found":            "https://kb.example/t0ken-in-the-path/mcp?key=s3cr3t-k3y-of-mine",
+		"version V1 of the MCP endpoint":     "https://kb.example/v1/mcp",
+		"a=1 is no setting of this endpoint": "https://kb.example/mcp?b=2",
+	} {
+		if got := pluginclient.Without(said, address); got != said {
+			t.Errorf("words that repeat nothing of %s became %q, want %q", address, got, said)
+		}
+	}
+}
+
+// Only the start of a long text is looked at, and a text that was cut may
+// end in the start of the key: not the key, so not found, and behind enough
+// white space that cleaning brings it to the front. Nothing of a key that
+// stands across the place a text is cut at is shown, wherever that place
+// falls in it, and neither when the key is written with characters that
+// show nothing between its letters.
+func TestAKeyAcrossThePlaceATextIsCutAtIsNotShown(t *testing.T) {
+	ctx := context.Background()
+	const key = "c0ffee5ecr3tk3y0123456789abcdef0"
+	var message atomic.Pointer[string]
+	address := service(t, plugintest.Config{
+		Findings: []plugincontract.Finding{{Name: "upstream", Message: "MESSAGE"}},
+		Twist: func(tool string, answer []byte, refused bool) []byte {
+			if said := message.Load(); said != nil && tool == plugincontract.ToolDiagnose {
+				quoted, _ := json.Marshal(*said)
+				return []byte(strings.ReplaceAll(string(answer), `"MESSAGE"`, string(quoted)))
+			}
+			return answer
+		}}) + "?key=" + key
+	c := plugintest.NewComputer(t)
+	s, err := pluginclient.Start(ctx, c.Env(""), c.RegisterURL(t, "remote", address), quick(c))
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer s.Close()
+	apart := strings.Join(strings.Split(key, ""), "\u200b")
+	// Where a finding's message was cut before the longest part of the
+	// address was allowed for, and where it is cut now.
+	before := 16*plugincontract.MaxFindingBytes + 4096
+	for _, at := range []int{before, before + len(address)} {
+		for _, written := range []string{key, apart} {
+			for _, kept := range []int{1, len(written) / 3, len(written) / 2, len(written) - 1} {
+				said := strings.Repeat(" ", at-kept) + written + " is the key"
+				message.Store(&said)
+				got, err := s.Diagnose(ctx)
+				shown := fmt.Sprint(got, err)
+				if strings.Contains(shown, key[:5]) {
+					t.Fatalf("a key that stands %d bytes before the place a text of %d bytes is cut at is shown in part: %.300s",
+						kept, at, shown)
+				}
+			}
+		}
+	}
+	// A key that stands whole in what is looked at is taken out as ever, and
+	// the words around it stay.
+	said := "the key " + key + " is not allowed"
+	message.Store(&said)
+	if got, err := s.Diagnose(ctx); err != nil || len(got) != 1 || got[0].Message != "the key … is not allowed" {
+		t.Errorf("Diagnose = %+v, %v", got, err)
 	}
 }

@@ -1902,8 +1902,12 @@ empty for a plugin that depends on nothing it could test.
 - **A URL** is reached over streamable HTTP. A redirect is not followed. A message says
   where the service is by the scheme and host of its address, and repeats nothing else of
   it, and what the service itself wrote is shown without the path and the query of its
-  address: they may be a key. A service that refuses says why, and the message repeats
-  that beside the revision of MCP `study` speaks, `2025-11-25`.
+  address: they may be a key. They are taken out in whatever letter case the service wrote
+  them, and with their percent-escapes written or read. A piece of the path counts from
+  eight bytes and a value of the query from six: a shorter one that a service says on its
+  own, and not as part of the address, is a word like any other, and is shown. So a key
+  in an address is longer than that. A service that refuses says why, and the message
+  repeats that beside the revision of MCP `study` speaks, `2025-11-25`.
 - **Deadlines**: `study` has 30 seconds to start a plugin, or to reach it, and the plugin
   to answer `contract`. One that takes longer is stopped and reported, so the command never
   hangs. The 30 seconds cover finding the plugin in the registry as well, and the command
@@ -2037,6 +2041,15 @@ computer has ([Knowledge base plugins](#knowledge-base-plugins)):
   naming that Finding**, and says that indexing may fail until it is put right: `study`
   cannot know which of a plugin's findings keeps a Source from being indexed, so the
   `fix` stays the command, with what may stop it beside it.
+- `shelf_settings`, only when Shelf's settings file (`shelf.toml` in Lamplight's
+  configuration folder, [docs/shelf.md](shelf.md)) is in the Study home or is reached
+  through it, a link to a file there say. It is a warning: the file says where Shelf sends
+  a book's text and with which key, and whoever can write the Study home, your agent among
+  them, could change it there, while Shelf's own findings still say its endpoints are all
+  right. Shelf cannot refuse such a file, since it is not told where the Study home is.
+  A path the doctor could not follow to its end is a warning too, and says so: it is not
+  taken for one that stays outside. A file of its own, a link to one elsewhere, and no
+  file at all add no Finding.
 
 ```json
 { "name": "knowledge_base:shelf", "status": "ok",

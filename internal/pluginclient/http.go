@@ -173,6 +173,17 @@ func Address(registered string) string {
 // searched without the characters that show nothing (seen), and an address
 // may hold one, in its path or its key. Left as registered, such a part
 // would be found nowhere in them.
+//
+// And each is given in the ways a service may write it: as it is
+// registered, with its escapes read, and escaped as a path is and as a
+// query is. A registry that holds a key plain is repeated by a service that
+// logs it escaped, and the other way round.
+//
+// A piece of a path counts from eight bytes and a value of a query from
+// six, as it reads with its escapes read: shorter, it is a word of its own,
+// "v1" or "mcp", and taking it out of a service's words wherever it stands
+// would leave little of them. A key that short, said on its own and not as
+// part of the address, is shown.
 func secrets(registered string) []string {
 	found := map[string]bool{}
 	add := func(part string, least int) {
@@ -180,14 +191,28 @@ func secrets(registered string) []string {
 			found[part] = true
 		}
 	}
+	// forms adds a piece in each way it may be written, when it is long
+	// enough as it reads.
+	forms := func(plain string, least int) {
+		if len(seen(plain)) < least {
+			return
+		}
+		add(plain, 1)
+		add(url.PathEscape(plain), 1)
+		add(url.QueryEscape(plain), 1)
+	}
 	add(registered, 1)
 	if u, err := url.Parse(registered); err == nil {
 		add(u.RequestURI(), 2)
 		add(u.EscapedPath(), 2)
 		add(u.Path, 2)
 		add(u.RawQuery, 1)
+		if plain, err := url.QueryUnescape(u.RawQuery); err == nil {
+			add(plain, 1)
+			add(u.Path+"?"+plain, 2)
+		}
 		for _, piece := range strings.Split(u.Path, "/") {
-			add(piece, 8)
+			forms(piece, 8)
 		}
 		for _, piece := range strings.Split(u.EscapedPath(), "/") {
 			add(piece, 8)
@@ -196,7 +221,7 @@ func secrets(registered string) []string {
 			_, value, _ := strings.Cut(pair, "=")
 			add(value, 6)
 			if plain, err := url.QueryUnescape(value); err == nil {
-				add(plain, 6)
+				forms(plain, 6)
 			}
 		}
 	}
