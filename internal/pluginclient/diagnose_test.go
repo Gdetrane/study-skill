@@ -3,6 +3,7 @@ package pluginclient_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"reflect"
@@ -145,8 +146,10 @@ func TestAFindingDoesNotRepeatARegisteredAddress(t *testing.T) {
 }
 
 // What diagnose gives back is held to the contract like any answer: findings
-// that are not what it describes are no findings, and the plugin does not
-// speak the contract.
+// that are not what it describes are no findings. The error says that of the
+// tool, and what of the answer breaks the contract, and never that the
+// plugin does not speak the contract: it started and said which contract it
+// speaks, and study goes on using it.
 func TestFindingsThatBreakTheContractAreRefused(t *testing.T) {
 	ctx := context.Background()
 	var many []plugincontract.Finding
@@ -165,7 +168,7 @@ func TestFindingsThatBreakTheContractAreRefused(t *testing.T) {
 		"a list that is null":   {`{"findings": null}`, "findings: it is not a list"},
 		"a key of its own":      {`{"Findings": []}`, `"findings" is spelled "Findings"`},
 		"findings by name":      {`{"findings": {"embedding": true}}`, "it is not the JSON the contract describes"},
-		"what is no object":     {`["embedding is fine"]`, "what its diagnose tool gave back is not what the contract describes: it is not a JSON object"},
+		"what is no object":     {`["embedding is fine"]`, "it is not a JSON object"},
 		"a fix of the plugin's": {`{"findings": [{"name": "embedding", "ok": false, "message": "it is down", "fix": "rm -rf ~"}]}`, ""},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -180,11 +183,97 @@ func TestFindingsThatBreakTheContractAreRefused(t *testing.T) {
 				return
 			}
 			if got != nil || codeOf(err) != pluginclient.CodeFailedPrecondition ||
-				!strings.Contains(err.Error(), "Knowledge base plugin kb does not speak Lamplight's contract") || !strings.Contains(err.Error(), tc.want) {
+				!strings.HasPrefix(err.Error(), "the diagnose tool of Knowledge base plugin kb gave an answer that breaks the contract: ") ||
+				!strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("Diagnose = %+v, %v; want it refused for %q", got, err, tc.want)
 			}
+			unhelped(t, err)
 			safe(t, err.Error())
+			if s.Ended() {
+				t.Error("the Connection ended over an answer that breaks the contract: the plugin answers, and is asked the rest")
+			}
 		})
+	}
+	// And an answer that is no JSON at all, from a service that answers in
+	// text.
+	c := plugintest.NewComputer(t)
+	words, err := pluginclient.Start(ctx, c.Env(""), c.RegisterURL(t, "remote", service(t, plugintest.Config{TextOnly: true,
+		Results: map[string]string{"diagnose": "embedding is fine"}})), quick(c))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer words.Close()
+	if _, err := words.Diagnose(ctx); codeOf(err) != pluginclient.CodeFailedPrecondition || err.Error() != "the diagnose tool of "+
+		"Knowledge base plugin remote gave an answer that breaks the contract: it is no JSON object, neither as structured content "+
+		"nor as text. docs/knowledge-base-contract.md describes the contract" {
+		t.Errorf("Diagnose of a service that answers in words = %v", err)
+	}
+}
+
+// unhelped fails the test when the error of a diagnose tool says of the
+// plugin what is true of one study cannot use, or names a command: the
+// plugin started and said which contract it speaks, and the command that
+// shows more of a plugin asks this tool again and says the same.
+func unhelped(t *testing.T, err error) {
+	t.Helper()
+	for _, not := range []string{"does not speak Lamplight's contract", "study knowledge-base", "Run its command"} {
+		if strings.Contains(err.Error(), not) {
+			t.Errorf("the error of a diagnose tool says %q: %v", not, err)
+		}
+	}
+}
+
+// A finding's name is shown as it is, so it is not passed through what takes
+// a registered address's parts out of a sentence: a name that holds one,
+// which may be a key, is no name, and the answer breaks the contract. The
+// error does not repeat it.
+func TestAFindingIsNotNamedAfterAPartOfARegisteredAddress(t *testing.T) {
+	ctx := context.Background()
+	const key = "c0ffee5ecr3tk3y0123456789abcdef0"
+	for name, tc := range map[string]struct {
+		rest, finding string
+		refused       bool
+	}{
+		"the key in the path":     {"/" + key + "/mcp", key, true},
+		"the key in the query":    {"/mcp?key=" + key, key, true},
+		"the key inside a name":   {"/mcp?key=s3cr3t", "the_s3cr3t_key", true},
+		"a name of its own":       {"/" + key + "/mcp", "embedding", false},
+		"a short part of a path":  {"/kb/mcp", "kb", false},
+		"no key in the address":   {"/mcp", "mcp", false},
+		"a word the address ends": {"/v1/mcp", "v1", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			address := service(t, plugintest.Config{Findings: []plugincontract.Finding{
+				{Name: "reranking", OK: true, Message: "it answers"}, {Name: tc.finding, Message: "it is down"}}})
+			address = strings.TrimSuffix(address, "/mcp") + tc.rest
+			c := plugintest.NewComputer(t)
+			s, err := pluginclient.Start(ctx, c.Env(""), c.RegisterURL(t, "remote", address), quick(c))
+			if err != nil {
+				t.Fatalf("Start: %v", err)
+			}
+			defer s.Close()
+			got, err := s.Diagnose(ctx)
+			if !tc.refused {
+				if err != nil || len(got) != 2 || got[1].Name != tc.finding {
+					t.Fatalf("Diagnose = %+v, %v; want the finding %s, which holds no part of %s that may be a key", got, err, tc.finding, address)
+				}
+				return
+			}
+			if got != nil || codeOf(err) != pluginclient.CodeFailedPrecondition ||
+				!strings.Contains(err.Error(), "the diagnose tool of Knowledge base plugin remote gave an answer that breaks the contract: "+
+					"findings[1] has a name that holds a part of the address study reaches the plugin at") {
+				t.Fatalf("Diagnose = %+v, %v; want the answer refused for the name of its second finding", got, err)
+			}
+			if strings.Contains(err.Error(), key) || strings.Contains(err.Error(), "s3cr3t") {
+				t.Errorf("the error repeats the key: %v", err)
+			}
+			unhelped(t, err)
+		})
+	}
+	// A command has no address: its findings are named as they like.
+	named := start(t, plugintest.NewComputer(t), "--finding", key+"=ok:it answers")
+	if got, err := named.Diagnose(ctx); err != nil || len(got) != 1 || got[0].Name != key {
+		t.Errorf("Diagnose of a command = %+v, %v", got, err)
 	}
 }
 
@@ -206,15 +295,42 @@ func TestAPluginThatDoesNotSayWhatItFoundIsStopped(t *testing.T) {
 	began := time.Now()
 	got, err := s.Diagnose(ctx)
 	if got != nil || codeOf(err) != pluginclient.CodeFailedPrecondition ||
-		!strings.Contains(err.Error(), "Knowledge base plugin kb did not answer its diagnose tool within 300ms, so study stopped it") {
+		err.Error() != "Knowledge base plugin kb did not answer its diagnose tool within 300ms, so study stopped it." {
 		t.Errorf("Diagnose = %+v, %v", got, err)
 	}
+	// It says that the plugin was late, for whoever would start it again.
+	var late *pluginclient.Error
+	if !errors.As(err, &late) || !late.Late {
+		t.Errorf("the error of a plugin that did not answer in time does not say it was late: %+v", late)
+	}
+	unhelped(t, err)
 	if took := time.Since(began); took > 5*time.Second {
 		t.Errorf("Diagnose took %s to give up on a plugin that has 300ms", took)
 	}
 	gone(t, record)
 	if !s.Ended() {
 		t.Error("the Connection of a plugin that was stopped has not ended")
+	}
+	// A service that is late was not stopped, and the error names nothing to
+	// look at either: the doctor that asked has nothing to run.
+	opts.DiagnoseTimeout = 300 * time.Millisecond
+	remote, err := pluginclient.Start(ctx, c.Env(""), c.RegisterURL(t, "remote", service(t, plugintest.Config{
+		Before: func(ctx context.Context, tool string) {
+			if tool == "diagnose" {
+				select {
+				case <-ctx.Done():
+				case <-time.After(5 * time.Second):
+				}
+			}
+		}})), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer remote.Close()
+	_, err = remote.Diagnose(ctx)
+	if codeOf(err) != pluginclient.CodeFailedPrecondition || !errors.As(err, &late) || !late.Late ||
+		err.Error() != "Knowledge base plugin remote did not answer its diagnose tool within 300ms." {
+		t.Errorf("Diagnose of a service that is late = %v", err)
 	}
 
 	// One that takes its time and answers within it is waited for: the
@@ -232,11 +348,33 @@ func TestAPluginThatDoesNotSayWhatItFoundIsStopped(t *testing.T) {
 	}
 
 	// A plugin that refuses the tool has failed in it: that is the learner's
-	// setup to put right, and no finding.
-	refuses := start(t, plugintest.NewComputer(t), "--refuse", "diagnose=internal:no settings file")
-	if got, err := refuses.Diagnose(ctx); got != nil || codeOf(err) != pluginclient.CodeFailedPrecondition ||
-		!strings.Contains(err.Error(), "Knowledge base plugin kb failed in its diagnose tool: no settings file") {
-		t.Errorf("Diagnose of a plugin that refuses = %+v, %v", got, err)
+	// setup to put right, and no finding. Whatever code it refuses with, the
+	// error is failed_precondition: the tool is asked nothing, so
+	// invalid_argument and not_found would be said of what the learner
+	// typed, which was the plugin's name.
+	for code, want := range map[string]string{
+		plugincontract.CodeInvalidArgument: "Knowledge base plugin kb does not take what its diagnose tool was given: no settings file",
+		plugincontract.CodeNotFound:        "Knowledge base plugin kb does not have what its diagnose tool was asked for: no settings file",
+		plugincontract.CodeUnsupported:     "Knowledge base plugin kb cannot do what its diagnose tool was asked: no settings file",
+		plugincontract.CodeInternal:        "Knowledge base plugin kb failed in its diagnose tool: no settings file",
+		"a_code_of_its_own":                "Knowledge base plugin kb failed in its diagnose tool: no settings file",
+	} {
+		refuses := start(t, plugintest.NewComputer(t), "--refuse", "diagnose="+code+":no settings file")
+		got, err := refuses.Diagnose(ctx)
+		if got != nil || codeOf(err) != pluginclient.CodeFailedPrecondition || err.Error() != want {
+			t.Errorf("Diagnose of a plugin that refuses with %s = %+v, %v (%s); want failed_precondition and %q", code, got, err, codeOf(err), want)
+		}
+		if errors.As(err, &late) && late.Late {
+			t.Errorf("a plugin that refused with %s is said to be late", code)
+		}
+		if refuses.Ended() {
+			t.Errorf("the Connection ended over a refusal with %s: the plugin answers", code)
+		}
+	}
+	plain := start(t, plugintest.NewComputer(t), "--plain-error", "diagnose=no settings file")
+	if _, err := plain.Diagnose(ctx); codeOf(err) != pluginclient.CodeFailedPrecondition ||
+		err.Error() != "Knowledge base plugin kb failed in its diagnose tool: no settings file" {
+		t.Errorf("Diagnose of a plugin that fails with text = %v", err)
 	}
 
 	// And a command that was stopped asks nothing.
@@ -244,5 +382,32 @@ func TestAPluginThatDoesNotSayWhatItFoundIsStopped(t *testing.T) {
 	cancel()
 	if _, err := start(t, plugintest.NewComputer(t)).Diagnose(stopped); codeOf(err) != pluginclient.CodeCanceled {
 		t.Errorf("Diagnose with a context that is cancelled = %v", err)
+	}
+}
+
+// The time a plugin has for each thing, when nothing says otherwise, is the
+// one written for that thing: the time to say what it found of what it
+// depends on is the contract's ten seconds, and not the time of a search,
+// which is six times as long and the next line in the same list.
+func TestEachTimeAPluginHasIsItsOwnByDefault(t *testing.T) {
+	got := pluginclient.WithDefaults(pluginclient.Options{})
+	for name, d := range map[string][2]time.Duration{
+		"to start":                     {got.StartTimeout, pluginclient.DefaultStartTimeout},
+		"to answer a call":             {got.CallTimeout, pluginclient.DefaultCallTimeout},
+		"to search":                    {got.SearchTimeout, pluginclient.DefaultSearchTimeout},
+		"to say what it found":         {got.DiagnoseTimeout, pluginclient.DefaultDiagnoseTimeout},
+		"to say what it found, at all": {got.DiagnoseTimeout, plugincontract.DiagnoseTime},
+		"to say what it found, in s":   {got.DiagnoseTimeout, 10 * time.Second},
+		"to stop":                      {got.StopGrace, pluginclient.DefaultStopGrace},
+	} {
+		if d[0] != d[1] {
+			t.Errorf("a plugin has %s %s by default, want %s", d[0], name, d[1])
+		}
+	}
+	set := pluginclient.WithDefaults(pluginclient.Options{StartTimeout: time.Second, CallTimeout: 2 * time.Second,
+		SearchTimeout: 3 * time.Second, DiagnoseTimeout: 4 * time.Second, StopGrace: 5 * time.Second})
+	if set.StartTimeout != time.Second || set.CallTimeout != 2*time.Second || set.SearchTimeout != 3*time.Second ||
+		set.DiagnoseTimeout != 4*time.Second || set.StopGrace != 5*time.Second {
+		t.Errorf("the times a caller set are not kept: %+v", set)
 	}
 }

@@ -81,8 +81,8 @@ func withASilentPlugin(t *testing.T) *kbComputer {
 // The findings of a plugin that depends on two endpoints, one of which is
 // down: as the test plugin is told to give them.
 var twoFindings = []string{
-	"--finding", "embedding=ok:the embedding endpoint 127.0.0.1:8080 gave a question's vector, of 512 numbers, with the model embeddinggemma-2",
-	"--finding", "reranking=wrong:the reranking endpoint 127.0.0.1:8081 could not be reached: connection refused. Without it a search gives its " +
+	"--finding", "embedding=ok:the embedding endpoint 127.0.0.1:8080 gave a question's vector, of 512 numbers, asked for the model embeddinggemma-2",
+	"--finding", "reranking=wrong:the reranking endpoint 127.0.0.1:8081 could not be reached: connection refused. Check that its server is running, and its address in Shelf's settings file. Without the reranking endpoint a search gives its " +
 		"Passages in the order it found them.",
 }
 

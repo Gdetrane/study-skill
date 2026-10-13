@@ -37,6 +37,16 @@ type Error struct {
 	// call is worth making. Every other error of a call says the plugin did
 	// not answer, or not as the contract has it.
 	AboutTheCall bool
+	// Late says that the plugin did not answer within the time study gave it
+	// for what it was asked, and that study gave it up: a command was
+	// stopped. Whoever would start the plugin again in the same run, to ask
+	// it something else, would only wait for it a second time.
+	Late bool
+	// advice is the end of Message that says what to run or to look at, and
+	// breaks what of an answer is not the contract's, said alone. They are
+	// for the one caller in this package that says an error of a call in
+	// words of its own (Connection.untested).
+	advice, breaks string
 }
 
 func (e *Error) Error() string { return e.Message }

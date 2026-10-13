@@ -6,9 +6,9 @@
       "$PLUGIN",
       "lamplight-test-plugin",
       "--finding",
-      "embedding=ok:the embedding endpoint 127.0.0.1:PORT gave a question's vector, of 512 numbers, with the model embeddinggemma-2",
+      "embedding=ok:the embedding endpoint 127.0.0.1:PORT gave a question's vector, of 512 numbers, asked for the model embeddinggemma-2",
       "--finding",
-      "reranking=wrong:the reranking endpoint 127.0.0.1:PORT could not be reached: connection refused. Without it a search gives its Passages in the order it found them."
+      "reranking=wrong:the reranking endpoint 127.0.0.1:PORT could not be reached: connection refused. Check that its server is running, and its address in Shelf's settings file. Without the reranking endpoint a search gives its Passages in the order it found them."
     ],
     "contract": {
       "version": 1,
@@ -32,12 +32,12 @@
       {
         "name": "embedding",
         "ok": true,
-        "message": "the embedding endpoint 127.0.0.1:PORT gave a question's vector, of 512 numbers, with the model embeddinggemma-2"
+        "message": "the embedding endpoint 127.0.0.1:PORT gave a question's vector, of 512 numbers, asked for the model embeddinggemma-2"
       },
       {
         "name": "reranking",
         "ok": false,
-        "message": "the reranking endpoint 127.0.0.1:PORT could not be reached: connection refused. Without it a search gives its Passages in the order it found them."
+        "message": "the reranking endpoint 127.0.0.1:PORT could not be reached: connection refused. Check that its server is running, and its address in Shelf's settings file. Without the reranking endpoint a search gives its Passages in the order it found them."
       }
     ]
   }

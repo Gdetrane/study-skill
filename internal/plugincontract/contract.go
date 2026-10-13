@@ -30,9 +30,10 @@ const (
 	ToolSearch   = "search"
 	ToolPassage  = "passage"
 	// ToolDiagnose has the plugin test what it depends on, a model it asks
-	// over a network say, and report what it found. It is the one tool that
-	// has a plugin reach for anything but its index and the Source it is
-	// handed, so study asks it only for the learner, from the command line.
+	// over a network say, and report what it found. study asks it only for
+	// the learner, from the command line: what it answers is the learner's
+	// question, which no agent needs the answer to, and it may take ten
+	// seconds, which no MCP tool waits for a plugin.
 	ToolDiagnose = "diagnose"
 )
 

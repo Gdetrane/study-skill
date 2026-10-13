@@ -47,17 +47,17 @@
       {
         "name": "knowledge_base:kb",
         "status": "ok",
-        "message": "started by $PLUGIN lamplight-test-plugin --record $RECORD --finding 'embedding=ok:the embedding endpoint 127.0.0.1:PORT gave a question'\\''s vector, of 512 numbers, with the model embeddinggemma-2' --finding 'reranking=wrong:the reranking endpoint 127.0.0.1:PORT could not be reached: connection refused. Without it a search gives its Passages in the order it found them.', speaks version 1 of Lamplight's contract"
+        "message": "started by $PLUGIN lamplight-test-plugin --record $RECORD --finding 'embedding=ok:the embedding endpoint 127.0.0.1:PORT gave a question'\\''s vector, of 512 numbers, asked for the model embeddinggemma-2' --finding 'reranking=wrong:the reranking endpoint 127.0.0.1:PORT could not be reached: connection refused. Check that its server is running, and its address in Shelf'\\''s settings file. Without the reranking endpoint a search gives its Passages in the order it found them.', speaks version 1 of Lamplight's contract"
       },
       {
         "name": "knowledge_base:kb:embedding",
         "status": "ok",
-        "message": "the embedding endpoint 127.0.0.1:PORT gave a question's vector, of 512 numbers, with the model embeddinggemma-2"
+        "message": "the embedding endpoint 127.0.0.1:PORT gave a question's vector, of 512 numbers, asked for the model embeddinggemma-2"
       },
       {
         "name": "knowledge_base:kb:reranking",
         "status": "warn",
-        "message": "the reranking endpoint 127.0.0.1:PORT could not be reached: connection refused. Without it a search gives its Passages in the order it found them."
+        "message": "the reranking endpoint 127.0.0.1:PORT could not be reached: connection refused. Check that its server is running, and its address in Shelf's settings file. Without the reranking endpoint a search gives its Passages in the order it found them."
       },
       {
         "name": "log",

@@ -288,9 +288,10 @@ goes over them, except that a `reason` or a `message` is cut short instead. The 
 of starting cover what `study` does first as well: finding the program and making the
 folder.
 
-The 10 seconds of `diagnose` are longer than the 2 seconds of a glance, because what a
-plugin tests there is asked over a network, and may have a model to wake. They are no
-longer, because `study doctor` asks every registered plugin, and a learner waits for it.
+The 10 seconds of `diagnose` are longer than the 2 seconds a plugin has when `study` shows
+what is indexed, because what a plugin tests there is asked over a network, and may have a
+model to wake. They are no longer, because `study doctor` asks every registered plugin,
+and a learner waits for it.
 
 ## Results and errors
 
@@ -676,7 +677,7 @@ keyword.
 | Field | Is |
 |---|---|
 | `findings` | A finding for each thing the plugin depends on and tested, 16 at most. **An empty list for a plugin that depends on nothing of the kind**: that is an answer like any other, and the plugin still has the tool. |
-| `name` | What was tested, in a word: a lowercase word of letters, digits and underscores, up to 32 characters, such as `embedding`. Each name once in an answer, and the same name every time: `study` shows it, and a learner tells one finding from the next by it. |
+| `name` | What was tested, in a word: a lowercase word of letters, digits and underscores, up to 32 characters, such as `embedding`. Each name once in an answer, and the same names every time, in whatever order: `study` shows the findings in the order of the answer, each under its name, and a learner tells one finding from the next by it. `study` shows a name as it is, so it refuses an answer with a name that holds a part of the address the plugin is registered at. |
 | `ok` | `true` when it works as the plugin needs it to, `false` when it does not. |
 | `message` | What was found, in a sentence for the learner: what answered, or what is wrong and what the plugin does without it. Required, for a finding that is all right too. `study` puts it on one line, escapes what a terminal would interpret, and shows the first 600 bytes. |
 
@@ -690,10 +691,12 @@ keyword.
   test, and the answer. Give each thing you test less than that, and test them side by
   side, so that an endpoint that never answers costs its own finding and not the whole
   answer. A plugin that does not answer in time is stopped, and `study` reports that it
-  did not say what it found.
+  did not say what it found, and goes on using it: no other tool is the worse for this
+  one. `study doctor` does not start it again, in that run, to ask what it has indexed.
 - **A finding that is not all right is no error.** The tool answers, and the finding says
-  so. An error is for a plugin that could not test at all, and `study` then reports that
-  the plugin failed.
+  so. An error is for a plugin that could not test at all. `study` then reports that the
+  tool failed, as `failed_precondition` whatever `code` the error has: the tool is asked
+  nothing a plugin could find wrong or missing.
 - **Put nothing in a message that is not for the learner's screen**: no key, and of an
   address no more than its host. `study` cannot take out what it does not know. It takes
   out the address the plugin itself is registered at, and nothing else.
@@ -703,8 +706,8 @@ keyword.
 - **Who asks.** `study knowledge-base check <name>` and `study doctor`, which the learner
   runs, or their agent in its own shell. There a finding that is not all right is a
   warning, and never keeps the learner from studying. **No tool of `study`'s MCP server
-  asks `diagnose`**: that server runs outside the agent's sandbox, and the tool has a
-  plugin send requests to wherever its settings point.
+  asks `diagnose`**: whether what a plugin depends on works is the learner's question,
+  which no agent needs the answer to, and no tool waits 10 seconds for a plugin.
 
 ## Checking a plugin
 
@@ -749,10 +752,11 @@ func TestMyPluginConforms(t *testing.T) {
   `127.0.0.1`: a `<title>`, an `<h1>` and one `<p>` for each paragraph.
 - **A plugin that stops answering fails the check that met it, and the suite ends there.**
   A call has 30 seconds (`Patience`).
-- **`diagnose` is asked as it is**, with whatever the plugin was started with: the suite
-  holds its answer to the 10 seconds, to the limits and to the shape of a finding, and
-  takes no view on whether a finding is all right. A plugin that depends on an endpoint
-  is so checked with the endpoint the test gave it, or with none.
+- **`diagnose` is asked as it is**, with whatever the plugin was started with, and twice:
+  the suite holds each answer to the 10 seconds, to the limits and to the shape of a
+  finding, and the two to the same names, in whatever order. It takes no view on whether
+  a finding is all right. A plugin that depends on an endpoint is so checked with the
+  endpoint the test gave it, or with none.
 
 The same package holds a small plugin that passes the suite, to read beside this page.
 

@@ -40,7 +40,7 @@ that scripts and agents can rely on. Terms follow [GLOSSARY.md](../GLOSSARY.md).
 | `study knowledge-base add <name> [--allow-study-home-arguments] [--replace] [--dry-run] (--url URL \| -- <command> [args...])` | Registers a Knowledge base plugin on this computer under a name, by the command that starts it, given after `--`, or by the http or https URL it answers at. The command's program is found on `PATH`, or at the path given, and registered by its absolute path. A program inside the Study home, or reached through it, is `invalid_argument`; so is an argument that names something there, unless `--allow-study-home-arguments` is given, and one that names a file relative to the folder `study` is started in. A program, or an argument that is not allowed so, named by a path `study` cannot follow to its end is `failed_precondition`: it is never taken for one outside the Study home. Registering a plugin as it is registered already changes nothing (`changed: false`); a name registered as something else is `already_exists` unless `--replace` is given. What it registers is the learner's, and never carries the mark of a registration `study setup` made (`by_setup`). It records no Event, and agents have no tool for it. See [Knowledge base plugins](#knowledge-base-plugins). |
 | `study knowledge-base list` | Lists the Knowledge base plugins registered on this computer, by name, and where the registry is. A plugin `study` does not use as it is registered carries a `problem`, and the one `study setup` registered says so (`by_setup`). |
 | `study knowledge-base remove <name> [--dry-run]` | Removes a Knowledge base plugin from this computer's registry, leaving its program or service as it is; a name that is not registered is `not_found`. It records no Event, and agents have no tool for it. |
-| `study knowledge-base check <name>` | Starts the Knowledge base plugin registered under the name, or reaches it at its URL, asks which version of Lamplight's contract it speaks and what it can do, has it test what it depends on, and stops it again. The result is `{"name", "command"?, "address"?, "contract": {"version", "sources", "search", "locations"}, "server": {"name", "version"?}, "data_folder"?, "findings": [{"name", "ok", "message"}]}`. A name that is not registered is `not_found`; a plugin that cannot be started, does not start, does not answer in time, is no MCP server or does not speak the contract is `failed_precondition`, with what to do; one that speaks a newer contract is `newer_format`. A finding that is not all right is no failure: the plugin answered, and said what it lacks. Nothing is left running. It indexes and searches nothing, records no Event, and agents have no tool for it. See [Knowledge base plugins](#knowledge-base-plugins). |
+| `study knowledge-base check <name>` | Starts the Knowledge base plugin registered under the name, or reaches it at its URL, asks which version of Lamplight's contract it speaks and what it can do, has it test what it depends on, and stops it again. The result is `{"name", "command"?, "address"?, "contract": {"version", "sources", "search", "locations"}, "server": {"name", "version"?}, "data_folder"?, "findings": [{"name", "ok", "message"}]}`. A name that is not registered is `not_found`; a plugin that cannot be started, does not start, does not answer in time, is no MCP server or does not speak the contract is `failed_precondition`, with what to do; one that speaks a newer contract is `newer_format`. A finding that is not all right is no failure: the plugin answered, and said what it lacks. A plugin that speaks the contract and does not say what it found, in time or as the contract has it, is `failed_precondition` too, whatever code the plugin itself refused with, with what happened and no command to run. Nothing is left running. It indexes and searches nothing, records no Event, and agents have no tool for it. See [Knowledge base plugins](#knowledge-base-plugins). |
 | `study syllabus [topic]` | Shows a Topic's Syllabus (the Active topic's when none is named): Milestones and Lessons with their display numbers and status, the Revisions waiting for the learner with their change, and a hand edit of `syllabus.toml` (see [The Syllabus](#the-syllabus)). |
 | `study revision propose <topic> --summary S (--syllabus FILE \| --from-file) [--dry-run]` | Proposes a change to the Syllabus, the first one included. `--syllabus` names a file holding the whole Syllabus as it would be afterwards, as TOML like `syllabus.toml` or as JSON; `--from-file` proposes `syllabus.toml` as edited by hand. Nothing changes until the learner approves. |
 | `study revision apply <topic> <revision> [--learner-said S] [--dry-run]` | Applies a proposed Revision once the learner approves. On a terminal, study shows the change and asks the learner directly; an agent relaying their answer from the conversation passes their words with `--learner-said`. Answering no records a decline. |
@@ -1768,7 +1768,7 @@ indexed and nothing is searched.
   "data_folder": "/home/ada/.local/state/lamplight/knowledge-base-plugins/shelf",
   "findings": [
     {"name": "embedding", "ok": false,
-     "message": "the embedding endpoint 127.0.0.1:8080 could not be reached: connection refused. Without it no Source is indexed, and a search is by keyword alone."}
+     "message": "the embedding endpoint 127.0.0.1:8080 could not be reached: dial tcp 127.0.0.1:8080: connect: connection refused. Check that its server is running, and its address in Shelf's settings file. Without the embedding endpoint no Source is indexed, and a search is by keyword alone."}
   ]
 }
 ```
@@ -1796,16 +1796,24 @@ empty for a plugin that depends on nothing it could test.
     and speaks the contract, so the exit code is 0 and `ok` in the envelope is `true`:
     the finding says what the plugin lacks.
   - **The words are the plugin's.** A message is shown as text and never as something to
-    run: on one line, with what a terminal would interpret escaped, 600 bytes of it at
-    most. `study` adds no command to it, and passes over whatever else a plugin puts in
-    a finding.
+    run: on one line, with what a terminal would interpret escaped, and cut after 600
+    bytes, with `…` where it was cut. `study` adds no command to it, and passes over
+    whatever else a plugin puts in a finding. A `name` is shown as it is: a lowercase
+    word, which holds no part of a registered address.
   - **The plugin has 10 seconds for the whole answer**, however long it has to start.
-    One that does not answer in that time, fails in the tool, or gives findings that are
-    not what the contract describes, is `failed_precondition`, like any plugin that does
-    not speak the contract.
-  - **It is asked here and by `study doctor`, and by nothing else.** The tool has a
-    plugin send requests to wherever its settings point, so it is asked at a command
-    line, which the learner or their agent runs in a shell, and no MCP tool asks it.
+  - **A plugin that does not say what it found fails the check, and is used all the
+    same.** One that does not answer in those 10 seconds, fails in the tool, or gives an
+    answer that breaks the contract, is `failed_precondition` and exit code 1, whatever
+    code the plugin itself refused with: the tool is asked nothing, so `invalid_argument`
+    would be said of what you typed, and `not_found` of a name that is not registered.
+    The message says what happened to the plugin's `diagnose` tool, with what of its
+    answer breaks the contract, and that `study` uses the plugin all the same: it starts
+    and speaks the rest of the contract, and `status`, `study source index` and a search
+    never ask that tool. **It names no command**, since none says more than this one.
+  - **It is asked here and by `study doctor`, and by nothing else.** Whether what a
+    plugin depends on works is the learner's question, which no agent needs the answer
+    to, and no MCP tool waits 10 seconds for a plugin: so it is asked at a command line,
+    which the learner or their agent runs in a shell.
 - **A command is started** by the program that is registered, opened and checked at that
   moment as `study knowledge-base list` checks it: without a shell, with the arguments as
   they are registered, in the registry's folder and never in the Topic or the Study home
@@ -1893,9 +1901,9 @@ outside the Study home; it could not be run; it exited before it answered, with 
 status and the last it wrote on its standard error; it wrote something on its standard
 output that is no MCP message; it sent `study` a request; it did not answer in time; it is
 an MCP server without the contract's tools; its `contract` tool gave back something else
-than the contract describes; its `diagnose` tool did not answer in time, failed, or gave
-back something else than the contract describes; or nothing answers as an MCP server at
-its address. A plugin
+than the contract describes; or nothing answers as an MCP server at its address. It is
+`failed_precondition` too, without a command to run, when the plugin's `diagnose` tool did
+not answer in time, failed, or gave an answer that breaks the contract. A plugin
 that speaks a newer version of the contract than this `study` knows is `newer_format`:
 upgrade `study`. A name that is not registered is `not_found`, and one that could not be a
 name is `invalid_argument`.
@@ -1971,8 +1979,12 @@ computer has ([Knowledge base plugins](#knowledge-base-plugins)):
   `upgrade study` for one that speaks a newer contract. Shelf's settings file is Shelf's to
   read: a file Shelf cannot use keeps it from starting, and its reason is the message.
   A plugin that starts and speaks the contract, and then does not say in its 10 seconds
-  what it found of what it depends on, or says it otherwise than the contract has it, is a
-  warning too, which says so, with the fix `study knowledge-base check <name>`.
+  what it found of what it depends on, fails in that tool, or gives an answer that breaks
+  the contract, is a warning too, **with no `fix`**: the message says what happened, with
+  what of the answer breaks the contract, and that `study` uses the plugin all the same.
+  `study knowledge-base check <name>` would say the same sentence and no more. One that
+  did not answer in time was stopped, and is not started again to say which Sources it
+  has indexed: its message says so, and its Topics have no `indexing` Finding.
 - `knowledge_base:<name>:<finding>`, one for each thing a plugin found when it tested what
   it depends on (its `diagnose` tool), after the plugin's own Finding and in the plugin's
   order: `knowledge_base:shelf:embedding`. The message is the plugin's sentence. A
@@ -1993,30 +2005,44 @@ computer has ([Knowledge base plugins](#knowledge-base-plugins)):
   whose indexing failed are named with the plugin's reason in a Finding that is `ok` and
   has no fix: a failure is no next action. A Topic whose Sources are all indexed has no
   such Finding, and neither has a Topic whose plugin's own Finding says what is wrong.
+  **When the Topic's plugin found something that is not all right, the message ends by
+  naming that Finding**, and says that indexing may fail until it is put right: `study`
+  cannot know which of a plugin's findings keeps a Source from being indexed, so the
+  `fix` stays the command, with what may stop it beside it.
 
 ```json
 { "name": "knowledge_base:shelf", "status": "ok",
   "message": "started by /home/ada/.local/bin/study-shelf, speaks version 1 of Lamplight's contract" },
 { "name": "knowledge_base:shelf:embedding", "status": "warn",
-  "message": "the embedding endpoint 127.0.0.1:8080 could not be reached: connection refused. Without it no Source is indexed, and a search is by keyword alone." },
+  "message": "the embedding endpoint 127.0.0.1:8080 could not be reached: dial tcp 127.0.0.1:8080: connect: connection refused. Check that its server is running, and its address in Shelf's settings file. Without the embedding endpoint no Source is indexed, and a search is by keyword alone." },
 { "name": "indexing:linear-algebra", "status": "warn",
-  "message": "not indexed: Strang; indexing failed: Scan (the file has no text layer)",
+  "message": "not indexed: Strang; indexing failed: Scan (the file has no text layer). Knowledge base plugin shelf found knowledge_base:shelf:embedding not all right: indexing may fail until it is put right",
   "fix": "study source index linear-algebra" }
 ```
 
-The doctor waits for no plugin, and has none index. Reading the registry, starting the
-plugins and their answers share the two seconds `status` gives a plugin, once to check
-them, side by side, and once to ask what they have indexed. A plugin that takes longer is
-stopped and is a warning, and is not asked a second time for the Topics that name it: one
-that does not answer is waited for once.
+**The doctor waits for plugins fourteen seconds at most**, however many are registered,
+and has none index:
 
-Testing what a plugin depends on has a time of its own, since it asks over a network: a
-plugin that has said which contract it speaks is asked at once, on the same connection,
-and has the 10 seconds the contract gives it for the whole answer. Every plugin is asked
-side by side, and none later than the two seconds are over, so **testing adds ten seconds
-at most to what the doctor waits for plugins, however many are registered**. A plugin
-with nothing to test answers at once. Shelf gives each endpoint eight seconds and tests
-them side by side, so it says in time which one did not answer.
+- **Two seconds** for reading the registry and for every plugin to start, or be reached,
+  and say which contract it speaks, all of them side by side. A plugin that takes longer
+  is stopped and is a warning, with the command that gives it thirty seconds.
+- **Ten seconds** for testing what the plugins depend on, which asks over a network. A
+  plugin that has said which contract it speaks is asked at once, on the same connection,
+  and has the 10 seconds the contract gives it for the whole answer; every plugin is
+  asked side by side, and none later than the two seconds are over. A plugin with nothing
+  to test answers at once. Shelf gives each endpoint eight seconds and tests them side by
+  side, so it says in time which one did not answer.
+- **Two seconds** for the plugins of your Topics to say which Sources they have indexed,
+  as `status` gives them, side by side again.
+
+A plugin that failed the first, or did not answer the second in time, is not asked the
+third: one that does not answer is waited for once, so a single plugin that hangs costs
+twelve seconds and not fourteen. Stopping the plugins comes on top, after the first two
+and after the third: a command that does not exit when its input closes has a quarter of
+a second, and another after `SIGTERM`, so a second at the very most. `study` prints
+nothing while it waits. **Stopped while it waits**, by SIGTERM or Ctrl-C, the doctor
+stops the plugins, reports `canceled` with exit code 1, and prints no Finding and no
+verdict.
 
 A plugin is asked its `contract`, `diagnose` and `status` tools and no other. None of these
 Findings is a failure: a Topic whose plugin cannot be asked works as one without a

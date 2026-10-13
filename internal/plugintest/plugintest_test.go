@@ -2,6 +2,7 @@ package plugintest_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http/httptest"
@@ -107,6 +108,27 @@ func TestAPluginWithFindingsConforms(t *testing.T) {
 			{Name: "embedding", OK: true, Message: "the embedding endpoint 127.0.0.1:8080 gave a vector of 512 numbers"},
 			{Name: "reranking", Message: strings.Repeat("x", plugincontract.MaxFindingBytes)},
 		}}))})
+}
+
+// The same things under the same names, in another order the next time: the
+// contract says nothing of the order but that study shows the findings in
+// the one they come in, so a plugin that tests side by side and gives each
+// finding as it arrives conforms.
+func TestAPluginThatGivesItsFindingsInAnotherOrderConforms(t *testing.T) {
+	one := plugincontract.Finding{Name: "embedding", OK: true, Message: "it answers"}
+	two := plugincontract.Finding{Name: "reranking", Message: "it is down"}
+	var asked atomic.Int64
+	plugintest.Conformance(t, plugintest.Target{Connect: plugintest.AsService(serve(t, plugintest.Config{PageDelay: 2 * time.Millisecond,
+		Findings: []plugincontract.Finding{one, two},
+		Twist: func(tool string, answer []byte, refused bool) []byte {
+			if tool == "diagnose" && asked.Add(1)%2 == 0 {
+				return []byte(found(two, one))
+			}
+			return answer
+		}}))})
+	if asked.Load() < 2 {
+		t.Fatalf("the suite asked diagnose %d times, so this test proves nothing of a second answer", asked.Load())
+	}
 }
 
 // broken are plugins that each break the contract in one way, and what the
@@ -241,6 +263,42 @@ var broken = map[string]struct {
 	}()}, want: "the same things are tested each time, under the same names"},
 	"it is slow to say what it found": {args: []string{"--delay", "diagnose=10300ms"},
 		want: "study gives a plugin 10s for the whole answer"},
+	// And every time it is asked, not the first alone.
+	"its finding says more than study shows the second time": {cfg: plugintest.Config{
+		Findings: []plugincontract.Finding{{Name: "embedding", Message: "it is down"}},
+		Twist: func() func(string, []byte, bool) []byte {
+			var asked atomic.Int64
+			return func(tool string, answer []byte, refused bool) []byte {
+				if tool == "diagnose" && asked.Add(1) > 1 {
+					return []byte(found(plugincontract.Finding{Name: "embedding", Message: strings.Repeat("x", plugincontract.MaxFindingBytes+1)}))
+				}
+				return answer
+			}
+		}()}, want: "has a message of 601 bytes the second time: study shows the first 600 of it"},
+	"its second answer breaks the contract": {cfg: plugintest.Config{
+		Findings: []plugincontract.Finding{{Name: "embedding", Message: "it is down"}},
+		Twist: func() func(string, []byte, bool) []byte {
+			var asked atomic.Int64
+			return func(tool string, answer []byte, refused bool) []byte {
+				if tool == "diagnose" && asked.Add(1) > 1 {
+					return []byte(found(plugincontract.Finding{Name: "embedding", Message: " "}))
+				}
+				return answer
+			}
+		}()}, want: "what diagnose gave back the second time is not the contract's: the finding embedding has no message"},
+	"it is slow to say what it found the second time": {cfg: plugintest.Config{
+		Findings: []plugincontract.Finding{{Name: "embedding", OK: true, Message: "it answers"}},
+		Before: func() func(context.Context, string) {
+			var asked atomic.Int64
+			return func(ctx context.Context, tool string) {
+				if tool == "diagnose" && asked.Add(1) > 1 {
+					select {
+					case <-ctx.Done():
+					case <-time.After(plugincontract.DiagnoseTime + 300*time.Millisecond):
+					}
+				}
+			}
+		}()}, want: "the second time: study gives a plugin 10s for the whole answer"},
 	// And one that stops answering is waited for once.
 	"it stops answering": {args: []string{"--hang", "search"}, patience: 2 * time.Second,
 		want: "nothing after it was checked", once: ": search got no answer within 2s"},

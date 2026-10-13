@@ -12,14 +12,21 @@ import (
 	"time"
 
 	"github.com/mordor-forge/lamplight/v2/internal/core"
+	"github.com/mordor-forge/lamplight/v2/internal/plugincontract"
 	"github.com/mordor-forge/lamplight/v2/internal/plugintest"
 )
 
 // CheckPlugin has the plugin test what it depends on, once it has said which
 // contract it speaks, and reports what the plugin found: a finding that is
-// not all right is the plugin's answer, and no failure of the check. A
-// plugin that does not say in time, or not as the contract has it, does not
-// speak the contract.
+// not all right is the plugin's answer, and no failure of the check.
+//
+// A plugin that does not say in time, or not as the contract has it, fails
+// the check with failed_precondition, whatever code the plugin itself
+// refused with: invalid_argument would be said of what the learner typed,
+// and not_found of a name that is not registered. The error says what
+// happened to that tool and that study uses the plugin all the same, never
+// that the plugin does not speak the contract, and names no command: the
+// one that shows more of a plugin is this check.
 func TestCheckPluginReportsWhatThePluginFound(t *testing.T) {
 	ctx := context.Background()
 	c := plugintest.NewComputer(t)
@@ -57,13 +64,24 @@ func TestCheckPluginReportsWhatThePluginFound(t *testing.T) {
 		args []string
 		want string
 	}{
-		"it says nothing": {[]string{"--hang", "diagnose"},
-			"Knowledge base plugin silent did not answer its diagnose tool within 400ms, so study stopped it"},
+		"it says nothing": {[]string{"--hang", "diagnose", "--stderr", "testing the endpoint"},
+			"Knowledge base plugin silent did not answer its diagnose tool within 400ms, so study stopped it. The last it wrote on " +
+				"its standard error: testing the endpoint. So study does not know"},
 		"it says what is no finding": {[]string{"--result", `diagnose={"findings": [{"name": "Embedding", "ok": true, "message": "x"}]}`},
-			"Knowledge base plugin silent does not speak Lamplight's contract: what its diagnose tool gave back is not what the contract " +
-				`describes: findings[0] is named "Embedding", which is no name`},
+			"the diagnose tool of Knowledge base plugin silent gave an answer that breaks the contract: " +
+				`findings[0] is named "Embedding", which is no name`},
 		"it fails": {[]string{"--refuse", "diagnose=internal:Shelf's settings file cannot be read"},
-			"Knowledge base plugin silent failed in its diagnose tool: Shelf's settings file cannot be read"},
+			"Knowledge base plugin silent failed in its diagnose tool: Shelf's settings file cannot be read. So study does not know"},
+		"it finds what it was given wrong": {[]string{"--refuse", "diagnose=invalid_argument:Shelf's settings file cannot be read"},
+			"Knowledge base plugin silent does not take what its diagnose tool was given: Shelf's settings file cannot be read. So"},
+		"it finds what it was asked for missing": {[]string{"--refuse", "diagnose=not_found:Shelf's settings file cannot be read"},
+			"Knowledge base plugin silent does not have what its diagnose tool was asked for: Shelf's settings file cannot be read. So"},
+		"it cannot": {[]string{"--refuse", "diagnose=unsupported:Shelf's settings file cannot be read"},
+			"Knowledge base plugin silent cannot do what its diagnose tool was asked: Shelf's settings file cannot be read. So"},
+		"it fails with a code of its own": {[]string{"--refuse", "diagnose=newer_format:Shelf's settings file cannot be read"},
+			"Knowledge base plugin silent failed in its diagnose tool: Shelf's settings file cannot be read. So study does not know"},
+		"it fails in words": {[]string{"--plain-error", "diagnose=Shelf's settings file cannot be read"},
+			"Knowledge base plugin silent failed in its diagnose tool: Shelf's settings file cannot be read. So study does not know"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			c := plugintest.NewComputer(t)
@@ -76,7 +94,16 @@ func TestCheckPluginReportsWhatThePluginFound(t *testing.T) {
 				t.Errorf("CheckPlugin took %s", took)
 			}
 			if core.CodeOf(err) != core.CodeFailedPrecondition || !strings.Contains(err.Error(), tc.want) || !reflect.DeepEqual(got, core.PluginCheck{}) {
-				t.Errorf("CheckPlugin = %+v, %v (%s); want failed_precondition with %q, and no check", got, err, core.CodeOf(err), tc.want)
+				t.Fatalf("CheckPlugin = %+v, %v (%s); want failed_precondition with %q, and no check", got, err, core.CodeOf(err), tc.want)
+			}
+			if !strings.HasSuffix(err.Error(), "So study does not know whether what the plugin depends on is all right, and uses the "+
+				"plugin all the same") {
+				t.Errorf("the error does not end with what it means for the learner: %v", err)
+			}
+			for _, not := range []string{"does not speak Lamplight's contract", "study knowledge-base", "Run its command", ".."} {
+				if strings.Contains(err.Error(), not) {
+					t.Errorf("the error says %q, of a plugin that starts and that study goes on using: %v", not, err)
+				}
 			}
 			if started := plugintest.ReadRecord(t, record); !plugintest.Gone(started.PID, 5*time.Second) {
 				plugintest.Kill(started.PID)
@@ -106,9 +133,9 @@ func TestThePluginsTimeToDiagnoseIsItsOwn(t *testing.T) {
 		len(found.Plugins[0].Check.Findings) != 1 {
 		t.Errorf("CheckPlugins, with a glance shorter than the plugin's 700ms = %+v, %v; want its finding", found, err)
 	}
-	if core.PluginDiagnoseTimeout <= core.PluginGlanceTimeout {
+	if plugincontract.DiagnoseTime <= core.PluginGlanceTimeout {
 		t.Errorf("a plugin has %s to test what it depends on, and %s for a glance: testing asks over a network, and needs more",
-			core.PluginDiagnoseTimeout, core.PluginGlanceTimeout)
+			plugincontract.DiagnoseTime, core.PluginGlanceTimeout)
 	}
 }
 
@@ -152,22 +179,24 @@ func TestCheckPluginsAsksEveryPluginAtOnceWhatItFound(t *testing.T) {
 	}
 	for name, record := range records {
 		g := got[name]
-		if g.Check == nil || g.Problem != "" || len(g.Check.Findings) != 0 || g.Check.Contract.Version != 1 ||
-			!strings.Contains(g.Undiagnosed, "Knowledge base plugin "+name+" did not answer its diagnose tool within 1s, so study stopped it") ||
-			!strings.Contains(g.Undiagnosed, "testing the endpoint") {
-			t.Errorf("%s = %+v (%+v); want what it said of itself, and that it did not say what it found within 1s", name, g, g.Check)
+		if g.Check == nil || g.Problem != "" || g.Fix != "" || len(g.Check.Findings) != 0 || g.Check.Contract.Version != 1 || !g.Late ||
+			g.Undiagnosed != "Knowledge base plugin "+name+" did not answer its diagnose tool within 1s, so study stopped it. The last it "+
+				"wrote on its standard error: testing the endpoint. So study does not know whether what the plugin depends on is all "+
+				"right, and uses the plugin all the same" {
+			t.Errorf("%s = %+v (%+v); want what it said of itself, and that it was late to say what it found within 1s", name, g, g.Check)
 		}
 		if started := plugintest.ReadRecord(t, record); !plugintest.Gone(started.PID, 5*time.Second) {
 			plugintest.Kill(started.PID)
 			t.Errorf("%s, process %d, was left running", name, started.PID)
 		}
 	}
-	if g := got["broken"]; g.Check == nil || g.Problem != "" ||
-		!strings.Contains(g.Undiagnosed, "what its diagnose tool gave back is not what the contract describes: the finding embedding has no message") {
-		t.Errorf("a plugin whose findings break the contract = %+v", g)
+	if g := got["broken"]; g.Check == nil || g.Problem != "" || g.Fix != "" || g.Late ||
+		!strings.HasPrefix(g.Undiagnosed, "the diagnose tool of Knowledge base plugin broken gave an answer that breaks the contract: "+
+			"the finding embedding has no message. docs/knowledge-base-contract.md describes the contract. So study does not know") {
+		t.Errorf("a plugin whose findings break the contract = %+v; want that said, and the plugin not late: it answered", g)
 	}
 	want := []core.PluginFinding{{Name: "embedding", Message: "the embedding endpoint 127.0.0.1:8080 answered 503"}}
-	if g := got["fine"]; g.Check == nil || g.Problem != "" || g.Undiagnosed != "" || !reflect.DeepEqual(g.Check.Findings, want) {
+	if g := got["fine"]; g.Check == nil || g.Problem != "" || g.Undiagnosed != "" || g.Late || !reflect.DeepEqual(g.Check.Findings, want) {
 		t.Errorf("a plugin with a finding that is not all right = %+v (%+v); want the finding, and nothing wrong with the plugin", g, g.Check)
 	}
 	if g := got["nothing"]; g.Check == nil || g.Problem != "" || g.Undiagnosed != "" || g.Check.Findings == nil || len(g.Check.Findings) != 0 {

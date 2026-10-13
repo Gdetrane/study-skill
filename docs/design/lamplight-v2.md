@@ -980,12 +980,16 @@ hours before any learning happens is exactly what v1 produced.
     starts and speaks the contract with an endpoint down, so `study doctor` and
     `study knowledge-base check` have each plugin say what it found, once it has said
     which contract it speaks: every plugin at once, with the contract's ten seconds, so
-    the doctor's wait grows by ten at most, however many are registered. A finding is the
-    plugin's name for what it tested, whether it is all right, and a sentence, cleaned and
-    cut like a `reason`, with no command of the plugin's choosing. One that is not all
-    right is a warning and never unhealthy; a plugin that depends on nothing adds no
-    line. **No MCP tool asks `diagnose`**: it has a plugin send requests to wherever its
-    settings point, and is kept to the command line as indexing is.
+    the doctor's wait grows by ten at most, however many are registered, and is fourteen
+    in all. A finding is the plugin's name for what it tested, whether it is all right,
+    and a sentence, cleaned and cut like a `reason`, with no command of the plugin's
+    choosing. One that is not all right is a warning and never unhealthy, and the Finding
+    of a Topic that names the plugin points at it beside `study source index`; a plugin
+    that depends on nothing adds no line. A plugin that does not say what it found, late
+    or otherwise than the contract has it, is a warning with no fix, and is used all the
+    same. **No MCP tool asks `diagnose`**: it is the learner's question, which no agent
+    needs the answer to, and no tool waits ten seconds for a plugin; it is kept to the
+    command line as indexing is.
   - Shelf tests each endpoint in its settings file as a search asks it: one question
     embedded, with the Recipe's request and the key, the answer held to `dimensions` and
     to numbers; one question and two texts reranked. The text is Shelf's own, never a

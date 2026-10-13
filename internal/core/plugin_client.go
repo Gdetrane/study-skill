@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io/fs"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -26,8 +27,8 @@ import (
 //     CheckPlugins, for study doctor, which asks every registered plugin the
 //     same, the first with the short deadline of a glance. Both are for the
 //     learner and CLI-only, and they are the one thing that asks a plugin's
-//     diagnose tool (checkPlugin): it has a plugin send requests to
-//     whatever its settings name.
+//     diagnose tool (checkPlugin): what it answers is the learner's to read,
+//     and it may take ten seconds.
 //   - IndexSources, for study source index, which asks the Topic's plugin to
 //     index. It is CLI-only too, and the one thing that asks a plugin to
 //     index (source_index.go).
@@ -40,15 +41,20 @@ import (
 //     tool reaches it too.
 //
 // So an MCP tool can have a plugin started, to ask its status, search and
-// passage tools, and can never have one index, or test what it depends on:
-// the MCP server runs outside the agent's sandbox, and a plugin that indexed
-// for it would read any file the agent named as a Source there, and one that
-// tested its endpoints for it would send requests from there. A search reads
-// the plugin's index and never a Source. Tests in internal/mcpserver keep it
-// so: one calls every tool with plugins registered that record what they are
-// asked, and one reads this package for whatever could ask a plugin to index
-// from anywhere but IndexSources, to search from anywhere but the two
-// functions that do, or to diagnose from anywhere but checkPlugin.
+// passage tools, and can never have one index, or test what it depends on.
+// The MCP server runs outside the agent's sandbox, and a plugin that indexed
+// for it would read any file the agent named as a Source there: a search
+// reads the plugin's index and never a Source. And what a plugin finds of
+// what it depends on is the learner's question, which no agent needs the
+// answer to, and no tool waits ten seconds for a plugin. Tests in
+// internal/mcpserver keep it so: two call the tools with plugins registered
+// that record what they are asked, one of them where a plugin fails and a
+// Study home is not in order; one reads this package for whatever could ask
+// a plugin to index from anywhere but IndexSources, to search from anywhere
+// but the two functions that do, or to diagnose from anywhere but
+// checkPlugin; and one reads every other package the server is built from,
+// which may ask a plugin none of it and name none of the three operations
+// above that are the command line's.
 //
 // Nothing is kept between two of them: each starts the plugin and stops it
 // again before it returns.
@@ -86,17 +92,11 @@ type PluginOptions struct {
 	EvidenceTimeout time.Duration
 	// DiagnoseTimeout is how long study knowledge-base check and study
 	// doctor give a plugin to test what it depends on and say what it
-	// found, once it has said which contract it speaks. Defaults to
-	// PluginDiagnoseTimeout.
+	// found, once it has said which contract it speaks. Defaults to the
+	// contract's own time for it (plugincontract.DiagnoseTime), which the
+	// client gives a plugin when nothing else is said.
 	DiagnoseTimeout time.Duration
 }
-
-// PluginDiagnoseTimeout is how long a plugin has to answer its diagnose
-// tool: the contract's own time for it. study doctor asks every registered
-// plugin at once, each as soon as it has said which contract it speaks,
-// which it has the two seconds of a glance for: so the doctor waits for
-// plugins that long and this long, however many are registered.
-const PluginDiagnoseTimeout = plugincontract.DiagnoseTime
 
 // PluginContract is what a Knowledge base plugin says of itself: the
 // version of Lamplight's contract it speaks, and what it can do.
@@ -149,14 +149,19 @@ type PluginCheck struct {
 // started, does not start, does not answer in time, is no MCP server or
 // does not speak the contract is failed_precondition, with what to do; one
 // that speaks a newer contract than this study knows is newer_format; and
-// canceled means the command was stopped first. A plugin that does not say
-// in time what it found of what it depends on, or not as the contract has
-// it, does not speak the contract either. In every case nothing is left
-// running.
+// canceled means the command was stopped first. In every case nothing is
+// left running.
 //
-// The plugin tests what it depends on by its own settings: an endpoint
-// they name is sent a request. That is why this is for the learner at a
-// command line, and no MCP tool reaches it.
+// A plugin that started and speaks the contract, and then did not say what
+// it found of what it depends on, in time or as the contract has it, is
+// failed_precondition too, whatever code the plugin itself refused with:
+// the check did not come to its end. The error says what happened and that
+// study uses the plugin all the same, and names no command: there is none
+// that would say more (pluginUntested).
+//
+// What a plugin finds of what it depends on is the learner's question, and
+// answering it may take the ten seconds the contract gives: this is for
+// the learner at a command line, and no MCP tool reaches it.
 //
 // A command plugin gets its folder in Lamplight's state folder, outside the
 // Study home, which is made when it is not there. Nothing else is written,
@@ -193,7 +198,7 @@ func (c *Core) CheckPlugin(ctx context.Context, name string) (PluginCheck, error
 // err is why the plugin did not start, or does not speak the contract: no
 // check is returned then. undiagnosed is why a plugin that started and
 // speaks the contract did not say what it found of what it depends on: the
-// check is whole then, but for its findings.
+// check is whole then, but for its findings (pluginUntested).
 //
 // This is the one place a plugin's diagnose tool is asked, and only
 // CheckPlugin and CheckPlugins lead here, which no MCP tool can name.
@@ -210,10 +215,34 @@ func (c *Core) checkPlugin(ctx context.Context, plugin Plugin, began time.Time, 
 	}
 	findings, undiagnosed := session.Diagnose(ctx)
 	if undiagnosed != nil {
-		return check, undiagnosed, nil
+		return check, pluginUntested(undiagnosed), nil
 	}
 	check.Findings = findings
 	return check, nil, nil
+}
+
+// pluginUntested is the error of a plugin that started and speaks the
+// contract, and did not say what it found of what it depends on: the
+// client's words for what happened to its diagnose tool, and what that
+// means for the learner, which is little. status, study source index and a
+// search never ask that tool, and go on using the plugin as before.
+//
+// It names no command. The one that shows more of a plugin is study
+// knowledge-base check, which asks the same tool and would say the same.
+// A command that was stopped is that, and nothing else.
+func pluginUntested(err error) error {
+	if CodeOf(err) == CodeCanceled {
+		return err
+	}
+	return &Error{Code: CodeFailedPrecondition, Err: err, Message: strings.TrimSuffix(err.Error(), ".") +
+		". So study does not know whether what the plugin depends on is all right, and uses the plugin all the same"}
+}
+
+// answeredLate reports whether err is of a plugin that did not answer in the
+// time it had, and was given up.
+func answeredLate(err error) bool {
+	var failed *pluginclient.Error
+	return errors.As(err, &failed) && failed.Late
 }
 
 // PluginGlance is what a quick check of one registered Knowledge base
@@ -232,8 +261,14 @@ type PluginGlance struct {
 	// Undiagnosed says why a plugin that started and speaks the contract did
 	// not say what it found of what it depends on: it did not answer in the
 	// time it has for that, or not as the contract has it. Check is set all
-	// the same, without findings.
+	// the same, without findings. There is no Fix for it: no command says
+	// more.
 	Undiagnosed string
+	// Late says that the plugin did not answer in time when it was asked
+	// what it found, and was stopped, or given up. Whoever asks it something
+	// else in the same run, what it has indexed say, would wait for it
+	// again: study doctor does not (StatusWithout).
+	Late bool
 }
 
 // PluginGlances is what CheckPlugins found on this computer.
@@ -262,8 +297,8 @@ type PluginGlances struct {
 // plugin is asked no later than the glance's deadline, so all of them have
 // answered, or been stopped, by one moment: that deadline and the time of
 // one diagnose after it, however many plugins there are. One that does not
-// say in time is reported as that (PluginGlance.Undiagnosed), and what it
-// said of itself stands.
+// say in time is reported as that (PluginGlance.Undiagnosed and Late), and
+// what it said of itself stands.
 //
 // A plugin is asked which contract it speaks and what it found of what it
 // depends on, and nothing else: nothing is indexed and nothing searched.
@@ -319,9 +354,9 @@ func (c *Core) glancePlugin(ctx context.Context, list PluginList, plugin Plugin,
 	case err == nil:
 		glance.Check = &check
 		if undiagnosed != nil {
-			// The client's own words: which tool was not answered, in how
-			// long, or what of its answer is not the contract's.
-			glance.Undiagnosed = undiagnosed.Error()
+			// Which tool was not answered, in how long, or what of its
+			// answer is not the contract's.
+			glance.Undiagnosed, glance.Late = undiagnosed.Error(), answeredLate(undiagnosed)
 		}
 	case ctx.Err() == nil && !time.Now().Before(began.Add(limit)):
 		glance.Problem = "Knowledge base plugin " + plugin.Name + " did not say which contract it speaks within " + limit.String() +

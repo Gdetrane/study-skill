@@ -274,7 +274,6 @@ func TestThePageGivesEveryLimitAndDeadline(t *testing.T) {
 		// may say of what it found.
 		"the time to say what it found":     "| `diagnose`: the whole answer | " + seconds(plugincontract.DiagnoseTime) + " |",
 		"the client's time for it":          "| `diagnose`: the whole answer | " + seconds(pluginclient.DefaultDiagnoseTimeout) + " |",
-		"the core's time for it":            "| `diagnose`: the whole answer | " + seconds(core.PluginDiagnoseTimeout) + " |",
 		"the number of findings":            "| Findings in a `diagnose` answer | " + number(plugincontract.MaxFindings) + " |",
 		"the length of a finding's name":    "| A finding's `name` | " + number(plugincontract.MaxKindBytes) + " characters |",
 		"the length of a finding's words":   "| A finding's `message`, as `study` shows it | " + number(plugincontract.MaxFindingBytes) + " bytes |",
@@ -293,6 +292,54 @@ func TestThePageGivesEveryLimitAndDeadline(t *testing.T) {
 	} {
 		if !strings.Contains(table, want) {
 			t.Errorf("the table of deadlines and limits does not give %s as %q", what, want)
+		}
+	}
+}
+
+// inWords writes a small number as the pages do in a sentence.
+func inWords(t *testing.T, n int) string {
+	t.Helper()
+	words := map[int]string{2: "two", 6: "six", 7: "seven", 8: "eight", 9: "nine", 10: "ten", 12: "twelve", 14: "fourteen"}
+	if words[n] == "" {
+		t.Fatalf("this test has no word for %d: add it", n)
+	}
+	return words[n]
+}
+
+// The page says in its sentences, and not in its tables alone, how many
+// tools a plugin has and how long it has to say what it found: someone who
+// writes a plugin reads the sentences first. A tool that is added, or a
+// time that changes, changes them too.
+func TestThePagesSentencesGiveTheToolsAndTheTimeToDiagnose(t *testing.T) {
+	page := strings.Join(strings.Fields(readDoc(t)), " ")
+	tools := inWords(t, len(plugincontract.Tools))
+	seconds := strconv.Itoa(int(plugincontract.DiagnoseTime/time.Second)) + " seconds"
+	glance := strconv.Itoa(int(core.PluginGlanceTimeout/time.Second)) + " seconds"
+	for what, want := range map[string]string{
+		"how many tools a plugin is":              "A plugin is **an MCP server with " + tools + " tools**:",
+		"how many tools the section describes":    "## The " + tools + " tools",
+		"how many tools version 1 has":            "Version 1 has " + tools + " tools.",
+		"each of the tools, where it says so":     "`" + strings.Join(plugincontract.Tools[:len(plugincontract.Tools)-1], "`, `") + "` and `" + plugincontract.Tools[len(plugincontract.Tools)-1] + "`",
+		"the time to say what it found":           "The " + seconds + " of `diagnose` are longer than the " + glance + " a plugin has when `study` shows what is indexed",
+		"the rule a plugin's author reads":        "**Answer within " + seconds + ", whatever you depend on does.**",
+		"why no tool asks":                        "no tool waits " + seconds + " for a plugin",
+		"what the suite holds an answer to":       "the suite holds each answer to the " + seconds,
+		"what study does with a message":          "shows the first " + number(plugincontract.MaxFindingBytes) + " bytes",
+		"how many findings an answer may hold":    "A finding for each thing the plugin depends on and tested, " + strconv.Itoa(plugincontract.MaxFindings) + " at most",
+		"how long a finding's name may be":        "a lowercase word of letters, digits and underscores, up to " + strconv.Itoa(plugincontract.MaxKindBytes) + " characters, such as `embedding`",
+		"the reason that is the learner's":        "whether what a plugin depends on works is the learner's question",
+		"the code a refusal is reported under":    "as `failed_precondition` whatever `code` the error has",
+		"that a name holds no part of an address": "it refuses an answer with a name that holds a part of the address the plugin is registered at",
+	} {
+		if !strings.Contains(page, want) {
+			t.Errorf("the page does not say %s as %q", what, want)
+		}
+	}
+	// And not the reason that does not hold: a search has a plugin ask its
+	// endpoints too.
+	for _, not := range []string{"send requests to wherever its settings point", "the one tool that has a plugin reach"} {
+		if strings.Contains(page, not) {
+			t.Errorf("the page says %q, which is true of a search as well", not)
 		}
 	}
 }

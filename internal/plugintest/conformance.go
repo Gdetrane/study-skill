@@ -326,33 +326,36 @@ func Conformance(t *testing.T, target Target) {
 		// speaks, with no arguments, and with ten seconds for the whole
 		// answer, whatever the plugin depends on does meanwhile.
 		s.ok(t, cs, plugincontract.ToolContract, struct{}{}, reflect.TypeFor[plugincontract.Contract]())
+		// held holds an answer to all the contract says of one: every time
+		// the tool is asked, and not the first time alone. when says which
+		// answer it is, and took how long the plugin took over it.
+		held := func(when string, got plugincontract.DiagnoseResult, took time.Duration) {
+			t.Helper()
+			if took > plugincontract.DiagnoseTime {
+				t.Fatalf("diagnose took %s%s: study gives a plugin %s for the whole answer, and stops one that takes longer. Give "+
+					"each thing you test less than that, and test them side by side", took.Round(time.Millisecond), when,
+					plugincontract.DiagnoseTime)
+			}
+			if err := got.Validate(); err != nil {
+				t.Fatalf("what diagnose gave back%s is not the contract's: %v\n%s", when, err, compact(got))
+			}
+			for _, f := range got.Findings {
+				if len(f.Message) > plugincontract.MaxFindingBytes {
+					t.Errorf("the finding %s has a message of %d bytes%s: study shows the first %d of it, so say it in fewer",
+						f.Name, len(f.Message), when, plugincontract.MaxFindingBytes)
+				}
+			}
+		}
 		var first plugincontract.DiagnoseResult
 		began := time.Now()
 		s.into(t, cs, plugincontract.ToolDiagnose, struct{}{}, &first)
-		if took := time.Since(began); took > plugincontract.DiagnoseTime {
-			t.Fatalf("diagnose took %s: study gives a plugin %s for the whole answer, and stops one that takes longer. Give each "+
-				"thing you test less than that, and test them side by side", took.Round(time.Millisecond), plugincontract.DiagnoseTime)
-		}
-		if err := first.Validate(); err != nil {
-			t.Fatalf("what diagnose gave back is not the contract's: %v\n%s", err, compact(first))
-		}
-		names := func(findings []plugincontract.Finding) []string {
-			var out []string
-			for _, f := range findings {
-				out = append(out, f.Name)
-			}
-			return out
-		}
-		for _, f := range first.Findings {
-			if len(f.Message) > plugincontract.MaxFindingBytes {
-				t.Errorf("the finding %s has a message of %d bytes: study shows the first %d of it, so say it in fewer",
-					f.Name, len(f.Message), plugincontract.MaxFindingBytes)
-			}
-		}
+		held("", first, time.Since(began))
 		// It tests the same things each time, under the same names: a
 		// learner tells one finding from the next by its name. And a field
 		// this version does not name is passed over, here as anywhere.
+		began = time.Now()
 		a := s.call(t, cs, plugincontract.ToolDiagnose, map[string]any{"added_later": true})
+		took := time.Since(began)
 		switch {
 		case a.refused:
 			t.Fatalf("diagnose refused arguments that hold a field the contract does not name (%s): it takes no arguments, and "+
@@ -364,8 +367,16 @@ func Conformance(t *testing.T, target Target) {
 		if err := plugincontract.Decode(a.data, &second); err != nil {
 			t.Fatalf("what diagnose gave back the second time: %v\n%s", err, a.data)
 		}
-		if err := second.Validate(); err != nil {
-			t.Fatalf("what diagnose gave back the second time is not the contract's: %v\n%s", err, a.data)
+		held(" the second time", second, took)
+		// The names, in whatever order: the contract says of the order only
+		// that study shows the findings in the one they are given in.
+		names := func(findings []plugincontract.Finding) []string {
+			var out []string
+			for _, f := range findings {
+				out = append(out, f.Name)
+			}
+			slices.Sort(out)
+			return out
 		}
 		if !slices.Equal(names(first.Findings), names(second.Findings)) {
 			t.Errorf("diagnose named its findings %v, and then %v: the same things are tested each time, under the same names",
