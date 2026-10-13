@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http/httptest"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -157,11 +158,14 @@ func TestFindingsThatBreakTheContractAreRefused(t *testing.T) {
 		many = append(many, plugincontract.Finding{Name: fmt.Sprintf("part%d", n), OK: true, Message: "it answers"})
 	}
 	for name, tc := range map[string]struct{ result, want string }{
-		"too many":              {findingsOf(t, many...), "it holds 17 findings, more than the 16 an answer may hold"},
-		"a name that is none":   {`{"findings": [{"name": "\u001b[2JEmbedding", "ok": true, "message": "it answers"}]}`, `findings[0] is named "\x1b[2JEmbedding", which is no name`},
-		"a name that is long":   {findingsOf(t, plugincontract.Finding{Name: strings.Repeat("n", 33), Message: "x"}), "up to 32 characters"},
-		"one name twice":        {`{"findings": [{"name": "a", "ok": true, "message": "x"}, {"name": "a", "ok": false, "message": "y"}]}`, "it holds the finding a twice"},
-		"no message":            {`{"findings": [{"name": "embedding", "ok": false, "message": " "}]}`, "the finding embedding has no message"},
+		"too many":            {findingsOf(t, many...), "it holds 17 findings, more than the 16 an answer may hold"},
+		"a name that is none": {`{"findings": [{"name": "\u001b[2JEmbedding", "ok": true, "message": "it answers"}]}`, `findings[0] is named "\x1b[2JEmbedding", which is no name`},
+		"a name that is long": {findingsOf(t, plugincontract.Finding{Name: strings.Repeat("n", 33), Message: "x"}), "up to 32 characters"},
+		"one name twice":      {`{"findings": [{"name": "a", "ok": true, "message": "x"}, {"name": "a", "ok": false, "message": "y"}]}`, "it holds the finding a twice"},
+		"no message":          {`{"findings": [{"name": "embedding", "ok": false, "message": " "}]}`, "the finding embedding has no message"},
+		// Characters that show nothing, and a blank that is no white space:
+		// cleaned, nothing of it is left for the learner to read.
+		"a message of nothing":  {`{"findings": [{"name": "embedding", "ok": false, "message": "\u200b\udb40\udc41\ufe0f \u2800\u2060"}]}`, "the finding embedding has a message that shows nothing"},
 		"no verdict":            {`{"findings": [{"name": "embedding", "message": "it is down"}]}`, `findings[0]: "ok" is missing`},
 		"a verdict in words":    {`{"findings": [{"name": "embedding", "ok": "yes", "message": "it answers"}]}`, "findings.ok is a string, not a bool"},
 		"no list":               {`{}`, `"findings" is missing`},
@@ -207,6 +211,70 @@ func TestFindingsThatBreakTheContractAreRefused(t *testing.T) {
 		"Knowledge base plugin remote gave an answer that breaks the contract: it is no JSON object, neither as structured content "+
 		"nor as text. docs/knowledge-base-contract.md describes the contract" {
 		t.Errorf("Diagnose of a service that answers in words = %v", err)
+	}
+}
+
+// A plugin whose connection breaks while it is asked diagnose started, and
+// said which contract it speaks: the error says that this tool was not
+// answered and what was read in its place, and not that the plugin "does
+// not speak MCP", which would be said of a plugin study goes on using.
+func TestAConnectionThatBreaksUnderDiagnoseIsSaidOfThatTool(t *testing.T) {
+	ctx := context.Background()
+	// A command that writes more than a message may hold.
+	c := plugintest.NewComputer(t)
+	opts := quick(c)
+	opts.DiagnoseTimeout = time.Minute
+	flood, err := pluginclient.Start(ctx, c.Env(""), c.Register(t, "kb", plugintest.Command("--flood", "diagnose")...), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer flood.Close()
+	got, err := flood.Diagnose(ctx)
+	if got != nil || codeOf(err) != pluginclient.CodeFailedPrecondition || !strings.HasPrefix(err.Error(), "Knowledge base plugin kb did "+
+		"not answer its diagnose tool: study read something on its standard output that is no MCP message (") {
+		t.Errorf("Diagnose of a command that writes what is no MCP message = %+v, %v", got, err)
+	}
+	broken(t, err)
+
+	// A service that hangs up on the call.
+	var server *httptest.Server
+	plugin := plugintest.New(plugintest.Config{Folder: t.TempDir(), Before: func(_ context.Context, tool string) {
+		if tool == plugincontract.ToolDiagnose {
+			server.CloseClientConnections()
+		}
+	}})
+	server = httptest.NewServer(plugin.Handler())
+	t.Cleanup(func() {
+		server.Close()
+		plugin.Close()
+	})
+	remote, err := pluginclient.Start(ctx, c.Env(""), c.RegisterURL(t, "remote", server.URL+"/mcp"), quick(c))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer remote.Close()
+	got, err = remote.Diagnose(ctx)
+	if got != nil || codeOf(err) != pluginclient.CodeFailedPrecondition || !strings.HasPrefix(err.Error(), "Knowledge base plugin remote "+
+		"did not answer its diagnose tool: the service at "+server.URL+" did not answer as an MCP server does (") {
+		t.Errorf("Diagnose of a service that hangs up = %+v, %v", got, err)
+	}
+	broken(t, err)
+}
+
+// broken fails the test when the error of a diagnose call whose connection
+// broke says of the whole plugin what is true of that call, names a command,
+// or says that the plugin was late.
+func broken(t *testing.T, err error) {
+	t.Helper()
+	unhelped(t, err)
+	for _, not := range []string{"does not speak MCP", "does not answer as an MCP server at", "knowledge-base add"} {
+		if strings.Contains(err.Error(), not) {
+			t.Errorf("the error of a diagnose call whose connection broke says %q: %v", not, err)
+		}
+	}
+	var failed *pluginclient.Error
+	if errors.As(err, &failed) && failed.Late {
+		t.Errorf("a plugin whose connection broke is said to have been late: %v", err)
 	}
 }
 
@@ -266,6 +334,34 @@ func TestAFindingIsNotNamedAfterAPartOfARegisteredAddress(t *testing.T) {
 			}
 			if strings.Contains(err.Error(), key) || strings.Contains(err.Error(), "s3cr3t") {
 				t.Errorf("the error repeats the key: %v", err)
+			}
+			unhelped(t, err)
+		})
+	}
+	// An answer that breaks the contract in another way is said to, with
+	// what it held: a name given twice, or one that is no name. That is the
+	// service's text as well, and is said without the key.
+	for name, result := range map[string]string{
+		"the key as a name, twice":      `{"findings": [{"name": "` + key + `", "ok": true, "message": "x"}, {"name": "` + key + `", "ok": true, "message": "y"}]}`,
+		"the key in what is no name":    `{"findings": [{"name": "The.Key.` + key + `", "ok": true, "message": "x"}]}`,
+		"the key in a field of its own": `{"findings": [{"name": "embedding", "ok": "` + key + `", "message": "x"}]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			address := service(t, plugintest.Config{Results: map[string]string{"diagnose": result}})
+			address += "?key=" + key
+			c := plugintest.NewComputer(t)
+			s, err := pluginclient.Start(ctx, c.Env(""), c.RegisterURL(t, "remote", address), quick(c))
+			if err != nil {
+				t.Fatalf("Start: %v", err)
+			}
+			defer s.Close()
+			got, err := s.Diagnose(ctx)
+			if got != nil || codeOf(err) != pluginclient.CodeFailedPrecondition ||
+				!strings.HasPrefix(err.Error(), "the diagnose tool of Knowledge base plugin remote gave an answer that breaks the contract: ") {
+				t.Fatalf("Diagnose = %+v, %v; want the answer refused", got, err)
+			}
+			if strings.Contains(err.Error(), key) {
+				t.Errorf("what is wrong with the answer is said with the key of the address the plugin is registered at: %v", err)
 			}
 			unhelped(t, err)
 		})

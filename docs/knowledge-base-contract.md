@@ -740,7 +740,7 @@ keyword.
 | `findings` | A finding for each thing the plugin depends on and tested, 16 at most. **An empty list for a plugin that depends on nothing of the kind**: that is an answer like any other, and the plugin still has the tool. |
 | `name` | What was tested, in a word: a lowercase word of letters, digits and underscores, up to 32 characters, such as `embedding`. Each name once in an answer, and the same names every time, in whatever order: `study` shows the findings in the order of the answer, each under its name, and a learner tells one finding from the next by it. `study` shows a name as it is, so it refuses an answer with a name that holds a part of the address the plugin is registered at. |
 | `ok` | `true` when it works as the plugin needs it to, `false` when it does not. |
-| `message` | What was found, in a sentence for the learner: what answered, or what is wrong and what the plugin does without it. Required, for a finding that is all right too. `study` puts it on one line, escapes what a terminal would interpret, and shows the first 600 bytes. |
+| `message` | What was found, in a sentence for the learner: what answered, or what is wrong and what the plugin does without it. Required, for a finding that is all right too. `study` puts it on one line, drops the characters that show nothing, escapes what a terminal would interpret, and shows the first 600 bytes. A message of which nothing is left then is none, and `study` refuses the answer. |
 
 - **Test it as you use it.** Send what indexing or a search sends: the same request, with
   the key, to the same address, and hold the answer to what you hold it to there. A test

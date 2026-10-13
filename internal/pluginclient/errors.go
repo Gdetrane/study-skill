@@ -42,11 +42,12 @@ type Error struct {
 	// stopped. Whoever would start the plugin again in the same run, to ask
 	// it something else, would only wait for it a second time.
 	Late bool
-	// advice is the end of Message that says what to run or to look at, and
-	// breaks what of an answer is not the contract's, said alone. They are
-	// for the one caller in this package that says an error of a call in
-	// words of its own (Connection.untested).
-	advice, breaks string
+	// advice is the end of Message that says what to run or to look at,
+	// breaks what of an answer is not the contract's, said alone, and broke
+	// what was read in place of an answer when the connection broke under a
+	// call, said alone too. They are for the one caller in this package that
+	// says an error of a call in words of its own (Connection.untested).
+	advice, breaks, broke string
 }
 
 func (e *Error) Error() string { return e.Message }
