@@ -1,4 +1,4 @@
-.PHONY: help test lint coverage build release-check release-snapshot clean
+.PHONY: help test lint coverage build notices release-check release-snapshot clean
 
 help:
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z0-9_-]+:.*## / {printf "%-17s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -17,6 +17,9 @@ coverage: ## Run tests with a coverage profile
 build: ## Build the study and study-shelf binaries
 	go build -o study ./cmd/study/
 	go build -o study-shelf ./cmd/study-shelf/
+
+notices: ## Rewrite NOTICES from the Go module cache, after a dependency changes
+	go run ./internal/notices/gen
 
 GORELEASER ?= goreleaser
 

@@ -41,6 +41,7 @@ make test         # go test -race ./...
 make lint         # gofmt check and go vet
 make coverage     # tests with a coverage profile
 make build        # build ./study and ./study-shelf
+make notices      # rewrite NOTICES from the Go module cache, after a dependency changes
 ```
 
 Narrow checks:
@@ -275,6 +276,22 @@ GOOS=darwin go vet ./...            # macOS is supported too
   `--json` output never triggers terminal queries.
 - The learner never sees overdue counts, "behind" or streaks: show where they are and one
   next action.
+- A release carries the licence of everything its two programs are built from, in
+  `NOTICES` (`docs/release.md`). After any change to a dependency, run `make notices` and
+  commit what it writes with the change: a test in `internal/notices` makes the folder
+  again, from what the go command says `./cmd/study` and `./cmd/study-shelf` link for each
+  system a release is built for, and fails on any difference. Never edit a licence text,
+  not even its white space. For a module that is new, read its licence files and write
+  the licence it is under, in SPDX's words, in `internal/notices/licences.go`: the
+  packages' `license` in `.goreleaser.yaml` names every kind written there and in
+  `NOTICES/pdfium/sources.toml`, and a test holds it to them. `NOTICES/pdfium` is kept by
+  hand, for the `pdfium.wasm` that go-pdfium embeds: a new go-pdfium fails the test until
+  someone has found what its file was built from and what is in it, as that folder's
+  `README.md` describes. The parts to look for come from the build files at that
+  revision, never from memory, and each is looked for in the file by constants as well
+  as by text, since most compiled code leaves no text: a part has a notice there when
+  the file itself shows it. A module that ships no licence file, or that embeds a file,
+  waits for a person in the same way.
 - Use conventional commit prefixes such as `fix:`, `feat:`, `docs:`, `test:` and `ci:`.
 - Do not commit built binaries, Study homes or agent assessment reports.
 
@@ -391,11 +408,16 @@ GOOS=darwin go vet ./...            # macOS is supported too
   run against a local folder of release files, which holds both programs, and a built
   `study` that starts the test plugin and stops it when it exits or is signalled.
 - `skills/lamplight`: the `lamplight` skill, embedded in the binary.
+- `NOTICES` and `internal/notices`: the licences and notices of what `study` and
+  `study-shelf` are built from, which every archive and package carries, and the package
+  that writes the folder (`gen`, run by `make notices`) and holds it to what the programs
+  link. Its `licences.go` says under which licence each module is, and `kindOf` which of
+  a module's files are carried. `NOTICES/pdfium`, with its `sources.toml`, is kept by hand.
 - `install.sh`: the install script the README gives (ADR-0010), in POSIX `sh`. It installs
-  `study` and `study-shelf`, and relies on the names of the release files and of the files
-  in an archive, set in `.goreleaser.yaml` and described in `docs/release.md`: change them
-  together. CI runs `shellcheck` on it and installs every release snapshot with it, on
-  Linux and on macOS.
+  `study` and `study-shelf`, and the archive's `NOTICES` beside them, and relies on the
+  names of the release files and of the files in an archive, set in `.goreleaser.yaml` and
+  described in `docs/release.md`: change them together. CI runs `shellcheck` on it and
+  installs every release snapshot with it, on Linux and on macOS.
 - `docs/release-checklist.md`: the maintainer's steps to ship v2.0.
 
 ## Patterns

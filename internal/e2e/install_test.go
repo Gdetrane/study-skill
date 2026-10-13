@@ -74,6 +74,16 @@ func TestTheInstallScript(t *testing.T) {
 		if err != nil || !bytes.Equal(page, built.manPage) {
 			t.Errorf("the man page was not installed from the archive: %v", err)
 		}
+		// The notices of what the two programs are built from are installed
+		// with them, whole: the archive is gone once the script ends.
+		doc := filepath.Join(in.home, ".local", "share", "doc", "lamplight")
+		in.wantNotices(filepath.Join(doc, "NOTICES"))
+		if got := names(t, doc); !slices.Equal(got, []string{"NOTICES"}) {
+			t.Errorf("the doc folder holds %v, want NOTICES alone", got)
+		}
+		if !strings.Contains(out, "Installed "+filepath.Join(doc, "NOTICES")+"\n") {
+			t.Errorf("install.sh does not say where the notices are:\n%s", out)
+		}
 		completions := filepath.Join(in.home, ".config", "fish", "completions", "study.fish")
 		if strings.Contains(out, "A package already provides") {
 			t.Log("a package on this machine provides study's completions, so study installed none")
@@ -219,6 +229,11 @@ func TestTheInstallScript(t *testing.T) {
 		if err := os.Link(dest, was); err != nil {
 			t.Fatal(err)
 		}
+		// The notices of the release that is there, one of them of a module
+		// the new release is no longer built from.
+		doc := filepath.Join(in.home, ".local", "share", "doc", "lamplight")
+		gone := filepath.Join(doc, "NOTICES", "modules", "example.com", "gone", "LICENSE")
+		writeExecutable(t, gone, "of a module v0.0.1 was built from\n")
 
 		bad := rel.folder(t, host)
 		writeChecksums(t, bad, map[string]string{host: strings.Repeat("0", 64)})
@@ -230,6 +245,9 @@ func TestTheInstallScript(t *testing.T) {
 				t.Errorf("a refused download changed the %s that was installed: %v", filepath.Base(file), err)
 			}
 		}
+		if _, err := os.Stat(gone); err != nil {
+			t.Errorf("a refused download changed the notices that were installed: %v", err)
+		}
 
 		in.dist = good
 		in.mustRun()
@@ -240,6 +258,105 @@ func TestTheInstallScript(t *testing.T) {
 		}
 		if got := names(t, filepath.Dir(dest)); !slices.Equal(got, []string{"study", "study-shelf"}) {
 			t.Errorf("the install folder holds %v, want study and study-shelf alone", got)
+		}
+		// The notices are the new release's and no others: wantNotices
+		// fails on the one that was left from v0.0.1.
+		in.wantNotices(filepath.Join(doc, "NOTICES"))
+		if got := names(t, doc); !slices.Equal(got, []string{"NOTICES"}) {
+			t.Errorf("the upgrade left %v in the doc folder, want NOTICES alone", got)
+		}
+	})
+
+	t.Run("installs the programs even when the notices cannot be", func(t *testing.T) {
+		in := newInstall(t, rel.folder(t, host))
+		// A file where the doc folder is to go.
+		share := filepath.Join(in.home, ".local", "share")
+		writeExecutable(t, filepath.Join(share, "doc"), "not a folder\n")
+		out := in.mustRun()
+		in.wantStudy(filepath.Join(in.home, ".local", "bin", "study"), rel.version)
+		for _, want := range []string{
+			"were not installed: could not write " + filepath.Join(share, "doc", "lamplight", "NOTICES") + "\n",
+			"They are in the NOTICES folder of file://" + in.dist + "/" + host + "\n",
+		} {
+			if !strings.Contains(out, want) {
+				t.Errorf("the output lacks %q:\n%s", want, out)
+			}
+		}
+		if got := names(t, share); !slices.Equal(got, []string{"doc", "man"}) {
+			t.Errorf("~/.local/share holds %v, want the file that was there and the man page's folder", got)
+		}
+
+		// The doc folder is there and the copy fails halfway: the real
+		// chmod serves the two programs, and fails for a whole folder.
+		real, err := exec.LookPath("chmod")
+		if err != nil {
+			t.Fatal(err)
+		}
+		in = newInstall(t, rel.folder(t, host))
+		in.fake("chmod", `case $1 in -R) echo "chmod: no" >&2; exit 1 ;; esac; exec `+real+` "$@"`)
+		doc := filepath.Join(in.home, ".local", "share", "doc", "lamplight")
+		earlier := filepath.Join(doc, "NOTICES", "README.md")
+		writeExecutable(t, earlier, "the notices of v0.0.1\n")
+		out = in.mustRun()
+		in.wantStudy(filepath.Join(in.home, ".local", "bin", "study"), rel.version)
+		if !strings.Contains(out, "were not installed: could not write "+filepath.Join(doc, "NOTICES")+"\n") {
+			t.Errorf("a copy that failed was not said:\n%s", out)
+		}
+		in.wantEarlierNotices(doc, earlier)
+
+		// The new folder is whole beside the earlier one, and cannot take
+		// its name: the earlier one goes back to it.
+		real, err = exec.LookPath("mv")
+		if err != nil {
+			t.Fatal(err)
+		}
+		in = newInstall(t, rel.folder(t, host))
+		in.fake("mv", `case $1 in */.NOTICES.install.*) echo "mv: no" >&2; exit 1 ;; esac; exec `+real+` "$@"`)
+		doc = filepath.Join(in.home, ".local", "share", "doc", "lamplight")
+		earlier = filepath.Join(doc, "NOTICES", "README.md")
+		writeExecutable(t, earlier, "the notices of v0.0.1\n")
+		out = in.mustRun()
+		if !strings.Contains(out, "were not installed: could not write "+filepath.Join(doc, "NOTICES")+"\n") {
+			t.Errorf("a folder that could not take its name was not said:\n%s", out)
+		}
+		in.wantEarlierNotices(doc, earlier)
+
+		// An earlier folder that cannot be emptied does not keep the new
+		// one out: it is left aside, and the script says where.
+		if os.Getuid() != 0 {
+			in = newInstall(t, rel.folder(t, host))
+			doc = filepath.Join(in.home, ".local", "share", "doc", "lamplight")
+			locked := filepath.Join(doc, "NOTICES", "modules", "locked")
+			writeExecutable(t, filepath.Join(locked, "LICENSE"), "of a module v0.0.1 was built from\n")
+			if err := os.Chmod(locked, 0o555); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				left, _ := filepath.Glob(filepath.Join(doc, ".NOTICES.old.*", "modules", "locked"))
+				for _, dir := range append(left, locked) {
+					_ = os.Chmod(dir, 0o755)
+				}
+			})
+			out = in.mustRun()
+			in.wantNotices(filepath.Join(doc, "NOTICES"))
+			left, _ := filepath.Glob(filepath.Join(doc, ".NOTICES.old.*"))
+			if len(left) != 1 || !strings.Contains(out, "An earlier NOTICES could not be deleted, and is left as "+left[0]+"\n") {
+				t.Errorf("the earlier folder is left as %v, and the script does not say so:\n%s", left, out)
+			}
+			if !strings.Contains(out, "Installed "+filepath.Join(doc, "NOTICES")+"\n") {
+				t.Errorf("the new notices are in place and the script does not say so:\n%s", out)
+			}
+		}
+
+		// A release from before the notices holds none, and the script
+		// has nothing to say of them.
+		before := newRelease(t, []byte(standInStudy), []byte(standInShelf), "v0.0.0-standin", "NOTICES")
+		in = newInstall(t, before.folder(t, host))
+		if out := in.mustRun(); strings.Contains(out, "NOTICES") || strings.Contains(out, "built from") {
+			t.Errorf("the script speaks of notices the archive does not hold:\n%s", out)
+		}
+		if _, err := os.Stat(filepath.Join(in.home, ".local", "share", "doc")); err == nil {
+			t.Error("the script made a doc folder for an archive that holds no notices")
 		}
 	})
 
@@ -336,11 +453,30 @@ func TestTheInstallScript(t *testing.T) {
 		if strings.Contains(out, "study.1.gz") {
 			t.Errorf("a man page was installed for a folder man does not look beside:\n%s", out)
 		}
-		for _, sub := range []string{".local/bin", ".local/share/man"} {
+		// Nor is there a doc folder beside it for the notices, which are
+		// not dropped without a word: the script says where they are.
+		for _, want := range []string{
+			"were not installed: " + dir + " is not a bin folder\n",
+			"They are in the NOTICES folder of file://" + in.dist + "/" + host + "\n",
+		} {
+			if !strings.Contains(out, want) {
+				t.Errorf("the output lacks %q:\n%s", want, out)
+			}
+		}
+		if got := names(t, dir); !slices.Equal(got, []string{"study", "study-shelf"}) {
+			t.Errorf("the install folder holds %v, want study and study-shelf alone", got)
+		}
+		for _, sub := range []string{".local/bin", ".local/share/man", ".local/share/doc", "share"} {
 			if _, err := os.Stat(filepath.Join(in.home, sub)); err == nil {
 				t.Errorf("the script wrote to ~/%s although STUDY_INSTALL_DIR names another folder", sub)
 			}
 		}
+
+		// A bin folder elsewhere has its share folder beside it.
+		in = newInstall(t, rel.folder(t, host))
+		in.env = append(in.env, "STUDY_INSTALL_DIR="+filepath.Join(in.home, "opt", "bin"))
+		in.mustRun()
+		in.wantNotices(filepath.Join(in.home, "opt", "share", "doc", "lamplight", "NOTICES"))
 
 		in = newInstall(t, rel.folder(t, host))
 		dir = filepath.Join(in.home, "is-a-folder")
@@ -544,9 +680,20 @@ type release struct {
 	version string // what its study --version prints after "study version "
 }
 
+// releaseNotices are the files of the NOTICES folder in the test's archives,
+// by their path in it. The real folder is deeper and holds more: the script
+// installs whatever is there. One licence ends in spaces, as some do.
+var releaseNotices = map[string]string{
+	"README.md":                         "# Notices\n",
+	"go/LICENSE":                        "Copyright 2009 The Go Authors.\n",
+	"modules/example.com/dep/v2/NOTICE": "a notice  \n",
+	"pdfium/freetype/docs/FTL.TXT":      "The FreeType Project LICENSE\n",
+}
+
 // newRelease makes a release of a study and a study-shelf. A nil shelf makes
-// a release that holds none, as one from before Shelf does.
-func newRelease(t *testing.T, binary, shelf []byte, version string) release {
+// a release that holds none, as one from before Shelf does, and a folder
+// named in without is left out of the archive.
+func newRelease(t *testing.T, binary, shelf []byte, version string, without ...string) release {
 	t.Helper()
 	var page bytes.Buffer
 	zw := gzip.NewWriter(&page)
@@ -574,6 +721,13 @@ func newRelease(t *testing.T, binary, shelf []byte, version string) release {
 	}
 	if shelf != nil {
 		files = append(files, file{"study-shelf", 0o755, shelf})
+	}
+	if !slices.Contains(without, "NOTICES") {
+		// With the mode of a file checked out under a strict umask: the
+		// script installs them for anyone to read all the same.
+		for name, text := range releaseNotices {
+			files = append(files, file{"NOTICES/" + name, 0o600, []byte(text)})
+		}
 	}
 	for _, f := range files {
 		if err := tw.WriteHeader(&tar.Header{Name: f.name, Mode: f.mode, Size: int64(len(f.data)), Typeflag: tar.TypeReg}); err != nil {
@@ -759,6 +913,65 @@ func (in *install) wantShelf(dest, version string) {
 	cmd.Env = []string{"HOME=" + in.home, "PATH=" + in.path}
 	if out, err := cmd.CombinedOutput(); err != nil || strings.TrimSpace(string(out)) != "study-shelf version "+version {
 		in.t.Errorf("the installed study-shelf does not run as version %s: %v\n%s", version, err, out)
+	}
+}
+
+// wantNotices checks that dir holds the release's NOTICES folder: every
+// file of it as the archive has it, readable by anyone, and no other.
+func (in *install) wantNotices(dir string) {
+	in.t.Helper()
+	got := map[string]string{}
+	err := filepath.WalkDir(dir, func(name string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(dir, name)
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			if info.Mode().Perm() != 0o755 {
+				in.t.Errorf("the folder %s of the notices has mode %v, want 0755", rel, info.Mode().Perm())
+			}
+			return nil
+		}
+		if info.Mode().Perm() != 0o644 {
+			in.t.Errorf("the notice %s has mode %v, want 0644", rel, info.Mode().Perm())
+		}
+		data, err := os.ReadFile(name)
+		got[filepath.ToSlash(rel)] = string(data)
+		return err
+	})
+	if err != nil {
+		in.t.Fatalf("the notices were not installed: %v", err)
+	}
+	if len(got) != len(releaseNotices) {
+		in.t.Errorf("%s holds %d files, want the %d of the archive's NOTICES", dir, len(got), len(releaseNotices))
+	}
+	for name, text := range releaseNotices {
+		if got[name] != text {
+			in.t.Errorf("the notice %s was installed as %q, want %q", name, got[name], text)
+		}
+	}
+}
+
+// wantEarlierNotices checks that a run that could not install the notices
+// left the doc folder as it was: the earlier NOTICES with its file, and
+// nothing of the copy that failed.
+func (in *install) wantEarlierNotices(doc, file string) {
+	in.t.Helper()
+	if data, err := os.ReadFile(file); err != nil || string(data) != "the notices of v0.0.1\n" {
+		in.t.Errorf("the earlier notices are not as they were: %q, %v", data, err)
+	}
+	if got := names(in.t, filepath.Dir(file)); !slices.Equal(got, []string{filepath.Base(file)}) {
+		in.t.Errorf("the earlier NOTICES holds %v, want the one file it held", got)
+	}
+	if got := names(in.t, doc); !slices.Equal(got, []string{"NOTICES"}) {
+		in.t.Errorf("the doc folder holds %v, want the earlier NOTICES and nothing left beside it", got)
 	}
 }
 
