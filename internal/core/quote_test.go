@@ -55,6 +55,13 @@ func TestAQuoteIsInAPassage(t *testing.T) {
 		{"a ligature in the Passage", "the \U0000FB01rst \U0000FB02oor of the o\U0000FB03ce", "the first floor of the office", true},
 		{"a ligature in the quote", "the first floor", "the \U0000FB01rst \U0000FB02oor", true},
 		{"an ellipsis character", "and so on\U00002026 until", "and so on... until", true},
+		// What the Passage writes as one character is quoted whole: three
+		// stops stand for an ellipsis, and one of them does not.
+		{"an ellipsis, up to its first stop", "The result\U00002026 Next comes", "The result.", false},
+		{"an ellipsis, up to its second stop", "The result\U00002026 Next comes", "The result..", false},
+		{"an ellipsis whole", "The result\U00002026 Next comes", "The result...", true},
+		{"from inside an ellipsis", "wait\U00002026 for it", ".. for it", false},
+		{"three stops that were typed are three characters", "The result... Next comes", "The result.", true},
 		{"full-width letters are not plain ones", "\U0000FF21\U0000FF22\U0000FF23 is the key", "ABC is the key", false},
 		{"a superscript is not its digit", "runs in O(2\U0000207F) time", "runs in O(2n) time", false},
 		{"a power of ten is not a number", "about 10\U00002076 rows", "about 106 rows", false},
@@ -84,6 +91,9 @@ func TestAQuoteIsInAPassage(t *testing.T) {
 		{"two words cut, one of them a compound", "a well-\nknown elimi-\nnation step", "a well-known elimination step", true},
 		{"the second half of a cut word alone", "Elimi-\nnation produces", "nation produces", false},
 		{"the first half of a cut word alone", "after Elimi-\nnation produces", "after Elimi", false},
+		{"the first half of a cut word, with its hyphen", "after Elimi-\nnation produces", "after Elimi-", false},
+		{"the second half of a cut word, from its hyphen", "after Elimi-\nnation produces", "-\nnation produces", false},
+		{"a hyphen that cuts nothing ends a quote", "the range 3- and no more", "the range 3-", true},
 		{"a hyphen whose next line begins with no letter stays", "word-\n-word", "word-word", false},
 		{"and is quoted with what follows it", "word-\n-word", "word- -word", true},
 		{"a hyphen followed by a space and no line break stays", "Elimi- nation produces", "Elimination produces", false},
