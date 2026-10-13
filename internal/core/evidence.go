@@ -324,6 +324,11 @@ func (c *Core) recordQuoted(ctx context.Context, spec EvidenceSpec, quote string
 	if err != nil {
 		return EvidenceResult{}, err
 	}
+	// Stopped while the plugin was being stopped, a command says so: a dry
+	// run plans nothing after it, and says no "would record".
+	if err := ctx.Err(); err != nil {
+		return EvidenceResult{}, err
+	}
 	texts := make([]string, len(passages))
 	locations := make([]*plugincontract.Location, len(passages))
 	for i, passage := range passages {

@@ -283,3 +283,42 @@ func TestASearchStoppedWhileItLooksForFilesSaysSo(t *testing.T) {
 		t.Errorf("%d turns are still taken", got)
 	}
 }
+
+// stoppedOnceThePluginIsStopped is a command that is stopped while study
+// stops the plugin: it reads as stopped once a turn of the plugin was taken
+// and given back.
+type stoppedOnceThePluginIsStopped struct {
+	context.Context
+	k     *Core
+	taken *bool
+}
+
+func (c stoppedOnceThePluginIsStopped) Err() error {
+	switch n := turnsTaken(c.k, "kb"); {
+	case n > 0:
+		*c.taken = true
+	case *c.taken:
+		return context.Canceled
+	}
+	return nil
+}
+
+// A command that is stopped once the plugin has answered, while the plugin
+// is being stopped, records nothing and says it was stopped: a dry run too,
+// which would otherwise say what it would record.
+func TestEvidenceStoppedOnceThePluginAnsweredIsCanceled(t *testing.T) {
+	m, src, found := quotedTopic(t)
+	before := len(historyLines(t, filepath.Join(m.home, "c")))
+	for _, dry := range []bool{true, false} {
+		taken := false
+		ctx := stoppedOnceThePluginIsStopped{Context: context.Background(), k: m.Core, taken: &taken}
+		res, err := m.RecordEvidence(ctx, EvidenceSpec{Topic: "c", Lesson: "elimination", Source: src.ID,
+			Quote: "Elimination produces an upper triangular system.", Passages: []string{found[0].ID}, DryRun: dry})
+		if CodeOf(err) != CodeCanceled || res.Changed || !taken {
+			t.Errorf("RecordEvidence (dry run: %v), stopped once the plugin had answered = %+v, %v (%s); want canceled", dry, res, err, CodeOf(err))
+		}
+	}
+	if after := historyLines(t, filepath.Join(m.home, "c")); len(after) != before {
+		t.Errorf("Evidence was recorded by a command that was stopped:\n%s", strings.Join(after[before:], "\n"))
+	}
+}

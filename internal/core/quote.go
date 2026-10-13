@@ -82,6 +82,10 @@ type compared struct {
 	space, breaks bool
 	// hyphen says that it was written as a hyphen, and not as a longer dash.
 	hyphen bool
+	// glued says that it was written as one character with the one before
+	// it, which this reading spells out: the i of a ligature for fi, the
+	// second stop of an ellipsis. No quote begins or ends between the two.
+	glued bool
 }
 
 // unspaced reports whether a character is of a script that is written
@@ -134,13 +138,13 @@ func foldText(text string) []compared {
 		case unicode.IsControl(r), unicode.Is(unicode.Cf, r):
 			// Not shown, and not compared.
 		case r >= 'ﬀ' && r <= 'ﬆ':
-			for _, letter := range quoteLigatures[r-'ﬀ'] {
-				add(compared{r: letter})
+			for i, letter := range quoteLigatures[r-'ﬀ'] {
+				add(compared{r: letter, glued: i > 0})
 			}
 		case r == '…':
 			add(compared{r: '.'})
-			add(compared{r: '.'})
-			add(compared{r: '.'})
+			add(compared{r: '.', glued: true})
+			add(compared{r: '.', glued: true})
 		case containsRune(singleMarks, r):
 			add(compared{r: '\''})
 		case containsRune(doubleMarks, r):
@@ -188,6 +192,11 @@ type passageText struct {
 	// break inside a script written without spaces. The end of a Passage is
 	// a line break, and no more optional than another.
 	optional []bool
+	// glued says of each character that it is one character of the Passage
+	// with the one before it (compared.glued), and cut that it is the hyphen
+	// of a word cut at a line's end: no quote begins or ends at such a
+	// hyphen, which is inside its word, though a quote may hold it.
+	glued, cut []bool
 	// starts is where each Passage's text begins in runes.
 	starts []int
 }
@@ -207,17 +216,18 @@ func foldPassages(texts []string) passageText {
 		all = append(all, folded...)
 	}
 	t.runes, t.optional = make([]rune, len(all)), make([]bool, len(all))
+	t.glued, t.cut = make([]bool, len(all)), make([]bool, len(all))
 	small := func(i int) bool { return i >= 0 && i < len(all) && unicode.IsLower(all[i].r) }
 	letter := func(i int) bool { return i >= 0 && i < len(all) && unicode.IsLetter(all[i].r) }
 	for i, c := range all {
-		t.runes[i] = c.r
+		t.runes[i], t.glued[i] = c.r, c.glued
 		switch {
 		case c.space && c.breaks && i > 0 && i+1 < len(all) && unspaced(all[i-1].r) && unspaced(all[i+1].r):
 			t.optional[i] = true
 		case c.hyphen && small(i-1) && letter(i-2) && i+1 < len(all) && all[i+1].space && all[i+1].breaks && small(i+2):
 			// A word cut at a line's end: the hyphen may be left out, and
 			// the line break after it.
-			t.optional[i], t.optional[i+1] = true, true
+			t.optional[i], t.optional[i+1], t.cut[i] = true, true, true
 		}
 	}
 	// The break after a cut hyphen was marked above, and the cases that
@@ -277,9 +287,10 @@ func (t passageText) holds(quote []rune) bool {
 	for j, r := range t.runes {
 		mask := masks[r]
 		// A quote begins only in the first Passage, and never inside a word
-		// or a character.
+		// or a character: not at the hyphen a word was cut with, and not at
+		// the later part of what the Passage writes as one character.
 		carry := uint64(0)
-		if j < firstEnd && !joined(before[j], quote[0]) {
+		if j < firstEnd && !t.cut[j] && !t.glued[j] && !joined(before[j], quote[0]) {
 			carry = 1
 		}
 		ended := false
@@ -301,7 +312,8 @@ func (t passageText) holds(quote []rune) bool {
 			state[w] = next
 		}
 		// And ends only in the last, and never inside a word or a character.
-		if ended && j >= lastStart && !joined(quote[m-1], after[j]) {
+		inside := t.cut[j] || j+1 < n && t.glued[j+1]
+		if ended && j >= lastStart && !inside && !joined(quote[m-1], after[j]) {
 			return true
 		}
 	}
