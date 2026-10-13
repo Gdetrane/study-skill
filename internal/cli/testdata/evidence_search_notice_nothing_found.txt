@@ -1,0 +1,2 @@
+Knowledge base plugin kb found no Passage for "zebra" in the Source of linear-algebra it searched.
+! The plugin says of this search: These Passages were found by keyword alone: the embedding endpoint models.example did not answer within 10s.

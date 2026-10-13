@@ -147,6 +147,9 @@ const (
 	MaxPassageBytes = 32 << 10
 	// MaxSearchLimit is the most Passages one search asks for.
 	MaxSearchLimit = 50
+	// MaxNoticeBytes is how much of a search's notice study keeps, in bytes
+	// of UTF-8. More is cut off, never refused, as with a reason.
+	MaxNoticeBytes = 2000
 	// MaxQueryBytes is how long a query may be, in bytes of UTF-8.
 	MaxQueryBytes = 4096
 	// MaxSources is how many Sources a collection's status may list, and how
@@ -313,6 +316,13 @@ type SearchInput struct {
 // first.
 type SearchResult struct {
 	Passages []ScoredPassage `json:"passages"`
+	// Notice says, in a sentence or two of the plugin's own for the learner,
+	// what this search did less than the plugin was set to, and why: found
+	// by keyword alone because an embedding endpoint did not answer, say. It
+	// is left out when the search did all it was set to. It is text a
+	// plugin wrote, and study treats it as it treats a reason: put on one
+	// line, cleaned, and cut to MaxNoticeBytes.
+	Notice string `json:"notice,omitempty"`
 }
 
 // PassageInput is what the passage tool takes.

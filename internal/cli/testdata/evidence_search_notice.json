@@ -1,0 +1,38 @@
+{
+  "ok": true,
+  "data": {
+    "topic": "linear-algebra",
+    "query": "elimination produces triangular",
+    "plugin": "kb",
+    "notice": "These Passages were found by keyword alone: the embedding endpoint models.example did not answer within 10s.",
+    "passages": [
+      {
+        "id": "<passage>",
+        "source": "strang.<id>",
+        "title": "Strang",
+        "text": "Elimination produces an upper triangular system.",
+        "location": "p. 1",
+        "score": 3
+      },
+      {
+        "id": "<passage>",
+        "source": "strang.<id>",
+        "title": "Strang",
+        "text": "The pivots are on the diagonal of the triangle after elimination.",
+        "location": "p. 1",
+        "score": 1
+      },
+      {
+        "id": "<passage>",
+        "source": "strang.<id>",
+        "title": "Strang",
+        "text": "Back substitution solves the triangular\nsystem from the last equation up.",
+        "location": "p. 2",
+        "score": 1
+      }
+    ],
+    "searched": [
+      "strang.<id>"
+    ]
+  }
+}

@@ -338,6 +338,9 @@ func TestShelfSaysWhatIsWrongWithAnEndpoint(t *testing.T) {
 func TestShelfSaysThatAnEndpointIsDown(t *testing.T) {
 	at, ranker := shelftest.NewEndpoint(t), shelftest.NewEndpoint(t)
 	_, s := startWith(t, t.TempDir(), shelf.Settings{Embedder: embedderAt(t, at), Reranker: rerankerAt(t, ranker)})
+	// A book indexed while the endpoint was up, for a search to find
+	// something in once it is down.
+	s.indexed("shown", file(t, "book.a1", leaves("The first page speaks of elimination.")))
 	at.Stop()
 	found := s.diagnose()
 	// With what to look at: the server, and the address Shelf has for it.
@@ -358,6 +361,23 @@ func TestShelfSaysThatAnEndpointIsDown(t *testing.T) {
 	}
 	if said := strings.ReplaceAll(found["embedding"].Message, at.Host, "127.0.0.1:8080"); strings.Count(string(page), `"message": "`+said+`"`) != 2 {
 		t.Errorf("docs/cli.md does not show, in its two examples, what Shelf says of an embedding endpoint that is down:\n%s", said)
+	}
+	// A search says the same of the endpoint, in its notice, with what to
+	// look at: the pages show that notice as Shelf words it too.
+	notice := strings.ReplaceAll(s.find("shown", "elimination", 5).Notice, at.Host, "127.0.0.1:8080")
+	if notice != "These Passages were found by keyword alone: the embedding endpoint 127.0.0.1:8080 could not be reached: dial tcp "+
+		"127.0.0.1:8080: connect: connection refused. Check that its server is running, and its address in Shelf's settings file." {
+		t.Errorf("with the embedding endpoint down, a search's notice is: %s", notice)
+	}
+	for name, times := range map[string]int{"../../docs/cli.md": 2, "../../docs/shelf.md": 1} {
+		shown, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n := strings.Count(string(shown), notice+"\n") + strings.Count(string(shown), notice+`"`+"\n"); n != times {
+			t.Errorf("%s shows the notice of a search with the embedding endpoint down %d times as Shelf words it, want %d:\n%s",
+				name, n, times, notice)
+		}
 	}
 	ranker.Stop()
 	if f := s.diagnose()["reranking"]; f.OK || !strings.HasPrefix(f.Message, "the reranking endpoint "+ranker.Host+" could not be reached: ") ||

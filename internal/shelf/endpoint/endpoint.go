@@ -341,8 +341,21 @@ type caller struct {
 	client   *http.Client
 }
 
-// bearer is a bearer token as a request's header holds it.
-var bearer = regexp.MustCompile(`(?i)\bbearer\s+[^\s"',;]+`)
+// bearer is a bearer token as a request's header holds it, and as a server
+// repeats one: the word in any letter case, and what follows it after white
+// space, a colon or an equals sign, between quotation marks or without
+// them. A quotation mark may be written as a server writes one inside its
+// own JSON, behind a backslash.
+var bearer = regexp.MustCompile(`(?i)\bbearer(?:\s*[:=]\s*|\s+)(?:\\?"[^"]*"|\\?'[^']*'|(?:\\?["'])?[^\s"',;]+)`)
+
+// What stands for Shelf's own key and for a part of the address while a
+// server's words are gone through. Neither is in text that is shown, so
+// nothing that is looked for afterwards is found in part of one, and each
+// is written out in words at the end.
+const (
+	aKey      = "\x00"
+	anAddress = "\x01"
+)
 
 func newCaller(kind string, to *url.URL, key, agent string, maxBytes int64) *caller {
 	// Go's own transport with its defaults: it verifies certificates, and
@@ -377,20 +390,32 @@ func newCaller(kind string, to *url.URL, key, agent string, maxBytes int64) *cal
 // each; and every name of the path of twelve characters or more, which is
 // an account's or a tenant's and not a word of the API. The host is not
 // among them: Shelf names an endpoint by it.
+//
+// Each is there as it is sent and as it reads, where a path holds what a
+// URL escapes: a server repeats either. And each is as it will be shown
+// (shown), which is where it is looked for.
 func namesOf(to *url.URL) []string {
 	base := *to
 	base.Path, base.RawPath = path.Dir(to.Path), ""
-	names := []string{to.String(), base.String()}
-	for _, part := range []string{to.Path, base.Path} {
-		if len(part) > 1 {
-			names = append(names, part)
-		}
-	}
-	for _, name := range strings.Split(to.Path, "/") {
-		if len(name) >= 12 {
+	var names []string
+	add := func(name string, least int) {
+		if name = shown(name); len(name) >= least && !slices.Contains(names, name) {
 			names = append(names, name)
 		}
 	}
+	for _, u := range []*url.URL{to, &base} {
+		add(u.String(), 2)
+		add(u.Scheme+"://"+u.Host+u.Path, 2)
+		add(u.EscapedPath(), 2)
+		add(u.Path, 2)
+	}
+	for _, whole := range []string{to.EscapedPath(), to.Path} {
+		for _, name := range strings.Split(whole, "/") {
+			add(name, 12)
+		}
+	}
+	// A name is part of a path, and a path of an address.
+	sort.SliceStable(names, func(i, j int) bool { return len(names[i]) > len(names[j]) })
 	return names
 }
 
@@ -612,29 +637,34 @@ func message(body []byte) string {
 // said is text of the endpoint's, or of the system's, made safe to repeat:
 // on one line, without what a terminal would act on, short, and without the
 // key, should the endpoint have repeated it.
+//
+// What it promises, and no more: Shelf's own key, whole, wherever it
+// stands; whatever follows the word "Bearer"; and the address but for its
+// host. A key that is not Shelf's and follows no "Bearer" is words like any
+// other to Shelf, and so is a name of the address's path that is shorter
+// than twelve characters and stands by itself.
 func (c *caller) said(text string) string {
-	text = strings.Join(strings.Fields(strings.Map(func(r rune) rune {
-		switch {
-		case r == '\n' || r == '\t' || r == '\r':
-			return ' '
-		case !unicode.IsPrint(r) || unicode.Is(unicode.Bidi_Control, r):
-			return -1
-		}
-		return r
-	}, strings.ToValidUTF8(text, ""))), " ")
 	// The key is looked for in the text as it will be shown: one repeated
-	// with a character in it that is not shown is whole again by now. And
-	// whatever follows "Bearer" is a key, Shelf's own or not: a server that
-	// repeats the header it was sent repeats it as it was sent.
-	text = bearer.ReplaceAllString(text, "Bearer [the key]")
+	// with a character in it that is not shown is whole again by now.
+	text = shown(text)
+	// Shelf's own key first, wherever it stands and whatever it holds: a
+	// key may hold a comma, a semicolon or a quotation mark, at which what
+	// follows "Bearer" is taken to end, and would be left in two.
 	if c.key != "" {
-		text = strings.ReplaceAll(text, c.key, "[the key]")
+		text = strings.ReplaceAll(text, c.key, aKey)
 	}
+	// And whatever follows "Bearer" is a key, Shelf's own or not: a server
+	// that repeats the header it was sent repeats it as it was sent, and a
+	// gateway repeats the one it sent on. What stands for Shelf's own is
+	// taken with it, whole.
+	text = bearer.ReplaceAllLiteralString(text, "Bearer "+aKey)
 	// Nor the rest of the address, which a server names when it says what
-	// it was asked for, and which may hold what is the learner's alone.
+	// it was asked for, and which may hold what is the learner's alone: in
+	// whatever letter case the server writes it.
 	for _, part := range c.address {
-		text = strings.ReplaceAll(text, part, "[the address]")
+		text = withoutFold(text, part, anAddress)
 	}
+	text = strings.NewReplacer(aKey, "[the key]", anAddress, "[the address]").Replace(text)
 	const most = 300
 	if len(text) > most {
 		cut := most

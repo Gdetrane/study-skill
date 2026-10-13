@@ -1,6 +1,7 @@
 package plugincontract_test
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -284,5 +285,64 @@ func TestResultsTheContractAllows(t *testing.T) {
 	}
 	if err := (plugincontract.SearchResult{}).Validate(in); err != nil {
 		t.Errorf("a search that found nothing: %v", err)
+	}
+}
+
+// A search may say what it did less than the plugin was set to, in a notice
+// beside its Passages, and one that did it all says nothing: the field is
+// left out. The notice is words for the learner: an answer is refused
+// neither for how long they are nor for a character in them, as it is not
+// for a reason's. study's client cuts and cleans them (internal/pluginclient).
+func TestASearchMaySayWhatItDidLess(t *testing.T) {
+	in := plugincontract.SearchInput{Collection: "c", Query: "q", Limit: 3}
+	found := plugincontract.SearchResult{Passages: []plugincontract.ScoredPassage{
+		{Passage: plugincontract.Passage{ID: "p1", Source: "a.1", Text: "x"}, Score: 1},
+	}}
+	plain, err := json.Marshal(found)
+	if err != nil || string(plain) != `{"passages":[{"id":"p1","source":"a.1","text":"x","score":1}]}` {
+		t.Errorf("a search without a notice is written as %s (%v); want no notice in it, not an empty one", plain, err)
+	}
+	for name, notice := range map[string]string{
+		"a notice":                           "These Passages were found by keyword alone: the embedding endpoint 127.0.0.1:8080 did not answer within 10s.",
+		"one of the most bytes":              strings.Repeat("é", plugincontract.MaxNoticeBytes/2),
+		"one over the limit":                 strings.Repeat("x", plugincontract.MaxNoticeBytes+1),
+		"one a terminal acts on, over lines": "found\x1b[2J by keyword\nalone",
+		"one that is white space":            " \n",
+	} {
+		said := found
+		said.Notice = notice
+		if err := said.Validate(in); err != nil {
+			t.Errorf("a search with %s: Validate() = %v; want it let through, for study to clean and to cut", name, err)
+		}
+		data, err := json.Marshal(said)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var back plugincontract.SearchResult
+		if err := plugincontract.Decode(data, &back); err != nil || back.Notice != notice || len(back.Passages) != 1 {
+			t.Errorf("a search with %s is read back as %+v (%v)", name, back, err)
+		}
+	}
+	// A plugin may say more of a search in fields of its own, which are
+	// passed over: these are the two Shelf adds.
+	var more plugincontract.SearchResult
+	if err := plugincontract.Decode([]byte(`{"passages": [], "search": ["keyword"], "reranked": false, "notice": "by keyword alone"}`), &more); err != nil ||
+		more.Notice != "by keyword alone" || more.Passages == nil {
+		t.Errorf("a search with fields of the plugin's own is read as %+v (%v)", more, err)
+	}
+	// The notice is optional, so it is left out and never null, and it is
+	// text, under its own name.
+	for data, want := range map[string]string{
+		`{"passages": [], "notice": null}`:       `"notice" is null: a field that is optional is left out, not given as null`,
+		`{"passages": [], "notice": 7}`:          "notice is a number, not a string",
+		`{"passages": [], "notice": ["a", "b"]}`: "notice is a array, not a string",
+		`{"passages": [], "Notice": "a"}`:        `"notice" is spelled "Notice"`,
+	} {
+		var out plugincontract.SearchResult
+		refusedFor(t, data, plugincontract.Decode([]byte(data), &out), want)
+	}
+	if plugincontract.MaxNoticeBytes < 500 || plugincontract.MaxNoticeBytes > plugincontract.MaxTextBytes {
+		t.Errorf("a notice may have %d bytes; want room for a sentence or two that name an endpoint and repeat what it said, and no "+
+			"more than a reason has (%d)", plugincontract.MaxNoticeBytes, plugincontract.MaxTextBytes)
 	}
 }

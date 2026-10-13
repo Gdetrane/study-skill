@@ -338,7 +338,10 @@ func (a *app) evidenceSearchCommand() *cobra.Command {
 			"Only the Sources the plugin holds indexed on this computer, as the Topic records them,\n" +
 			"are searched. The others are left out, and the output says which, why, and the one\n" +
 			"command to run next for them. The plugin is started for the search and stopped again,\n" +
-			"and has 45 seconds for all of it. Nothing is recorded.",
+			"and has 45 seconds for all of it. Nothing is recorded.\n\n" +
+			"A plugin that searched with less than it is set to, by keyword alone while its\n" +
+			"embedding endpoint does not answer, say, says so in a notice, which is shown before the\n" +
+			"Passages: they are then not the best the Sources hold. A notice is no error.",
 		Example: `  study evidence search linear-algebra "why does elimination produce a triangular system?"
   study evidence search linear-algebra pivots --limit 3 --source strang-linear-algebra.k3f9a2`,
 		Args:              minArgs(2),
@@ -587,6 +590,11 @@ func writeIndexResult(w io.Writer, r core.IndexResult) error {
 // Passage with what Evidence quoted from it is recorded with, and then what
 // was left out of the search.
 //
+// What the plugin says the search did less than it was set to, its notice,
+// comes before the Passages, under the line that says how many were found:
+// whoever relies on them has then read that they are not the best the
+// Sources hold. It is the plugin's text, printed through printable.
+//
 // A Passage's text is the plugin's, as it gave it. It is printed line by
 // line, each through printable, like any text from a file.
 func writePassageSearch(w io.Writer, r core.PassageSearch) error {
@@ -601,6 +609,9 @@ func writePassageSearch(w io.Writer, r core.PassageSearch) error {
 	default:
 		fmt.Fprintf(&b, "Knowledge base plugin %s found %d %s for %s in %s, best first:\n", plugin, len(r.Passages),
 			plural(len(r.Passages), "Passage", "Passages"), strconv.Quote(r.Query), topic)
+	}
+	if r.Notice != "" {
+		fmt.Fprintf(&b, "%s The plugin says of this search: %s\n", styleWarn.Render("!"), printable(r.Notice))
 	}
 	for _, p := range r.Passages {
 		where := ""

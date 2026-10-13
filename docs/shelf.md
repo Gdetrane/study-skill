@@ -185,8 +185,9 @@ A search is answered all the same, by what is left. An embedding endpoint that i
 takes longer than 10 seconds, or answers with what is no vector leaves a search by keyword.
 A reranking endpoint that fails, or takes longer than 20 seconds, leaves the order the
 search had. Together that is 30 of the 45 seconds `study` gives a search, starting Shelf
-included, so that Shelf is still there to answer and to say what it did without. Shelf says so in its answer, in three fields of its own beside the Passages,
-which the contract lets a plugin add:
+included, so that Shelf is still there to answer and to say what it did without. Shelf says so in its answer, in three fields beside the Passages.
+The `notice` is the contract's, and `study` shows it to you. The other two are Shelf's
+own, which the contract lets a plugin add and `study` does not read:
 
 | Field | Says |
 |---|---|
@@ -194,13 +195,45 @@ which the contract lets a plugin add:
 | `reranked` | Whether the reranking endpoint put them in their order. |
 | `notice` | In words for you, what the search did less than its settings ask for, and why: `These Passages were found by keyword alone: the embedding endpoint 127.0.0.1:8080 could not be reached: …`. It is left out when there is nothing to say. |
 
-Shelf names an endpoint by its host. It never repeats the endpoint's key, nor the rest of
-its address, and keeps neither in its index: where an endpoint's own words repeat them,
-or anything after "Bearer", Shelf takes them out before it repeats the words.
+Shelf names an endpoint by its host, and keeps neither the key nor the address in its
+index. When an endpoint refuses, Shelf repeats the endpoint's own words, so that you can
+see what is wrong, in a notice and in the reason of a Source that failed. `study` shows
+both to you and hands both to your agent. Shelf takes three things out of those words
+first:
 
-`study` does not show you a `notice` yet: `study evidence search`, and the agent's
-`evidence_search` tool, give the Passages and what was left out of the search, and the
-contract has no word for a search that did less than its settings ask for.
+- **The key in Shelf's settings**, whole, wherever it stands in them and whatever
+  characters it holds.
+- **Whatever follows the word "Bearer"**, in any letter case, after a space, a colon, an
+  equals sign or a quotation mark: a gateway that sends a key of its own on repeats that
+  one.
+- **The address but for its host**: the address a request went to and the one the
+  settings give, their paths, and every name of a path of twelve characters or more, as
+  the settings give them and as they were sent, in any letter case.
+
+Two things Shelf cannot tell from any other word, and repeats as the endpoint said them:
+
+- a key that is not the one in Shelf's settings and does not stand right after the word
+  "Bearer": in `invalid bearer token sk-…` it stands after `token`, and a gateway may
+  name a key of its own anywhere in a sentence;
+- a name of the address's path that is shorter than twelve characters, where a server
+  repeats it by itself, as in `tenant acme has no model`.
+
+So give nothing that must stay secret a short name in the address, and expect an endpoint
+to keep its own keys out of what it says.
+
+`study` shows you a `notice` wherever it shows a search. `study evidence search` prints it
+under its first line, before the Passages, and gives it as `notice` with `--json`:
+
+```
+Knowledge base plugin shelf found 2 Passages for "elimination" in linear-algebra, best first:
+! The plugin says of this search: These Passages were found by keyword alone: the embedding endpoint 127.0.0.1:8080 could not be reached: dial tcp 127.0.0.1:8080: connect: connection refused. Check that its server is running, and its address in Shelf's settings file.
+```
+
+Your agent's `evidence_search` tool returns it in the same field, and the skill has the
+agent tell you what it says when it matters to what you asked, and not take the Passages
+for the best your Sources hold. A notice is no error: the Passages are your Sources' own
+text all the same, to learn from and to quote. When the endpoint answers again, so does
+the search by it, and the notice is gone.
 
 ### Vectors of another model
 

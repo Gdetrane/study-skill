@@ -257,6 +257,14 @@ A stretch of a Source's own text that a search of the Knowledge base returns, wi
 location when known. Evidence quotes from a Passage.
 _Avoid_: Chunk, snippet, hit, result
 
+**Notice**:
+What a Knowledge base plugin says of a search that did less than the plugin is set to, and
+why, in a sentence or two of its own for the learner: found by keyword alone because an
+embedding endpoint did not answer, say. It comes with the search's Passages, which are
+then not the best the Sources hold, and is no error. It is not the search's note, which
+is `study`'s and says which Sources were left out.
+_Avoid_: Warning, error, fallback, degraded search
+
 **Library**:
 The learner's whole collection of documents across all Topics.
 _Avoid_: Catalog (that is only the index behind the Library)

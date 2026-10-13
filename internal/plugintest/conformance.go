@@ -673,6 +673,13 @@ func (s *suite) search(t *testing.T, cs *session, in plugincontract.SearchInput)
 	if err := out.Validate(in); err != nil {
 		t.Fatalf("what search gave back for %s breaks the contract: %v", compact(in), err)
 	}
+	// A notice is a sentence or two for the learner. study refuses no
+	// search for a longer one: it cuts the notice short, and the learner
+	// never reads how it ended.
+	if n := len(out.Notice); n > plugincontract.MaxNoticeBytes {
+		t.Errorf("search gave a notice of %d bytes for %s: a notice is %d bytes at most, and study cuts a longer one short",
+			n, compact(in), plugincontract.MaxNoticeBytes)
+	}
 	return out.Passages
 }
 

@@ -54,6 +54,8 @@ const Arg = "lamplight-test-plugin"
 //	--refuse TOOL=CODE:MESSAGE   TOOL refuses every call
 //	--plain-error TOOL=TEXT      TOOL fails with text that is no JSON
 //	--text-only         results as text, without structured content
+//	--notice TEXT       every search says TEXT in its notice, as a plugin
+//	                    says what a search did less than it was set to
 //	--break RULES       the rules of the contract it breaks (the Break
 //	                    constants), divided by commas
 //	--linger            stay when its input closes, until it is signalled
@@ -69,7 +71,7 @@ const Arg = "lamplight-test-plugin"
 //	                    places
 //	--stderr TEXT       write TEXT on its standard error first
 //	--escaped           read \x1b, \a, \n and the like in the texts of
-//	                    --name, --version, --stderr, --refuse, --finding and
+//	                    --name, --version, --stderr, --notice, --refuse, --finding and
 //	                    --plain-error as the characters they stand for: the
 //	                    registry stores no argument with such a character
 //	                    in it, and a plugin can write one all the same
@@ -211,8 +213,14 @@ func ReadCalls(t testing.TB, path string) []Call {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The plugin makes the file and then writes its first line: a reader
+	// that comes between the two finds a file with no call in it yet.
+	lines := strings.TrimSpace(string(data))
+	if lines == "" {
+		return nil
+	}
 	var calls []Call
-	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+	for _, line := range strings.Split(lines, "\n") {
 		var call Call
 		if err := json.Unmarshal([]byte(line), &call); err != nil {
 			t.Fatalf("a line of %s.calls is no call: %v: %q", path, err, line)
@@ -324,6 +332,7 @@ func run(args []string) int {
 	flags.StringVar(&cfg.Name, "name", "", "")
 	flags.StringVar(&cfg.Version, "version", "", "")
 	flags.BoolVar(&cfg.TextOnly, "text-only", false, "")
+	flags.StringVar(&cfg.Notice, "notice", "", "")
 	delays := pairs{}
 	flags.Var((*findings)(&cfg.Findings), "finding", "")
 	flags.Var(pairs(cfg.Results), "result", "")
@@ -335,6 +344,7 @@ func run(args []string) int {
 	}
 	if *escaped {
 		cfg.Name, cfg.Version, *stderr = unescaped(cfg.Name), unescaped(cfg.Version), unescaped(*stderr)
+		cfg.Notice = unescaped(cfg.Notice)
 		for _, texts := range []map[string]string{cfg.Refusals, cfg.PlainErrors} {
 			for tool, text := range texts {
 				texts[tool] = unescaped(text)

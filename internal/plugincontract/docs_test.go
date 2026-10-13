@@ -282,6 +282,7 @@ func TestThePageGivesEveryLimitAndDeadline(t *testing.T) {
 		"the length of a Passage":           "| " + number(plugincontract.MaxPassageBytes) + " bytes of UTF-8 |",
 		"the length of a query":             "| " + number(plugincontract.MaxQueryBytes) + " bytes of UTF-8 |",
 		"the highest limit of a search":     "| `limit` of a search | " + number(plugincontract.MaxSearchLimit) + " |",
+		"the length of a notice":            "| A search's `notice`, as `study` shows it | " + number(plugincontract.MaxNoticeBytes) + " bytes at most, and `…` after them when it was cut |",
 		"the number of Sources":             "| " + number(plugincontract.MaxSources) + " |",
 		"the length of a collection's name": "| A collection's name | " + number(plugincontract.MaxNameBytes) + " characters |",
 		"the length of an id":               "| " + number(plugincontract.MaxIDBytes) + " characters |",
@@ -431,8 +432,19 @@ func TestThePagesExamplesAreTheContracts(t *testing.T) {
 			var out plugincontract.SearchResult
 			strict(t, what, m[3], &out)
 			check(what, out.Validate(searched))
-			if len(out.Passages) < 2 {
-				t.Errorf("the example of %s shows %d Passages: show the order of two", what, len(out.Passages))
+			// The first is a search that did all it was set to, and the
+			// second one that says what it did less.
+			switch seen[what] {
+			case 1:
+				if len(out.Passages) < 2 || out.Notice != "" {
+					t.Errorf("the first example of %s shows %d Passages, with the notice %q: show the order of two, and no notice",
+						what, len(out.Passages), out.Notice)
+				}
+			case 2:
+				if n := out.Notice; strings.TrimSpace(n) == "" || len(n) > plugincontract.MaxNoticeBytes || len(out.Passages) == 0 {
+					t.Errorf("the second example of %s shows %d Passages, with the notice %q: show Passages a search found "+
+						"all the same, and a notice as long as one may be at most", what, len(out.Passages), n)
+				}
 			}
 		case "passage input":
 			strict(t, what, m[3], &asked)
@@ -462,6 +474,8 @@ func TestThePagesExamplesAreTheContracts(t *testing.T) {
 	for _, tool := range []string{plugincontract.ToolStatus, plugincontract.ToolCancel, plugincontract.ToolSearch, plugincontract.ToolPassage} {
 		want[tool+" input"], want[tool+" result"] = 1, 1
 	}
+	// A search is shown answering twice: without a notice, and with one.
+	want[plugincontract.ToolSearch+" result"] = 2
 	if !reflect.DeepEqual(seen, want) {
 		t.Errorf("the page has these examples: %v\nwant: %v", seen, want)
 	}
