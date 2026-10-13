@@ -62,26 +62,45 @@ type searched struct {
 //
 // An endpoint that does not answer takes nothing from the search but what
 // it would have added: the search is answered by what is left, and says so.
+//
+// The question's vector is asked for first, and the collection is then read
+// once for both rankings (index.Reading): another copy of Shelf may replace
+// a Source's content while a search is under way, and a search gives the
+// Source as it was or as it is, never some Passages of each.
 func (s *Shelf) find(ctx context.Context, c *index.Collection, in plugincontract.SearchInput) (searched, error) {
 	out := searched{kinds: []string{plugincontract.SearchKeyword}}
-	byWords, err := c.Search(ctx, in.Query, each, in.Sources)
+	var question []float32
+	if s.settings.Embedder != nil {
+		vector, notice, err := s.question(ctx, c, in)
+		if err != nil {
+			return out, err
+		}
+		if question = vector; notice != "" {
+			out.notices = append(out.notices, notice)
+		}
+	}
+	reading, err := c.Read(ctx)
+	if err != nil {
+		return out, err
+	}
+	defer reading.Close()
+	byWords, err := reading.Search(ctx, in.Query, each, in.Sources)
 	if err != nil {
 		return out, err
 	}
 	out.found = byWords
-	if s.settings.Embedder != nil {
-		byMeaning, notice, err := s.nearest(ctx, c, in)
+	if question != nil {
+		e := s.settings.Embedder
+		byMeaning, err := reading.Nearest(ctx, index.Made{Model: e.Model(), Document: e.Document()}, question, each, in.Sources)
 		if err != nil {
 			return out, err
 		}
-		if byMeaning != nil {
-			out.found = merge(byMeaning, byWords)
-			out.kinds = append(out.kinds, plugincontract.SearchEmbedding)
-		}
-		if notice != "" {
-			out.notices = append(out.notices, notice)
-		}
+		out.found = merge(byMeaning, byWords)
+		out.kinds = append(out.kinds, plugincontract.SearchEmbedding)
 	}
+	// The reading is over before a reranker is asked: what it orders is in
+	// hand, and an endpoint takes its time.
+	reading.Close()
 	if r := s.settings.Reranker; r != nil && len(out.found) > 1 {
 		// The best of them, and at least as many as are asked for: what is
 		// returned was all before the reranker.
@@ -112,16 +131,16 @@ func (s *Shelf) find(ctx context.Context, c *index.Collection, in plugincontract
 	return out, nil
 }
 
-// nearest returns the Passages nearest a question by their vectors, the
-// nearest first. It returns nil, and a notice that says why, when the
-// search has to do without them: no Source that is searched has vectors a
+// question returns the vector of a search's question, to find the Passages
+// nearest it by. It returns none, and a notice that says why, when the
+// search has to do without: no Source that is searched has vectors a
 // question's is compared with, or the endpoint did not give the question's.
-// A notice beside Passages says that some of the Sources were searched by
+// A notice beside a vector says that some of the Sources are searched by
 // keyword alone.
 //
 // The endpoint is asked only when there is a vector to compare the
 // question's with.
-func (s *Shelf) nearest(ctx context.Context, c *index.Collection, in plugincontract.SearchInput) (found []index.Found, notice string, err error) {
+func (s *Shelf) question(ctx context.Context, c *index.Collection, in plugincontract.SearchInput) (vector []float32, notice string, err error) {
 	e := s.settings.Embedder
 	sources, err := c.Sources(ctx)
 	if err != nil {
@@ -151,7 +170,10 @@ func (s *Shelf) nearest(ctx context.Context, c *index.Collection, in plugincontr
 		return nil, alone + "none of the Sources searched has vectors of the model " + short(e.Model()) + ", which Shelf's settings name. " +
 			"Index them again to have their Passages embedded.", nil
 	}
-	question, err := e.Query(ctx, in.Query)
+	// The question's vector is of the size the settings name, as the
+	// vectors of every Source that fits them are: the endpoint client cuts
+	// to it, and refuses a shorter one.
+	vector, err = e.Query(ctx, in.Query)
 	var failed *endpoint.Problem
 	switch {
 	case errors.As(err, &failed):
@@ -159,21 +181,11 @@ func (s *Shelf) nearest(ctx context.Context, c *index.Collection, in plugincontr
 	case err != nil:
 		return nil, "", err
 	}
-	// The question's vector is of the size the settings name, as the
-	// vectors of every Source that fits them are: the endpoint client cuts
-	// to it, and refuses a shorter one.
-	found, err = c.Nearest(ctx, index.Made{Model: e.Model(), Document: e.Document()}, question, each, in.Sources)
-	if err != nil {
-		return nil, "", err
-	}
-	if found == nil {
-		found = []index.Found{}
-	}
 	if others := len(indexed) - len(fitting); others > 0 {
 		notice = fmt.Sprintf("%d of the %d Sources searched were searched by keyword alone: their Passages have no vectors of the model %s, "+
 			"which Shelf's settings name. Index them again to have their Passages embedded.", others, len(indexed), short(e.Model()))
 	}
-	return found, notice, nil
+	return vector, notice, nil
 }
 
 // merge puts the two rankings of one search in one order: two Passages of

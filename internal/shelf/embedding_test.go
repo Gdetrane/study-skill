@@ -1009,3 +1009,51 @@ func TestAServerThatAppliesTheModelsPromptsIsToldByName(t *testing.T) {
 		t.Errorf("the collection keeps %+v for the Source, want %+v", got, want)
 	}
 }
+
+// A search gives a Source as it was or as it is, never some Passages of
+// each. Another copy of Shelf may put other content in a Source's place
+// while a search is under way, and the moment a search waits longest is
+// while the endpoint makes the question's vector: so that is asked for
+// first, and the collection is then read once, for the Passages found by
+// their words and for those found by their vectors alike.
+func TestASearchGivesOneContentOfASource(t *testing.T) {
+	warm(t)
+	at := shelftest.NewEndpoint(t)
+	folder := t.TempDir()
+	_, s := startWith(t, folder, shelf.Settings{Embedder: embedderAt(t, at)})
+	early := file(t, "book.a1", leaves("The first edition speaks of motives.", "The first edition speaks of cycles."))
+	s.indexed("replaced", early)
+
+	// The other copy, with the same settings, and the content it indexes
+	// while the first is asked for a question's vector.
+	_, other := startWith(t, folder, shelf.Settings{Embedder: embedderAt(t, at)})
+	later := early
+	data := leaves("The second edition speaks of motives.", "The second edition speaks of cycles.")
+	later.Path = filepath.Join(t.TempDir(), "second-edition.pdf")
+	if err := os.WriteFile(later.Path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	later.Hash = hashOf(data)
+	var once sync.Once
+	at.Answer(func(_ http.ResponseWriter, _ *http.Request, body map[string]any) bool {
+		// The question, and not the Passages the other copy has embedded
+		// meanwhile, which the endpoint answers as ever.
+		if texts, _ := body["input"].([]any); len(texts) == 1 && strings.Contains(fmt.Sprint(texts[0]), "query: ") {
+			once.Do(func() { other.indexed("replaced", later) })
+		}
+		return false
+	})
+	found := s.search("replaced", "edition motives cycles", 10)
+	if len(found) != 2 {
+		t.Fatalf("the search found %d Passages, want the two of the Source: %+v", len(found), found)
+	}
+	for _, passage := range found {
+		if !strings.Contains(passage.Text, "The second edition") {
+			t.Errorf("a search that began before the Source was replaced, and read the collection after, found %q: want the "+
+				"content that is indexed, and none of the earlier one", passage.Text)
+		}
+	}
+	if now := s.status("replaced")[early.ID]; now.Hash != later.Hash {
+		t.Fatalf("the Source was not replaced during the search, so this test shows nothing: %+v", now)
+	}
+}

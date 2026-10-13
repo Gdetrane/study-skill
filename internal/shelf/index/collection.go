@@ -717,10 +717,51 @@ func terms(query string) string {
 	return strings.Join(quoted, " OR ")
 }
 
+// Reading is one reading of a collection: whatever it is asked, it answers
+// of the collection as it was when it first looked. A search by words and
+// one by vectors made through the same Reading find the same content of
+// every Source, though another copy of Shelf replaces one meanwhile, and a
+// Passage is never paired with the vector of the one that stood in its
+// place before.
+//
+// It is a transaction that only reads. A transaction of this collection
+// otherwise takes the lock that writes it from its beginning, and a search
+// must never keep another copy of Shelf from indexing: one that only reads
+// blocks nobody. Close it when the reading is over.
+type Reading struct {
+	c  *Collection
+	tx *sql.Tx
+}
+
+// Read begins a reading of the collection.
+func (c *Collection) Read(ctx context.Context) (*Reading, error) {
+	tx, err := c.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return nil, c.wrap(err)
+	}
+	return &Reading{c: c, tx: tx}, nil
+}
+
+// Close ends the reading. It may be called more than once.
+func (r *Reading) Close() { _ = r.tx.Rollback() }
+
+// Search returns the Passages that answer a query, the best first, and no
+// more than limit. sources, when not nil, are the ids of the Sources to
+// search. It is a reading of its own: see Reading.Search.
+func (c *Collection) Search(ctx context.Context, query string, limit int, sources []string) ([]Found, error) {
+	r, err := c.Read(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer r.Close()
+	return r.Search(ctx, query, limit, sources)
+}
+
 // Search returns the Passages that answer a query, the best first, and no
 // more than limit. sources, when not nil, are the ids of the Sources to
 // search.
-func (c *Collection) Search(ctx context.Context, query string, limit int, sources []string) ([]Found, error) {
+func (r *Reading) Search(ctx context.Context, query string, limit int, sources []string) ([]Found, error) {
+	c := r.c
 	match := terms(query)
 	if match == "" {
 		return nil, nil // a query of punctuation alone names nothing to find
@@ -740,7 +781,7 @@ func (c *Collection) Search(ctx context.Context, query string, limit int, source
 	// Passages that score the same come in the order of the text, so that
 	// the same search gives the same answer.
 	statement += ` ORDER BY bm25(passages_text), p.source, p.place LIMIT ?`
-	rows, err := c.db.QueryContext(ctx, statement, append(args, limit)...)
+	rows, err := r.tx.QueryContext(ctx, statement, append(args, limit)...)
 	if err != nil {
 		return nil, c.wrap(err)
 	}
@@ -766,7 +807,20 @@ func (c *Collection) Search(ctx context.Context, query string, limit int, source
 // Every vector that counts is read and compared: no index of them is kept.
 // A collection is a Topic's books, a few thousand Passages, and the
 // comparing is a fraction of the reading (docs/shelf.md has the numbers).
+// It is a reading of its own: see Reading.Nearest.
 func (c *Collection) Nearest(ctx context.Context, made Made, question []float32, limit int, sources []string) ([]Found, error) {
+	r, err := c.Read(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer r.Close()
+	return r.Nearest(ctx, made, question, limit, sources)
+}
+
+// Nearest returns the Passages whose vectors are nearest a question's, as
+// Collection.Nearest does, of the collection as this reading has it.
+func (r *Reading) Nearest(ctx context.Context, made Made, question []float32, limit int, sources []string) ([]Found, error) {
+	c, tx := r.c, r.tx
 	if vectors, err := c.hasVectors(ctx); err != nil || !vectors || len(question) == 0 || limit < 1 {
 		return nil, err
 	}
@@ -781,21 +835,11 @@ func (c *Collection) Nearest(ctx context.Context, made Made, question []float32,
 		statement += ` AND v.source IN (SELECT value FROM json_each(?))`
 		args = append(args, string(list))
 	}
-	// One reading of the collection, for the vectors and then for the
-	// Passages they are of: a Passage is known to its vector by its place
-	// in the Source, and another copy of Shelf may put other content in the
-	// Source's place between the two. Read apart, the new Passage at a place
-	// would be ranked by the vector of the one that stood there before.
-	//
-	// A reading, and said to be one: a transaction of this collection takes
-	// the lock that writes it from its beginning, and a search must never
-	// keep another copy of Shelf from indexing. One that only reads holds
-	// the collection as it was when it first looked, and blocks nobody.
-	tx, err := c.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
-	if err != nil {
-		return nil, c.wrap(err)
-	}
-	defer func() { _ = tx.Rollback() }()
+	// The vectors, and then the Passages they are of, in the one reading:
+	// a Passage is known to its vector by its place in the Source, and
+	// another copy of Shelf may put other content in the Source's place
+	// between the two. Read apart, the new Passage at a place would be
+	// ranked by the vector of the one that stood there before.
 	rows, err := tx.QueryContext(ctx, statement+` ORDER BY v.source, v.first`, args...)
 	if err != nil {
 		return nil, c.wrap(err)
