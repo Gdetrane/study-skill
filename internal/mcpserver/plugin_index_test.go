@@ -807,6 +807,16 @@ func receiverOf(expr ast.Expr) string {
 // other method of a Connection asks for it. So each tool's name is used in
 // the one method that is called after it, and nowhere is a tool named by a
 // text of the client's own.
+//
+// And no method asks another's tool by calling that method: a Search that
+// called Diagnose when the plugin refused it would have every tool that
+// searches test what the plugin depends on, with the core none the wiser.
+// The client calls none of a Connection's asking methods anywhere. What
+// calls a tool at all is one function, callWithin, which only the handshake
+// and ask use, and ask is called once in each asking method, with that
+// method's own tool, named by the contract's name for it. The list of the
+// contract's tools is read by the handshake alone, so no tool is asked by
+// its place in that list.
 func TestTheClientAsksEachToolInOneMethod(t *testing.T) {
 	files, err := filepath.Glob(filepath.Join("..", "pluginclient", "*.go"))
 	if err != nil {
@@ -814,6 +824,19 @@ func TestTheClientAsksEachToolInOneMethod(t *testing.T) {
 	}
 	only := map[string]string{"ToolIndex": "Connection.Index", "ToolStatus": "Connection.Status", "ToolCancel": "Connection.Cancel",
 		"ToolSearch": "Connection.Search", "ToolPassage": "Connection.Passage", "ToolDiagnose": "Connection.Diagnose"}
+	// asking are the methods of a Connection that ask a plugin a tool, and
+	// calledIn where the client's own way to a tool may be used. Search and
+	// Passage are names of fields of the contract's types too, so of those
+	// only a call counts.
+	asking := []string{"Index", "Status", "Cancel", "Diagnose"}
+	calledIn := map[string][]string{
+		"CallTool":   {"Connection.callWithin"},
+		"callWithin": {"Connection.ask", "Connection.handshake"},
+		"ask": {"Connection.Index", "Connection.Status", "Connection.Cancel", "Connection.Search", "Connection.Passage",
+			"Connection.Diagnose"},
+		"Tools": {"Connection.handshake"},
+	}
+	asks := map[string]int{}
 	found := map[string]int{}
 	// methods are the exported methods of a Connection.
 	methods := map[string]bool{}
@@ -836,14 +859,54 @@ func TestTheClientAsksEachToolInOneMethod(t *testing.T) {
 					}
 				}
 			}
+			// called are the selectors that are called: x.Search(...).
+			called := map[*ast.SelectorExpr]bool{}
+			ast.Inspect(decl, func(n ast.Node) bool {
+				if call, ok := n.(*ast.CallExpr); ok {
+					if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
+						called[sel] = true
+					}
+				}
+				return true
+			})
 			ast.Inspect(decl, func(n ast.Node) bool {
 				switch x := n.(type) {
+				case *ast.CallExpr:
+					// ask(ctx, tool, ...): the tool is the contract's name
+					// for the method's own, written out.
+					if sel, ok := x.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "ask" {
+						asks[in]++
+						tool, named := ast.Expr(nil), false
+						if len(x.Args) > 1 {
+							tool = x.Args[1]
+						}
+						if arg, ok := tool.(*ast.SelectorExpr); ok {
+							named = only[arg.Sel.Name] == in
+						}
+						if !named {
+							t.Errorf("%s: %s calls ask with a tool that is not the contract's name for its own: each method "+
+								"asks the one tool it is called after, named so that this test can follow it", name, in)
+						}
+					}
 				case *ast.SelectorExpr:
 					if may, guarded := only[x.Sel.Name]; guarded {
 						found[x.Sel.Name]++
 						if in != may {
 							t.Errorf("%s: %s uses %s: only %s asks a plugin that tool, so that who has a plugin index is "+
 								"whoever calls that method", name, in, x.Sel.Name, may)
+						}
+					}
+					if slices.Contains(asking, x.Sel.Name) || called[x] && (x.Sel.Name == "Search" || x.Sel.Name == "Passage") {
+						t.Errorf("%s: %s uses .%s: the client calls none of a Connection's asking methods. One that asked "+
+							"another tool, when its own call failed say, would have whatever reaches it ask that tool too, and "+
+							"the tests that read the core for who has a plugin index, or test what it depends on, would not "+
+							"see it (ADR-0012)", name, in, x.Sel.Name)
+					}
+					if may, guarded := calledIn[x.Sel.Name]; guarded {
+						found[x.Sel.Name]++
+						if !slices.Contains(may, in) {
+							t.Errorf("%s: %s uses %s: only %v may, so that every tool of a plugin is asked in the one method "+
+								"called after it", name, in, x.Sel.Name, may)
 						}
 					}
 				case *ast.BasicLit:
@@ -860,6 +923,19 @@ func TestTheClientAsksEachToolInOneMethod(t *testing.T) {
 		if found[tool] == 0 {
 			t.Errorf("the client does not use plugincontract.%s, so this test no longer reads the client as it is", tool)
 		}
+	}
+	for name := range calledIn {
+		if found[name] == 0 {
+			t.Errorf("the client does not use %s, so this test no longer reads the client as it is", name)
+		}
+	}
+	for _, method := range calledIn["ask"] {
+		if asks[method] != 1 {
+			t.Errorf("%s calls ask %d times, want once: each asking method asks its one tool, once", method, asks[method])
+		}
+	}
+	if found["CallTool"] != 1 {
+		t.Errorf("the client calls a tool in %d places, want the one, callWithin", found["CallTool"])
 	}
 	// And a Connection has the methods the test above knows, and no other:
 	// that test tells what asks a plugin to index, to stop, to search or
