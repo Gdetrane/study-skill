@@ -5,8 +5,10 @@
 #   curl -fsSL https://raw.githubusercontent.com/mordor-forge/lamplight/main/install.sh | sh
 #
 # It downloads the archive for this machine, checks it against the release's
-# checksums.txt, and puts study and study-shelf in ~/.local/bin without sudo.
-# Running it again upgrades. docs/release.md lists the files a release holds.
+# checksums.txt, and puts study and study-shelf in ~/.local/bin without sudo,
+# with the man page and the notices of what the two are built from in
+# ~/.local/share. Running it again upgrades. docs/release.md lists the files
+# a release holds.
 #
 # Environment:
 #   STUDY_VERSION       the release to install, such as v2.0.0 (default: the latest)
@@ -114,9 +116,53 @@ put() {
 	return 1
 }
 
+# putdir copies folder $1 to $2 in place of the one that is there, so that a
+# file an earlier release held and this one does not is gone. The new folder
+# is made whole beside it first. Then the earlier one is renamed aside, the
+# new one takes its name, and the earlier one is deleted last. So whatever
+# fails, $2 is the earlier folder as it was, or the new one, and never part
+# of either. An earlier folder that cannot be deleted is left under its other
+# name, and said.
+putdir() {
+	staged=${2%/*}/.${2##*/}.install.$$
+	old=${2%/*}/.${2##*/}.old.$$
+	if rm -rf "$staged" "$old" && [ ! -e "$old" ] &&
+		cp -R "$1" "$staged" && chmod -R u=rwX,go=rX "$staged"; then
+		free=yes
+		if [ -e "$2" ] || [ -L "$2" ]; then
+			if mv "$2" "$old"; then
+				aside=$old
+				placing=$2
+			else
+				free=
+			fi
+		fi
+		if [ -n "$free" ] && mv "$staged" "$2"; then
+			staged=
+			if [ -n "$aside" ] && ! rm -rf "$aside"; then
+				say "An earlier ${2##*/} could not be deleted, and is left as $aside"
+			fi
+			aside=
+			return 0
+		fi
+		if [ -n "$aside" ]; then
+			mv "$aside" "$2"
+			aside=
+		fi
+	fi
+	rm -rf "$staged"
+	staged=
+	return 1
+}
+
 cleanup() {
 	rm -rf "$tmp"
-	[ -z "$staged" ] || rm -f "$staged"
+	# An earlier folder that putdir had renamed aside goes back to its name
+	# when the new one did not take it.
+	if [ -n "$aside" ] && [ ! -e "$placing" ]; then
+		mv "$aside" "$placing"
+	fi
+	[ -z "$staged" ] || rm -rf "$staged"
 	[ -z "$new_study" ] || rm -f "$new_study"
 	[ -z "$new_shelf" ] || rm -f "$new_shelf"
 }
@@ -169,6 +215,8 @@ main() {
 	fi
 
 	staged=
+	aside=
+	placing=
 	new_study=
 	new_shelf=
 	tmp=$(mktemp -d)
@@ -225,6 +273,11 @@ main() {
 	say "Installed $shelf ($shelved)"
 
 	# man looks beside each folder on PATH: for <prefix>/bin, in <prefix>/share/man.
+	# The licences and notices of what the two programs are built from go
+	# beside it, where a package would put them: in <prefix>/share/doc. A
+	# folder that is not a bin folder has no such place, and they stay in the
+	# archive.
+	notices=$tmp/files/NOTICES
 	case $dir in
 	*/bin)
 		man1=${dir%/bin}/share/man/man1
@@ -234,6 +287,21 @@ main() {
 			else
 				say "The man page was not installed: could not write $man1/study.1.gz"
 			fi
+		fi
+		doc=${dir%/bin}/share/doc/lamplight
+		if [ -d "$notices" ]; then
+			if mkdir -p "$doc" && putdir "$notices" "$doc/NOTICES"; then
+				say "Installed $doc/NOTICES"
+			else
+				say "The notices of what study and study-shelf are built from were not installed: could not write $doc/NOTICES"
+				say "They are in the NOTICES folder of $base/$archive"
+			fi
+		fi
+		;;
+	*)
+		if [ -d "$notices" ]; then
+			say "The notices of what study and study-shelf are built from were not installed: $dir is not a bin folder"
+			say "They are in the NOTICES folder of $base/$archive"
 		fi
 		;;
 	esac

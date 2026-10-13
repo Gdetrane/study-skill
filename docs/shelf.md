@@ -601,6 +601,10 @@ Shelf is one program without dependencies to install. It is built from:
 No model is inside, and nothing that runs one: the vectors are compared by Shelf's own few
 lines, and the models are served by what you run.
 
+The licence of each, and of everything else `study-shelf` is built from, comes with every
+release, in its `NOTICES` folder. `NOTICES/pdfium` there says what the PDF reader itself is
+made of.
+
 The PDF reader runs inside Shelf, shut in: it is given the one file to read, and can open
 no other file, reach no network, and take no more memory than it is allowed. Why PDFium was
 chosen over `pdftotext` is in
