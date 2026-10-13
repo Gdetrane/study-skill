@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -504,6 +505,54 @@ func TestAnEndpointThatIsDownIsAReason(t *testing.T) {
 	at.Stop()
 	_, err := e.Query(ctx, "anything")
 	reason(t, err, at.Host, "the embedding endpoint", "could not be reached")
+}
+
+// A server closes a connection it kept open, when it is restarted or has
+// kept it long enough, and Shelf may send its next request on it before it
+// has seen that. A request changes nothing at the endpoint, so it is sent
+// again, once, on a new connection: Shelf says nothing of an endpoint that
+// answers, and of one that is gone it says that it is, not "EOF".
+func TestARequestOnAConnectionTheServerClosedIsSentAgain(t *testing.T) {
+	var mu sync.Mutex
+	asked := map[string]int{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		asked[r.RemoteAddr]++
+		again := asked[r.RemoteAddr] > 1
+		mu.Unlock()
+		if _, marked := r.Header["Idempotency-Key"]; marked {
+			t.Error("the mark that lets a request be sent again was sent to the endpoint")
+		}
+		if again {
+			// The second request on a connection: it is closed without a
+			// word, as one the server had given up is.
+			if conn, _, err := w.(http.Hijacker).Hijack(); err == nil {
+				_ = conn.Close()
+			}
+			return
+		}
+		vectors(w, ones(8))
+	}))
+	defer server.Close()
+	e := embedder(t, endpoint.Embedding{Address: server.URL, Model: "m", Dimensions: 8})
+	for n := 1; n <= 3; n++ {
+		if _, err := e.Query(ctx, "x"); err != nil {
+			t.Fatalf("request %d, the server having closed the connection of the one before: %v", n, err)
+		}
+	}
+	mu.Lock()
+	connections := len(asked)
+	mu.Unlock()
+	if connections != 3 {
+		t.Errorf("three requests went over %d connections, want each after the first sent again on a new one", connections)
+	}
+	// Nothing listens any more, and the connection Shelf kept is closed on
+	// its next request: the endpoint is gone, and that is what is said.
+	_ = server.Listener.Close()
+	_, err := e.Query(ctx, "x")
+	if said := reason(t, err, strings.TrimPrefix(server.URL, "http://"), "could not be reached", "connection refused"); strings.Contains(said, "EOF") {
+		t.Errorf("of an endpoint that is gone, Shelf says what the closed connection gave: %s", said)
+	}
 }
 
 // Shelf being told to stop is no failure of the endpoint: the caller's own

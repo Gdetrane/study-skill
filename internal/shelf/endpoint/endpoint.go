@@ -446,6 +446,13 @@ func (c *caller) post(ctx context.Context, within time.Duration, most int64, bod
 	if c.key != "" {
 		req.Header.Set("Authorization", "Bearer "+c.key)
 	}
+	// A request changes nothing at the endpoint, so it can be sent a second
+	// time. Marked so, it is: once, on a new connection, when the server
+	// had closed the connection Shelf kept open from the request before,
+	// as a server does that was restarted or that keeps none for long.
+	// Shelf would otherwise say "EOF" of an endpoint that answers, or of
+	// one that is gone. The mark is an empty list, which is not sent.
+	req.Header["Idempotency-Key"] = []string{}
 	failed := func(err error) error {
 		var timeout interface{ Timeout() bool }
 		switch {
