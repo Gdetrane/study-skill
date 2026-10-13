@@ -210,7 +210,11 @@ func without(text, address string) string {
 	if address == "" {
 		return text
 	}
-	text = strings.ReplaceAll(text, address, Address(address)+"…")
+	// The address whole, as it reads in words that hold no character that
+	// shows nothing: the form secrets gives its parts in, too.
+	if whole := seen(address); whole != "" {
+		text = strings.ReplaceAll(text, whole, Address(address)+"…")
+	}
 	for _, secret := range secrets(address) {
 		text = strings.ReplaceAll(text, secret, "…")
 	}

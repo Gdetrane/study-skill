@@ -206,8 +206,14 @@ func ReadCalls(t testing.TB, path string) []Call {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The plugin makes the file and then writes its first line: a reader
+	// that comes between the two finds a file with no call in it yet.
+	lines := strings.TrimSpace(string(data))
+	if lines == "" {
+		return nil
+	}
 	var calls []Call
-	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+	for _, line := range strings.Split(lines, "\n") {
 		var call Call
 		if err := json.Unmarshal([]byte(line), &call); err != nil {
 			t.Fatalf("a line of %s.calls is no call: %v: %q", path, err, line)

@@ -249,3 +249,35 @@ func TestTheValuesOfAMessageAreCounted(t *testing.T) {
 		}
 	}
 }
+
+// The address a plugin is registered at may itself hold a character that
+// shows nothing, in a piece of its path or in its key. A service's words
+// are searched without such characters, so the parts of the address are
+// looked for as they read there: left as registered they would be found
+// nowhere, and the key would be shown.
+func TestAnAddressThatHoldsWhatShowsNothingIsStillTakenOut(t *testing.T) {
+	const piece, secret = "t0ken-in-the-path", "s3cr3t-k3y-of-the-learner"
+	for name, hidden := range map[string]string{"a zero-width space": "\u200b", "a soft hyphen": "\u00ad",
+		"a variation selector": "\ufe0f", "a tag": "\U000E0041"} {
+		address := "https://kb.example/" + piece[:5] + hidden + piece[5:] + "/mcp?key=" + secret[:6] + hidden + secret[6:]
+		// What a service says when it repeats that address as it reads,
+		// by the time study looks in it: without what shows nothing.
+		for what, said := range map[string]string{
+			"its parts": "the account " + piece + " has no model for the key " + secret + ".",
+			"the whole": "no model at https://kb.example/" + piece + "/mcp?key=" + secret,
+		} {
+			got := pluginclient.Without(said, address)
+			if strings.Contains(got, piece) || strings.Contains(got, secret) {
+				t.Errorf("an address registered with %s in it, repeated by %s, is shown as %q", name, what, got)
+			}
+		}
+		if got := pluginclient.Without("nothing of the address here", address); got != "nothing of the address here" {
+			t.Errorf("with an address that holds %s, words that repeat none of it became %q", name, got)
+		}
+	}
+	// An address that is nothing but such characters is no part to look
+	// for: looked for, it would be found between any two letters.
+	if got := pluginclient.Without("words", "\u200b"); got != "words" {
+		t.Errorf("an address of one character that shows nothing made %q of a plugin's words", got)
+	}
+}
