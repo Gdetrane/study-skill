@@ -347,13 +347,12 @@ func rerankerAt(t *testing.T, at *shelftest.Endpoint, change ...func(*endpoint.R
 	return r
 }
 
-// found is what Shelf's search gives back: the contract's Passages, and
-// what Shelf says beside them of how it searched.
+// found is what Shelf's search gives back: the contract's Passages and
+// notice, and what Shelf says beside them of how it searched.
 type found struct {
 	plugincontract.SearchResult
 	Search   []string `json:"search"`
 	Reranked bool     `json:"reranked"`
-	Notice   string   `json:"notice,omitempty"`
 }
 
 // find searches, and returns all of Shelf's answer.

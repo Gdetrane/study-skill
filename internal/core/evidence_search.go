@@ -110,6 +110,14 @@ type PassageSearch struct {
 	Query string `json:"query"`
 	// Plugin is the name of the Topic's Knowledge base plugin.
 	Plugin string `json:"plugin"`
+	// Notice is what the plugin says this search did less than the plugin
+	// was set to, and why, when it says so: found by keyword alone because
+	// an embedding endpoint did not answer, say. The Passages are then not
+	// the best the Sources hold, so it comes before them. It is the
+	// plugin's own text, on one line, which study cleaned and cut short as
+	// it does a reason: print it through printable. It is no error, and
+	// nothing follows from it but what the learner makes of it.
+	Notice string `json:"notice,omitempty"`
 	// Passages are the Passages found, best first.
 	Passages []FoundPassage `json:"passages"`
 	// Searched are the ids of the Sources that were searched: the ones the
@@ -140,6 +148,13 @@ type PassageSearch struct {
 // indexed. A Topic without Sources, and one of whose Sources none is
 // indexed, are searched for nothing and say so: neither is an error. It
 // records nothing and changes nothing.
+//
+// A plugin that searched with less than it was set to, by keyword alone
+// while an embedding endpoint does not answer, say, says so beside its
+// Passages, and the result carries that as its Notice. It is no error
+// either, and changes neither the Note nor the Action: those are about the
+// Sources that were left out, and a notice is about the ones that were
+// searched.
 //
 // It fails with failed_precondition when the Topic names no plugin, when the
 // plugin is not registered on this computer, cannot be started, does not
@@ -239,7 +254,8 @@ func (c *Core) SearchEvidence(ctx context.Context, q PassageQuery) (PassageSearc
 		if err != nil {
 			return PassageSearch{}, err
 		}
-		for _, passage := range found {
+		res.Notice = found.Notice
+		for _, passage := range found.Passages {
 			title, searched := titles[passage.Source]
 			if !searched {
 				// The client refuses an answer that holds a Passage of a
@@ -251,7 +267,7 @@ func (c *Core) SearchEvidence(ctx context.Context, q PassageQuery) (PassageSearc
 			// A result is kept to a size an agent can take in: the best
 			// Passages, as many as fit. The first always does.
 			if size += len(text); size > MaxSearchTextBytes {
-				cut = len(found) - len(res.Passages)
+				cut = len(found.Passages) - len(res.Passages)
 				break
 			}
 			res.Passages = append(res.Passages, FoundPassage{ID: passage.ID, Source: passage.Source, Title: title,
@@ -600,14 +616,14 @@ func found(src Source, said *plugincontract.SourceStatus) bool {
 }
 
 // searchPassages asks the plugin for the Passages of some of the Topic's
-// Sources that answer a query. It is the one place study searches a
-// plugin.
-func (p *topicPlugin) searchPassages(ctx context.Context, query string, limit int, sources []string) ([]plugincontract.ScoredPassage, error) {
+// Sources that answer a query, and for what it says the search did less
+// than it was set to. It is the one place study searches a plugin.
+func (p *topicPlugin) searchPassages(ctx context.Context, query string, limit int, sources []string) (plugincontract.SearchResult, error) {
 	asking, cancel := p.asking(ctx)
 	defer cancel()
 	found, err := p.conn.Search(asking, p.collection, query, limit, sources)
 	if err != nil {
-		return nil, p.failed(ctx, err)
+		return plugincontract.SearchResult{}, p.failed(ctx, err)
 	}
 	return found, nil
 }

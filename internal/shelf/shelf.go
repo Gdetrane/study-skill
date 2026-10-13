@@ -743,7 +743,7 @@ func (s *Shelf) search(ctx context.Context, args json.RawMessage) (any, *pluginc
 		out.Passages = append(out.Passages, plugincontract.ScoredPassage{Passage: passageOf(f.Passage), Score: f.Score})
 	}
 	out.Search, out.Reranked = got.kinds, got.reranked
-	out.Notice = plugincontract.Cut(strings.Join(got.notices, " "), plugincontract.MaxTextBytes)
+	out.Notice = plugincontract.Cut(strings.Join(got.notices, " "), plugincontract.MaxNoticeBytes)
 	return out, nil
 }
 

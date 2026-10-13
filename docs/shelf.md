@@ -183,8 +183,9 @@ A search is answered all the same, by what is left. An embedding endpoint that i
 takes longer than 10 seconds, or answers with what is no vector leaves a search by keyword.
 A reranking endpoint that fails, or takes longer than 20 seconds, leaves the order the
 search had. Together that is 30 of the 45 seconds `study` gives a search, starting Shelf
-included, so that Shelf is still there to answer and to say what it did without. Shelf says so in its answer, in three fields of its own beside the Passages,
-which the contract lets a plugin add:
+included, so that Shelf is still there to answer and to say what it did without. Shelf says so in its answer, in three fields beside the Passages.
+The `notice` is the contract's, and `study` shows it to you. The other two are Shelf's
+own, which the contract lets a plugin add and `study` does not read:
 
 | Field | Says |
 |---|---|
@@ -196,9 +197,19 @@ Shelf names an endpoint by its host. It never repeats the endpoint's key, nor th
 its address, and keeps neither in its index: where an endpoint's own words repeat them,
 or anything after "Bearer", Shelf takes them out before it repeats the words.
 
-`study` does not show you a `notice` yet: `study evidence search`, and the agent's
-`evidence_search` tool, give the Passages and what was left out of the search, and the
-contract has no word for a search that did less than its settings ask for.
+`study` shows you a `notice` wherever it shows a search. `study evidence search` prints it
+under its first line, before the Passages, and gives it as `notice` with `--json`:
+
+```
+Knowledge base plugin shelf found 2 Passages for "elimination" in linear-algebra, best first:
+! The plugin says of this search: These Passages were found by keyword alone: the embedding endpoint 127.0.0.1:8080 could not be reached: dial tcp 127.0.0.1:8080: connect: connection refused.
+```
+
+Your agent's `evidence_search` tool returns it in the same field, and the skill has the
+agent tell you what it says when it matters to what you asked, and not take the Passages
+for the best your Sources hold. A notice is no error: the Passages are your Sources' own
+text all the same, to learn from and to quote. When the endpoint answers again, so does
+the search by it, and the notice is gone.
 
 ### Vectors of another model
 

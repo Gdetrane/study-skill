@@ -6,10 +6,12 @@ import (
 	"net/http/httptest"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/mordor-forge/lamplight/v2/internal/plugincontract"
 	"github.com/mordor-forge/lamplight/v2/internal/plugintest"
 )
 
@@ -53,6 +55,23 @@ func TestAPluginOfOneKindOfSourceConforms(t *testing.T) {
 func TestAPluginThatAnswersInTextConforms(t *testing.T) {
 	plugintest.Conformance(t, plugintest.Target{Connect: plugintest.AsService(serve(t,
 		plugintest.Config{TextOnly: true, PageDelay: 2 * time.Millisecond}))})
+}
+
+// longNotice is a notice of n bytes, as a plugin words one.
+func longNotice(n int) string {
+	notice := "These Passages were found by keyword alone: the embedding endpoint did not answer."
+	return notice + strings.Repeat(" It did not.", n)[:n-len(notice)]
+}
+
+// And one whose searches each carry a notice, of as many bytes as a notice
+// may have: a search that says what it did less than it was set to is no
+// broken search. The plugin is started to say it, as a command.
+func TestAPluginThatGivesANoticeConforms(t *testing.T) {
+	plugintest.Conformance(t, plugintest.Target{
+		Connect: plugintest.AsCommand(plugintest.NewComputer(t),
+			plugintest.Command("--page-delay", slow, "--notice", longNotice(plugincontract.MaxNoticeBytes))...),
+		Restarts: true,
+	})
 }
 
 // serve runs a test plugin as a service on this computer's loopback
@@ -175,6 +194,8 @@ var broken = map[string]struct {
 		want: "A plugin passes over a name there that begins with .lamplight-"},
 	"it sends study requests": {args: []string{"--ask", "status"},
 		want: "the plugin sent a request (ping), which ended the session"},
+	"its notice is a byte longer than a notice may be": {args: []string{"--notice", longNotice(plugincontract.MaxNoticeBytes + 1)},
+		want: "search gave a notice of " + strconv.Itoa(plugincontract.MaxNoticeBytes+1) + " bytes"},
 	// And one that stops answering is waited for once.
 	"it stops answering": {args: []string{"--hang", "search"}, patience: 2 * time.Second,
 		want: "nothing after it was checked", once: ": search got no answer within 2s"},

@@ -63,10 +63,10 @@ func TestAURLIsReachedOverStreamableHTTP(t *testing.T) {
 		t.Errorf("Status = %+v", done)
 	}
 	found, err := s.Search(ctx, "linear-algebra", "inverse matrix identity", 5, nil)
-	if err != nil || len(found) != 1 || found[0].Text != "A matrix times its inverse is the identity." {
+	if err != nil || len(found.Passages) != 1 || found.Passages[0].Text != "A matrix times its inverse is the identity." {
 		t.Fatalf("Search = %+v, %v", found, err)
 	}
-	if same, err := s.Passage(ctx, "linear-algebra", found[0].ID); err != nil || same.Text != found[0].Text {
+	if same, err := s.Passage(ctx, "linear-algebra", found.Passages[0].ID); err != nil || same.Text != found.Passages[0].Text {
 		t.Errorf("Passage = %+v, %v", same, err)
 	}
 	if _, err := s.Passage(ctx, "linear-algebra", "nothing"); codeOf(err) != pluginclient.CodeNotFound {

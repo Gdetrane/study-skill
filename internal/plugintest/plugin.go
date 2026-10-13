@@ -108,6 +108,9 @@ type Config struct {
 	PlainErrors map[string]string
 	// TextOnly gives results as text alone, without structured content.
 	TextOnly bool
+	// Notice is what every search says in its notice, as a plugin says what
+	// a search did less than it was set to. Empty is no notice.
+	Notice string
 	// Breaks are the rules of the contract it breaks: the Break constants.
 	Breaks []string
 	// Asked, when set, is told each call as it arrives, before anything
@@ -622,7 +625,7 @@ func (p *Plugin) search(ctx context.Context, args json.RawMessage) (any, *plugin
 		return nil, refuse(plugincontract.CodeInternal, "reading the index: %v", err)
 	}
 	query := words(in.Query)
-	out := plugincontract.SearchResult{Passages: []plugincontract.ScoredPassage{}}
+	out := plugincontract.SearchResult{Passages: []plugincontract.ScoredPassage{}, Notice: p.cfg.Notice}
 	for _, entry := range entries {
 		if in.Sources != nil && !slices.Contains(in.Sources, entry.ID) {
 			continue

@@ -684,6 +684,33 @@ func TestTheSkillTeachesIndexing(t *testing.T) {
 	}
 }
 
+// A search can come with a notice: the plugin says it searched with less
+// than it is set to. The Passages of such a search look like any others, so
+// the skill has to say what to make of it, where it teaches searching.
+func TestTheSkillTeachesASearchsNotice(t *testing.T) {
+	searching := ""
+	for _, f := range readSkill(t) {
+		if f.name == "references/knowledge.md" {
+			_, after, _ := strings.Cut(f.text, "\n## Searching the Sources\n")
+			searching, _, _ = strings.Cut(after, "\n## ")
+			searching = strings.Join(strings.Fields(searching), " ")
+		}
+	}
+	for _, want := range []string{
+		"When the result has a `notice`",
+		"Tell the learner what it says when it matters to what they asked",
+		"do not take the Passages for the best the Sources hold",
+	} {
+		if !strings.Contains(searching, want) {
+			t.Errorf("references/knowledge.md does not say %q where it teaches searching", want)
+		}
+	}
+	// What the skill names is what the tool gives.
+	if s := connectServer(t); !s.tools["evidence_search"] || !s.fields["notice"] {
+		t.Error("the skill speaks of a search's notice, which no result of a tool holds")
+	}
+}
+
 func TestNoV1Leftovers(t *testing.T) {
 	for _, f := range readSkill(t) {
 		for _, pattern := range v1Leftovers {

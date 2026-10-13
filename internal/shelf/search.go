@@ -11,10 +11,15 @@ import (
 )
 
 // searchResult is what Shelf's search gives back: the contract's result,
-// and three things of Shelf's own beside it. The contract lets a plugin say
-// more than it names, and study reads past what it does not know: these are
-// for whoever shows a search to the learner, so that a search that did less
-// than Shelf's settings ask for is not taken for one that did it all.
+// and two things of Shelf's own beside it. The contract lets a plugin say
+// more than it names, and study reads past what it does not know: these two
+// are for whoever asks Shelf itself how a search was made.
+//
+// What the learner is to know of a search is in the contract's notice,
+// which study shows: in words for the learner, what the search did less
+// than Shelf was set to, and why, an endpoint that did not answer or Sources
+// without vectors, so that such a search is not taken for one that did it
+// all. It is left out when there is nothing to say.
 type searchResult struct {
 	plugincontract.SearchResult
 	// Search says how these Passages were found: the kinds of search, as
@@ -22,10 +27,6 @@ type searchResult struct {
 	Search []string `json:"search"`
 	// Reranked says that the reranking endpoint put them in their order.
 	Reranked bool `json:"reranked"`
-	// Notice says, in words for the learner, what the search did less than
-	// it was set to, and why: an endpoint that did not answer, Sources
-	// without vectors. It is left out when there is nothing to say.
-	Notice string `json:"notice,omitempty"`
 }
 
 const (

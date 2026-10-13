@@ -190,7 +190,10 @@ GOOS=darwin go vet ./...            # macOS is supported too
   deadline, a message is read up to a limit, every answer is checked against the contract
   (`plugincontract`'s `Validate`), and text a plugin wrote reaches an error only through
   the client's `clean`. A Passage's text is returned as it is: print it through
-  `printable()`.
+  `printable()`. A search's `notice`, what a plugin says the search did less than it was
+  set to, is such text too: it reaches a search's result as a `reason` reaches a Source's,
+  through the client's `say`, cut to `MaxNoticeBytes`, and is no error, no next action and
+  nothing recorded. It is shown before the Passages, through `printable()`.
 - `study` links nothing of Shelf's (ADR-0012): not `internal/shelf`, not SQLite, not the
   PDF reader, not what reads web pages. `TestStudyLinksNothingOfShelf` fails when
   `go list -deps` of `cmd/study`, the core, the command line, the MCP server or the plugin
@@ -273,8 +276,12 @@ GOOS=darwin go vet ./...            # macOS is supported too
     searches the Source. Never say `failed` of what is found and only wants its vectors,
     and keep the reason under the 300 bytes `study` shows of one.
   - A search is by keyword always, and an endpoint that fails takes from it only what it
-    would have added: the answer then says so in Shelf's own fields beside the Passages
-    (`search`, `reranked`, `notice`). The two rankings are taken two of the embeddings'
+    would have added: the answer then says so in the contract's `notice`, which `study`
+    shows the learner and hands to the agent, and in Shelf's own fields beside the Passages
+    (`search`, `reranked`), which `study` does not read. A notice holds what a reason may:
+    an endpoint by its host, never the key or the rest of the address
+    (`TestANoticeHoldsNoKeyAndNoMoreOfAnAddressThanItsHost`).
+    The two rankings are taken two of the embeddings'
     for one of keyword's (`merge`), which was measured against reciprocal rank fusion
     (docs/shelf.md): do not change it without measuring again.
 - Every file Lamplight owns carries a `format` number, and newer formats are refused. A

@@ -709,18 +709,24 @@ func (s *Connection) Cancel(ctx context.Context, collection, source string) (sto
 // A Passage's text is the Source's own, as the plugin gave it. It is checked
 // for its length and not cleaned: whoever prints it prints it as text from a
 // file.
-func (s *Connection) Search(ctx context.Context, collection, query string, limit int, sources []string) ([]plugincontract.ScoredPassage, error) {
+//
+// The result's Notice is what the plugin says the search did less than it
+// was set to, when it says so. It is the plugin's own text, and is cleaned
+// as a reason is: on one line, with nothing a terminal would interpret, and
+// cut to plugincontract.MaxNoticeBytes. Whatever else the plugin said of
+// the search, in fields the contract does not name, is not read.
+func (s *Connection) Search(ctx context.Context, collection, query string, limit int, sources []string) (plugincontract.SearchResult, error) {
 	if sources != nil && len(sources) == 0 {
 		// The contract reads an empty list as a mistake, and a missing one
 		// as "every Source": neither is what the caller means.
 		if err := (plugincontract.SearchInput{Collection: collection, Query: query, Limit: limit}).Validate(); err != nil {
-			return nil, s.notSent(plugincontract.ToolSearch, err)
+			return plugincontract.SearchResult{}, s.notSent(plugincontract.ToolSearch, err)
 		}
-		return []plugincontract.ScoredPassage{}, nil
+		return plugincontract.SearchResult{Passages: []plugincontract.ScoredPassage{}}, nil
 	}
 	in := plugincontract.SearchInput{Collection: collection, Query: query, Limit: limit, Sources: sources}
 	if err := in.Validate(); err != nil {
-		return nil, s.notSent(plugincontract.ToolSearch, err)
+		return plugincontract.SearchResult{}, s.notSent(plugincontract.ToolSearch, err)
 	}
 	var out plugincontract.SearchResult
 	err := s.ask(ctx, plugincontract.ToolSearch, s.opts.SearchTimeout, in, &out, func() error {
@@ -735,12 +741,13 @@ func (s *Connection) Search(ctx context.Context, collection, query string, limit
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return plugincontract.SearchResult{}, err
 	}
 	if out.Passages == nil {
 		out.Passages = []plugincontract.ScoredPassage{}
 	}
-	return out.Passages, nil
+	out.Notice = s.say(out.Notice, plugincontract.MaxNoticeBytes)
+	return out, nil
 }
 
 // Passage asks the plugin for one Passage of a collection again, by the id

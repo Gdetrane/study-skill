@@ -44,7 +44,7 @@ Lamplight's; what is behind them is the plugin's.
 | `index` | a collection, and one Source: id, title, a path with its content hash, or a URL | an answer at once; the work goes on afterwards |
 | `status` | a collection | for each Source: indexed, indexing with its progress, or failed with the reason, and the hash of the content that was indexed |
 | `cancel` | a collection and a Source's id | indexing of that Source stops; what was indexed stays |
-| `search` | a collection, a query, a limit, optionally some Sources | Passages, best first, each with its score for that query |
+| `search` | a collection, a query, a limit, optionally some Sources | Passages, best first, each with its score for that query; and a notice, when the search did less than the plugin is set to |
 | `passage` | a collection and a Passage's id | that Passage |
 
 - A **collection** is a name `study` chooses for a Topic. A plugin keeps collections apart
@@ -412,6 +412,32 @@ what they needed:
   the plugin has not tried, the listing of the Sources when a file is missing, changed or
   unreadable, and none when what is left out failed. An agent told after every search to
   run a command that cannot help would tell the learner so after every search.
+- **A search that did less than it was set to says so, and `study` shows it.** Shelf
+  answers a search by keyword alone when its embedding endpoint does not answer, and said
+  so in a field of its own, which the contract let it add and `study` read past: the
+  learner and the agent were handed Passages that looked like any others. So the result
+  of `search` has an optional `notice`: a sentence or two of the plugin's own, for the
+  learner, saying what the search did less than the plugin is set to, and why.
+  - It is text a plugin wrote, and is treated as a `reason` is: never refused, put on one
+    line, with what a terminal would interpret escaped and without the path and query of
+    a registered address, and cut short after 2,000 bytes.
+  - `study evidence search` prints it under the line that says what was found, before the
+    Passages, so that it is read before they are relied on. In `--json`, and in what
+    `evidence_search` returns, it is a field of its own, `notice`, before `passages`. A
+    search without one prints and returns what it did before.
+  - It is no error: no exit code, no next action and nothing that is recorded changes for
+    it. `note` and `action` are about the Sources that were left out, and a notice is
+    about the ones that were searched. The skill has the agent tell the learner what it
+    says when it matters to what they asked, and not take the Passages for the best the
+    Sources hold.
+  - What else Shelf says of a search, the kinds of search it used and whether it reranked,
+    stays Shelf's own: a plugin may add fields to a result, and `study` reads only the
+    contract's.
+  - The contract stays version 1: nothing is released.
+  - A notice reaches the agent through a tool, as a `reason` does. So what Shelf puts in
+    one is held, by tests, to what the reason of a Source that failed was held to already:
+    no key, nothing else that follows "Bearer", and of an endpoint's address no more than
+    its host.
 - **What "in its text" allows.** A Passage is text as it was extracted, and whoever quotes
   it writes the same words and seldom the same bytes: an agent that straightens a curly
   quote has paraphrased nothing, and one that is refused for it learns to record without a
@@ -728,9 +754,11 @@ where it was stopped, and what a Recipe holds.
 - **An endpoint that fails takes from a search only what it would have added.** Without
   the question's vector the search is by keyword, and without the reranker's answer in the
   order it had, each after a deadline that leaves time for the rest: 10 and 20 seconds of
-  the 45 `study` gives a search, starting Shelf included. The contract has no word for a search that did less
-  than it could, so Shelf says it in three fields of its own beside the Passages, `search`,
-  `reranked` and `notice`, which `study` reads past until it is taught them. While a Source
+  the 45 `study` gives a search, starting Shelf included. Shelf says what the search did without in the
+  contract's `notice`, which `study` shows (Searching, above), and how it was made in two
+  fields of its own beside the Passages, `search` and `reranked`, which `study` does not
+  read. The contract had no word for a search that did less than it could when this was
+  built, and `notice` was Shelf's own field then. While a Source
   is indexed there is nothing to fall back to: the Source is `failed`, with a reason that
   names the endpoint's host and never its key.
 - **Vectors of another making are `outdated`, a fourth state of the contract.** A

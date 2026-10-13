@@ -656,7 +656,8 @@ hours before any learning happens is exactly what v1 produced.
     collection; it answers at once with the Source's state), `status` (each Source
     `indexed`, `indexing` with its progress or `failed` with the reason, and the hash of
     the content that is indexed), `cancel` (stop indexing a Source; it answers once the
-    work has stopped), `search` (Passages for a query, best first, each with its score) and
+    work has stopped), `search` (Passages for a query, best first, each with its score, and
+    a notice when the search did less than the plugin is set to) and
     `passage` (one Passage again, without a score). A Passage is the Source's own text as
     extracted, with a location when the plugin knows one. A location says its kind: `pages`
     now, others such as a time range later, without a new contract version; a Passage from
@@ -809,6 +810,16 @@ hours before any learning happens is exactly what v1 produced.
     best first: the Source's own text, each with its id, its Source, its location when the
     plugin knows it, and its score for that query. It reads the plugin's index and never a
     Source, so it has a tool, as indexing has not.
+  - **A search that did less than the plugin is set to says so.** The contract's `search`
+    result has an optional `notice`, a sentence or two of the plugin's own for the learner:
+    found by keyword alone because an embedding endpoint did not answer, say. `study`
+    treats it as a plugin's `reason`: one line, cleaned, cut short after 2,000 bytes, and
+    never a reason to refuse an answer. `study evidence search` prints it before the
+    Passages, and `--json` and the `evidence_search` tool give it as `notice`, a field of
+    its own. It is no error, and changes no exit code, no next action and nothing that is
+    recorded; the skill has the agent tell the learner what it says when it matters, and
+    not take the Passages for the best the Sources hold. A plugin may say more of a search
+    in fields of its own, which `study` does not read.
   - **It returns only what the Topic records.** The plugin is asked what it has indexed
     first, and then to search, by their ids, the Topic's Sources of which it says, by the
     hash, that a search finds the Source's own content, whatever their state. A removed Topic and a later one
@@ -946,8 +957,8 @@ hours before any learning happens is exactly what v1 produced.
       each one of the keyword ranking's. With a reranking endpoint, one more request
       orders the best thirty.
     - An endpoint that does not answer a search leaves it to what remains, keyword search
-      or the order it had, and the answer says so in fields of Shelf's own (`search`,
-      `reranked`, `notice`).
+      or the order it had, and the answer says so in the contract's `notice`, which
+      `study` shows, and in two fields of Shelf's own (`search`, `reranked`).
     - A Source whose vectors are of another model, marking or size, or that has none, is
       `outdated`: found as it is, by keyword, with the hash of what is found and the
       reason. `study` names `study source index` as what to do next, and asked for again,
@@ -985,8 +996,6 @@ hours before any learning happens is exactly what v1 produced.
 - **Left as they are** (ADR-0012):
   - A plugin reached by URL is a service outside any sandbox, so it must itself be told
     what it may read and fetch.
-  - Nothing shows the learner a search's `notice` yet: the contract has no word for a
-    search that did less than its settings ask for.
 - **Later**: a context written by a language model for each Passage, used for indexing
   only; layout-aware conversion for formulas, tables and scans; recordings, video and
   images as Sources.

@@ -143,10 +143,10 @@ func TestASessionSpeaksTheContract(t *testing.T) {
 	}
 
 	found, err := s.Search(ctx, "linear-algebra", "inverse matrix identity", 5, nil)
-	if err != nil || len(found) != 1 {
-		t.Fatalf("Search = %+v, %v; want the one Passage about the inverse", found, err)
+	if err != nil || len(found.Passages) != 1 || found.Notice != "" {
+		t.Fatalf("Search = %+v, %v; want the one Passage about the inverse, and no notice", found, err)
 	}
-	passage := found[0]
+	passage := found.Passages[0]
 	if passage.Source != source.ID || passage.Text != "A matrix times its inverse is the identity." || passage.Score <= 0 ||
 		passage.Location == nil || *passage.Location != (plugincontract.Location{Kind: "pages", First: 2, Last: 2}) {
 		t.Errorf("the Passage found = %+v (location %+v)", passage, passage.Location)
@@ -159,13 +159,13 @@ func TestASessionSpeaksTheContract(t *testing.T) {
 
 	// Limited to Sources, a search finds only theirs; limited to none, it
 	// finds nothing and asks nothing.
-	if found, err := s.Search(ctx, "linear-algebra", "inverse", 5, []string{"another-book.a1b2c3"}); err != nil || len(found) != 0 {
+	if found, err := s.Search(ctx, "linear-algebra", "inverse", 5, []string{"another-book.a1b2c3"}); err != nil || len(found.Passages) != 0 {
 		t.Errorf("Search in another Source = %+v, %v", found, err)
 	}
-	if found, err := s.Search(ctx, "linear-algebra", "inverse", 5, []string{}); err != nil || found == nil || len(found) != 0 {
+	if found, err := s.Search(ctx, "linear-algebra", "inverse", 5, []string{}); err != nil || found.Passages == nil || len(found.Passages) != 0 {
 		t.Errorf("Search in no Source = %+v, %v", found, err)
 	}
-	if found, err := s.Search(ctx, "linear-algebra", "inverse", 5, []string{source.ID}); err != nil || len(found) != 1 {
+	if found, err := s.Search(ctx, "linear-algebra", "inverse", 5, []string{source.ID}); err != nil || len(found.Passages) != 1 {
 		t.Errorf("Search in the Source = %+v, %v", found, err)
 	}
 
@@ -176,7 +176,7 @@ func TestASessionSpeaksTheContract(t *testing.T) {
 	if sources, err := s.Status(ctx, "go-concurrency"); err != nil || len(sources) != 0 {
 		t.Errorf("Status of another collection = %+v, %v", sources, err)
 	}
-	if found, err := s.Search(ctx, "go-concurrency", "inverse", 5, nil); err != nil || len(found) != 0 {
+	if found, err := s.Search(ctx, "go-concurrency", "inverse", 5, nil); err != nil || found.Passages == nil || len(found.Passages) != 0 {
 		t.Errorf("Search in another collection = %+v, %v", found, err)
 	}
 }

@@ -235,8 +235,8 @@ with `application/json` or with a stream of server-sent events.
   speaks only a later revision of MCP says which there.
 - **Only the scheme and host of the address are shown** by `study`, outside
   `study knowledge-base list`: the rest of an address, a path or a query, may be a key.
-  Whatever a service writes, in a refusal, a `reason` or its own name, is shown without the
-  path and the query of the address it is registered at.
+  Whatever a service writes, in a refusal, a `reason`, a `notice` or its own name, is shown
+  without the path and the query of the address it is registered at.
 - A service gets no folder from `study`, and keeps its index where it was told to.
 - **A service reads files and fetches addresses from where it runs, outside any sandbox
   the agent is in.** It is handed a file's path and must see the same file there. It must
@@ -261,6 +261,7 @@ with `application/json` or with a stream of server-sent events.
 | A Passage's `text` | 32,768 bytes of UTF-8 |
 | A `query` | 4,096 bytes of UTF-8 |
 | `limit` of a search | 50 |
+| A search's `notice`, as `study` shows it | 2,000 bytes |
 | Sources in a `status` answer, and in the `sources` of a search | 10,000 |
 | A collection's name | 64 characters |
 | The id of a Source or of a Passage | 128 characters |
@@ -279,7 +280,7 @@ is the time to build for.
 
 A plugin that misses a deadline is stopped, when it is a command, and not asked again in
 that session. `study` never sends more than these limits allow, and refuses an answer that
-goes over them, except that a `reason` or a `message` is cut short instead. The 30 seconds
+goes over them, except that a `reason`, a `message` or a `notice` is cut short instead. The 30 seconds
 of starting cover what `study` does first as well: finding the program and making the
 folder.
 
@@ -293,7 +294,9 @@ Every tool takes one JSON object as its arguments and gives back one JSON object
 - **Names are spelled as on this page**, in lower case. A list is a JSON list even when it
   is empty.
 - **Fields this page does not name are passed over, in both directions.** A plugin may
-  say more in a result, and `study` reads past it. `study` sends no field that this version
+  add fields of its own to a result, and `study` reads only the ones this page names: what
+  a plugin says in a field of its own reaches neither the learner nor the learner's agent.
+  `study` sends no field that this version
   does not define, and a plugin passes over one it does not know all the same, without
   refusing: a field added later must not break a plugin written now.
 - **Every field of a tool's arguments is required unless its row says it is optional.**
@@ -573,6 +576,7 @@ Finds the Passages of a collection that answer a query, **best first**.
 | `kind` | The kind of location, one the plugin's `contract` lists: `pages`. |
 | `first`, `last` | With `pages`: the first and the last page the text is on, counted from 1 from the start of the file, `last` not before `first`. |
 | `score` | How well the Passage answers this query: a number, higher is better, and no Passage has a higher one than the Passage before it. It means nothing outside this search. |
+| `notice` | Optional. What this search did less than the plugin is set to, and why, in a sentence or two for the learner. Left out when the search did all the plugin is set to. `study` puts it on one line, escapes what a terminal would interpret, and shows the first 2,000 bytes. |
 
 - A search reads the index and never a Source, and never waits for indexing: it finds what
   is indexed now, and answers as quickly while a Source is being indexed as otherwise.
@@ -586,6 +590,40 @@ Finds the Passages of a collection that answer a query, **best first**.
   another kind in its `contract` gives that kind its own fields, which this version of
   `study` passes over. **A location of a kind the plugin's `contract` does not list is
   refused** by `study`, with the whole answer.
+
+**A search that did less than the plugin is set to says so in `notice`**, beside what it
+found:
+
+<!-- example: search result -->
+```json
+{"passages": [
+  {"id": "7f3a9c12e5b04d68", "source": "strang-linear-algebra.k3f9a2",
+   "text": "Elimination produces an upper triangular system.",
+   "location": {"kind": "pages", "first": 46, "last": 46}, "score": 4.2}
+ ],
+ "notice": "These Passages were found by keyword alone: the embedding endpoint 127.0.0.1:8080 did not answer within 10 seconds."}
+```
+
+- A plugin whose search leans on something that can fail, an endpoint that embeds the
+  query or a model that reorders what was found, may answer with what is left when it
+  does: by keyword alone, say. Those Passages are then not the best the Sources hold, and
+  whoever reads them must know. `notice` says what the search did without, and why, in a
+  sentence or two for the learner, in the plugin's own words. A search that did all the
+  plugin is set to has none.
+- **A notice is no error.** `study` shows it to the learner before the Passages, gives it
+  to the learner's agent with them, and does nothing else about it: the search succeeded.
+- **It is the plugin's text, and `study` treats it as it treats a `reason`.** An answer is
+  never refused for what its notice says, or for how long it is: `study` puts it on one
+  line, escapes what a terminal would interpret, and cuts it short after 2,000 bytes.
+  Keep a notice within them all the same: the learner reads no further, and the
+  conformance suite fails a plugin whose notice is longer.
+- **It reaches the learner's agent, so it holds nothing the learner would not show one**:
+  no key, and of an endpoint's address no more than its host, since a path or a query may
+  be a key. Repeat a server's own words only without them.
+- **Whatever else a plugin says of a search, it says in fields of its own**, which `study`
+  passes over, as it does every field this page does not name: Shelf adds `search`, the
+  kinds of search it used for the query, and `reranked`. Of what a plugin says about a
+  search, only `notice` reaches the learner.
 
 ### `passage`
 

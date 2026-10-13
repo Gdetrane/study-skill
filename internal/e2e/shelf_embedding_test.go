@@ -5,6 +5,7 @@ package e2e
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -179,8 +180,8 @@ func TestABuiltStudyHasTheBuiltShelfEmbedABook(t *testing.T) {
 	}
 	// A search asks the endpoint once, for the question's vector, marked as
 	// a question, and returns the book's Passages.
-	if got := search("triangular"); len(got.Passages) != 2 || len(got.Searched) != 1 || got.Passages[0].Location != "p. 1" {
-		t.Errorf("study evidence search = %+v; want the book's two Passages, the page that holds the word first", got)
+	if got := search("triangular"); len(got.Passages) != 2 || len(got.Searched) != 1 || got.Passages[0].Location != "p. 1" || got.Notice != "" {
+		t.Errorf("study evidence search = %+v; want the book's two Passages, the page that holds the word first, and no notice", got)
 	}
 	if asked := at.Asked(); len(asked) != 1 || fmt.Sprint(asked[0].Texts()) != "[task: search result | query: triangular]" || asked[0].Key != key {
 		t.Errorf("for a search the endpoint was asked %+v; want the question's vector, once", asked)
@@ -212,9 +213,11 @@ func TestABuiltStudyHasTheBuiltShelfEmbedABook(t *testing.T) {
 			t.Errorf("to say so, Shelf asked the endpoint %+v", asked)
 		}
 		// Meanwhile the book is still found, by its words: the search asks
-		// no endpoint, having no vector to compare a question's with.
-		if got := search("substitution"); len(got.Passages) != 1 || len(got.LeftOut) != 0 || got.Passages[0].Location != "p. 2" {
-			t.Errorf("while the book is outdated, study evidence search = %+v; want it found by keyword", got)
+		// no endpoint, having no vector to compare a question's with, and
+		// carries Shelf's notice that it was by keyword alone, and why.
+		if got := search("substitution"); len(got.Passages) != 1 || len(got.LeftOut) != 0 || got.Passages[0].Location != "p. 2" ||
+			!strings.Contains(got.Notice, "found by keyword alone: none of the Sources searched has vectors of the model "+model) {
+			t.Errorf("while the book is outdated, study evidence search = %+v; want it found by keyword, and saying so", got)
 		}
 		if asked := at.Asked(); len(asked) != 0 {
 			t.Errorf("a search of a book without vectors of the model asked the endpoint %+v", asked)
@@ -234,6 +237,46 @@ func TestABuiltStudyHasTheBuiltShelfEmbedABook(t *testing.T) {
 	if asked := at.Asked(); len(asked) != 0 {
 		t.Errorf("indexing again what is indexed, vectors and all, Shelf asked the endpoint %+v", asked)
 	}
+
+	// The endpoint stops giving vectors. A search is answered all the same,
+	// by keyword, and study shows what Shelf says of it: for people before
+	// the Passages, and as JSON in a field of its own, which is what the
+	// learner's agent is given too. The endpoint refuses in words that
+	// repeat the key it was sent and the address it was asked at: what
+	// study shows holds neither, and names the endpoint by its host.
+	at.Answer(func(w http.ResponseWriter, r *http.Request, _ map[string]any) bool {
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprintf(w, `{"error": {"message": "no model is loaded for %s, asked at http://%s%s"}}`, r.Header.Get("Authorization"), r.Host, r.URL.Path)
+		return true
+	})
+	noticed := func(what string, got core.PassageSearch, words ...string) {
+		t.Helper()
+		if len(got.Passages) != 1 || got.Passages[0].Location != "p. 2" || len(got.LeftOut) != 0 || got.Note != "" || got.Action != "" {
+			t.Errorf("%s, study evidence search = %+v; want the Passage keyword search finds, and nothing to do", what, got)
+		}
+		for _, word := range append(words, "These Passages were found by keyword alone: the embedding endpoint "+at.Host) {
+			if !strings.Contains(got.Notice, word) {
+				t.Errorf("%s, the search's notice does not say %q: %s", what, word, got.Notice)
+			}
+		}
+		for _, not := range []string{key, "/v1", "http://", "embeddings"} {
+			if strings.Contains(got.Notice, not) {
+				t.Errorf("%s, the search's notice repeats %q, of the endpoint's key or of its address: %s", what, not, got.Notice)
+			}
+		}
+		// For people it is under the line that says what was found, and
+		// before the Passage.
+		shown := must("evidence", "search", "linear-algebra", "substitution")
+		notice, passage := strings.Index(shown, "! The plugin says of this search: "+got.Notice+"\n"), strings.Index(shown, "> Back substitution")
+		if !strings.HasPrefix(shown, "Knowledge base plugin shelf found 1 Passage") || notice < 0 || passage < notice {
+			t.Errorf("%s, study evidence search does not show Shelf's notice before the Passage:\n%s", what, shown)
+		}
+	}
+	noticed("with an endpoint that refuses", search("substitution"), "answered 500 Internal Server Error",
+		"no model is loaded for Bearer [the key], asked at [the address]")
+	// And once nothing listens there at all.
+	at.Stop()
+	noticed("with the endpoint down", search("substitution"), "could not be reached")
 
 	// A settings file Shelf cannot use: study says so, with Shelf's reason,
 	// where it says what is wrong with a plugin, and repeats no key.

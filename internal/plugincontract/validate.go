@@ -484,6 +484,11 @@ func (p Passage) Validate() error {
 // Validate checks the search tool's answer to in: no more Passages than were
 // asked for, none twice, none from a Source the search was not limited to,
 // and the best first.
+//
+// What a notice says, and at what length, is not checked here, as a
+// reason's text is not: it is words for the learner, and an answer is not
+// refused for them. study's client cleans them and cuts them to
+// MaxNoticeBytes.
 func (r SearchResult) Validate(in SearchInput) error {
 	if len(r.Passages) > in.Limit {
 		return fmt.Errorf("it holds %d Passages, and %d were asked for", len(r.Passages), in.Limit)
