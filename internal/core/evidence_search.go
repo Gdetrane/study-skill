@@ -539,7 +539,23 @@ func (p *topicPlugin) indexed(ctx context.Context, sources []Source, fileState f
 	if err != nil {
 		return nil, nil, "", p.failed(ctx, err)
 	}
-	ask := newIndexAsk(p.topic, &KnowledgeBase{Kind: KnowledgeBasePlugin, Plugin: p.name}, sources)
+	// What a search finds is held, and the rest is left out: said of each
+	// as status says it, and the action is for the ones left out alone. A
+	// Source that is found and to be indexed again is none of a search's
+	// business: status says so.
+	byID := make(map[string]*plugincontract.SourceStatus, len(said))
+	for i := range said {
+		byID[said[i].ID] = &said[i]
+	}
+	var rest []Source
+	for _, src := range sources {
+		if found(src, byID[src.ID]) {
+			held = append(held, src)
+		} else {
+			rest = append(rest, src)
+		}
+	}
+	ask := newIndexAsk(p.topic, &KnowledgeBase{Kind: KnowledgeBasePlugin, Plugin: p.name}, rest)
 	ask.fileState = fileState
 	ask.answered(asking, p.name, p.conn.Contract(), said)
 	// Looking for the files of what is not indexed is study's own work, and
@@ -557,16 +573,8 @@ func (p *topicPlugin) indexed(ctx context.Context, sources []Source, fileState f
 			p.limit.String() + " study has to " + p.doing + ". study source list " + p.topic + " looks for them without that " +
 			"limit. " + p.otherwise}
 	}
-	byID := make(map[string]*plugincontract.SourceStatus, len(said))
-	for i := range said {
-		byID[said[i].ID] = &said[i]
-	}
-	for i, src := range sources {
-		if !found(src, byID[src.ID]) {
-			leftOut = append(leftOut, ask.indexing.Sources[i])
-			continue
-		}
-		held = append(held, src)
+	if len(rest) > 0 {
+		leftOut = ask.indexing.Sources
 	}
 	action = ask.indexing.Action
 	if action == "" && ask.held && validateTopicID(p.topic) == nil {

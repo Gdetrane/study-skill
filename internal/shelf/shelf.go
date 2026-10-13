@@ -380,27 +380,26 @@ func (s *Shelf) fits(have index.Made) bool {
 // nothing of the kind to say of. Indexing the Source again puts it right,
 // which gives its Passages their vectors and leaves them as they are.
 //
-// The contract has three states, and this is `failed` with the hash of
-// what is still found: the one state whose reason study shows the learner,
-// and the one study has indexed again by study source index. What failed
-// is not the last indexing but the index, against the settings as they are
-// now.
+// It is what the contract calls outdated: found as it is, with the hash of
+// what is found, and to be indexed again for a reason study shows the
+// learner. study then names study source index as what to do next, and a
+// search still covers the Source.
 func (s *Shelf) behind(have *index.Source) string {
 	e := s.settings.Embedder
 	if e == nil || have == nil || have.Hash == "" || s.fits(have.Made) {
 		return ""
 	}
-	const found, again = "it is found by keyword alone: ", ". Index it again to have its Passages embedded"
+	const found = "it is found by keyword alone: "
 	now := "the model " + short(e.Model())
 	switch made := have.Made; {
 	case !made.Any():
-		return found + "it was indexed without vectors, and Shelf now has an embedding endpoint, for " + now + again
+		return found + "it was indexed without vectors, and Shelf now has an embedding endpoint, for " + now
 	case made.Model != e.Model():
-		return found + "its vectors are of the model " + short(made.Model) + ", and Shelf's settings now name " + now + again
+		return found + "its vectors are of the model " + short(made.Model) + ", and Shelf's settings now name " + now
 	case made.Document != e.Document():
-		return found + "its Passages were marked for " + now + " in another way than Shelf's settings now say" + again
+		return found + "its Passages were marked for " + now + " in another way than Shelf's settings now say"
 	default:
-		return found + fmt.Sprintf("its vectors have %d numbers, and Shelf's settings now ask for %d", made.Dimensions, e.Dimensions()) + again
+		return found + fmt.Sprintf("its vectors have %d numbers, and Shelf's settings now ask for %d", made.Dimensions, e.Dimensions())
 	}
 }
 
@@ -622,8 +621,8 @@ func statusOf(have *index.Source, at working, unwritten, behind string) (status 
 		status.State, status.Reason = plugincontract.StateFailed, have.Failed
 	case have != nil && have.Hash != "" && behind != "":
 		// Found, by its words, and to be indexed again: the hash is there,
-		// as it is for every Source whose earlier content is still found.
-		status.State, status.Reason = plugincontract.StateFailed, behind
+		// as it is for every Source whose content is found.
+		status.State, status.Reason = plugincontract.StateOutdated, behind
 	case have != nil && have.Hash != "":
 		status.State = plugincontract.StateIndexed
 	default:

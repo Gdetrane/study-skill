@@ -242,9 +242,32 @@ func TestResultsTheContractAllows(t *testing.T) {
 		{ID: "b.2", State: plugincontract.StateIndexing, Progress: &half, Hash: hash},
 		{ID: "c.3", State: plugincontract.StateIndexing},
 		{ID: "d.4", State: plugincontract.StateFailed, Reason: "no text layer", Hash: hash},
+		{ID: "e.5", State: plugincontract.StateOutdated, Reason: "its Passages have no vectors of the model", Hash: hash},
 	}}
 	if err := status.Validate(); err != nil {
 		t.Errorf("a status: %v", err)
+	}
+	// A Source that is outdated is found as it is, so of some content, and
+	// says what indexing it again would add. And index never answers it:
+	// what was outdated was just asked to be brought up to date.
+	for name, said := range map[string]plugincontract.SourceStatus{
+		"without a hash":   {ID: "e.5", State: plugincontract.StateOutdated, Reason: "no vectors"},
+		"without a reason": {ID: "e.5", State: plugincontract.StateOutdated, Hash: hash},
+		"with a blank one": {ID: "e.5", State: plugincontract.StateOutdated, Hash: hash, Reason: " \n"},
+	} {
+		if err := said.Validate(); err == nil || !strings.Contains(err.Error(), "is outdated and has no") {
+			t.Errorf("a Source that is outdated %s: Validate() = %v", name, err)
+		}
+	}
+	asked := plugincontract.IndexInput{Collection: "c", Source: plugincontract.Source{ID: "e.5", Title: "E", Kind: plugincontract.SourceFile,
+		Path: "/books/e.pdf", Hash: hash}}
+	answer := plugincontract.IndexResult{Source: status.Sources[4]}
+	if err := answer.Validate(asked); err == nil || !strings.Contains(err.Error(), "which a Source that was just asked to be indexed is not") {
+		t.Errorf("index answered that the Source is outdated: Validate() = %v", err)
+	}
+	if err := (plugincontract.SourceStatus{ID: "f.6", State: "stale", Hash: hash}).Validate(); err == nil ||
+		!strings.Contains(err.Error(), "not indexed, indexing, failed or outdated") {
+		t.Errorf("a state the contract does not have: Validate() = %v", err)
 	}
 	if err := (plugincontract.StatusResult{}).Validate(); err != nil {
 		t.Errorf("an empty status: %v", err)

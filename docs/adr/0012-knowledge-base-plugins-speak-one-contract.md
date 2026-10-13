@@ -733,18 +733,32 @@ where it was stopped, and what a Recipe holds.
   `reranked` and `notice`, which `study` reads past until it is taught them. While a Source
   is indexed there is nothing to fall back to: the Source is `failed`, with a reason that
   names the endpoint's host and never its key.
-- **Vectors of another making are `failed`, with the hash.** A question's vector is
-  compared only with vectors of the model, the marking and the size the settings name now.
-  A Source whose Passages have others, or none because it was indexed before there was an
-  endpoint, is still found by keyword. The contract has three states: `indexed` would say
-  nothing and `study` would show nothing, so Shelf says `failed`, with the hash of what is
-  still found and the reason, which is the state `study` shows with its reason and has
-  `study source index` ask for again, with `--again` or without. Asked for that content
-  again, Shelf gives vectors to the Passages that are there: it reads no Source for it, so
-  the Passages and their ids stay, as the contract has it for content that is indexed, and
-  a web page is not fetched without `refetch`. Two things are stretched and want a word of
-  the contract's own: `failed` here is no failed indexing, and `index` of content that is
-  indexed does not "do nothing".
+- **Vectors of another making are `outdated`, a fourth state of the contract.** A
+  question's vector is compared only with vectors of the model, the marking and the size
+  the settings name now. A Source whose Passages have others, or none because it was
+  indexed before there was an endpoint, is still found by keyword. This is the path most
+  learners take: Shelf as installed, and an embedding model later. The contract had three
+  states, and none fits. `indexed` would say nothing, and `study` would show nothing.
+  `failed`, with the hash of what is still found, was built first, being the state whose
+  reason `study` shows and which `study source index` asks for again. A review found
+  where that ends: `failed` is never the next action, since a scan without text would be
+  one for ever, so the learner was told of forty failures and of nothing to do; and a
+  book that had been moved away since stayed `failed` with no way out, though it was
+  found as before. So the contract has a word for it:
+  - `outdated` is `indexed` with a reason: the Passages can be found, `hash` says of which
+    content, and `reason` what indexing the Source again would add. A plugin says it only
+    of its own settings having changed.
+  - `study` shows it with the reason, names `study source index` as what to do next, and
+    has that command ask for the Source again without `--again`. A search covers it, since
+    a search goes by the hash.
+  - `index` of a Source that is `outdated` is what brings it up to date, and may do so
+    from what the plugin holds: Shelf gives vectors to the Passages that are there and
+    reads no Source for it, so the Passages and their ids stay, and a web page is not
+    fetched. `index` never answers `outdated`.
+  - A file is handed to a plugin only when it is on the computer and is the one that was
+    added, so an `outdated` Source whose file is gone stays `outdated`, and found, until
+    the file is back. Handing over a path that leads nowhere, for a plugin that might not
+    need it, was not worth a second way of calling `index`.
 - **An endpoint is the learner's, so it is not held to the rule for web pages.** Shelf
   fetches no Source's page from the computer it runs on because the agent names Sources.
   The settings file is the learner's and outside the Study home, and an endpoint is

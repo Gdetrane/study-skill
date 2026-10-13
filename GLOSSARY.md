@@ -231,7 +231,9 @@ _Avoid_: Provider, backend, model server
 **Indexed**:
 Said of a Source whose content the Topic's Knowledge base plugin holds on this machine, so
 that a search finds it. Whether a Source is indexed is the plugin's to say: no Event records
-it, and another machine may say otherwise.
+it, and another machine may say otherwise. A Source the plugin calls outdated is indexed,
+and to be indexed again: the plugin's settings changed since, and it says what indexing
+the Source again would add.
 _Avoid_: Ingested, embedded, synced
 
 **Collection**:

@@ -181,7 +181,8 @@ func TestThePageNamesEveryKindStateAndCode(t *testing.T) {
 		plugincontract.SearchEmbedding, plugincontract.LocationPages} {
 		in(plugincontract.ToolContract, kind)
 	}
-	for _, state := range []string{plugincontract.StateIndexed, plugincontract.StateIndexing, plugincontract.StateFailed} {
+	for _, state := range []string{plugincontract.StateIndexed, plugincontract.StateIndexing, plugincontract.StateFailed,
+		plugincontract.StateOutdated} {
 		in(plugincontract.ToolStatus, state)
 	}
 	// Each code, and the code study reports it as, in one row of the table.
@@ -354,7 +355,8 @@ func TestThePagesExamplesAreTheContracts(t *testing.T) {
 				states = append(states, source.State)
 			}
 			slices.Sort(states)
-			if !slices.Equal(states, []string{plugincontract.StateFailed, plugincontract.StateIndexed, plugincontract.StateIndexing}) {
+			if !slices.Equal(states, []string{plugincontract.StateFailed, plugincontract.StateIndexed, plugincontract.StateIndexing,
+				plugincontract.StateOutdated}) {
 				t.Errorf("the example of %s shows the states %v, want one of each", what, states)
 			}
 		case "cancel input":

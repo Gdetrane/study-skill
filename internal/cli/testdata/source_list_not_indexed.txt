@@ -16,5 +16,5 @@ go-blog.<id>  Go blog
   http://127.0.0.1:PORT/blog
   ! not indexed
 
-To have Knowledge base plugin kb index what is not indexed, run:
+To have Knowledge base plugin kb index what is not indexed, or is to be indexed again, run:
   study source index linear-algebra

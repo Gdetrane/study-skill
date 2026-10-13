@@ -165,25 +165,59 @@ func TestABuiltStudyHasTheBuiltShelfEmbedABook(t *testing.T) {
 	if asked := at.Asked(); len(asked) != 0 {
 		t.Errorf("to say what is indexed, Shelf asked the endpoint %+v", asked)
 	}
+	// search runs study evidence search, by a Shelf started for the
+	// question, and returns what it found.
+	search := func(query string) core.PassageSearch {
+		t.Helper()
+		var found struct {
+			Data core.PassageSearch `json:"data"`
+		}
+		if err := json.Unmarshal([]byte(must("evidence", "search", "linear-algebra", query, "--json")), &found); err != nil {
+			t.Fatal(err)
+		}
+		return found.Data
+	}
+	// A search asks the endpoint once, for the question's vector, marked as
+	// a question, and returns the book's Passages.
+	if got := search("triangular"); len(got.Passages) != 2 || len(got.Searched) != 1 || got.Passages[0].Location != "p. 1" {
+		t.Errorf("study evidence search = %+v; want the book's two Passages, the page that holds the word first", got)
+	}
+	if asked := at.Asked(); len(asked) != 1 || fmt.Sprint(asked[0].Texts()) != "[task: search result | query: triangular]" || asked[0].Key != key {
+		t.Errorf("for a search the endpoint was asked %+v; want the question's vector, once", asked)
+	}
+	at.Forget()
 
 	// The learner serves another model, and names it. Twice: what is said
 	// of the book is put right by study source index, and by --again.
 	for model, again := range map[string][]string{"another-model": nil, "a-third-model": {"--again"}} {
 		write(model)
 		now := listed().Indexed
-		if now.State != core.IndexFailed || now.Retry != "study source index linear-algebra "+source.ID {
-			t.Fatalf("with %s named in Shelf's settings, the book is %+v; want it failed, with the command that has it indexed again", model, now)
+		if now.State != core.IndexOutdated || now.Retry != "" {
+			t.Fatalf("with %s named in Shelf's settings, the book is %+v; want it outdated: indexed, and to be indexed again", model, now)
 		}
-		for _, word := range []string{"found by keyword alone", "its vectors are of the model", "now name the model " + model, "Index it again"} {
+		for _, word := range []string{"found by keyword alone", "its vectors are of the model", "now name the model " + model} {
 			if !strings.Contains(now.Reason, word) {
 				t.Errorf("the reason does not say %q: %s", word, now.Reason)
 			}
 		}
-		if status := must("status"); !strings.Contains(status, "found by keyword alone") {
-			t.Errorf("study status does not say that the book is found by keyword alone:\n%s", status)
+		// status says so, and names the command that brings it up to date
+		// as what to do next.
+		status := must("status")
+		for _, word := range []string{"to be indexed again", "found by keyword alone", "Run: study source index linear-algebra"} {
+			if !strings.Contains(status, word) {
+				t.Errorf("study status does not say %q:\n%s", word, status)
+			}
 		}
 		if asked := at.Asked(); len(asked) != 0 {
 			t.Errorf("to say so, Shelf asked the endpoint %+v", asked)
+		}
+		// Meanwhile the book is still found, by its words: the search asks
+		// no endpoint, having no vector to compare a question's with.
+		if got := search("substitution"); len(got.Passages) != 1 || len(got.LeftOut) != 0 || got.Passages[0].Location != "p. 2" {
+			t.Errorf("while the book is outdated, study evidence search = %+v; want it found by keyword", got)
+		}
+		if asked := at.Asked(); len(asked) != 0 {
+			t.Errorf("a search of a book without vectors of the model asked the endpoint %+v", asked)
 		}
 		if got := index(again...); got.State != core.IndexIndexed || !got.Asked {
 			t.Fatalf("study source index %s = %+v; want the book asked for, and indexed", strings.Join(again, " "), got)

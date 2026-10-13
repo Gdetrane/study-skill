@@ -758,7 +758,7 @@ hours before any learning happens is exactly what v1 produced.
     cannot be told is reported as possibly still indexing. What was indexed stays, and the
     next run carries on.
   - **`sources` and `status` say what is indexed**, in the CLI and over MCP: each Source is
-    `indexed`, `indexing`, `failed`, `not_indexed` or `unknown`, with `study source index`
+    `indexed`, `outdated`, `indexing`, `failed`, `not_indexed` or `unknown`, with `study source index`
     as the one action when a Source is not indexed and the command would hand it over. A
     Source that failed is shown with the plugin's reason and is no action: it is tried
     again when someone runs the command for it. Nor is the command the action for a file

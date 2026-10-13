@@ -359,7 +359,7 @@ func TestTheBuiltStudyShelfDoesWhatItsSettingsFileSays(t *testing.T) {
 	writeSettings(t, computer, at, "embeddinggemma-2-prompts", false)
 	at.Forget()
 	s, _ = run(t, computer)
-	if now := s.status("settings")[book.ID]; now.State != plugincontract.StateFailed || now.Hash != book.Hash ||
+	if now := s.status("settings")[book.ID]; now.State != plugincontract.StateOutdated || now.Hash != book.Hash ||
 		!strings.Contains(now.Reason, "marked for the model google/embeddinggemma-2 in another way") {
 		t.Errorf("after the Recipe was changed, study-shelf says %+v of the book", now)
 	}

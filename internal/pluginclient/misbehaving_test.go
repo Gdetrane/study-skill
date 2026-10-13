@@ -556,7 +556,7 @@ func TestAnAnswerThatBreaksTheContractIsRefused(t *testing.T) {
 			"Source strang.k3f9a2 is indexed and has no hash"},
 		{"a state that is none", `status={"sources": [{"id": "strang.k3f9a2", "state": "\u001b[2Jready"}]}`,
 			func(s *pluginclient.Connection) error { _, err := s.Status(ctx, "c"); return err },
-			`the state of Source strang.k3f9a2 is "\x1b[2Jready", not indexed, indexing or failed`},
+			`the state of Source strang.k3f9a2 is "\x1b[2Jready", not indexed, indexing, failed or outdated`},
 		{"failed without a reason", `status={"sources": [{"id": "strang.k3f9a2", "state": "failed"}]}`,
 			func(s *pluginclient.Connection) error { _, err := s.Status(ctx, "c"); return err },
 			"Source strang.k3f9a2 failed and has no reason"},

@@ -139,8 +139,8 @@ GOOS=darwin go vet ./...            # macOS is supported too
   no plugin anything, and a command that only needs to know which Topic it is about calls
   `ActiveTopic`, not `Status`. Never give a plugin the client's thirty seconds on such a
   path. The one action `status` names is a command that would help: `study source index`
-  only for a Source it would hand over and the plugin has not tried, never for one that
-  failed or whose file is missing, changed or unreadable. A search, and a refused
+  only for a Source it would hand over and the plugin has not tried, or calls `outdated`,
+  never for one that failed or whose file is missing, changed or unreadable. A search, and a refused
   recording, decide it by the same code (`indexAsk`): never write that rule a second time.
 - A search of a Topic's Sources, and the reading of a Passage to check a quote, have
   `core.PluginEvidenceTimeout`, forty-five seconds, for the registry, the start and every
@@ -241,9 +241,11 @@ GOOS=darwin go vet ./...            # macOS is supported too
     Source `failed`. A question's vector is compared only with vectors made the same way
     (`index.Made`: model, marking, size).
   - A Source that is indexed and has no such vectors, though the settings name an
-    endpoint, is `failed` with the hash of what is still found and the reason
-    (`Shelf.behind`): the one state whose reason `study` shows, and which `study source
-    index` asks for again. Keep the reason under the 300 bytes `study` shows of one.
+    endpoint, is `outdated`, with the hash of what is still found and the reason
+    (`Shelf.behind`): the contract's word for what is indexed and to be indexed again.
+    `study` shows the reason, names `study source index` as what to do next, and still
+    searches the Source. Never say `failed` of what is found and only wants its vectors,
+    and keep the reason under the 300 bytes `study` shows of one.
   - A search is by keyword always, and an endpoint that fails takes from it only what it
     would have added: the answer then says so in Shelf's own fields beside the Passages
     (`search`, `reranked`, `notice`). The two rankings are taken two of the embeddings'

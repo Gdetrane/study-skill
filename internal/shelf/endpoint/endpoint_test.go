@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mordor-forge/lamplight/v2/internal/plugincontract"
 	"github.com/mordor-forge/lamplight/v2/internal/shelf/endpoint"
 	"github.com/mordor-forge/lamplight/v2/internal/shelf/shelftest"
 )
@@ -616,4 +617,41 @@ func TestWhatARerankerGetsWrongIsAReason(t *testing.T) {
 			t.Errorf("%s: NewReranker made a reranker of it", name)
 		}
 	}
+}
+
+// study gives a search forty-five seconds for all of it, starting the
+// plugin included, and stops a plugin that takes longer without hearing
+// what it found. The time Shelf waits for an endpoint that never answers,
+// for the question's vector and then for the reranker, leaves it time to
+// start, to search by keyword and to answer: so that the search is
+// answered, by what is left, and says what it did without.
+func TestTheSearchDeadlinesLeaveTimeToAnswer(t *testing.T) {
+	// What starting Shelf, the keyword search, reading every vector of a
+	// large collection and writing the answer may take on a slow computer.
+	const rest = 10 * time.Second
+	waited := endpoint.DefaultQueryTimeout + endpoint.DefaultRerankTimeout
+	if waited+rest > plugincontract.EvidenceTime {
+		t.Errorf("a search waits up to %s for its two endpoints, which with %s for the rest is more than the %s study gives a search: "+
+			"study would stop Shelf before it could answer by keyword", waited, rest, plugincontract.EvidenceTime)
+	}
+	// And each is the time a request really has: an embedder and a reranker
+	// made from settings that name none.
+	at := shelftest.NewEndpoint(t)
+	release := make(chan struct{})
+	defer close(release)
+	at.Answer(func(_ http.ResponseWriter, r *http.Request, _ map[string]any) bool {
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+		return true
+	})
+	cfg := prefixed(at)
+	cfg.QueryTimeout = 150 * time.Millisecond
+	began := time.Now()
+	_, err := embedder(t, cfg).Query(ctx, "a question")
+	if took := time.Since(began); took < 150*time.Millisecond || took > 5*time.Second {
+		t.Errorf("a question's vector was waited for %s, and its deadline is 150ms", took)
+	}
+	reason(t, err, at.Host, "did not answer within 150ms")
 }

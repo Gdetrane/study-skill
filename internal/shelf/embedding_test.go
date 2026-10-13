@@ -709,10 +709,10 @@ func TestVectorsOfAnotherMakingAreReportedAndPutRightByIndexingAgain(t *testing.
 	status := s.status("changed")
 	for _, source := range []plugincontract.Source{book, page} {
 		now := status[source.ID]
-		if now.State != plugincontract.StateFailed || now.Hash == "" {
-			t.Fatalf("status of %s, whose vectors are another model's = %+v; want it failed, with the hash of what is still found", source.ID, now)
+		if now.State != plugincontract.StateOutdated || now.Hash == "" {
+			t.Fatalf("status of %s, whose vectors are another model's = %+v; want it outdated, with the hash of what is still found", source.ID, now)
 		}
-		for _, word := range []string{"found by keyword alone", "the model model-a", "now name the model model-b", "Index it again"} {
+		for _, word := range []string{"found by keyword alone", "the model model-a", "now name the model model-b"} {
 			if !strings.Contains(now.Reason, word) {
 				t.Errorf("the reason does not say %q: %s", word, now.Reason)
 			}
@@ -787,7 +787,7 @@ func TestVectorsOfAnotherMakingAreReportedAndPutRightByIndexingAgain(t *testing.
 
 	// Another size of the same model's vectors.
 	third, s := startWith(t, folder, withModel("model-b", func(e *endpoint.Embedding) { e.Dimensions = 256 }))
-	if now := s.status("changed")[book.ID]; now.State != plugincontract.StateFailed || now.Hash != book.Hash ||
+	if now := s.status("changed")[book.ID]; now.State != plugincontract.StateOutdated || now.Hash != book.Hash ||
 		!strings.Contains(now.Reason, "its vectors have 512 numbers, and Shelf's settings now ask for 256") {
 		t.Errorf("status of a Source whose vectors are of another size = %+v", now)
 	}
@@ -812,7 +812,7 @@ func TestVectorsOfAnotherMakingAreReportedAndPutRightByIndexingAgain(t *testing.
 		e.Dimensions = 256
 		e.Document = endpoint.Marking{Text: "passage: {text}"}
 	}))
-	if now := s.status("changed")[book.ID]; now.State != plugincontract.StateFailed || !strings.Contains(now.Reason, "marked for the model model-b in another way") {
+	if now := s.status("changed")[book.ID]; now.State != plugincontract.StateOutdated || !strings.Contains(now.Reason, "marked for the model model-b in another way") {
 		t.Errorf("status of a Source whose Passages were marked another way = %+v", now)
 	}
 	fourth.Close()
@@ -832,7 +832,7 @@ func TestVectorsOfAnotherMakingAreReportedAndPutRightByIndexingAgain(t *testing.
 	// And one that has an endpoint says of that Source that it has none.
 	_, s = startWith(t, folder, withModel("model-b", func(e *endpoint.Embedding) { e.Dimensions = 256 }))
 	now := s.status("changed")[plain.ID]
-	if now.State != plugincontract.StateFailed || now.Hash != plain.Hash ||
+	if now.State != plugincontract.StateOutdated || now.Hash != plain.Hash ||
 		!strings.Contains(now.Reason, "it was indexed without vectors, and Shelf now has an embedding endpoint, for the model model-b") {
 		t.Errorf("status of a Source that was indexed without vectors = %+v", now)
 	}
@@ -955,7 +955,7 @@ func TestGivingVectorsToWhatIsIndexedCanBeStopped(t *testing.T) {
 		t.Fatal("cancel says it stopped nothing")
 	}
 	now := s.status("stopped")[book.ID]
-	if now.State != plugincontract.StateFailed || now.Hash != book.Hash || !strings.Contains(now.Reason, "indexed without vectors") {
+	if now.State != plugincontract.StateOutdated || now.Hash != book.Hash || !strings.Contains(now.Reason, "indexed without vectors") {
 		t.Errorf("after the embedding was stopped, status says %+v; want the Source as it was", now)
 	}
 	if found := s.search("stopped", "motives", 5); len(found) != 1 {
