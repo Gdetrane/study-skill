@@ -56,15 +56,19 @@ func TestTheInstallScript(t *testing.T) {
 			t.Errorf("the install folder holds %v, want study and study-shelf alone", got)
 		}
 		// The two are installed to work together: the study that was
-		// installed starts the study-shelf beside it, and they speak the
-		// contract.
+		// installed registers the study-shelf beside it, starts it, and
+		// they speak the contract.
 		in.wantShelfChecked(dest)
-		// And the script says how: nothing else tells a learner that Shelf
-		// is there to be registered.
-		for _, want := range []string{"knowledge-base add shelf -- \"" + dest + "-shelf\"", "knowledge-base check shelf"} {
+		// And the script says how: that study setup registers Shelf, and
+		// the command that shows it starts.
+		for _, want := range []string{"and register\nShelf, which indexes a Topic's books and web pages and searches them:\n  " + dest + " setup\n",
+			"  " + dest + " knowledge-base check shelf\n"} {
 			if !strings.Contains(out, want) {
 				t.Errorf("install.sh does not print %q", want)
 			}
+		}
+		if strings.Contains(out, "knowledge-base add") {
+			t.Errorf("install.sh still has the learner register Shelf by hand:\n%s", out)
 		}
 		page, err := os.ReadFile(filepath.Join(in.home, ".local", "share", "man", "man1", "study.1.gz"))
 		if err != nil || !bytes.Equal(page, built.manPage) {
@@ -758,16 +762,18 @@ func (in *install) wantShelf(dest, version string) {
 	}
 }
 
-// wantShelfChecked registers the installed study-shelf with the installed
-// study, as the learner does, and has study check it: study starts it as it
-// starts any plugin, and they speak the contract.
+// wantShelfChecked runs the two commands the script prints, as the learner
+// does: the installed study's setup registers the study-shelf installed
+// beside it, and study checks it, starting it as it starts any plugin, and
+// they speak the contract. The home is a temporary folder here, from where
+// setup registers nothing unless it is forced to.
 func (in *install) wantShelfChecked(study string) {
 	in.t.Helper()
 	env := []string{"HOME=" + in.home, "PATH=" + filepath.Dir(study) + string(os.PathListSeparator) + in.path,
 		"STUDY_HOME=" + filepath.Join(in.home, "study"),
 		"XDG_CONFIG_HOME=" + filepath.Join(in.home, ".config"), "XDG_STATE_HOME=" + filepath.Join(in.home, ".local", "state")}
 	for _, args := range [][]string{
-		{"knowledge-base", "add", "shelf", "--", "study-shelf"},
+		{"setup", "--force"},
 		{"knowledge-base", "check", "shelf", "--json"},
 	} {
 		cmd := exec.Command(study, args...)

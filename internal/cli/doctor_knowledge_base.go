@@ -1,0 +1,97 @@
+package cli
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/mordor-forge/lamplight/v2/internal/core"
+)
+
+// diagnoseKnowledgeBase is what study doctor says of the Knowledge base
+// plugins (ADR-0012): the registry, each plugin registered in it, and, for
+// each Topic that names a plugin, what the plugin says of the Topic's
+// Sources when there is something to say.
+//
+// A plugin is checked as study knowledge-base check checks it, and asked
+// what it has indexed as study status asks it, each time with the couple of
+// seconds of a glance (core.PluginGlanceTimeout): the doctor waits for no
+// plugin, and has none index. What is said of a Topic's Sources, and the one
+// command named for them, are status's own (core.Indexing): a Source whose
+// indexing failed is shown with its reason, and is nothing to run a command
+// for here either.
+//
+// None of it makes the setup unhealthy. A Topic whose plugin cannot be
+// asked works as one without a Knowledge base.
+func (a *app) diagnoseKnowledgeBase(ctx context.Context) []core.Finding {
+	c, err := core.Open(a.opts)
+	if err != nil {
+		// The Study home cannot be found, and the doctor has said why.
+		return nil
+	}
+	registry := core.Finding{Name: "knowledge_base", Status: core.FindingOK}
+	glances, err := c.CheckPlugins(ctx)
+	switch {
+	case err != nil:
+		registry.Status, registry.Message = core.FindingWarn, err.Error()
+		return []core.Finding{registry}
+	case glances.Problem != "":
+		// The registry's own words say what to do, and every Topic that
+		// names a plugin would repeat them.
+		registry.Status, registry.Message = core.FindingWarn, glances.Problem
+		return []core.Finding{registry}
+	case len(glances.Plugins) == 0:
+		registry.Message = "no Knowledge base plugin is registered on this computer: study setup registers Shelf when " +
+			shelfProgram + " is installed"
+	default:
+		registry.Message = glances.Registry
+	}
+	out := []core.Finding{registry}
+	// broken are the plugins whose own Finding says what is wrong, and what
+	// to do: a Topic that names one has nothing to add.
+	broken := map[string]bool{}
+	for _, g := range glances.Plugins {
+		f := core.Finding{Name: "knowledge_base:" + g.Plugin.Name, Status: core.FindingOK}
+		if g.Check != nil {
+			f.Message = describeCheck(*g.Check)
+		} else {
+			f.Status, f.Message, f.Fix = core.FindingWarn, g.Problem, g.Fix
+			broken[g.Plugin.Name] = true
+		}
+		out = append(out, f)
+	}
+	status, err := c.Status(ctx)
+	if err != nil {
+		// What keeps the Topics from being read is the doctor's to say, and
+		// it has.
+		return out
+	}
+	for _, t := range status.Topics {
+		x := t.Indexing
+		if x == nil || x.Problem != "" && broken[x.Plugin] {
+			continue
+		}
+		f := core.Finding{Name: "indexing:" + t.ID, Status: core.FindingOK, Message: x.Problem, Fix: x.Action}
+		if f.Message == "" {
+			if f.Message = describeIndexing(x.Sources); f.Message == "" {
+				// Every Source is indexed.
+				continue
+			}
+		}
+		if x.Problem != "" || x.Action != "" {
+			f.Status = core.FindingWarn
+		}
+		out = append(out, f)
+	}
+	return out
+}
+
+// describeCheck says of a plugin that was checked how study starts it, or
+// where it reaches it, and which contract it speaks.
+func describeCheck(r core.PluginCheck) string {
+	how := "started by " + describePlugin(core.Plugin{Command: r.Command})
+	if r.Address != "" {
+		// Its scheme and host: the rest of the address may be a key.
+		how = "reached at " + printable(r.Address)
+	}
+	return fmt.Sprintf("%s, speaks version %d of Lamplight's contract", how, r.Contract.Version)
+}

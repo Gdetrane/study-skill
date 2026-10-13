@@ -2,3 +2,5 @@ study setup would set up Lamplight with study at $HOME/bin/study
   skill   would install in $HOME/.agents/skills/lamplight (9 files to write)
   claude  would register; would link $HOME/.claude/skills/lamplight
   codex   would register
+  shelf   skipped
+          study-shelf is neither beside study nor on your PATH; run study setup again once it is installed

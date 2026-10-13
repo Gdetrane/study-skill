@@ -510,7 +510,8 @@ func TestSetupDryRunsAndChecksWriteNothing(t *testing.T) {
 		t.Errorf("dry run: %v", dry)
 	}
 	r := h.run(t, "setup", "--check", "--json")
-	if code, data := failure(t, r); code != "unhealthy" || data["up_to_date"] != false || len(data["findings"].([]any)) != 3 {
+	// The skill, the two agents, and Shelf.
+	if code, data := failure(t, r); code != "unhealthy" || data["up_to_date"] != false || len(data["findings"].([]any)) != 4 {
 		t.Errorf("--check before setup: %s", r.stdout)
 	}
 	for p, sum := range tree256(t, h.home) {

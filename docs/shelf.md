@@ -14,13 +14,24 @@ other plugin. Terms follow [GLOSSARY.md](../GLOSSARY.md).
 
 ## Registering it
 
-`install.sh` and the deb and rpm packages install `study-shelf` next to `study`. Register it
-once on each computer, under the name your Topics will use:
+`install.sh` and the deb and rpm packages install `study-shelf` next to `study`, and
+`study setup` registers it on the computer, under the name your Topics will use, `shelf`:
 
 ```bash
-study knowledge-base add shelf -- study-shelf
+study setup                        # registers the study-shelf beside study, among what it sets up
 study knowledge-base check shelf
 ```
+
+Setup takes the `study-shelf` beside `study`, and otherwise the first on your `PATH`. A
+plugin you registered as `shelf` yourself is left as it is, and so you can register Shelf
+by hand, from another place or with [`--allow-loopback`](#what-it-reads):
+
+```bash
+study knowledge-base add shelf -- /opt/lamplight/bin/study-shelf
+```
+
+`study doctor` says whether Shelf starts, and which Sources of your Topics it has not
+indexed ([docs/cli.md](cli.md#study-doctor)).
 
 `check` starts Shelf as `study` starts it for a Topic, and reports the contract it speaks:
 version 1, Sources that are files and web pages, pages as locations, and how it searches:
@@ -326,9 +337,9 @@ making: an `OPENAI_API_KEY` or `OPENAI_BASE_URL` in your shell never reaches She
 environment tells Shelf where your configuration folder is, and nothing else.
 
 After a change, `study knowledge-base check shelf` says whether Shelf can use the file,
-and how it searches now. It does not ask the endpoints anything: the first
-`study source index` does, and a Source fails with the reason when one does not answer as
-the settings expect.
+and how it searches now. It does not ask the endpoints anything, and neither does
+`study doctor`: the first `study source index` does, and a Source fails with the reason
+when one does not answer as the settings expect.
 
 | Setting | Is |
 |---|---|
@@ -359,11 +370,11 @@ write. A server that marks a text Shelf had marked would mark it twice, so a fil
 gives both is refused.
 
 **A file Shelf cannot use stops it.** Shelf then does not start, and
-`study knowledge-base check shelf` shows why: a line that is no TOML, a setting or a Recipe
-it does not know, a newer format, an address that is none. It does not search by keyword
-instead: you would think the endpoint you wrote in use. Shelf says which line or setting
-is wrong and never what it holds, since it may hold the key. Keep the file yours alone to
-read (`chmod 600`) when it has a key in it.
+`study knowledge-base check shelf` shows why, as `study doctor` does: a line that is no
+TOML, a setting or a Recipe it does not know, a newer format, an address that is none.
+Shelf does not search by keyword instead: you would think the endpoint you wrote in use.
+It says which line or setting is wrong and never what it holds, since it may hold the
+key. Keep the file yours alone to read (`chmod 600`) when it has a key in it.
 
 **The file is not read from where an index is kept.** A settings file inside the folder
 Shelf keeps its index in, or inside the folder above it that holds every plugin's folder

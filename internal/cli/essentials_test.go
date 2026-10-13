@@ -69,6 +69,15 @@ func runEnv(t *testing.T, env map[string]string, dir string, stdin io.Reader, ar
 		Dir:    dir,
 		Now:    func() time.Time { return fixedNow },
 		NewID:  func() string { return fmt.Sprintf("id%03d", n.Add(1)) },
+		// A plugin that is started, as study doctor starts each one that is
+		// registered, gets the test's environment and never the caller's.
+		Plugins: core.PluginOptions{Environ: func() []string {
+			environ := []string{}
+			for key, value := range env {
+				environ = append(environ, key+"="+value)
+			}
+			return environ
+		}, StopGrace: 300 * time.Millisecond},
 	}
 	if stdin == nil {
 		stdin = strings.NewReader("")

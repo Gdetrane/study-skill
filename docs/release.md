@@ -70,8 +70,9 @@ It needs `curl`, `tar` and `sha256sum` or `shasum`, and no sudo. It:
    holds only one. It puts the man page in `~/.local/share/man/man1`;
 4. runs `study completion install` for the learner's shell, and goes on when that fails;
 5. says when `~/.local/bin` is not on the `PATH`, or when another `study` comes first there,
-   and prints the next steps: `study setup`, and the two commands that register Shelf and
-   check it. It runs neither.
+   and prints the next steps: `study setup`, which registers the `study-shelf` beside
+   `study` as the Knowledge base plugin `shelf` among what it sets up, and
+   `study knowledge-base check shelf`. It runs neither.
 
 Running it again upgrades. Three variables change what it does, set for `sh`, as in
 `curl ... | STUDY_VERSION=v2.0.0 sh`:
@@ -82,8 +83,9 @@ Running it again upgrades. Three variables change what it does, set for `sh`, as
 | `STUDY_INSTALL_DIR` | The folder `study` and `study-shelf` go in. The man page is installed only when this is a `bin` folder, in `share/man/man1` beside it. |
 | `STUDY_DOWNLOAD_URL` | A folder of release files to download from instead of the GitHub release, as an `https://` or `file://` address, such as `file://$PWD/dist` after `make release-snapshot`. |
 
-To remove what it installed: `study setup --remove`, `study completion uninstall`,
-`study knowledge-base remove shelf` if Shelf was registered, then
+To remove what it installed: `study setup --remove`, which takes Shelf out of the registry
+when setup registered it, `study completion uninstall`,
+`study knowledge-base remove shelf` if you registered Shelf yourself, then
 delete `~/.local/bin/study`, `~/.local/bin/study-shelf` and
 `~/.local/share/man/man1/study.1.gz`. The Study home is the learner's and stays, and so
 does Shelf's index, in `~/.local/state/lamplight/knowledge-base-plugins`, until it is

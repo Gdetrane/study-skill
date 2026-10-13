@@ -283,15 +283,14 @@ main() {
 		;;
 	esac
 
+	# study setup finds the study-shelf beside the study it is run from, and
+	# registers it by its whole path.
 	say ""
-	say "Next, install the lamplight skill and register study with Claude Code and Codex:"
+	say "Next, install the lamplight skill, register study with Claude Code and Codex, and register"
+	say "Shelf, which indexes a Topic's books and web pages and searches them:"
 	say "  $study setup"
-	# By its whole path: study starts a registered plugin with a PATH of its
-	# own making, and the registration then holds wherever this folder is on
-	# the learner's.
 	say ""
-	say "To have Shelf index a Topic's books and web pages and search them, register it once:"
-	say "  $study knowledge-base add shelf -- \"$shelf\""
+	say "Then see that Shelf starts:"
 	say "  $study knowledge-base check shelf"
 }
 

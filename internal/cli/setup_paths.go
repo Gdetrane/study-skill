@@ -469,6 +469,9 @@ func (a *app) invalidSetupRecord(rec setupRecord) string {
 		}
 		seen[g.Agent] = true
 	}
+	if s := rec.Shelf; s != nil && (s.Name != shelfName || !filepath.IsAbs(s.Program) || filepath.Base(s.Program) != shelfProgram) {
+		return fmt.Sprintf("it names a Knowledge base plugin study setup never registers (%s %s)", s.Name, s.Program)
+	}
 	return ""
 }
 

@@ -49,15 +49,8 @@ study completion install   # shell completions, if you did not use the install s
 study doctor               # checks that everything is in place
 ```
 
-To have your books and web pages indexed and searched, register Shelf, the Knowledge base
-plugin that is installed beside `study`, once on each computer:
-
-```bash
-study knowledge-base add shelf -- ~/.local/bin/study-shelf
-study knowledge-base check shelf
-```
-
-[docs/shelf.md](docs/shelf.md) says what Shelf reads, what it keeps and where.
+`study setup` also registers Shelf, the program that indexes and searches your books:
+see [A Knowledge base](#a-knowledge-base).
 
 `study setup --check` finds a stale install, and `study setup --remove` undoes exactly what
 setup did. Claude Code users can install the plugin instead; other agents can run
@@ -89,6 +82,39 @@ Your Study home is `~/study` unless `STUDY_HOME` or `study_home` in
     history.jsonl            everything that happened
 ```
 
+## A Knowledge base
+
+A Topic learns from Sources: your books, as PDFs, and web pages. A Knowledge base holds
+their text and searches it, so that your agent finds the Passage a Lesson rests on and
+quotes it word for word. That quote is Evidence, and Lamplight checks it against the
+Passage: what the book does not say is not recorded as its words. Without a Knowledge base
+the agent reads the Sources itself, and its quotes are not checked.
+
+A Knowledge base is a plugin: a program on your computer that `study` starts whenever it
+has something to ask it. Lamplight ships with one, Shelf, the `study-shelf` program
+installed beside `study`. It needs no account, and keeps its index on your computer.
+`study setup` registers it, and then a Topic names it:
+
+```bash
+study topic update linear-algebra --knowledge-base shelf
+study source add linear-algebra --file ~/Books/strang.pdf
+study source index linear-algebra --dry-run   # which files and addresses Shelf would read
+study source index linear-algebra
+study evidence search linear-algebra "why does elimination work?"
+```
+
+Or tell your agent which book to learn from. It adds the Source, runs `study source index`
+in its own shell, and searches the book as it teaches. `study status` and `study doctor`
+say which Sources are not indexed yet, with the command that indexes them.
+
+Shelf searches by keyword as it is installed. Name an embedding model that you serve
+yourself in `~/.config/lamplight/shelf.toml`, and it also finds a Passage by what a
+question means; your books' text then goes to that model and nowhere else.
+[docs/shelf.md](docs/shelf.md) says how, what Shelf reads, and where it keeps its index.
+Another plugin can take Shelf's place:
+[docs/knowledge-base-contract.md](docs/knowledge-base-contract.md) is the contract one
+speaks, and `study knowledge-base add` registers it.
+
 ## Commands
 
 Most of the time you talk to your agent. The command line covers the same ground:
@@ -103,6 +129,7 @@ Most of the time you talk to your agent. The command line covers the same ground
 | `study review` | Review your Cards in the terminal |
 | `study card …`, `study task …` | Manage Cards and Tasks |
 | `study source …`, `study evidence …`, `study library …` | Sources, citations, and your book Library |
+| `study knowledge-base …` | The Knowledge base plugins this computer has |
 | `study history`, `study lesson <lesson>` | What happened, and one Lesson's details |
 | `study import <v1-workspace>` | Bring a v1 workspace over |
 | `study setup`, `study doctor`, `study completion …` | Installation and checks |
