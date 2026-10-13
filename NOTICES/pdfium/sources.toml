@@ -1,0 +1,192 @@
+# What is inside the pdfium.wasm that go-pdfium embeds, and so inside
+# study-shelf: where each licence text in this folder was copied from, and at
+# which revision. Written by hand, as README.md describes. internal/notices
+# holds it to go.mod, to the pdfium.wasm in the module cache and to the files
+# of this folder, and lists its parts in ../README.md.
+format = 1
+
+# The file these notices were written for. A go-pdfium of another version
+# fails the test until its pdfium.wasm has been looked at again.
+[wasm]
+module = "github.com/klippa-app/go-pdfium"
+version = "v1.21.3"
+file = "internal/pdfium_wasm/pdfium.wasm"
+sha256 = "d1dbc423597c0c65cd932cd1bb6a452fdc457a1f3b5009d3d5ec4ca768c47f53"
+
+[[part]]
+name = "PDFium"
+version = "chromium/8057"
+repository = "https://pdfium.googlesource.com/pdfium"
+revision = "a5a7089234f121990b336b3841008009dca143bf"
+
+  [[part.file]]
+  path = "pdfium/LICENSE"
+  source = "LICENSE"
+  sha256 = "1fe9dea718fbd75cf149adaf4d8a22a4335604d964ddb76d1b45383dec8668c9"
+
+# The three that PDFium keeps in its own tree, at PDFium's revision.
+
+[[part]]
+name = "Anti-Grain Geometry"
+version = "2.3"
+repository = "https://pdfium.googlesource.com/pdfium"
+revision = "a5a7089234f121990b336b3841008009dca143bf"
+
+  [[part.file]]
+  path = "agg/copying"
+  source = "third_party/agg23/copying"
+  sha256 = "0e16f9c2285583269242e94c6f502de0c9910dfcbbc7b386e236cdf29ecd4333"
+
+[[part]]
+name = "Little CMS"
+version = "2.19"
+repository = "https://pdfium.googlesource.com/pdfium"
+revision = "a5a7089234f121990b336b3841008009dca143bf"
+
+  [[part.file]]
+  path = "lcms/LICENSE"
+  source = "third_party/lcms/LICENSE"
+  sha256 = "6dbd60437f8ef91d8de1f08ad75882547fd4931bfcc3566a0735f28db1484d31"
+
+[[part]]
+name = "OpenJPEG"
+version = "2.5.4"
+repository = "https://pdfium.googlesource.com/pdfium"
+revision = "a5a7089234f121990b336b3841008009dca143bf"
+
+  [[part.file]]
+  path = "openjpeg/LICENSE"
+  source = "third_party/libopenjpeg/LICENSE"
+  sha256 = "a6af136f3e15038a666b61f376612a07d9a4e48cb7c01adbf3e33b3f14ab49b6"
+
+# Those that PDFium's DEPS file fetches, each at the revision DEPS names.
+
+[[part]]
+name = "FreeType"
+version = "2.14.3"
+repository = "https://chromium.googlesource.com/chromium/src/third_party/freetype2"
+revision = "4800589f76dc62fbe523a74a59e0d4850a5dd7df"
+
+  [[part.file]]
+  path = "freetype/LICENSE.TXT"
+  source = "LICENSE.TXT"
+  sha256 = "bd36c8b474855fa294c2ec5c184544478ef3720aad37d65a6296a4f264fd2d3b"
+
+  [[part.file]]
+  path = "freetype/docs/FTL.TXT"
+  source = "docs/FTL.TXT"
+  sha256 = "5a5ee54c5001bbad1cdc1a57cc3dd4c42199b2da09d39c7ee41fab002d02967f"
+
+[[part]]
+name = "ICU"
+version = "78"
+repository = "https://chromium.googlesource.com/chromium/deps/icu"
+revision = "8cc91d9b6ab9991802fd208ee03a69714fd0251c"
+
+  [[part.file]]
+  path = "icu/LICENSE"
+  source = "LICENSE"
+  sha256 = "e55522d81edc687a341a4411e0776e54ca654e90147f354a90458aaced4116af"
+
+[[part]]
+name = "libjpeg-turbo"
+version = "3.1.0"
+repository = "https://chromium.googlesource.com/chromium/deps/libjpeg_turbo"
+revision = "640f254ad0fa03f6b1f29f89b7dd9366f2f6e533"
+
+  [[part.file]]
+  path = "libjpeg-turbo/LICENSE.md"
+  source = "LICENSE.md"
+  sha256 = "96f5b328adbb78eeaaec6980d73fd558cb1e4d62560ed615646bc3cf5e532430"
+
+  # The Independent JPEG Group's licence, which LICENSE.md refers to.
+  [[part.file]]
+  path = "libjpeg-turbo/README.ijg"
+  source = "README.ijg"
+  sha256 = "75815e3bf6484201a3c3d17a1bbf10f2e8e3237f84df10a2357ea896db2a81d6"
+
+[[part]]
+name = "zlib"
+version = "1.3.2"
+repository = "https://chromium.googlesource.com/chromium/src/third_party/zlib"
+revision = "285e94b8fa95ad3b7d16b80798ec8dce6febb8c8"
+
+  [[part.file]]
+  path = "zlib/LICENSE"
+  source = "LICENSE"
+  sha256 = "e32ff4e00d9d94930537635291da39e7e612703334bf6fde8c7f1686fe8a45a2"
+
+[[part]]
+name = "Abseil"
+repository = "https://chromium.googlesource.com/chromium/src/third_party/abseil-cpp"
+revision = "435e7d977fb36fb47854a4c552c0706dad0bd7cf"
+
+  [[part.file]]
+  path = "abseil-cpp/LICENSE"
+  source = "LICENSE"
+  sha256 = "c79a7fea0e3cac04cd43f20e7b648e5a0ff8fa5344e644b0ee09ca1162b62747"
+
+# fast_float is offered under three licences. PDFium takes it under MIT.
+[[part]]
+name = "fast_float"
+repository = "https://chromium.googlesource.com/external/github.com/fastfloat/fast_float"
+revision = "34164f547b7df3f5d794ff67e9f885c36819ebfc"
+
+  [[part.file]]
+  path = "fast_float/LICENSE-MIT"
+  source = "LICENSE-MIT"
+  sha256 = "e562f3f974ced7e69dd1db77b820b36bcf8f30377f1aa105723fba449c53c4e6"
+
+# What built the file: the scripts, whose own code is linked into it, and
+# the compiler, whose C and C++ libraries are.
+
+[[part]]
+name = "pdfium-binaries"
+repository = "https://github.com/jerbob92/pdfium-binaries"
+revision = "b54b0ea110098401ab3ddf17c885b305310b290a"
+
+  [[part.file]]
+  path = "pdfium-binaries/LICENSE"
+  source = "LICENSE"
+  sha256 = "493abc10084b58f97dce3fac1654624e1a25788f17180fe8925786c266cd2416"
+
+[[part]]
+name = "Emscripten"
+version = "6.0.9"
+repository = "https://github.com/emscripten-core/emscripten"
+revision = "4e4223852a0835923411059a3929907d7df1232e"
+
+  [[part.file]]
+  path = "emscripten/LICENSE"
+  source = "LICENSE"
+  sha256 = "620a78084fc7ca97c0b5dea9abf891f3ffcadfdbf305276f099c9c4e12fc1d86"
+
+[[part]]
+name = "musl, in Emscripten"
+repository = "https://github.com/emscripten-core/emscripten"
+revision = "4e4223852a0835923411059a3929907d7df1232e"
+
+  [[part.file]]
+  path = "musl/COPYRIGHT"
+  source = "system/lib/libc/musl/COPYRIGHT"
+  sha256 = "b870108ec5e7790e9f9919064f1b9421d62d5f9b0e6c230c6adf7ea2da62e97b"
+
+[[part]]
+name = "libc++, in Emscripten"
+repository = "https://github.com/emscripten-core/emscripten"
+revision = "4e4223852a0835923411059a3929907d7df1232e"
+
+  [[part.file]]
+  path = "libcxx/LICENSE.TXT"
+  source = "system/lib/libcxx/LICENSE.TXT"
+  sha256 = "539dd7aed86e8a4f12cbdd0e6c50c189c7d74847e4fecc64ce2c6ee3a01da38b"
+
+[[part]]
+name = "libc++abi, in Emscripten"
+repository = "https://github.com/emscripten-core/emscripten"
+revision = "4e4223852a0835923411059a3929907d7df1232e"
+
+  [[part.file]]
+  path = "libcxxabi/LICENSE.TXT"
+  source = "system/lib/libcxxabi/LICENSE.TXT"
+  sha256 = "e2b35be49f7284a45b7baca8fc7b3ab7440e7902392b2528a457816b5bb2a15c"
