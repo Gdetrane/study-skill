@@ -2,7 +2,10 @@ package core
 
 import (
 	"context"
+	"errors"
+	"io/fs"
 	"os"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -19,7 +22,9 @@ import (
 // Four things start a plugin, each through startPlugin:
 //
 //   - CheckPlugin, for study knowledge-base check, which asks which contract
-//     the plugin speaks. It is for the learner and CLI-only.
+//     the plugin speaks, and CheckPlugins, for study doctor, which asks
+//     every registered plugin the same with the short deadline of a glance.
+//     Both are for the learner and CLI-only.
 //   - IndexSources, for study source index, which asks the Topic's plugin to
 //     index. It is CLI-only too, and the one thing that asks a plugin to
 //     index (source_index.go).
@@ -134,7 +139,14 @@ func (c *Core) CheckPlugin(ctx context.Context, name string) (PluginCheck, error
 	if err != nil {
 		return PluginCheck{}, err
 	}
-	session, err := c.startPlugin(ctx, plugin, began, pluginUse{})
+	return c.checkPlugin(ctx, plugin, began, pluginUse{})
+}
+
+// checkPlugin starts a registered plugin, or reaches it, takes what it says
+// of itself, and stops it again. It asks the plugin's contract tool, as
+// starting it does, and nothing else.
+func (c *Core) checkPlugin(ctx context.Context, plugin Plugin, began time.Time, use pluginUse) (PluginCheck, error) {
+	session, err := c.startPlugin(ctx, plugin, began, use)
 	if err != nil {
 		return PluginCheck{}, err
 	}
@@ -145,6 +157,108 @@ func (c *Core) CheckPlugin(ctx context.Context, name string) (PluginCheck, error
 		check.Address = pluginclient.Address(plugin.URL)
 	}
 	return check, nil
+}
+
+// PluginGlance is what a quick check of one registered Knowledge base
+// plugin came to.
+type PluginGlance struct {
+	// Plugin is the plugin as it is registered.
+	Plugin Plugin
+	// Check is what the plugin said of itself, when it started, or was
+	// reached, and speaks the contract.
+	Check *PluginCheck
+	// Problem says why it did not, and Fix what to do about it: the command
+	// that puts it right, or the one that says what is wrong with the
+	// plugin, having more time for it.
+	Problem, Fix string
+}
+
+// PluginGlances is what CheckPlugins found on this computer.
+type PluginGlances struct {
+	// Registry is the file that holds the registrations, whether or not it
+	// exists yet. It is empty when Problem says why the registry could not
+	// be read, and what to do about that.
+	Registry string
+	Problem  string
+	// Plugins are the registered plugins, ordered by name.
+	Plugins []PluginGlance
+}
+
+// CheckPlugins does for every Knowledge base plugin registered on this
+// computer what CheckPlugin does for one, and waits for none: it is for
+// study doctor. Reading the registry, starting each plugin or reaching it,
+// and its answer share one deadline (PluginOptions.GlanceTimeout). The
+// plugins are checked side by side, and one that misses the deadline is
+// stopped and reported with the command that gives it more time. A plugin
+// study does not use as it is registered is not started.
+//
+// A plugin is asked which contract it speaks and nothing else: nothing is
+// indexed and nothing searched. Nothing is written but a command plugin's
+// own folder, which is made when it is not there, and no Event is recorded.
+// It fails only when the command was stopped.
+func (c *Core) CheckPlugins(ctx context.Context) (PluginGlances, error) {
+	limit := c.plugins.GlanceTimeout
+	if limit <= 0 {
+		limit = PluginGlanceTimeout
+	}
+	stoppedFirst := func() error {
+		if !stopped(ctx) {
+			return ctx.Err()
+		}
+		return &Error{Code: CodeCanceled, Err: ctx.Err(), Message: "the command was stopped before every Knowledge base plugin " +
+			"had said which contract it speaks"}
+	}
+	list, began, err := c.registryInTime(ctx, limit)
+	switch {
+	case ctx.Err() != nil:
+		return PluginGlances{}, stoppedFirst()
+	case err != nil:
+		// The registry's own words say what to do.
+		return PluginGlances{Problem: err.Error()}, nil
+	}
+	found := PluginGlances{Registry: list.Registry, Plugins: make([]PluginGlance, len(list.Plugins))}
+	var wg sync.WaitGroup
+	for i := range list.Plugins {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			found.Plugins[i] = c.glancePlugin(ctx, list, list.Plugins[i], began, limit)
+		}()
+	}
+	wg.Wait()
+	if ctx.Err() != nil {
+		return PluginGlances{}, stoppedFirst()
+	}
+	return found, nil
+}
+
+// glancePlugin checks one plugin of a reading of the registry, which began
+// at began, within limit of that.
+func (c *Core) glancePlugin(ctx context.Context, list PluginList, plugin Plugin, began time.Time, limit time.Duration) PluginGlance {
+	glance := PluginGlance{Plugin: plugin}
+	if _, problem, action := unusable(list, nil, plugin.Name); problem != "" {
+		glance.Problem, glance.Fix = problem, action
+		return glance
+	}
+	check, err := c.checkPlugin(ctx, plugin, began, pluginUse{within: limit, grace: PluginGlanceGrace})
+	switch {
+	case err == nil:
+		glance.Check = &check
+	case ctx.Err() == nil && !time.Now().Before(began.Add(limit)):
+		glance.Problem = "Knowledge base plugin " + plugin.Name + " did not say which contract it speaks within " + limit.String() +
+			", and study did not wait for it"
+		glance.Fix = "study knowledge-base check " + plugin.Name
+	case CodeOf(err) == CodeNewerFormat:
+		glance.Problem, glance.Fix = err.Error(), "upgrade study"
+	case len(plugin.Command) > 0 && errors.Is(err, fs.ErrNotExist):
+		// Its program is gone: checking it again says the same.
+		glance.Problem = err.Error()
+		glance.Fix = "install the program again, or register the plugin where its program is now with study knowledge-base add " +
+			plugin.Name + " --replace -- <command>"
+	default:
+		glance.Problem, glance.Fix = err.Error(), "study knowledge-base check "+plugin.Name
+	}
+	return glance
 }
 
 // registered finds the plugin registered under name among the ones a

@@ -168,7 +168,7 @@ func TestTheServerNamesNothingThatChangesThePluginRegistry(t *testing.T) {
 		// Nor what starts a plugin itself: the server asks the core where
 		// the learner is and what a Topic's Sources are, and the core asks
 		// the plugin (see TestTheCoreAsksAPluginToIndexInOnePlace).
-		"CheckPlugin", "PluginCheck", "PluginOptions", "startPlugin", "askPlugins", "askPlugin"} {
+		"CheckPlugin", "PluginCheck", "CheckPlugins", "PluginGlances", "PluginOptions", "startPlugin", "askPlugins", "askPlugin"} {
 		if !aboutTheRegistry(name) {
 			t.Fatalf("%s is not refused, so this test proves nothing", name)
 		}

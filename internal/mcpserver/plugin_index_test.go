@@ -289,8 +289,10 @@ func TestNoToolHasAPluginIndex(t *testing.T) {
 // plugin, which nothing study is built from links. In the core, every use
 // of that package is one this test knows, and the one function that starts
 // a plugin is used in one place, startPlugin. startPlugin is used in four:
-// CheckPlugin, which a tool cannot name; askPlugin, which asks a plugin
-// what it has indexed and is what a tool reaches; IndexSources; and
+// checkPlugin, which asks a plugin nothing but its contract and which only
+// CheckPlugin and CheckPlugins reach, for study knowledge-base check and
+// study doctor, neither of which a tool can name; askPlugin, which asks a
+// plugin what it has indexed and is what a tool reaches; IndexSources; and
 // startTopicPlugin, which only SearchEvidence and recordQuoted use, for a
 // search and for Evidence with its Passage, and which a tool reaches too.
 //
@@ -352,12 +354,12 @@ func TestTheCoreAsksAPluginToIndexInOnePlace(t *testing.T) {
 	// as often as it may be.
 	for name, want := range map[string]int{"Start": 1, "startPlugin": 4, "Index": 1, "Cancel": 2, "Search": 2, "Passage": 1,
 		"askToIndex": 1, "indexSources": 1, "startTopicPlugin": 2, "searchPassages": 1, "readPassage": 1, "quotedPassages": 1,
-		"recordQuoted": 1} {
+		"recordQuoted": 1, "checkPlugin": 2, "glancePlugin": 1} {
 		if found[name] != want {
 			t.Errorf("%s is used %d times in the core, want %d: this test no longer reads the core as it is", name, found[name], want)
 		}
 	}
-	for _, name := range []string{"CheckPlugin", "askPlugins"} {
+	for _, name := range []string{"CheckPlugin", "CheckPlugins", "askPlugins"} {
 		if !aboutTheRegistry(name) {
 			t.Fatalf("the server could name %s, so this test proves nothing", name)
 		}
@@ -374,7 +376,10 @@ import (
 	"github.com/mordor-forge/lamplight/v2/internal/pluginclient"
 	"github.com/mordor-forge/lamplight/v2/internal/plugincontract"
 )
-func (c *Core) CheckPlugin() { c.startPlugin() }
+func (c *Core) CheckPlugin() { c.checkPlugin() }
+func (c *Core) CheckPlugins() { c.glancePlugin() }
+func (c *Core) glancePlugin() { c.checkPlugin() }
+func (c *Core) checkPlugin() { conn, _ := c.startPlugin(); conn.Contract() }
 func (c *Core) askPlugin() { conn, _ := c.startPlugin(); conn.Status(nil, "c") }
 func (c *Core) IndexSources() { conn, _ := c.startPlugin(); (&indexRun{conn: conn}).indexSources() }
 func (r *indexRun) indexSources() { r.askToIndex() }
@@ -494,6 +499,18 @@ func (c *Core) Status() { c.CheckPlugin(nil, "kb") }
 		"CheckPlugin is taken as a value": `package core
 func (c *Core) Status() { check := c.CheckPlugin; check(nil, "kb") }
 `,
+		"another operation checks every plugin, as the doctor does": `package core
+func (c *Core) Status() { c.CheckPlugins(nil) }
+`,
+		"another operation checks a plugin through the function that does": `package core
+func (c *Core) ListSources() { c.checkPlugin(nil, Plugin{}, time.Time{}, pluginUse{}) }
+`,
+		"another operation checks a plugin as the doctor's check does": `package core
+func (c *Core) ListSources() { c.glancePlugin(nil, PluginList{}, Plugin{}, time.Time{}, 0) }
+`,
+		"the function that checks a plugin asks it to index": `package core
+func (c *Core) checkPlugin() { conn, _ := c.startPlugin(); conn.Index(nil, "c", plugincontract.Source{}) }
+`,
 		"the package under another name": `package core
 import pc "github.com/mordor-forge/lamplight/v2/internal/pluginclient"
 func (c *Core) Status() { pc.Start(nil, pluginregistry.Env{}, pluginregistry.Plugin{}, pc.Options{}) }
@@ -549,17 +566,22 @@ var pluginClientNames = map[string]string{
 
 // usedOnlyIn are the names of the core that lead to a plugin being started,
 // asked to index, searched, or asked for a Passage again, and the functions
-// each may be used in. CheckPlugin and IndexSources may be used nowhere in
-// the core: they are for the command line, which names them, and the server
-// cannot.
+// each may be used in. CheckPlugin, CheckPlugins and IndexSources may be
+// used nowhere in the core: they are for the command line, which names
+// them, and the server cannot. What starts a plugin to check it is
+// checkPlugin, for the two of them alone: study knowledge-base check, and
+// study doctor through glancePlugin.
 //
 // A function is named with the type it is a method of: a method of the same
 // name on another type is another function.
 var usedOnlyIn = map[string][]string{
-	"startPlugin":  {"Core.CheckPlugin", "Core.askPlugin", "Core.IndexSources", "Core.startTopicPlugin"},
+	"startPlugin":  {"Core.checkPlugin", "Core.askPlugin", "Core.IndexSources", "Core.startTopicPlugin"},
 	"askToIndex":   {"indexRun.indexSources"},
 	"indexSources": {"Core.IndexSources"},
+	"checkPlugin":  {"Core.CheckPlugin", "Core.glancePlugin"},
+	"glancePlugin": {"Core.CheckPlugins"},
 	"CheckPlugin":  nil,
+	"CheckPlugins": nil,
 	"IndexSources": nil,
 	// A Topic's plugin is started to be searched by a search, and to give
 	// Passages again by Evidence that is recorded with them.
