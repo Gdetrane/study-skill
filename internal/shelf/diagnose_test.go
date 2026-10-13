@@ -270,7 +270,7 @@ func TestShelfSaysWhatIsWrongWithAnEndpoint(t *testing.T) {
 			fmt.Fprintf(w, `{"error": {"message": "no such key %s, sent as %s, at http://%s%s, passed on as Bearer sk-upstream-41c9e0"}}`,
 				key, r.Header.Get("Authorization"), r.Host, r.URL.Path)
 		}, []string{"answered 401 Unauthorized: no such key [the key], sent as Bearer [the key], at [the address], passed on as Bearer [the key]",
-			"Check the key in Shelf's settings file"}},
+			"Check the key in Shelf's settings file, or in the key file they name"}},
 		{"it answers what is no JSON", "embedding", "/v1/embeddings", func(w http.ResponseWriter, _ *http.Request, _ map[string]any) {
 			fmt.Fprint(w, "It works!")
 		}, []string{"did not answer as its API does"}},

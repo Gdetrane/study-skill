@@ -568,14 +568,17 @@ func TestAKeyFileThatCannotBeUsedSaysWhy(t *testing.T) {
 		file, setting string
 		want          []string
 	}{
-		"a key and a key file":         {secret, "key = \"" + secret + "\"\nkey_file = \"the.key\"\n", []string{"has both a [embedding] key and a [embedding] key_file", "not both"}},
-		"a key file that is no text":   {secret, "key_file = 7\n", []string{"[embedding] key_file that is not text"}},
-		"a key file without a name":    {secret, "key_file = \"  \"\n", []string{"[embedding] key_file that names no file"}},
-		"a home folder by its sign":    {secret, "key_file = \"~/the.key\"\n", []string{"is not the name of a file beside the settings file"}},
-		"a path below the folder":      {secret, "key_file = \"keys/the.key\"\n", []string{"is not the name of a file beside the settings file"}},
-		"a path out of the folder":     {secret, "key_file = \"../the.key\"\n", []string{"is not the name of a file beside the settings file", "link it there"}},
-		"a whole path":                 {secret, "key_file = \"/etc/hostname\"\n", []string{"is not the name of a file beside the settings file"}},
-		"the folder above":             {secret, "key_file = \"..\"\n", []string{"is not the name of a file beside the settings file"}},
+		"a key and a key file":       {secret, "key = \"" + secret + "\"\nkey_file = \"the.key\"\n", []string{"has both a [embedding] key and a [embedding] key_file", "not both"}},
+		"a key file that is no text": {secret, "key_file = 7\n", []string{"[embedding] key_file that is not text"}},
+		"a key file without a name":  {secret, "key_file = \"  \"\n", []string{"[embedding] key_file that names no file"}},
+		"a home folder by its sign":  {secret, "key_file = \"~/the.key\"\n", []string{"is not the name of a file beside the settings file"}},
+		"a path below the folder":    {secret, "key_file = \"keys/the.key\"\n", []string{"is not the name of a file beside the settings file"}},
+		"a path out of the folder":   {secret, "key_file = \"../the.key\"\n", []string{"is not the name of a file beside the settings file", "link it there"}},
+		"a whole path":               {secret, "key_file = \"/etc/hostname\"\n", []string{"is not the name of a file beside the settings file"}},
+		"the folder above":           {secret, "key_file = \"..\"\n", []string{"is not the name of a file beside the settings file"}},
+		// A name is written into what Shelf says, on a terminal.
+		"a name of two lines":          {"", "key_file = \"the\\nkey\"\n", []string{"is not the name of a file beside the settings file"}},
+		"a name a terminal obeys":      {"", "key_file = \"the\\u001b[2Jkey\"\n", []string{"is not the name of a file beside the settings file"}},
 		"a file that is not there":     {"", "key_file = \"the.key\"\n", []string{"names a key file for [embedding], ", "the.key, that is not there"}},
 		"an empty file":                {"\n", "key_file = \"the.key\"\n", []string{"the.key, that is empty"}},
 		"two words":                    {secret + " " + secret, "key_file = \"the.key\"\n", []string{"holds more than a key", "one word"}},
@@ -608,6 +611,9 @@ func TestAKeyFileThatCannotBeUsedSaysWhy(t *testing.T) {
 			}
 			if strings.Contains(err.Error(), secret) || strings.Contains(err.Error(), "sk-") {
 				t.Errorf("the reason holds the key: %v", err)
+			}
+			if strings.ContainsFunc(err.Error(), func(r rune) bool { return r < ' ' || r == 0x7f }) {
+				t.Errorf("the reason holds what a terminal obeys, or a line's end: %q", err)
 			}
 		})
 	}

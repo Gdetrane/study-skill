@@ -28,7 +28,7 @@ func refusal(t *testing.T, path, key string, says func(r *http.Request) string) 
 	host := strings.TrimPrefix(server.URL, "http://")
 	said := reason(t, err, host, "the embedding endpoint "+host+" answered 403 Forbidden: ")
 	_, said, _ = strings.Cut(said, "answered 403 Forbidden: ")
-	return strings.TrimSuffix(strings.ReplaceAll(said, host, "HOST"), ". Check the key in Shelf's settings file")
+	return strings.TrimSuffix(strings.ReplaceAll(said, host, "HOST"), ". Check the key in Shelf's settings file, or in the key file they name")
 }
 
 // The key Shelf sends is taken out of a server's words wherever it stands

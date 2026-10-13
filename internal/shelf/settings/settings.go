@@ -289,8 +289,11 @@ type keyFiles struct{ embedding, reranking string }
 // setting: a file of its own, small, with no second name, and nowhere in
 // the folders that hold data.
 func readKey(settings, named, table, dataFolder string) (key, reason string) {
+	// A name is written into what Shelf says of the file, on a terminal:
+	// one that holds a line's end, or what a terminal obeys, is none.
+	unwritable := func(r rune) bool { return r == utf8.RuneError || !unicode.IsPrint(r) }
 	if named == "." || named == ".." || strings.ContainsRune(named, filepath.Separator) || strings.ContainsAny(named, `/\`) ||
-		strings.HasPrefix(named, "~") {
+		strings.HasPrefix(named, "~") || strings.ContainsFunc(named, unwritable) {
 		return "", "has a " + table + " key_file that is not the name of a file beside the settings file. A key file is " +
 			"kept there, in Lamplight's configuration folder, and named without a folder: link it there when you keep " +
 			"it elsewhere"
