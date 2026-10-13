@@ -59,7 +59,7 @@ func studyOn(t *testing.T, c *plugintest.Computer, studyHome string, plugins cor
 		value *time.Duration
 		usual time.Duration
 	}{{&plugins.StartTimeout, 20 * time.Second}, {&plugins.StopGrace, 300 * time.Millisecond}, {&plugins.GlanceTimeout, patient},
-		{&plugins.IndexPoll, 10 * time.Millisecond}, {&plugins.CancelTimeout, 5 * time.Second}} {
+		{&plugins.IndexPoll, 10 * time.Millisecond}, {&plugins.CancelTimeout, 5 * time.Second}, {&plugins.EvidenceTimeout, patient}} {
 		if *d.value == 0 {
 			*d.value = d.usual
 		}

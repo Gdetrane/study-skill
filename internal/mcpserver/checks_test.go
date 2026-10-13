@@ -119,6 +119,11 @@ type everyToolOptions struct {
 	// knowledgeBase is the Knowledge base topic_update gives the Topic: the
 	// kind none when it is nil.
 	knowledgeBase map[string]any
+	// prepared, if not nil, is called once the Topic names its plugin and
+	// has its Sources, one of them indexed through the core, and before any
+	// tool is called on the Topic as it is then: what a plugin was asked up
+	// to here was not asked by a tool.
+	prepared func()
 	// plugins says how the server's core starts Knowledge base plugins.
 	plugins core.PluginOptions
 }
@@ -159,23 +164,42 @@ func everyToolOn(t *testing.T, home, studyHome string, options everyToolOptions)
 	// A Topic that is to name a plugin names it, and has a Source the plugin
 	// has not indexed, from before the first tool is called on it: every
 	// tool is then called on a Topic a plugin could be asked to index for.
-	// Both are done through the core here, not by a tool, so that no tool
-	// is left out for coming before the ones that do it.
+	// It has a second Source too, which the plugin has indexed, the one way
+	// there is: so a tool that searches has something to search, and one
+	// that checks a quote a Passage to check it against. All of it is done
+	// through the core here, not by a tool, so that no tool is left out for
+	// coming before the ones that do it.
+	plugin, _ := options.knowledgeBase["plugin"].(string)
+	// ids holds what earlier calls returned, for later ones to name.
+	ids := map[string]string{}
 	marker := checkTopicIn(t, session, home, studyHome, func() {
-		name, _ := options.knowledgeBase["plugin"].(string)
-		if name == "" {
+		if plugin == "" {
 			return
 		}
 		if _, err := c.UpdateTopic(ctx, "c", core.TopicChanges{KnowledgeBase: &core.KnowledgeBase{Kind: core.KnowledgeBasePlugin,
-			Plugin: name}}); err != nil {
+			Plugin: plugin}}); err != nil {
 			t.Fatal(err)
 		}
-		notes := filepath.Join(home, "Books", "notes.txt")
-		if err := os.WriteFile(notes, []byte("Notes the plugin has not indexed.\n"), 0o644); err != nil {
-			t.Fatal(err)
+		for _, book := range []struct{ name, text string }{
+			{"notes.txt", "Notes the plugin has not indexed.\n"},
+			{"indexed.txt", "A pointer is a variable that contains the address of a variable.\n"},
+		} {
+			path := filepath.Join(home, "Books", book.name)
+			if err := os.WriteFile(path, []byte(book.text), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			added, err := c.AddSource(ctx, core.SourceSpec{Topic: "c", File: path})
+			if err != nil {
+				t.Fatal(err)
+			}
+			ids[book.name] = added.Source.ID
 		}
-		if _, err := c.AddSource(ctx, core.SourceSpec{Topic: "c", File: notes}); err != nil {
-			t.Fatal(err)
+		indexed, err := c.IndexSources(ctx, core.IndexSpec{Topic: "c", Sources: []string{ids["indexed.txt"]}})
+		if err != nil || len(indexed.Sources) != 1 || indexed.Sources[0].State != core.IndexIndexed {
+			t.Fatalf("study source index c %s = %+v, %v", ids["indexed.txt"], indexed, err)
+		}
+		if options.prepared != nil {
+			options.prepared()
 		}
 	})
 	runs := func() int {
@@ -193,8 +217,6 @@ func everyToolOn(t *testing.T, home, studyHome string, options everyToolOptions)
 	for _, tool := range []string{"topic_create", "revision_propose", "revision_apply", "phase_set"} {
 		after(tool)
 	}
-	// ids holds what earlier calls returned, for later ones to name.
-	ids := map[string]string{}
 	use := func(tool string, args map[string]any, keep func(json.RawMessage)) {
 		t.Helper()
 		res := call(t, session, tool, args)
@@ -266,6 +288,49 @@ func everyToolOn(t *testing.T, home, studyHome string, options everyToolOptions)
 	use("source_update", with(topic, "source", ids["source"], "title", "K&R"), nil)
 	use("evidence_record", with(lesson, "source", ids["source"], "quote", "The answer is 42.",
 		"location", "p. 1", "location_from", "source"), field("evidence", "evidence", "id"))
+	if plugin == "" {
+		// A Topic without a Knowledge base plugin has nothing to search,
+		// and the tool says so: that is its work on such a Topic.
+		res, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "evidence_search", Arguments: with(topic, "query", "pointer")})
+		if err != nil || !res.IsError || !strings.Contains(text(res), "failed_precondition: Topic c names no Knowledge base plugin") {
+			t.Fatalf("evidence_search on a Topic that names no plugin: %v, %s", err, text(res))
+		}
+		called["evidence_search"] = true
+		if n := runs(); n != 0 {
+			t.Fatalf("calling evidence_search ran the Check %d times", n)
+		}
+		after("evidence_search")
+	} else {
+		// The search finds the Passage of the Source that is indexed, and
+		// the quote is recorded with it, which has it checked.
+		use("evidence_search", with(topic, "query", "pointer variable address"), field("passage", "passages", "id"))
+		use("evidence_record", with(lesson, "source", ids["indexed.txt"], "quote", "A pointer is a variable that contains the address",
+			"passages", []any{ids["passage"]}), nil)
+		// And what is refused is refused without the plugin being asked for
+		// more: a quote that is not in the Passage, a Passage the plugin
+		// does not have, and a quote from the Source that is not indexed,
+		// which is not indexed to have the quote checked.
+		for _, refused := range []struct {
+			args map[string]any
+			says string
+		}{
+			{with(lesson, "source", ids["indexed.txt"], "quote", "A pointer holds an address", "passages", []any{ids["passage"]}),
+				"invalid_argument: the quote is not in the text of Passage " + ids["passage"]},
+			{with(lesson, "source", ids["indexed.txt"], "quote", "A pointer is a variable", "passages", []any{"0123456789abcdef01234567"}),
+				"not_found: Knowledge base plugin " + plugin + " has no Passage 0123456789abcdef01234567"},
+			{with(lesson, "source", ids["notes.txt"], "quote", "Notes the plugin has not indexed.", "passages", []any{ids["passage"]}),
+				"failed_precondition: Knowledge base plugin " + plugin + " does not hold Source " + ids["notes.txt"] + " indexed"},
+		} {
+			res, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "evidence_record", Arguments: refused.args})
+			if err != nil || !res.IsError || !strings.Contains(text(res), refused.says) {
+				t.Fatalf("evidence_record %v: %v, %s; want it refused with %q", refused.args, err, text(res), refused.says)
+			}
+			if n := runs(); n != 0 {
+				t.Fatalf("calling evidence_record ran the Check %d times", n)
+			}
+			after("evidence_record")
+		}
+	}
 	use("evidence", topic, nil)
 	use("evidence_retract", with(topic, "evidence", ids["evidence"]), nil)
 	use("revision_propose", with(topic, "summary", "Ask the question first", "syllabus", secondSyllabus),

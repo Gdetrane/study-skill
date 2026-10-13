@@ -1,0 +1,8 @@
+Knowledge base plugin kb found 1 Passage for "pivot" in linear-algebra, best first:
+
+<passage>  Notes, p. 1
+  Source notes.<id>, score 1
+  > "The pivot\x1b[2J is the first entry of a row."
+
+Quote a Passage as it is given, and record the quote with the Passage's id:
+  study evidence record linear-algebra --lesson <lesson> --source <source> --passage <passage> --quote <quote>

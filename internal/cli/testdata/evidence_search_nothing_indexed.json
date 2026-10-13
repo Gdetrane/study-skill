@@ -1,0 +1,24 @@
+{
+  "ok": true,
+  "data": {
+    "topic": "linear-algebra",
+    "query": "elimination",
+    "plugin": "kb",
+    "passages": [],
+    "searched": [],
+    "left_out": [
+      {
+        "id": "strang.<id>",
+        "title": "Strang",
+        "state": "not_indexed"
+      },
+      {
+        "id": "notes.<id>",
+        "title": "Notes",
+        "state": "not_indexed"
+      }
+    ],
+    "note": "nothing was searched: Knowledge base plugin kb holds none of the 2 Sources indexed on this computer as the Topic records them",
+    "action": "study source index linear-algebra"
+  }
+}

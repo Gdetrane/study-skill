@@ -1,0 +1,7 @@
+{
+  "ok": false,
+  "error": {
+    "code": "invalid_argument",
+    "message": "Evidence recorded with a Passage takes its location from the Passage: leave the location, and where it came from, out"
+  }
+}

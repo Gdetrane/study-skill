@@ -33,9 +33,10 @@ that scripts and agents can rely on. Terms follow [GLOSSARY.md](../GLOSSARY.md).
 | `study source update <topic> <source> [--title T] [--path P] [--dry-run]` | Changes a Source's title, which the History records, or says where its file is on this computer (`--path`, remembered locally only); the file at `--path` must hold the same content. |
 | `study source list <topic>` | Lists the Topic's Knowledge base and Sources, and finds each file on this computer. When the Topic names a Knowledge base plugin, each Source has an `index` (`indexed`, `indexing`, `failed`, `not_indexed` or `unknown`) and the list an `indexing` with the one command to run next; the plugin has two seconds to say, and is never waited for. See [What is indexed](#what-is-indexed). |
 | `study source index <topic> [<source>...] [--again] [--dry-run]` | Asks the Topic's Knowledge base plugin to index the Topic's Sources that are not indexed, or the ones named, one after the other, and follows each to its end; progress goes to stderr. A file is handed over by its path and content hash, a web page by its address. `--again` asks for Sources that are indexed already too, and has a web page fetched again. `--dry-run` starts the plugin, asks what it has indexed and lists what would be asked of it, without asking. The result is `{"topic", "plugin", "collection", "sources": [{"id", "title", "path"? \| "url"?, "state", "progress"?, "reason"?, "asked"?, "skipped"?}]}`. A Source that fails is not an error of the command: its `state` is `failed`, with the plugin's `reason`, and the exit code is 0. Stopped, it tells the plugin to stop and reports `canceled`; run again, it carries on. It records no Event. It is the one thing that indexes, and agents have no tool for it: they run it in their own shell. See [study source index](#study-source-index). |
-| `study evidence record <topic> --lesson L --source S --quote Q [--location LOC --location-from F] [--dry-run]` | Records an exact quote from a Source that a Lesson cites. `--quote -` reads the quote from stdin. Recording the same Evidence twice changes nothing. |
+| `study evidence search <topic> <query> [--limit N] [--source S]...` | Asks the Topic's Knowledge base plugin for the Passages of the Topic's Sources that answer the query, best first: each with its `id`, its `source` and `title`, its `text` (the Source's own, as the plugin extracted it), its `location` when the plugin knows it, and its `score` for this query. Only the Sources the plugin holds indexed on this computer, as the Topic records them, are searched: the result lists the others in `left_out`, says so in `note`, and gives the one command to run next for them in `action`. `--limit` defaults to 5 and is capped at 50; `--source` searches only that Source, and can be repeated. An answer holds at most 256 KiB of Passages' text. It is `failed_precondition` when the Topic names no plugin, whatever Sources it has, and when the plugin cannot be had or does not answer within 45 seconds. A Topic that names a plugin and has no Sources, or none indexed, is a success with no Passages. It reads the plugin's index and never a Source, and records nothing. The MCP tool is `evidence_search`. See [Searching a Topic's Sources](#searching-a-topics-sources). |
+| `study evidence record <topic> --lesson L --source S --quote Q [--passage P]... [--location LOC --location-from F] [--dry-run]` | Records an exact quote from a Source that a Lesson cites. `--quote -` reads the quote from stdin. With `--passage`, the id of the Passage the quote is from as `study evidence search` gave it, the quote is checked: it is refused (`invalid_argument`) when it is not in the Passage's text, and its location is the Passage's, so `--location` is then refused too. Repeat `--passage`, in order, for a quote that runs from one Passage into the next: each names one Passage, and one given without an id is a usage error. Without `--passage` nothing is checked. Recording the same Evidence twice changes nothing. A dry run asks the plugin and checks the quote, as the real run does. See [Evidence checked against its Passage](#evidence-checked-against-its-passage). |
 | `study evidence retract <topic> <evidence> [--dry-run]` | Takes back Evidence recorded by mistake. The retraction is recorded, never deleted; retracting twice changes nothing. |
-| `study evidence list <topic> [--lesson L] [--all]` | Lists the Evidence recorded in the Topic, or only what one Lesson cites. Retracted Evidence is listed only with `--all`. |
+| `study evidence list <topic> [--lesson L] [--all]` | Lists the Evidence recorded in the Topic, or only what one Lesson cites, each with whether its quote was checked against the Passages it is from (`checked`, and then `passages` and `plugin`). Retracted Evidence is listed only with `--all`. |
 | `study knowledge-base add <name> [--allow-study-home-arguments] [--replace] [--dry-run] (--url URL \| -- <command> [args...])` | Registers a Knowledge base plugin on this computer under a name, by the command that starts it, given after `--`, or by the http or https URL it answers at. The command's program is found on `PATH`, or at the path given, and registered by its absolute path. A program inside the Study home, or reached through it, is `invalid_argument`; so is an argument that names something there, unless `--allow-study-home-arguments` is given, and one that names a file relative to the folder `study` is started in. A program, or an argument that is not allowed so, named by a path `study` cannot follow to its end is `failed_precondition`: it is never taken for one outside the Study home. Registering a plugin as it is registered already changes nothing (`changed: false`); a name registered as something else is `already_exists` unless `--replace` is given. It records no Event, and agents have no tool for it. See [Knowledge base plugins](#knowledge-base-plugins). |
 | `study knowledge-base list` | Lists the Knowledge base plugins registered on this computer, by name, and where the registry is. A plugin `study` does not use as it is registered carries a `problem`. |
 | `study knowledge-base remove <name> [--dry-run]` | Removes a Knowledge base plugin from this computer's registry, leaving its program or service as it is; a name that is not registered is `not_found`. It records no Event, and agents have no tool for it. |
@@ -49,7 +50,7 @@ that scripts and agents can rely on. Terms follow [GLOSSARY.md](../GLOSSARY.md).
 | `study rubric grade <lesson> <criterion> --grade G [...]` | Grades a rubric item of a Lesson's Check (see "Checks"). |
 | `study results <lesson> [--topic ID]` | Shows a Lesson's Check results and whether it can be completed (see "Checks"). |
 | `study lesson <lesson> [--topic ID]` | Shows one Lesson: its number, Milestone, status and Phase, its file, and what its YAML header declares (the Check's criteria with their commands, and the Break points), with the current Check version, whether it is the one shown to the learner (`check_shown`), and whether the header can be read (`header_readable`, `header_error`). Runs nothing and never shows Held-out data. Without `--topic`, it uses the Active topic. The MCP tool is `lesson`. |
-| `study history [topic] [--limit N] [--type T] [--lesson L]` | Shows a Topic's most recent Events, newest first, each as `{id, type, at, clock_behind?, summary, lesson?, item?, held?}` with `more` set when older ones match too. `--limit` defaults to 10 and is capped at 100; `--type` keeps the Events whose type starts with T (such as `card.` or `attempt`), `--lesson` those about one Lesson, its Card Events and Reviews included. Each Event appears once, as replay applied it. Entries are ordered by the History's clock (`time`) but show the writer's wall clock (`at`), so an Event from a machine whose clock was behind can look older than the one before it: `clock_behind` marks it ("clock behind" in the text). `held` marks an Event replay did not apply (`status` flags it), and Events written by a newer version of study are not shown. Entries never carry an Event's full payload: summaries are built from the kind of Event and ids only, so no Held-out results, notes, quotes, titles or Next steps. It is for understanding what happened, never a tally for the learner. The MCP tool is `history`. |
+| `study history [topic] [--limit N] [--type T] [--lesson L]` | Shows a Topic's most recent Events, newest first, each as `{id, type, at, clock_behind?, summary, lesson?, item?, held?}` with `more` set when older ones match too. `--limit` defaults to 10 and is capped at 100; `--type` keeps the Events whose type starts with T (such as `card.` or `attempt`; `evidence` matches `evidence.recorded`, `evidence.retracted` and `evidence_passages.recorded`, and `evidence.` leaves the last out), `--lesson` those about one Lesson, its Card Events and Reviews included. Each Event appears once, as replay applied it. Entries are ordered by the History's clock (`time`) but show the writer's wall clock (`at`), so an Event from a machine whose clock was behind can look older than the one before it: `clock_behind` marks it ("clock behind" in the text). `held` marks an Event replay did not apply (`status` flags it), and Events written by a newer version of study are not shown. Entries never carry an Event's full payload: summaries are built from the kind of Event and ids only, so no Held-out results, notes, quotes, titles or Next steps. It is for understanding what happened, never a tally for the learner. The MCP tool is `history`. |
 | `study review [topic] [--energy E] [--limit N]` | Reviews the due Cards in the terminal, without an agent (see "Cards and Reviews" below). Without a Topic, it reviews the Active topic. Interactive only: with `--json` it is a usage error. |
 | `study card list <topic> [--lesson L]` | Lists the Topic's Cards in the order they were written, with their display numbers and state. `--lesson explore` lists the Explore Cards. |
 | `study card due <topic> [--energy E] [--limit N]` | Lists the Cards to review now, sized to the Energy, never saying how many more are due. A paused Topic lists none, and its result says `"paused": true`. |
@@ -103,6 +104,11 @@ when an earlier argument is invalid. Help (`--help`), `--version`, `study mcp` (
 speaks MCP on stdout) and the completion-script and man-page commands print text; a command
 group run without a subcommand, such as `study topic --json`, is a `usage` error. With
 `--json`, `study` never writes to the terminal or waits for it, even when stdout is one.
+A result can hold text `study` did not write, such as a Passage's, which is a Knowledge base
+plugin's. In a string, every character a terminal acts on is written as a JSON escape: the
+control characters, DEL and the C1 controls among them, and the characters that change
+the direction text is shown in. The document says the same text, and printed on a
+terminal it is only text.
 
 Success:
 
@@ -972,12 +978,19 @@ indexed is the plugin's to say on this computer, and its index is in that same f
 [study source index](#study-source-index)). Naming a Topic's plugin is a write like any
 other, with an Event of its own type, `knowledge_base_plugin.set`.
 
+`study evidence search` records no Event and writes nothing either. Evidence recorded with
+the Passage it quotes is a write like any other, with an Event of its own type,
+`evidence_passages.recorded`; the plugin is asked for the Passage before the Topic's lock
+is taken, so no write waits for a plugin (see
+[Evidence checked against its Passage](#evidence-checked-against-its-passage)).
+
 ## Sources and Evidence
 
 The Knowledge seam ([ADR-0007](adr/0007-knowledge-bases-return-evidence.md)) records where
 a Topic's material comes from. `study` never parses a document. Without a Knowledge base the
 agent reads the Sources itself and records the quotes it relied on; a Topic can instead name
-a Knowledge base plugin, which indexes its Sources
+a Knowledge base plugin, which indexes its Sources and searches them, and against whose
+Passages a quote is checked
 ([ADR-0012](adr/0012-knowledge-base-plugins-speak-one-contract.md)).
 
 - **Knowledge base**: `none`, or a Knowledge base plugin, which the Topic names. It is
@@ -1050,16 +1063,25 @@ a Knowledge base plugin, which indexes its Sources
   FIFO or a device is refused, and hashing stops when the command is cancelled.
 - **Evidence** is an exact quote, cited by a Lesson, with an optional `location` and
   `location_from`: `source` (read in the Source itself, such as a printed page number),
-  `knowledge_base` (a citation as the Knowledge base gave it), `learner`, or `estimate`.
-  Evidence lives in the History only, and Evidence whose Source has not arrived from
-  another machine yet is held until it does. Retracted Evidence no longer counts for its
-  Lesson. Lessons without Evidence are marked, never blocked.
+  `learner`, `estimate`, or `knowledge_base` (the location of the Passage the quote is
+  from, as the Knowledge base plugin gave it). The last is what Evidence recorded with its
+  Passage gets, and nobody gives it: `--location-from knowledge_base` without a `--passage`
+  is `invalid_argument`, since a location that says it is a Passage's comes with the
+  Passage that was checked. Evidence lives in the History only, and Evidence
+  whose Source has not arrived from another machine yet is held until it does. Retracted
+  Evidence no longer counts for its Lesson. Lessons without Evidence are marked, never
+  blocked.
 
   ```json
   { "id": "k3f9a2b7qd", "lesson": "elimination", "source": "strang-linear-algebra.k3f9a2",
     "quote": "Elimination produces an upper triangular system.", "location": "p. 46",
-    "location_from": "source", "recorded": "2026-10-01T09:30:00Z" }
+    "location_from": "source", "checked": false, "recorded": "2026-10-01T09:30:00Z" }
   ```
+
+  `checked` says whether the quote was checked when it was recorded. Evidence recorded
+  with the Passage it quotes is checked against that Passage's text, and carries the
+  Passages and the plugin that gave them; Evidence recorded without one is not checked
+  (see [Evidence checked against its Passage](#evidence-checked-against-its-passage)).
 - **Two machines**: Sources and Evidence added on two machines merge: each Source is its own
   item in the History, and `history.jsonl` and `sources.jsonl` both merge by union in git.
   One Source edited on both machines is flagged as a `conflict`, and the union merge may
@@ -1154,10 +1176,11 @@ the Topic it lists, whatever its state.
   that answered about one Topic works, so a Topic the time did not reach says that, and its
   action is `study source list <topic>`, which asks about that Topic alone with all of the
   time.
-- **A plugin is asked what it has indexed, and nothing else**: its `status` tool, once it
-  said which contract it speaks. It is started for that and stopped again before the
-  command, or the tool, answers: nothing is kept running in between, in `study mcp`
-  either.
+- **For this a plugin is asked what it has indexed, and nothing else**: its `status` tool,
+  once it said which contract it speaks. It is started for that and stopped again before
+  the command, or the tool, answers: nothing is kept running in between, in `study mcp`
+  either. A search, and Evidence recorded with its Passage, ask it more, and have longer
+  (see [Searching a Topic's Sources](#searching-a-topics-sources)).
 - **`indexing.problem`** says why the plugin could not say, and every Source is then
   `unknown`. The Topic works as one without a Knowledge base meanwhile: Sessions open,
   teaching goes on, and Evidence is recorded from the Sources as the agent reads them.
@@ -1302,6 +1325,244 @@ it runs `study check`; the learner can always run it themselves.
 | `canceled`, exit 1 | The command was stopped. |
 | `invalid_argument`, exit 2 | What was given as the Topic is not the id of one, or what was given as a Source is not the id of one. |
 
+### Searching a Topic's Sources
+
+`study evidence search <topic> <query>`, and the `evidence_search` tool, ask the Topic's
+Knowledge base plugin for the Passages of the Topic's Sources that answer a query, best
+first. A Passage is a stretch of a Source's own text, as the plugin extracted it: never a
+summary, and never a generated answer. Evidence is quoted from it.
+
+```json
+{
+  "topic": "linear-algebra",
+  "query": "why does elimination produce a triangular system?",
+  "plugin": "shelf",
+  "passages": [
+    {"id": "7f3a9c12e5b04d68", "source": "strang-linear-algebra.k3f9a2", "title": "Linear Algebra",
+     "text": "Elimination produces an upper triangular system.", "location": "p. 46", "score": 0.83},
+    {"id": "2b9d4e71a0c3f586", "source": "strang-linear-algebra.k3f9a2", "title": "Linear Algebra",
+     "text": "The pivots are on the diagonal of the triangle after elimination.", "location": "pp. 46–47", "score": 0.41}
+  ],
+  "searched": ["strang-linear-algebra.k3f9a2"],
+  "left_out": [{"id": "axler-linear-algebra-done-right.p2x7q1", "title": "Linear Algebra Done Right", "state": "not_indexed"}],
+  "note": "1 of the 2 Sources was not searched: Knowledge base plugin shelf does not hold it indexed on this computer as the Topic records it",
+  "action": "study source index linear-algebra"
+}
+```
+
+- **Only what the Topic records is returned.** A search is limited to the Sources the Topic
+  has, by their ids: a Topic that was removed and another made later under its id share a
+  collection, and the removed Topic's Sources are still in it. And a Source is searched
+  only when the plugin says, by the `hash` in its `status`, that what a search finds of it
+  is the Source's own content: a plugin that breaks the contract may hold another file's
+  text under the Source's id, and says so through that hash. That is every Source the
+  plugin says is `indexed`, and also one that is being indexed anew, or whose last
+  indexing failed, while its earlier content is still indexed: the contract has a plugin
+  give that content's hash, and find it. So the plugin is asked what it holds first
+  (`status`), and then to search the Sources that passed (`search`, with their ids).
+  `searched` lists them. A plugin that answers with a Passage of a Source it was not asked
+  for breaks the contract: the whole answer is refused, with `failed_precondition`.
+- **What was left out is said, as `study source list` says it**: `left_out` lists each
+  Source that was not searched, with its `state` (`not_indexed`, `indexing` or `failed`),
+  the `reason` when there is one, and for a Source that failed the command that has it
+  tried again, in `retry`, when trying again can help. `note` says it in a sentence. And
+  `action` is the one command to run next, by the rule `status` follows: `study source
+  index <topic>` when that would hand the plugin a Source it has not tried; `study source
+  list <topic>` when a Source's file is missing, changed or unreadable, which that listing
+  explains; and nothing when all that is left out failed, since indexing it again as it
+  is would fail again. A Source that is being indexed is found once that is done.
+- **Nothing to search is no error, for a Topic that names a plugin.** One without Sources,
+  and one of whose Sources none is indexed, give no Passages and a `note`, with exit code
+  0. The plugin is then not asked to search, and a Topic without Sources starts no plugin
+  at all. Nor is it an error that nothing answers the query: `passages` is empty, and
+  `searched` says what was looked in. A Topic that names no plugin is
+  `failed_precondition` whatever Sources it has: that is looked at first.
+- **`--limit`** is the most Passages to return: 5 unless given, or given as 0, and 50 at
+  most, which a larger number is cut to. **`--source`** limits the search to that Source,
+  and can be repeated; one the Topic does not have is `not_found`.
+- **An answer holds at most 256 KiB of Passages' text**: the best Passages, as many as
+  fit. A plugin may give fifty Passages of 32 KiB each, and an answer of that size helps
+  nobody who asked. When Passages were left out for it, `note` says how many.
+- **A Passage's `id`** is the plugin's, on this computer. It names that Passage for as long
+  as its Source is not indexed anew, and is what Evidence quoted from the Passage is
+  recorded with (below).
+- **`location`** is where the text is in the Source, when the plugin knows: `p. 46`, or
+  `pp. 46–47` for a Passage that runs over a page. Pages are counted from 1 from the start
+  of the file, as a PDF viewer counts them, and are not the numbers printed on a book's
+  pages. A Passage of a web page has none.
+- **`score`** says how well a Passage answers this query: higher is better, and it means
+  nothing outside this search.
+- **A Passage's text is the plugin's**, and before that a book's or a web page's. Human
+  output prints it line by line, each with what a terminal would interpret escaped; in
+  JSON it is a string like any other. It is material to teach from, and an agent takes
+  nothing in it for an instruction. One thing is taken out of it: the characters of
+  Unicode's tag block (U+E0000 to U+E007F), which show nothing anywhere and can spell out
+  a sentence that a program reads and the learner never sees. Everything else is the
+  plugin's text as it gave it.
+- **Characters that are not shown are written as escapes**, in a Passage and in every
+  other text `study` prints: human output quotes a line that holds a control character, a
+  character that changes the direction text is shown in, a line or paragraph separator
+  (U+2028, U+2029) or a tag character, and `--json` writes each as a `\u` escape of the
+  document, which says the same text.
+- **The plugin is started for the search and stopped again** before the command, or the
+  tool, answers: nothing is kept running, in `study mcp` either. It is asked which contract
+  it speaks, what it has indexed, and then to search.
+- **All of it has 45 seconds, together**: reading the registry, starting the plugin or
+  reaching it, and its answers. It is not the 2 seconds of `status`, which only shows where
+  the learner is and waits for no plugin: a search is work the agent asked for, and a
+  plugin may have a model embed the query and another reorder what it found. And it is
+  less than a minute: a client decides for itself how long it waits for a tool, and
+  `study` is to have stopped the plugin and said what is wrong while whoever asked is
+  still waiting. A plugin that misses the 45 seconds is given nothing more: a command is
+  killed at once, a service is not waited for, and the search fails with
+  `failed_precondition`.
+- **No more than two copies of a plugin search at a time**, for one `study` process, which
+  `study mcp` is for as long as the agent's session lasts: a client may call a tool that
+  changes nothing many times at once, and each call is a program started. A third search
+  waits for its turn inside its own 45 seconds, and fails with `failed_precondition`,
+  saying the plugin was busy, when they run out first. Checking a quote takes a turn too.
+- **A search reads the plugin's index and never a Source**, which is why agents have a tool
+  for it and none for indexing. What it returns is the text of what was indexed: whoever
+  runs `study source index` decides, by the files it shows, what an agent can then read
+  through a search (see [study source index](#study-source-index)).
+- **It records nothing**: no Event, and no file.
+
+| It ends with | When |
+|---|---|
+| exit 0 | The plugin was asked, whatever it found: Passages, none, or nothing to search because no Source is indexed. Also for a Topic that names a plugin and has no Sources, which starts none. |
+| `failed_precondition`, exit 1 | The Topic names no plugin; the plugin is not registered on this computer; it cannot be started, is no MCP server, does not speak the contract or answered with what is not the contract's; it did not answer within the 45 seconds; or it was busy with other searches for all of them. The message says which, and that the Topic works meanwhile as one without a Knowledge base: the agent reads the Sources itself. |
+| `newer_format`, exit 1 | The plugin speaks a newer version of the contract: upgrade `study`. |
+| `not_found`, exit 1 | There is no such Topic, or the Topic has no such Source. |
+| `canceled`, exit 1 | The command was stopped. A plugin that was started is stopped. |
+| `invalid_argument`, exit 2 | The query is empty, holds a control character or is longer than 4,096 bytes; the limit is negative; or what was given as the Topic or as a Source is not the id of one. Also a query the plugin itself refuses. |
+| `usage`, exit 2 | The command was given no query at all. |
+
+### Evidence checked against its Passage
+
+Evidence is an exact quote, and with a Knowledge base plugin `study` can check that it is
+one. `study evidence record --passage <id>`, and `evidence_record` with `passages`, record
+a quote with the Passage it is from, by the id a search gave. `study` then asks the plugin
+for that Passage again, refuses a quote that is not in its text, and takes the location
+from it.
+
+```json
+{ "id": "m4k8s3q7xw", "lesson": "elimination", "source": "strang-linear-algebra.k3f9a2",
+  "quote": "Elimination produces an upper triangular system.", "location": "p. 46",
+  "location_from": "knowledge_base", "checked": true, "passages": ["7f3a9c12e5b04d68"],
+  "plugin": "shelf", "recorded": "2026-10-01T09:30:00Z" }
+```
+
+- **What is asked of the plugin**: what it has indexed (`status`), and then each Passage
+  again (`passage`). The Source must be one a search covers: the plugin says, by the hash,
+  that it holds the content the Topic records. And each Passage must be a Passage of that
+  Source: one of another
+  Source is `invalid_argument`, which keeps out the Passages of a Topic that was removed. A
+  Passage the plugin does not have is `not_found`: its id names nothing once its Source was
+  indexed anew, so search again.
+- **A quote is in a Passage's text** when its characters are there, in order and with
+  nothing between them, and it begins and ends where a word of the Passage does: `stable`
+  is not in "unstable", and `500 steps` is not in "1500 steps". Nor does it begin or end
+  between a letter and a mark written onto it, such as a vowel sign, in any script. "Checked" has to mean that
+  the words are the Source's, so little is let pass. A Passage is text as it was extracted
+  from a file, and whoever quotes it types on a keyboard, so this much may differ and no
+  more:
+  - **How much white space there is, and of which kind**: a line break in the Passage is a
+    space in the quote, and two spaces are one. But white space is there where the Passage
+    has it, and nowhere else: "a symmetric matrix" is not `asymmetric matrix`, and
+    `rm -rf /tmp` is not `rm -rf / tmp`.
+  - **An accent written apart from its letter, a ligature, an ellipsis character**: both
+    are read in the form NFC, `ﬁ` is `fi`, and `…` is three stops. Nothing else is made
+    like anything else: a superscript is not its digit, so `2ⁿ` is not `2n` and `10⁶` is
+    not `106`, and a full-width letter is not the plain one.
+  - **The shape of a quotation mark and the length of a dash**: `’` for `'`, `“` for `"`,
+    `—` or `−` for `-`. A single mark is not a double one: `f'` is not `f"`.
+  - **A character that is not shown**, where the Passage holds one: a soft hyphen, a
+    zero-width space. A quote may not hold one at all, beyond the few a script needs
+    (U+200C, U+200D and the soft hyphen): one that does is `invalid_argument`, which names
+    the character.
+  - **A word cut at a line's end may be quoted whole**: where two letters at least, the
+    last of them small, are followed by a hyphen, a line break and a small letter, the
+    hyphen and the break may be left out, so `elimi-`, a line break and `nation` is quoted
+    as `elimination`.
+    The break alone may be left out too, since a compound cut at its own hyphen
+    (`well-known`) looks the same. The end of a Passage is a line break, when the quote
+    goes on in the next. Every other hyphen stays: "pre- and post-" keeps both, and so do
+    a hyphen before a digit, after a single letter or after capitals, and one a plugin
+    has already joined the lines around.
+  - **A line break inside text written without spaces between words** (Chinese, Japanese,
+    Thai and the like) may be left out, and a quote of such text begins and ends anywhere.
+
+  Everything else must be as the Passage has it: every letter and its case, every digit,
+  every other mark, and their order. A paraphrase, a word left out, a part of a word, two
+  sentences joined with an ellipsis, and a spelling that was corrected are all refused,
+  with `invalid_argument`, and nothing is recorded. The message says to quote the Passage
+  as the search gave it. A quote must hold a letter or a digit: a mark alone is in every
+  text.
+- **The quote is recorded as it was given**, not as the Passage has it: the line breaks of
+  a page are no part of what a Lesson cites.
+- **A quote that runs from one Passage into the next names both**, in the order it runs
+  through them, five at most (`--passage` repeated, or several `passages`). A plugin may
+  keep every Passage on one page, and a sentence does not end with the page. The quote is
+  then looked for in their texts read one after the other, and must begin in the first and
+  end in the last, so each Passage named is one the quote is in; one that is all in one of
+  them is refused, and the message says in which. A word cut at the end of a Passage may be
+  quoted whole, as at a line's end. Between two Passages a quote has white space, as
+  between any two words: the last word of one and the first of the next do not run
+  together. `study` cannot tell that two Passages follow one
+  another in the Source, which the contract does not say: the end of one Passage and the
+  beginning of another, of the same Source, pass as a quote. Where a plugin's Passages
+  overlap, quote from one of them.
+- **The location is the Passages'**: `p. 46`, or `pp. 46–47` from the first page of the
+  first to the last page of the last, with `location_from` `knowledge_base`. It is there
+  when the plugin gave every Passage its pages, counted from the start of the file. A
+  `--location` beside a `--passage` is `invalid_argument`.
+- **It is another Event type**: `evidence_passages.recorded`, whose payload names the
+  Passages and the plugin, as the quote alone is `evidence.recorded`'s:
+
+  ```json
+  {"id": "m4k8s3q7xw", "lesson": "elimination", "source": "strang-linear-algebra.k3f9a2",
+   "quote": "Elimination produces an upper triangular system.", "passages": ["7f3a9c12e5b04d68"],
+   "plugin": "shelf", "location": "p. 46"}
+  ```
+
+  A retraction takes back Evidence of either kind, and a Card cites either. The same quote
+  recorded once with its Passage and once without is two pieces of Evidence, and so is
+  one checked against two plugins' Passages. The same quote with white space of another
+  kind or length, from the same Passages, is the same Evidence.
+- **`checked` says what was so when the Evidence was recorded**, on the computer that
+  recorded it. A Passage's id is that computer's plugin's: it need not name anything on
+  another computer, or once the Source is indexed anew, and nothing checks the quote again.
+  It is also the History's word, and no more: the History is a file in the Study home,
+  which syncs and which whoever can write there can write. `study` records `checked` only
+  for a quote it checked, and cannot say more of a line it did not write.
+- **Evidence without a Passage stays possible, and is not checked**: `checked` is `false`.
+  Human output says "checked against Passage …" under Evidence that was, and nothing under
+  Evidence that was not. It asks no plugin anything. It is what a Topic without a Knowledge
+  base records, and what is left for a formula that the extraction garbled: such a quote
+  is either the text as it was extracted, checked, or the formula as the book prints it,
+  unchecked. A quote that was refused is not recorded this way instead: it is not what
+  the Passage says.
+- **The plugin has the same 45 seconds as for a search**, for all of it, and is stopped
+  before anything is written. It is asked before the Topic's lock is taken, so no other
+  write waits for a plugin, and waiting for that lock has what is left of the 45 seconds:
+  the command ends `busy` when another process writes the Topic for longer. `--dry-run`
+  asks the plugin and checks the quote too: it says what the real run does, and records
+  nothing. A Topic this version of `study` cannot write is refused before the plugin is
+  started.
+- **Two machines** that each record Evidence do not conflict, checked or not: each Event
+  edits no file, and the Histories merge by union.
+
+| It ends with | When |
+|---|---|
+| exit 0 | The quote is in its Passages and the Evidence was recorded, or was recorded already (`changed: false`). |
+| `invalid_argument`, exit 2 | The quote is not in the text of its Passages; a Passage is of another Source; a location was given beside a Passage; more than five Passages, one named twice, or an id that is no Passage's; or the quote holds no letter or digit, or a character that is not shown. Nothing is recorded. |
+| `usage`, exit 2 | `--passage` was given without an id. Nothing is recorded: a script whose variable is empty does not get unchecked Evidence instead. |
+| `not_found`, exit 1 | The plugin has no such Passage; or there is no such Topic, or the Topic has no such Source. |
+| `failed_precondition`, exit 1 | The Topic names no plugin; the plugin is not registered on this computer, cannot be started, does not speak the contract, did not answer within the 45 seconds or was busy with other searches for all of them; or it does not hold the Source indexed as the Topic records it, and the message then says what to run, as `study source list` would. Nothing is recorded, and the message says so. |
+| `busy`, exit 1 | Another `study` process was writing the Topic for the rest of the 45 seconds. Nothing is recorded. |
+| `newer_format`, exit 1 | The plugin speaks a newer version of the contract: upgrade `study`. |
+| `canceled`, exit 1 | The command was stopped. Nothing is recorded. |
+
 ## Knowledge base plugins
 
 A Knowledge base plugin is a program, or a service the learner runs, that indexes Sources
@@ -1310,11 +1571,12 @@ computer registers the plugins it has, each under a name, with `study knowledge-
 `study` is the MCP client of a plugin, and
 [docs/knowledge-base-contract.md](knowledge-base-contract.md) is the contract a plugin
 speaks. A Topic names the plugin it uses (`study topic update --knowledge-base <name>`),
-`study source index` has the plugin index the Topic's Sources, and `status` and
-`study source list` say what it has indexed (see
-[Sources and Evidence](#sources-and-evidence)). Nothing searches a plugin yet. The plugin
-that ships with Lamplight is Shelf, the `study-shelf` program installed beside `study`:
-[docs/shelf.md](shelf.md) says what it reads and where it keeps its index.
+`study source index` has the plugin index the Topic's Sources, `status` and
+`study source list` say what it has indexed, `study evidence search` searches it, and
+`study evidence record --passage` checks a quote against a Passage of it (see
+[Sources and Evidence](#sources-and-evidence)). The plugin that ships with Lamplight is
+Shelf, the `study-shelf` program installed beside `study`: [docs/shelf.md](shelf.md) says
+what it reads and where it keeps its index.
 
 - **The registry** is `knowledge-base-plugins.json` in Lamplight's configuration folder,
   beside `config.toml`: `$XDG_CONFIG_HOME/lamplight`, or `~/.config/lamplight`. It is this

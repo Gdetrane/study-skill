@@ -1,0 +1,7 @@
+{
+  "ok": false,
+  "error": {
+    "code": "invalid_argument",
+    "message": "the quote is not in the text of Passage <passage>, so nothing was recorded. Evidence is the Source's own words: quote the Passage as the search gave it, never a paraphrase or a summary. It begins and ends where a word of the Passage does. How much white space there is and of which kind, a word cut at a line's end, a letter's accent written apart, and the shape of a quotation mark or the length of a dash may differ, and nothing else: not a word, not a space added or left out, not a letter's case. A quote that runs on into the next Passage names both, in order"
+  }
+}

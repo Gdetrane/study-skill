@@ -1,0 +1,3 @@
+Nothing of linear-algebra was searched for "elimination".
+
+! Topic linear-algebra has no Sources yet, so there is nothing to search: add one with study source add linear-algebra --file <path>

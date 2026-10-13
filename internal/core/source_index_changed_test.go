@@ -27,7 +27,8 @@ func topicWithAPlugin(t *testing.T, flags ...string) (c *plugintest.Computer, k 
 		// Time enough on a busy computer: nothing here is about a plugin
 		// that is late.
 		Plugins: PluginOptions{Environ: func() []string { return c.Environ() }, StartTimeout: 20 * time.Second,
-			GlanceTimeout: 20 * time.Second, StopGrace: 300 * time.Millisecond, IndexPoll: 10 * time.Millisecond},
+			GlanceTimeout: 20 * time.Second, EvidenceTimeout: 20 * time.Second, StopGrace: 300 * time.Millisecond,
+			IndexPoll: 10 * time.Millisecond},
 	})
 	if err != nil {
 		t.Fatal(err)

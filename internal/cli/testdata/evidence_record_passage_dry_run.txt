@@ -1,0 +1,4 @@
+Would record Evidence for Lesson elimination from Source strang.<id>
+  > Elimination produces an upper triangular system.
+  p. 1 (location from knowledge base)
+  checked against Passage <passage> of Knowledge base plugin kb

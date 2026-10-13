@@ -1,0 +1,47 @@
+{
+  "ok": true,
+  "data": {
+    "topic": "linear-algebra",
+    "evidence": [
+      {
+        "id": "<id>",
+        "lesson": "elimination",
+        "source": "strang.<id>",
+        "quote": "Elimination produces an upper triangular system.",
+        "location": "p. 1",
+        "location_from": "knowledge_base",
+        "checked": true,
+        "passages": [
+          "<passage>"
+        ],
+        "plugin": "kb",
+        "recorded": "2026-10-01T09:30:00Z"
+      },
+      {
+        "id": "<id>",
+        "lesson": "elimination",
+        "source": "strang.<id>",
+        "quote": "after elimination. Back substitution solves",
+        "location": "pp. 1–2",
+        "location_from": "knowledge_base",
+        "checked": true,
+        "passages": [
+          "<passage>",
+          "<passage>"
+        ],
+        "plugin": "kb",
+        "recorded": "2026-10-01T09:30:00Z"
+      },
+      {
+        "id": "<id>",
+        "lesson": "elimination",
+        "source": "notes.<id>",
+        "quote": "A sentence the agent read itself.",
+        "location": "§2",
+        "location_from": "source",
+        "checked": false,
+        "recorded": "2026-10-01T09:30:00Z"
+      }
+    ]
+  }
+}

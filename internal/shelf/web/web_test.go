@@ -216,14 +216,12 @@ func TestWhatCannotBeFetchedIsSaid(t *testing.T) {
 		}
 	})
 	t.Run("a page larger than the most that is fetched", func(t *testing.T) {
-		sent := 0
 		server := serve(t, func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "text/html")
-			sent, _ = fmt.Fprint(w, "<html><body>", big, "</body></html>")
+			_, _ = fmt.Fprint(w, "<html><body>", big, "</body></html>")
 		})
 		_, err := fetch(t, server.URL)
 		problem(t, err, "larger than")
-		_ = sent
 	})
 	t.Run("a page that expands without end", func(t *testing.T) {
 		// A megabyte of one letter is a kilobyte on the wire.

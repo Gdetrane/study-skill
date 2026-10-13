@@ -103,8 +103,8 @@ Three more things to know about what comes out:
   both halves as words, and is joined otherwise. A rare pair that the book writes once, at
   the end of a line, can so come out as one word.
 - **A Passage keeps to one page**, always. A sentence that runs over the end of a page is
-  in two Passages, one on each page: quote the part that is on one page, or record that
-  Evidence without a Passage. A printed book's running header, the chapter's title and the
+  in two Passages, one on each page: Evidence that quotes it names both, in order
+  (`--passage` twice), and its location is then both pages. A printed book's running header, the chapter's title and the
   page number at the top of each page, is part of the page's text, and begins its first
   Passage.
 - **Formulas come out as the PDF holds them**, which is often not as they look: a book
@@ -125,10 +125,16 @@ word to the index.
 Searching reads the index and never a Source: a book that was moved away is still found,
 and a search is answered while another book is being indexed.
 
-`study` does not search a plugin yet: `study evidence search` and the agent's
-`evidence_search` tool are the next change (issue #82), and until then what Shelf indexed
-is found by nothing but Shelf's own tests. Search by meaning, through an embedding model
-you run, and reranking follow that (issue #84).
+Your agent searches with its `evidence_search` tool, and you can with
+`study evidence search <topic> <query>`. What comes back are Passages: the book's own
+text, each with its page. A quote the agent records as Evidence with the Passage it is
+from is checked against that Passage, and refused when it is not what the book says
+there. Quote a Passage as Shelf gives it, a joined word included: the check compares with
+the Passage, not with the page. [docs/cli.md](cli.md#searching-a-topics-sources) has the
+details.
+
+Search by meaning, through an embedding model you run, and reranking are the next change
+(issue #84).
 
 ## Where the index is
 

@@ -1,0 +1,13 @@
+<id>  Lesson elimination, Source strang.<id>
+  > Elimination produces an upper triangular system.
+  p. 1 (location from knowledge base)
+  checked against Passage <passage> of Knowledge base plugin kb
+
+<id>  Lesson elimination, Source strang.<id>
+  > after elimination. Back substitution solves
+  pp. 1–2 (location from knowledge base)
+  checked against Passages <passage>, <passage> of Knowledge base plugin kb
+
+<id>  Lesson elimination, Source notes.<id>
+  > A sentence the agent read itself.
+  §2 (location from source)

@@ -1,0 +1,46 @@
+{
+  "ok": true,
+  "data": {
+    "topic": "linear-algebra",
+    "query": "elimination produces triangular",
+    "plugin": "kb",
+    "passages": [
+      {
+        "id": "<passage>",
+        "source": "strang.<id>",
+        "title": "Strang",
+        "text": "Elimination produces an upper triangular system.",
+        "location": "p. 1",
+        "score": 3
+      },
+      {
+        "id": "<passage>",
+        "source": "strang.<id>",
+        "title": "Strang",
+        "text": "The pivots are on the diagonal of the triangle after elimination.",
+        "location": "p. 1",
+        "score": 1
+      },
+      {
+        "id": "<passage>",
+        "source": "strang.<id>",
+        "title": "Strang",
+        "text": "Back substitution solves the triangular\nsystem from the last equation up.",
+        "location": "p. 2",
+        "score": 1
+      }
+    ],
+    "searched": [
+      "strang.<id>"
+    ],
+    "left_out": [
+      {
+        "id": "notes.<id>",
+        "title": "Notes",
+        "state": "not_indexed"
+      }
+    ],
+    "note": "1 of the 2 Sources was not searched: Knowledge base plugin kb does not hold it indexed on this computer as the Topic records it",
+    "action": "study source index linear-algebra"
+  }
+}

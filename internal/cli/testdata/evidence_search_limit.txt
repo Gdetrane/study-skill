@@ -1,0 +1,8 @@
+Knowledge base plugin kb found 1 Passage for "elimination" in linear-algebra, best first:
+
+<passage>  Strang, p. 1
+  Source strang.<id>, score 1
+  > Elimination produces an upper triangular system.
+
+Quote a Passage as it is given, and record the quote with the Passage's id:
+  study evidence record linear-algebra --lesson <lesson> --source <source> --passage <passage> --quote <quote>
