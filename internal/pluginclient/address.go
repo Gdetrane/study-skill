@@ -118,12 +118,19 @@ func readAs(text string) (string, []int32) {
 				r += 'a' - 'A'
 			}
 			read = append(read, byte(r))
-		case unicode.SimpleFold(r) == r && norm.NFD.Properties(bytes[i:i+size]).Decomposition() == nil:
-			// No letter with another case, and nothing an accent is
-			// written onto: itself, as most of what is not ASCII is.
-			read = append(read, bytes[i:i+size]...)
 		default:
-			read = append(read, norm.NFD.String(fold.String(norm.NFD.String(string(r))))...)
+			// Folded as Unicode folds case, which makes two letters of
+			// some, between two decompositions, which put an accent apart
+			// from its letter. In buffers of its own: what is appended to
+			// read is never worked over again.
+			var apart, folded, again [32]byte
+			one := norm.NFD.Append(apart[:0], bytes[i:i+size]...)
+			n, _, err := fold.Transform(folded[:], one, true)
+			if err != nil {
+				// More than the buffer holds, which no character folds to.
+				n = copy(folded[:], one)
+			}
+			read = append(read, norm.NFD.Append(again[:0], folded[:n]...)...)
 		}
 		for range len(read) - before {
 			where = append(where, from[i])

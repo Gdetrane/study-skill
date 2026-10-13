@@ -345,6 +345,10 @@ func TestAnAddressIsTakenOutHoweverAServiceWritesIt(t *testing.T) {
 			"the key STRASSE-SECRET is not allowed", "the key … is not allowed"},
 		"two s said as a sharp s": {"https://kb.example/mcp?key=strasse-secret",
 			"the key stra\u00dfe-secret is not allowed", "the key … is not allowed"},
+		// A ligature has no capital of its own, and no other form but
+		// the two letters it folds to.
+		"a ligature said as two capitals": {"https://kb.example/mcp?key=o\ufb00ice-secret",
+			"the key OFFICE-SECRET is not allowed", "the key … is not allowed"},
 		"an accent written apart": {"https://kb.example/mcp?key=cl\u00e9-secr\u00e8te",
 			"the key cle\u0301-SECRE\u0300TE is not allowed", "the key … is not allowed"},
 		// A long s and a Kelvin sign are an s and a k in another case, and
