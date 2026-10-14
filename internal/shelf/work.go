@@ -34,6 +34,9 @@ type job struct {
 	// ctx is done once the work is told to stop, which stop does.
 	ctx  context.Context
 	stop context.CancelFunc
+	// begun is closed once the work is shown to the other copies of Shelf,
+	// or could not be.
+	begun chan struct{}
 	// done is closed when the work has ended, and stopped then says that it
 	// ended because it was told to, with nothing of it in the index.
 	done    chan struct{}
@@ -78,21 +81,12 @@ func wrong(format string, args ...any) error {
 	return &problem{reason: fmt.Sprintf(format, args...)}
 }
 
-// begun is what index did before it answered, for the work to go on from:
-// the collection, opened, and the work the other copies of Shelf see, or why
-// either could not be had.
-type begun struct {
-	c     *index.Collection
-	shown *index.Work
-	err   error
-}
-
 // work indexes one Source, after index has answered. Whatever it comes to
 // is in the index before the job leaves the list of what is being indexed:
 // the Source's new content, in the place of what was there, or the reason it
 // could not be indexed, beside what was there. Told to stop, it leaves the
 // index as it was.
-func (s *Shelf) work(k key, in plugincontract.IndexInput, j *job, at begun) {
+func (s *Shelf) work(k key, in plugincontract.IndexInput, j *job) {
 	ctx := j.ctx
 	source := index.Source{ID: k.source, Kind: in.Source.Kind, Title: in.Source.Title}
 	// What the indexing was asked with, which a failure is recorded with.
@@ -101,10 +95,16 @@ func (s *Shelf) work(k key, in plugincontract.IndexInput, j *job, at begun) {
 		source.Address, asked = in.Source.URL, in.Source.URL
 	}
 
-	// The other copies of Shelf see the Source being indexed since index
-	// began the work (shown), and no longer as the one whose last indexing
-	// failed, while it waits for its turn too.
-	c, shown, err := at.c, at.shown, at.err
+	// From here on the other copies of Shelf see the Source being indexed,
+	// and no longer as the one whose last indexing failed: while it waits
+	// for its turn too, so that a study status in another terminal does not
+	// offer to index a Source that is next.
+	var shown *index.Work
+	c, err := s.collection(ctx, k.collection, true)
+	if err == nil {
+		shown, err = c.Begin(ctx, k.source)
+	}
+	close(j.begun)
 	if err == nil {
 		select {
 		case s.slots <- struct{}{}:
