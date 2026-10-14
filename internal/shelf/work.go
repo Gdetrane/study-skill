@@ -78,12 +78,21 @@ func wrong(format string, args ...any) error {
 	return &problem{reason: fmt.Sprintf(format, args...)}
 }
 
+// begun is what index did before it answered, for the work to go on from:
+// the collection, opened, and the work the other copies of Shelf see, or why
+// either could not be had.
+type begun struct {
+	c     *index.Collection
+	shown *index.Work
+	err   error
+}
+
 // work indexes one Source, after index has answered. Whatever it comes to
 // is in the index before the job leaves the list of what is being indexed:
 // the Source's new content, in the place of what was there, or the reason it
 // could not be indexed, beside what was there. Told to stop, it leaves the
 // index as it was.
-func (s *Shelf) work(k key, in plugincontract.IndexInput, j *job) {
+func (s *Shelf) work(k key, in plugincontract.IndexInput, j *job, at begun) {
 	ctx := j.ctx
 	source := index.Source{ID: k.source, Kind: in.Source.Kind, Title: in.Source.Title}
 	// What the indexing was asked with, which a failure is recorded with.
@@ -92,25 +101,23 @@ func (s *Shelf) work(k key, in plugincontract.IndexInput, j *job) {
 		source.Address, asked = in.Source.URL, in.Source.URL
 	}
 
-	var c *index.Collection
-	var shown *index.Work
-	err := error(errStopped)
-	select {
-	case s.slots <- struct{}{}:
-		// One of the few Sources that are worked on at once.
-		defer func() { <-s.slots }()
-		if c, err = s.collection(ctx, k.collection, true); err == nil {
-			// From here on the other copies of Shelf see the Source being
-			// indexed, and no longer as the one whose last indexing failed.
-			if shown, err = c.Begin(ctx, k.source); err == nil {
-				if j.vectorsOnly {
-					err = s.embedIndexed(ctx, c, in, j, shown)
-				} else {
-					err = s.run(ctx, in, source, j, shown)
-				}
+	// The other copies of Shelf see the Source being indexed since index
+	// began the work (shown), and no longer as the one whose last indexing
+	// failed, while it waits for its turn too.
+	c, shown, err := at.c, at.shown, at.err
+	if err == nil {
+		select {
+		case s.slots <- struct{}{}:
+			// One of the few Sources that are worked on at once.
+			defer func() { <-s.slots }()
+			if j.vectorsOnly {
+				err = s.embedIndexed(ctx, c, in, j, shown)
+			} else {
+				err = s.run(ctx, in, source, j, shown)
 			}
+		case <-ctx.Done():
+			err = errStopped
 		}
-	case <-ctx.Done():
 	}
 
 	stopped := err != nil && ctx.Err() != nil

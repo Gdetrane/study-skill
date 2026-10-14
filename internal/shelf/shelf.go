@@ -191,7 +191,9 @@ type Shelf struct {
 
 	mu sync.Mutex
 	// jobs are the Sources being indexed now. A job is in it from the
-	// moment index answers until what it came to is in the index.
+	// moment index answers until what it came to is in the index, and the
+	// other copies of Shelf see it for as long (index.Work), waiting for a
+	// slot included.
 	jobs map[key]*job
 	// unwritten are the reasons of failures that could not be written to
 	// the index, where every other failure is kept: the index itself was
@@ -503,17 +505,29 @@ func (s *Shelf) index(ctx context.Context, args json.RawMessage) (any, *pluginco
 
 	work, stop := context.WithCancel(context.Background())
 	j := &job{source: in.Source, vectorsOnly: vectorsOnly, ctx: work, stop: stop, done: make(chan struct{})}
+	// The other copies of Shelf see the Source being indexed before index
+	// answers, as this one does: a study status in another terminal is not
+	// to offer to index a Source that is waiting for its turn here. What
+	// keeps it from being shown is why the work fails, which work records.
+	c, err := s.collection(work, k.collection, true)
+	var shown *index.Work
+	if err == nil {
+		shown, err = c.Begin(work, k.source)
+	}
 	s.mu.Lock()
 	if s.closing {
 		// Close has stopped what was being indexed, and starts nothing.
 		s.mu.Unlock()
 		stop()
+		if shown != nil {
+			shown.End()
+		}
 		return nil, refuse(plugincontract.CodeInternal, "Shelf is stopping")
 	}
 	delete(s.unwritten, k)
 	s.jobs[k] = j
 	s.mu.Unlock()
-	go s.work(k, in, j)
+	go s.work(k, in, j, begun{c: c, shown: shown, err: err})
 	status, _ := statusOf(have, working{job: j}, "", "")
 	return plugincontract.IndexResult{Source: status}, nil
 }

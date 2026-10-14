@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 
 	"github.com/mordor-forge/lamplight/v2/internal/plugincontract"
 	"github.com/mordor-forge/lamplight/v2/internal/plugintest"
+	"github.com/mordor-forge/lamplight/v2/internal/shelf"
 	"github.com/mordor-forge/lamplight/v2/internal/shelf/shelftest"
 )
 
@@ -569,6 +571,74 @@ func TestAGlanceSeesWhatAnotherStudyShelfIsIndexing(t *testing.T) {
 		t.Errorf("indexed after the kill, a search finds %d of the two last pages", len(found))
 	}
 	integrity(t, computer.DataFolder("conformance"), "glanced")
+}
+
+// A Source that waits for its turn is being indexed, for every copy of
+// Shelf, from the moment index answers: a study status in another terminal,
+// while a study source index has more Sources than it works on at once,
+// would otherwise offer to index the ones that wait. And once cancel has
+// answered, no copy says it is being indexed.
+func TestAGlanceSeesASourceThatWaitsForItsTurn(t *testing.T) {
+	warm(t)
+	computer := plugintest.NewComputer(t)
+	folder := computer.DataFolder("conformance")
+	if err := os.MkdirAll(folder, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// One Source at a time, and the first is held once its pages are read,
+	// until the test lets it go: the one slot is taken for as long as the
+	// test needs it.
+	reading, held := make(chan struct{}), make(chan struct{})
+	read := sync.OnceFunc(func() { close(reading) })
+	plugin := shelf.New(shelf.Options{Folder: folder, Settings: shelf.Settings{Workers: 1}, Crash: func(point string) {
+		if point == shelf.PointPagesRead {
+			read()
+			<-held
+		}
+	}})
+	t.Cleanup(plugin.Close)
+	let := sync.OnceFunc(func() { close(held) })
+	t.Cleanup(let)
+	indexer := connect(t, plugin)
+
+	first := file(t, "first.a1", pdf([]string{"The first book speaks of spectra."}))
+	waiting := file(t, "waiting.b2", pdf([]string{"The second book speaks of sheaves."}))
+	indexer.index("turns", first)
+	select {
+	case <-reading:
+	case <-time.After(patience):
+		t.Fatal("the first book was never read")
+	}
+	indexer.index("turns", waiting)
+
+	glance, _ := run(t, computer)
+	status := glance.status("turns")
+	if now, listed := status[waiting.ID]; !listed || now.State != plugincontract.StateIndexing || now.Hash != "" {
+		t.Fatalf("a glance says %+v (listed: %v) of a Source another study-shelf has been asked for and works on next; want it being indexed, with no hash", now, listed)
+	}
+	if now, listed := status[first.ID]; !listed || now.State != plugincontract.StateIndexing {
+		t.Errorf("a glance says %+v (listed: %v) of the Source another study-shelf is reading; want it being indexed", now, listed)
+	}
+
+	// Stopped while it waits, it was being indexed, and no copy says so any
+	// longer.
+	if !indexer.cancel("turns", waiting.ID) {
+		t.Error("cancel says it stopped nothing of a Source that waited for its turn")
+	}
+	if now, listed := glance.status("turns")[waiting.ID]; listed {
+		t.Errorf("once cancel has answered, a glance says %+v of the Source it stopped; want nothing", now)
+	}
+
+	// The first is indexed once it is let go, and the other when it is asked
+	// for again.
+	let()
+	if now, _ := indexer.settled("turns", first.ID); now.State != plugincontract.StateIndexed {
+		t.Errorf("the first book let go of: %+v", now)
+	}
+	indexer.indexed("turns", waiting)
+	if found := glance.search("turns", "sheaves", 5); len(found) != 1 {
+		t.Errorf("a glance finds the Source indexed after its cancel %d times", len(found))
+	}
 }
 
 // Two study-shelf programs on one folder, a glance beside a study source
