@@ -99,10 +99,20 @@ func (s *Shelf) work(k key, in plugincontract.IndexInput, j *job) {
 	// and no longer as the one whose last indexing failed: while it waits
 	// for its turn too, so that a study status in another terminal does not
 	// offer to index a Source that is next.
+	var c *index.Collection
 	var shown *index.Work
-	c, err := s.collection(ctx, k.collection, true)
-	if err == nil {
-		shown, err = c.Begin(ctx, k.source)
+	err := error(errStopped)
+	select {
+	case s.beginning <- struct{}{}:
+		// One work begins at a time. Beginning is a write, which waits for
+		// another copy of Shelf that is writing a book into the index, on one
+		// of the few connections a collection has: the others are kept for
+		// what this copy reads meanwhile, status and index among it.
+		if c, err = s.collection(ctx, k.collection, true); err == nil {
+			shown, err = c.Begin(ctx, k.source)
+		}
+		<-s.beginning
+	case <-ctx.Done():
 	}
 	close(j.begun)
 	if err == nil {

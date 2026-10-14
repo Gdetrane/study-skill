@@ -185,6 +185,8 @@ type Shelf struct {
 	fetcher   *web.Fetcher
 	// slots are held by the Sources being worked on.
 	slots chan struct{}
+	// beginning is held by the one work that is beginning (job.begun).
+	beginning chan struct{}
 
 	// asking makes one request to index wait for the one before it.
 	asking sync.Mutex
@@ -213,6 +215,7 @@ func New(opts Options) *Shelf {
 		settings:  settings,
 		fetcher:   web.NewFetcher(settings.Fetch, Name+"/"+VersionString()+" (+https://github.com/mordor-forge/lamplight)"),
 		slots:     make(chan struct{}, settings.Workers),
+		beginning: make(chan struct{}, 1),
 		jobs:      map[key]*job{},
 		unwritten: map[key]string{},
 		at:        opts.Crash,
@@ -438,6 +441,19 @@ func (s *Shelf) index(ctx context.Context, args json.RawMessage) (any, *pluginco
 	if refusal := read(args, &in); refusal != nil {
 		return nil, refusal
 	}
+	// The work this request starts, if it starts one, is waited for a moment
+	// (beginsWithin) once the next request has been let in: deferred before
+	// asking is locked, the wait runs after it is unlocked, and requests that
+	// arrive together wait together.
+	var started *job
+	defer func() {
+		if started != nil {
+			select {
+			case <-started.begun:
+			case <-time.After(beginsWithin):
+			}
+		}
+	}()
 	s.asking.Lock()
 	defer s.asking.Unlock()
 	k := key{in.Collection, in.Source.ID}
@@ -524,10 +540,7 @@ func (s *Shelf) index(ctx context.Context, args json.RawMessage) (any, *pluginco
 	s.jobs[k] = j
 	s.mu.Unlock()
 	go s.work(k, in, j)
-	select {
-	case <-j.begun:
-	case <-time.After(beginsWithin):
-	}
+	started = j
 	status, _ := statusOf(have, working{job: j}, "", "")
 	return plugincontract.IndexResult{Source: status}, nil
 }

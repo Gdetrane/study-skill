@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	_ "modernc.org/sqlite"
 
 	"github.com/mordor-forge/lamplight/v2/internal/plugincontract"
@@ -640,26 +641,67 @@ func TestAGlanceSeesASourceThatWaitsForItsTurn(t *testing.T) {
 		t.Errorf("once cancel has answered, a glance says %+v of the Source it stopped; want nothing", now)
 	}
 
-	// Another copy writes for longer than an answer may take. index answers
-	// all the same, well before SQLite would give up waiting for the writer,
-	// and the others are told once the writing is over.
+	// Another copy writes for longer than an answer may take, while several
+	// sessions ask for Sources at once. Each is answered all the same, well
+	// before SQLite would give up waiting for the writer, and none waits for
+	// another's wait. The other copies are told once the writing is over.
+	asked := []plugincontract.Source{waiting}
+	for n := range 7 {
+		asked = append(asked, file(t, fmt.Sprintf("more.c%d", n), pdf([]string{"A book that waits for its turn."})))
+	}
 	done = writing(t, folder, "turns")
-	began := time.Now()
-	indexer.index("turns", waiting)
-	if took := time.Since(began); took > 5*time.Second {
-		t.Errorf("index took %s to answer while another copy wrote into the index: it answers at once", took)
+	took, refused := make([]time.Duration, len(asked)), make([]error, len(asked))
+	var asking sync.WaitGroup
+	for n, source := range asked {
+		session := connect(t, plugin)
+		asking.Go(func() {
+			// Not session.index: a test fails only from its own goroutine.
+			ctx, cancel := context.WithTimeout(context.Background(), patience)
+			defer cancel()
+			began := time.Now()
+			res, err := session.cs.CallTool(ctx, &mcp.CallToolParams{Name: plugincontract.ToolIndex,
+				Arguments: plugincontract.IndexInput{Collection: "turns", Source: source}})
+			took[n] = time.Since(began)
+			if err == nil && res.IsError {
+				err = fmt.Errorf("refused: %+v", res.StructuredContent)
+			}
+			refused[n] = err
+		})
+	}
+	asking.Wait()
+	for n, err := range refused {
+		if err != nil {
+			t.Fatalf("index of %s: %v", asked[n].ID, err)
+		}
+	}
+	if slowest := slices.Max(took); slowest > 4*time.Second {
+		t.Errorf("of %d Sources asked for at once while another copy wrote into the index, the last was answered after %s: each is answered at once", len(asked), slowest)
 	}
 	done()
 	for deadline := time.Now().Add(patience); ; time.Sleep(10 * time.Millisecond) {
-		if now, listed := glance.status("turns")[waiting.ID]; listed && now.State == plugincontract.StateIndexing {
+		status, shown := glance.status("turns"), 0
+		for _, source := range asked {
+			now, listed := status[source.ID]
+			switch {
+			case listed && now.State == plugincontract.StateIndexing:
+				shown++
+			case listed:
+				// Its work could not begin: the wait for the writer was too
+				// long, or too many waited at once.
+				t.Fatalf("once the other copy's writing was over, a glance says %+v of %s; want it being indexed", now, source.ID)
+			}
+		}
+		if shown == len(asked) {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatal("once the other copy's writing was over, no glance said the Source asked for meanwhile is being indexed")
+			t.Fatalf("once the other copy's writing was over, a glance said %d of the %d Sources asked for meanwhile are being indexed", shown, len(asked))
 		}
 	}
-	if !indexer.cancel("turns", waiting.ID) {
-		t.Error("cancel says it stopped nothing of a Source that waited for its turn")
+	for _, source := range asked {
+		if !indexer.cancel("turns", source.ID) {
+			t.Errorf("cancel says it stopped nothing of %s, which waited for its turn", source.ID)
+		}
 	}
 
 	// The first is indexed once it is let go, and the other when it is asked
