@@ -618,19 +618,30 @@ func TestAGlanceSeesASourceThatWaitsForItsTurn(t *testing.T) {
 	glance, _ := run(t, computer)
 
 	// Another copy writes into the index for a moment as the Source is
-	// asked for: telling the others waits for it, and index for that.
+	// asked for, twice, from two sessions: telling the others waits for the
+	// writing, and both answers wait for that, the one that finds the work
+	// under way too.
 	done := writing(t, folder, "turns")
 	go func() {
-		time.Sleep(300 * time.Millisecond)
+		time.Sleep(500 * time.Millisecond)
 		done()
 	}()
-	indexer.index("turns", waiting)
+	var earlier error
+	var once sync.WaitGroup
+	once.Go(func() { _, earlier = indexing(indexer, "turns", waiting) })
+	time.Sleep(150 * time.Millisecond)
+	if _, err := indexing(connect(t, plugin), "turns", waiting); err != nil {
+		t.Fatalf("index of %s, asked for again: %v", waiting.ID, err)
+	}
 	status := glance.status("turns")
 	if now, listed := status[waiting.ID]; !listed || now.State != plugincontract.StateIndexing || now.Hash != "" {
 		t.Fatalf("a glance says %+v (listed: %v) of a Source another study-shelf has been asked for and works on next; want it being indexed, with no hash", now, listed)
 	}
 	if now, listed := status[first.ID]; !listed || now.State != plugincontract.StateIndexing {
 		t.Errorf("a glance says %+v (listed: %v) of the Source another study-shelf is reading; want it being indexed", now, listed)
+	}
+	if once.Wait(); earlier != nil {
+		t.Fatalf("index of %s: %v", waiting.ID, earlier)
 	}
 	// Stopped while it waits, it was being indexed, and no copy says so any
 	// longer.
@@ -654,19 +665,7 @@ func TestAGlanceSeesASourceThatWaitsForItsTurn(t *testing.T) {
 	var asking sync.WaitGroup
 	for n, source := range asked {
 		session := connect(t, plugin)
-		asking.Go(func() {
-			// Not session.index: a test fails only from its own goroutine.
-			ctx, cancel := context.WithTimeout(context.Background(), patience)
-			defer cancel()
-			began := time.Now()
-			res, err := session.cs.CallTool(ctx, &mcp.CallToolParams{Name: plugincontract.ToolIndex,
-				Arguments: plugincontract.IndexInput{Collection: "turns", Source: source}})
-			took[n] = time.Since(began)
-			if err == nil && res.IsError {
-				err = fmt.Errorf("refused: %+v", res.StructuredContent)
-			}
-			refused[n] = err
-		})
+		asking.Go(func() { took[n], refused[n] = indexing(session, "turns", source) })
 	}
 	asking.Wait()
 	for n, err := range refused {
@@ -676,6 +675,16 @@ func TestAGlanceSeesASourceThatWaitsForItsTurn(t *testing.T) {
 	}
 	if slowest := slices.Max(took); slowest > 4*time.Second {
 		t.Errorf("of %d Sources asked for at once while another copy wrote into the index, the last was answered after %s: each is answered at once", len(asked), slowest)
+	}
+	// A Source of another collection is shown at once all the same: the
+	// writer that is held is the first collection's.
+	apart := file(t, "apart.d4", pdf([]string{"A book of another Topic."}))
+	indexer.index("apart", apart)
+	if now, listed := glance.status("apart")[apart.ID]; !listed || now.State != plugincontract.StateIndexing {
+		t.Errorf("while another copy wrote into one collection, a glance says %+v (listed: %v) of a Source asked for in another; want it being indexed", now, listed)
+	}
+	if !indexer.cancel("apart", apart.ID) {
+		t.Errorf("cancel says it stopped nothing of %s, which waited for its turn", apart.ID)
 	}
 	done()
 	for deadline := time.Now().Add(patience); ; time.Sleep(10 * time.Millisecond) {
@@ -714,6 +723,22 @@ func TestAGlanceSeesASourceThatWaitsForItsTurn(t *testing.T) {
 	if found := glance.search("turns", "sheaves", 5); len(found) != 1 {
 		t.Errorf("a glance finds the Source indexed after its cancel %d times", len(found))
 	}
+}
+
+// indexing asks a Shelf to index a Source, from a goroutine of the test's
+// own, and returns how long the answer took. It fails nothing itself: a test
+// fails only from its own goroutine.
+func indexing(s *session, collection string, source plugincontract.Source) (time.Duration, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), patience)
+	defer cancel()
+	began := time.Now()
+	res, err := s.cs.CallTool(ctx, &mcp.CallToolParams{Name: plugincontract.ToolIndex,
+		Arguments: plugincontract.IndexInput{Collection: collection, Source: source}})
+	took := time.Since(began)
+	if err == nil && res.IsError {
+		err = fmt.Errorf("refused: %+v", res.StructuredContent)
+	}
+	return took, err
 }
 
 // writing holds the one writer of a collection, as another copy of Shelf

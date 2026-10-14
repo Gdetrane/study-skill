@@ -102,16 +102,18 @@ func (s *Shelf) work(k key, in plugincontract.IndexInput, j *job) {
 	var c *index.Collection
 	var shown *index.Work
 	err := error(errStopped)
+	turn := s.beginner(k.collection)
 	select {
-	case s.beginning <- struct{}{}:
-		// One work begins at a time. Beginning is a write, which waits for
-		// another copy of Shelf that is writing a book into the index, on one
-		// of the few connections a collection has: the others are kept for
-		// what this copy reads meanwhile, status and index among it.
+	case turn <- struct{}{}:
+		// One work begins at a time in a collection. Beginning is a write,
+		// which waits for another copy of Shelf that is writing a book into
+		// the collection, on one of the few connections it has: the others
+		// are kept for what this copy reads of it meanwhile, status and
+		// index among it.
 		if c, err = s.collection(ctx, k.collection, true); err == nil {
 			shown, err = c.Begin(ctx, k.source)
 		}
-		<-s.beginning
+		<-turn
 	case <-ctx.Done():
 	}
 	close(j.begun)

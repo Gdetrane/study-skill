@@ -185,8 +185,9 @@ type Shelf struct {
 	fetcher   *web.Fetcher
 	// slots are held by the Sources being worked on.
 	slots chan struct{}
-	// beginning is held by the one work that is beginning (job.begun).
-	beginning chan struct{}
+	// beginning is held, in each collection, by the one work that is
+	// beginning there (job.begun).
+	beginning map[string]chan struct{}
 
 	// asking makes one request to index wait for the one before it.
 	asking sync.Mutex
@@ -215,7 +216,7 @@ func New(opts Options) *Shelf {
 		settings:  settings,
 		fetcher:   web.NewFetcher(settings.Fetch, Name+"/"+VersionString()+" (+https://github.com/mordor-forge/lamplight)"),
 		slots:     make(chan struct{}, settings.Workers),
-		beginning: make(chan struct{}, 1),
+		beginning: map[string]chan struct{}{},
 		jobs:      map[key]*job{},
 		unwritten: map[key]string{},
 		at:        opts.Crash,
@@ -360,6 +361,19 @@ func (s *Shelf) collection(ctx context.Context, name string, create bool) (*inde
 	return s.folder.Collection(ctx, name, create)
 }
 
+// beginner returns what the one work that is beginning in a collection
+// holds.
+func (s *Shelf) beginner(collection string) chan struct{} {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	turn := s.beginning[collection]
+	if turn == nil {
+		turn = make(chan struct{}, 1)
+		s.beginning[collection] = turn
+	}
+	return turn
+}
+
 // stored is what the index holds of a Source, and nil when it holds
 // nothing.
 func (s *Shelf) stored(ctx context.Context, k key) (*index.Source, error) {
@@ -441,10 +455,10 @@ func (s *Shelf) index(ctx context.Context, args json.RawMessage) (any, *pluginco
 	if refusal := read(args, &in); refusal != nil {
 		return nil, refusal
 	}
-	// The work this request starts, if it starts one, is waited for a moment
-	// (beginsWithin) once the next request has been let in: deferred before
-	// asking is locked, the wait runs after it is unlocked, and requests that
-	// arrive together wait together.
+	// The work this request starts, or finds under way for the same
+	// content, is waited for a moment (beginsWithin) once the next request
+	// has been let in: deferred before asking is locked, the wait runs after
+	// it is unlocked, and requests that arrive together wait together.
 	var started *job
 	defer func() {
 		if started != nil {
@@ -472,6 +486,7 @@ func (s *Shelf) index(ctx context.Context, args json.RawMessage) (any, *pluginco
 	// Work that was told to stop, and has not stopped yet, is no work on it.
 	if running != nil && running.indexes(in.Source) && running.ctx.Err() == nil {
 		s.mu.Unlock()
+		started = running
 		status, _ := statusOf(have, working{job: running}, "", "")
 		return plugincontract.IndexResult{Source: status}, nil
 	}
